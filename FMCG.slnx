@@ -1,0 +1,11 @@
+<Solution>
+  <Project Path="src/FMCG.API/FMCG.API.csproj" />
+  <Project Path="src/FMCG.Application/FMCG.Application.csproj" />
+  <Project Path="src/FMCG.Domain/FMCG.Domain.csproj" />
+  <Project Path="src/FMCG.Infrastructure/FMCG.Infrastructure.csproj" />
+  <Project Path="src/FMCG.Persistence/FMCG.Persistence.csproj" />
+  <Project Path="src/FMCG.Shared/FMCG.Shared.csproj" />
+  <Project Path="tests/FMCG.IntegrationTests/FMCG.IntegrationTests.csproj" />
+  <Project Path="tests/FMCG.LoadTests/FMCG.LoadTests.csproj" />
+  <Project Path="tests/FMCG.UnitTests/FMCG.UnitTests.csproj" />
+</Solution>
