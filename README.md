@@ -1,5 +1,7 @@
 # FSCM Backend
 
+[![Backend CI](https://github.com/GFA26SE63/FSCM-Backend/actions/workflows/backend-ci.yml/badge.svg)](https://github.com/GFA26SE63/FSCM-Backend/actions/workflows/backend-ci.yml)
+
 .NET 10 API for the FSCM short shelf-life FMCG warehouse operations and distribution allocation system.
 
 The solution follows Clean Architecture boundaries across API, Application, Domain, Infrastructure, Persistence, and Shared projects. It also contains unit, integration, and load-test projects.
