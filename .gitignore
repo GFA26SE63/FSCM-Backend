@@ -1,0 +1,41 @@
+# IDE and operating-system files
+.idea/
+.vscode/
+.vs/
+.DS_Store
+Thumbs.db
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# .NET build and test output
+bin/
+obj/
+TestResults/
+coverage/
+*.trx
+*.coverage
+*.coveragexml
+*.nupkg
+packages/
+
+# Runtime configuration and secrets
+appsettings.json
+appsettings.*.json
+!**/appsettings.example.json
+*.local.env
+local.settings.json
+secrets.json
+*.secrets.json
+*.secret.json
+*.pem
+*.key
+*.pfx
+*.cer
+
+# Logs and temporary files
+logs/
+*.log
+*.tmp
+*.temp

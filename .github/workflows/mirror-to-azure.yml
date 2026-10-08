@@ -1,0 +1,45 @@
+name: Mirror branch to Azure DevOps
+
+on:
+  push:
+    branches:
+      - "**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: azure-mirror-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  mirror:
+    name: Push branch to Azure DevOps
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out complete branch history
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Push branch to Azure DevOps
+        shell: bash
+        env:
+          AZURE_DEVOPS_PAT: ${{ secrets.AZURE_DEVOPS_PAT }}
+          AZURE_REPO_URL: https://dev.azure.com/workinghaidoan2901/FMCG/_git/FSCM-Backend
+          BRANCH_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "$AZURE_DEVOPS_PAT" ]; then
+            echo "AZURE_DEVOPS_PAT secret is missing."
+            exit 1
+          fi
+
+          AZURE_AUTH="$(printf ':%s' "$AZURE_DEVOPS_PAT" | base64 | tr -d '\n')"
+          git remote add azure "$AZURE_REPO_URL"
+          git -c http.extraheader="Authorization: Basic $AZURE_AUTH" push azure "HEAD:refs/heads/$BRANCH_NAME"
