@@ -27,10 +27,10 @@ jobs:
           dotnet-version: 10.0.x
 
       - name: Restore
-        run: dotnet restore FMCG.slnx
+        run: dotnet restore FSCM.slnx
 
       - name: Build
-        run: dotnet build FMCG.slnx --configuration Release --no-restore
+        run: dotnet build FSCM.slnx --configuration Release --no-restore
 
       - name: Test
-        run: dotnet test FMCG.slnx --configuration Release --no-build
+        run: dotnet test FSCM.slnx --configuration Release --no-build

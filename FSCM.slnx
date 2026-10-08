@@ -1,0 +1,11 @@
+<Solution>
+  <Project Path="src/FSCM.API/FSCM.API.csproj" />
+  <Project Path="src/FSCM.Application/FSCM.Application.csproj" />
+  <Project Path="src/FSCM.Domain/FSCM.Domain.csproj" />
+  <Project Path="src/FSCM.Infrastructure/FSCM.Infrastructure.csproj" />
+  <Project Path="src/FSCM.Persistence/FSCM.Persistence.csproj" />
+  <Project Path="src/FSCM.Shared/FSCM.Shared.csproj" />
+  <Project Path="tests/FSCM.IntegrationTests/FSCM.IntegrationTests.csproj" />
+  <Project Path="tests/FSCM.LoadTests/FSCM.LoadTests.csproj" />
+  <Project Path="tests/FSCM.UnitTests/FSCM.UnitTests.csproj" />
+</Solution>

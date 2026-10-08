@@ -23,9 +23,9 @@ Cross-system architecture documentation is stored beside the local repositories 
 Create an ignored local settings file from the committed template:
 
 ```powershell
-Copy-Item src/FMCG.API/appsettings.example.json src/FMCG.API/appsettings.Local.json
-dotnet restore FMCG.slnx
-dotnet run --project src/FMCG.API/FMCG.API.csproj --launch-profile https
+Copy-Item src/FSCM.API/appsettings.example.json src/FSCM.API/appsettings.Local.json
+dotnet restore FSCM.slnx
+dotnet run --project src/FSCM.API/FSCM.API.csproj --launch-profile https
 ```
 
 The development profile exposes Swagger at `/swagger`, GraphQL at `/graphql`, and health checks at `/health`.
@@ -33,9 +33,9 @@ The development profile exposes Swagger at `/swagger`, GraphQL at `/graphql`, an
 ## Validation
 
 ```powershell
-dotnet restore FMCG.slnx
-dotnet build FMCG.slnx --configuration Release --no-restore
-dotnet test FMCG.slnx --configuration Release --no-build
+dotnet restore FSCM.slnx
+dotnet build FSCM.slnx --configuration Release --no-restore
+dotnet test FSCM.slnx --configuration Release --no-build
 ```
 
 ## Delivery
