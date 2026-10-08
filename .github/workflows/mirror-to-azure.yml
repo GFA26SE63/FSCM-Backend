@@ -30,7 +30,7 @@ jobs:
         shell: bash
         env:
           AZURE_DEVOPS_PAT: ${{ secrets.AZURE_DEVOPS_PAT }}
-          AZURE_REPO_URL: https://dev.azure.com/workinghaidoan2901/FMCG/_git/FSCM-Backend
+          AZURE_REPO_URL: https://dev.azure.com/workinghaidoan2901/FSCM/_git/FSCM-Backend
           BRANCH_NAME: ${{ github.ref_name }}
         run: |
           set -euo pipefail
