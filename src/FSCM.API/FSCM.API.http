@@ -1,6 +1,41 @@
 @FSCM.API_HostAddress = http://localhost:5246
+@email = sales@fscm.local
+@password = FscmDemo#2026
 
-GET {{FSCM.API_HostAddress}}/weatherforecast/
+GET {{FSCM.API_HostAddress}}/health
 Accept: application/json
 
 ###
+
+# @name login
+POST {{FSCM.API_HostAddress}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "{{email}}",
+  "password": "{{password}}"
+}
+
+###
+
+GET {{FSCM.API_HostAddress}}/api/v1/auth/me
+Authorization: Bearer {{login.response.body.$.accessToken}}
+Accept: application/json
+
+###
+
+POST {{FSCM.API_HostAddress}}/api/v1/auth/refresh
+Content-Type: application/json
+
+{
+  "refreshToken": "{{login.response.body.$.refreshToken}}"
+}
+
+###
+
+POST {{FSCM.API_HostAddress}}/api/v1/auth/password-reset/request
+Content-Type: application/json
+
+{
+  "email": "{{email}}"
+}
