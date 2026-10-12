@@ -1,4 +1,6 @@
+using FSCM.Application.Features.Identity;
 using FSCM.Persistence.DbContexts;
+using FSCM.Persistence.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -22,6 +24,8 @@ public static class DependencyInjection
                     postgresOptions => postgresOptions.EnableRetryOnFailure());
             });
         }
+
+        services.AddScoped<IIdentityStore, IdentityStore>();
 
         return services;
     }

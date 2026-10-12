@@ -1,4 +1,5 @@
 using System.Text;
+using FSCM.API.Errors;
 using FSCM.API.GraphQL;
 using FSCM.API.Options;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
@@ -23,6 +24,8 @@ public static class ServiceCollectionExtensions
         services.AddSwaggerGen();
         services.AddOpenApi();
         services.AddHealthChecks();
+        services.AddProblemDetails();
+        services.AddExceptionHandler<IdentityExceptionHandler>();
 
         services.AddCors(options =>
         {
