@@ -31,6 +31,30 @@ dotnet run --project src/FSCM.API/FSCM.API.csproj --launch-profile https
 
 The development profile exposes Swagger at `/swagger`, GraphQL at `/graphql`, and health checks at `/health`.
 
+### Identity API and development data
+
+BE-01 provides JWT login and refresh-token rotation, account activation, password reset, six-role authorization, and warehouse/sales-group/retailer scopes under `/api/v1/auth` and `/api/v1/users`.
+
+Create the development-only identity dataset after applying migrations:
+
+```powershell
+dotnet user-secrets set "SeedData:DefaultPassword" "FscmDemo#2026" --project src/FSCM.API/FSCM.API.csproj
+dotnet run --project src/FSCM.API/FSCM.API.csproj --launch-profile http -- --seed
+```
+
+The command is idempotent and creates active users for all six roles. The example password above is for local development only and must not be used in a deployed environment.
+
+| Role | Email | Seeded scope |
+| --- | --- | --- |
+| Admin | `admin@fscm.local` | System-wide administration |
+| Operator | `operator@fscm.local` | `WH-HCM-01` |
+| SalesManager | `sales.manager@fscm.local` | `SG-HCM-01`, `RTL-HCM-001` |
+| Sales | `sales@fscm.local` | `SG-HCM-01`, `RTL-HCM-001` |
+| WarehouseKeeper | `warehouse.keeper@fscm.local` | `WH-HCM-01` |
+| Retailer | `retailer@fscm.local` | `SG-HCM-01`, `RTL-HCM-001` |
+
+Admin accounts are bootstrap-only: the user-management API rejects both Admin creation and Admin role promotion.
+
 ## Validation
 
 ```powershell

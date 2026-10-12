@@ -6,8 +6,6 @@ public static class WebApplicationExtensions
 {
     public static WebApplication UseApiPipeline(this WebApplication app)
     {
-        app.UseExceptionHandler();
-
         if (app.Environment.IsDevelopment())
         {
             app.MapOpenApi();
@@ -16,6 +14,7 @@ public static class WebApplicationExtensions
         }
 
         app.UseSerilogRequestLogging();
+        app.UseExceptionHandler();
         app.UseHttpsRedirection();
         app.UseCors(ServiceCollectionExtensions.CorsPolicyName);
         app.UseAuthentication();
