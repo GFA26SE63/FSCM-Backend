@@ -61,8 +61,8 @@ The development catalog dump contains:
 
 | Data | Seeded examples |
 | --- | --- |
-| Categories | `CAT-01` through `CAT-04`, including a parent-child relationship and an inactive category |
-| Products | `SKU001` through `SKU005`, covering Draft, Published, Inactive, and replacement states |
+| Categories | `CAT-01` through `CAT-04`, with Vietnamese names, a parent-child relationship, and an inactive category |
+| Products | `SKU001` through `SKU005`, with Vietnamese names and units covering Draft, Published, Inactive, and replacement states |
 | Prices | Multiple VND price-history entries for suggestion and effective-price testing |
 
 Use [the HTTP request collection](src/FSCM.API/FSCM.API.http) after seeding to log in, query the catalog, inspect price history, and request a historical-price suggestion.

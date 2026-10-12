@@ -22,12 +22,12 @@ public sealed class DevelopmentDataSeeder(
 
     private static readonly (string Email, string FullName, string Role)[] DemoUsers =
     [
-        ("admin@fscm.local", "FSCM Administrator", SystemRoles.Admin),
-        ("operator@fscm.local", "FSCM Operator", SystemRoles.Operator),
-        ("sales.manager@fscm.local", "FSCM Sales Manager", SystemRoles.SalesManager),
-        ("sales@fscm.local", "FSCM Sales Representative", SystemRoles.Sales),
-        ("warehouse.keeper@fscm.local", "FSCM Warehouse Keeper", SystemRoles.WarehouseKeeper),
-        ("retailer@fscm.local", "FSCM Retailer User", SystemRoles.Retailer)
+        ("admin@fscm.local", "Quản trị viên FSCM", SystemRoles.Admin),
+        ("operator@fscm.local", "Nhân viên vận hành FSCM", SystemRoles.Operator),
+        ("sales.manager@fscm.local", "Quản lý bán hàng FSCM", SystemRoles.SalesManager),
+        ("sales@fscm.local", "Nhân viên bán hàng FSCM", SystemRoles.Sales),
+        ("warehouse.keeper@fscm.local", "Thủ kho FSCM", SystemRoles.WarehouseKeeper),
+        ("retailer@fscm.local", "Người dùng nhà bán lẻ FSCM", SystemRoles.Retailer)
     ];
 
     public async Task SeedAsync(CancellationToken cancellationToken = default)
@@ -66,10 +66,10 @@ public sealed class DevelopmentDataSeeder(
     {
         var definitions = new[]
         {
-            new CategorySeed("CAT-01", "Beverages", "Short shelf-life beverages", (string?)null),
-            new CategorySeed("CAT-02", "Dairy", "Milk and cultured dairy products", "CAT-01"),
-            new CategorySeed("CAT-03", "Fresh Food", "Fresh packaged foods", (string?)null),
-            new CategorySeed("CAT-04", "Seasonal", "Inactive category for catalog testing", (string?)null, false)
+            new CategorySeed("CAT-01", "Đồ uống", "Đồ uống có hạn sử dụng ngắn", (string?)null),
+            new CategorySeed("CAT-02", "Sữa và sản phẩm từ sữa", "Sữa và các sản phẩm sữa lên men", "CAT-01"),
+            new CategorySeed("CAT-03", "Thực phẩm tươi", "Thực phẩm tươi được đóng gói", (string?)null),
+            new CategorySeed("CAT-04", "Hàng theo mùa", "Danh mục ngừng hoạt động dùng để kiểm thử", (string?)null, false)
         };
         var categories = new Dictionary<string, ProductCategory>(StringComparer.Ordinal);
 
@@ -126,11 +126,11 @@ public sealed class DevelopmentDataSeeder(
     {
         var definitions = new[]
         {
-            new ProductSeed("SKU001", "Fresh Milk 1L", "Carton", 168, 24, "CAT-02", ProductStatuses.Published),
-            new ProductSeed("SKU002", "Drinking Yogurt 180ml", "Carton", 336, 48, "CAT-02", ProductStatuses.Published),
-            new ProductSeed("SKU003", "Fresh Sandwich", "Case", 72, 12, "CAT-03", ProductStatuses.Draft),
-            new ProductSeed("SKU004", "Orange Juice 250ml - 48 pack", "Carton", 720, 120, "CAT-01", ProductStatuses.Inactive),
-            new ProductSeed("SKU005", "Orange Juice 250ml - 36 pack", "Carton", 720, 120, "CAT-01", ProductStatuses.Published, "SKU004")
+            new ProductSeed("SKU001", "Sữa tươi 1 lít", "Thùng", 168, 24, "CAT-02", ProductStatuses.Published),
+            new ProductSeed("SKU002", "Sữa chua uống 180 ml", "Thùng", 336, 48, "CAT-02", ProductStatuses.Published),
+            new ProductSeed("SKU003", "Bánh mì kẹp tươi", "Khay", 72, 12, "CAT-03", ProductStatuses.Draft),
+            new ProductSeed("SKU004", "Nước cam 250 ml - thùng 48 hộp", "Thùng", 720, 120, "CAT-01", ProductStatuses.Inactive),
+            new ProductSeed("SKU005", "Nước cam 250 ml - thùng 36 hộp", "Thùng", 720, 120, "CAT-01", ProductStatuses.Published, "SKU004")
         };
         var products = new Dictionary<string, Product>(StringComparer.Ordinal);
 
@@ -311,8 +311,8 @@ public sealed class DevelopmentDataSeeder(
         {
             Id = Guid.NewGuid(),
             Code = DemoRegionCode,
-            Name = "Ho Chi Minh City",
-            Description = "Development seed region",
+            Name = "Thành phố Hồ Chí Minh",
+            Description = "Khu vực dữ liệu mẫu dùng cho môi trường phát triển",
             IsActive = true,
             CreatedAt = now,
             UpdatedAt = now
@@ -336,8 +336,8 @@ public sealed class DevelopmentDataSeeder(
         {
             Id = Guid.NewGuid(),
             Code = DemoWarehouseCode,
-            Name = "Ho Chi Minh Central Warehouse",
-            Address = "Thu Duc City, Ho Chi Minh City",
+            Name = "Kho trung tâm Củ Chi",
+            Address = "Huyện Củ Chi, Thành phố Hồ Chí Minh",
             IsActive = true,
             CreatedAt = now,
             UpdatedAt = now
@@ -365,7 +365,7 @@ public sealed class DevelopmentDataSeeder(
             Id = Guid.NewGuid(),
             RegionId = regionId,
             Code = DemoSalesGroupCode,
-            Name = "Ho Chi Minh Sales Group 01",
+            Name = "Nhóm bán hàng Thành phố Hồ Chí Minh 01",
             IsActive = true,
             CreatedAt = now,
             UpdatedAt = now
@@ -394,11 +394,11 @@ public sealed class DevelopmentDataSeeder(
             Id = Guid.NewGuid(),
             RegionId = regionId,
             Code = DemoRetailerCode,
-            Name = "FSCM Demo Retailer",
-            ContactName = "Demo Store Manager",
+            Name = "Cửa hàng bán lẻ mẫu FSCM",
+            ContactName = "Nguyễn Văn Minh",
             Phone = "+84 28 0000 0001",
             Email = "store@fscm.local",
-            Address = "District 1, Ho Chi Minh City",
+            Address = "Quận 1, Thành phố Hồ Chí Minh",
             Status = "Active",
             DeclaredByUserId = declaredByUserId,
             CreatedAt = now,
