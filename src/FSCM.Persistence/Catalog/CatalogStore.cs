@@ -65,10 +65,11 @@ public sealed class CatalogStore(AppDbContext dbContext) : ICatalogStore
         }
 
         var totalCount = await query.CountAsync(cancellationToken);
-        var records = await CreateProductViewQuery(query)
-            .OrderBy(record => record.Product.Sku)
+        var pageQuery = query
+            .OrderBy(product => product.Sku)
             .Skip((search.Page - 1) * search.PageSize)
-            .Take(search.PageSize)
+            .Take(search.PageSize);
+        var records = await CreateProductViewQuery(pageQuery)
             .ToArrayAsync(cancellationToken);
 
         return (records.Select(ToProductView).ToArray(), totalCount);
