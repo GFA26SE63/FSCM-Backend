@@ -12,4 +12,3 @@ public sealed class WriteOffAttachment
     public string BlobUrl { get; set; } = string.Empty;
     public DateTimeOffset UploadedAt { get; set; }
 }
-

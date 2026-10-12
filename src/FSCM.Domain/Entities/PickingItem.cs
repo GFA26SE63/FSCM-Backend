@@ -15,4 +15,3 @@ public sealed class PickingItem
     public DateTimeOffset? ScannedAt { get; set; }
     public DateTimeOffset? CompletedAt { get; set; }
 }
-

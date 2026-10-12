@@ -16,4 +16,3 @@ public sealed class Allocation
     public string Status { get; set; } = string.Empty;
     public DateTimeOffset CreatedAt { get; set; }
 }
-

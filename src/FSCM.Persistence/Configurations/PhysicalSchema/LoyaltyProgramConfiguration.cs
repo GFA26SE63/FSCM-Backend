@@ -29,4 +29,3 @@ public sealed class LoyaltyProgramConfiguration : IEntityTypeConfiguration<Loyal
             .OnDelete(DeleteBehavior.Restrict);
     }
 }
-

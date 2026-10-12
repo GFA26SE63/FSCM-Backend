@@ -13,4 +13,3 @@ public sealed class Reservation
     public DateTimeOffset? ReleasedAt { get; set; }
     public DateTimeOffset? ConsumedAt { get; set; }
 }
-

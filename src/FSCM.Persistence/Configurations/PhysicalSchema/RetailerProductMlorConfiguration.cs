@@ -28,4 +28,3 @@ public sealed class RetailerProductMlorConfiguration : IEntityTypeConfiguration<
             .OnDelete(DeleteBehavior.Restrict);
     }
 }
-

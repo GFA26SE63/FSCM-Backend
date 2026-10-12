@@ -19,4 +19,3 @@ public sealed class DriverConfiguration : IEntityTypeConfiguration<Driver>
         builder.Property(entity => entity.UpdatedAt).HasColumnType("timestamp with time zone").IsRequired();
     }
 }
-

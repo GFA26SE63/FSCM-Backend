@@ -29,4 +29,3 @@ public sealed class WriteOffConfiguration : IEntityTypeConfiguration<WriteOff>
             .OnDelete(DeleteBehavior.Restrict);
     }
 }
-

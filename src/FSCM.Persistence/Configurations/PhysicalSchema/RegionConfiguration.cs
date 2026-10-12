@@ -20,4 +20,3 @@ public sealed class RegionConfiguration : IEntityTypeConfiguration<Region>
         builder.HasIndex(entity => entity.Code).IsUnique();
     }
 }
-

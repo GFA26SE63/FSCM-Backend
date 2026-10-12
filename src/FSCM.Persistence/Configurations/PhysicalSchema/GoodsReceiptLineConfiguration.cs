@@ -27,4 +27,3 @@ public sealed class GoodsReceiptLineConfiguration : IEntityTypeConfiguration<Goo
             .OnDelete(DeleteBehavior.Restrict);
     }
 }
-

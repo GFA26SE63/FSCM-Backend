@@ -26,4 +26,3 @@ public sealed class TransitTimeRuleConfiguration : IEntityTypeConfiguration<Tran
             .OnDelete(DeleteBehavior.Restrict);
     }
 }
-

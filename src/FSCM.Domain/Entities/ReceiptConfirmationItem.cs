@@ -12,4 +12,3 @@ public sealed class ReceiptConfirmationItem
     public decimal ReceivedQuantity { get; set; }
     public DateTimeOffset ScannedAt { get; set; }
 }
-

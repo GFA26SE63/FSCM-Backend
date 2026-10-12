@@ -11,4 +11,3 @@ public sealed class SalesGroupMember
     public DateTimeOffset? UnassignedAt { get; set; }
     public bool IsActive { get; set; }
 }
-

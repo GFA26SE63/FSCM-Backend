@@ -14,4 +14,3 @@ public sealed class SystemConfiguration
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
 }
-

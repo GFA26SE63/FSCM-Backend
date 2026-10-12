@@ -14,4 +14,3 @@ public sealed class AuditLog
     public string? Reason { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
 }
-

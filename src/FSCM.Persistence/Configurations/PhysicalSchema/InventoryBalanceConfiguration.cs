@@ -24,4 +24,3 @@ public sealed class InventoryBalanceConfiguration : IEntityTypeConfiguration<Inv
             .OnDelete(DeleteBehavior.Restrict);
     }
 }
-

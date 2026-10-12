@@ -36,4 +36,3 @@ public sealed class GoodsReceiptConfiguration : IEntityTypeConfiguration<GoodsRe
             .OnDelete(DeleteBehavior.Restrict);
     }
 }
-

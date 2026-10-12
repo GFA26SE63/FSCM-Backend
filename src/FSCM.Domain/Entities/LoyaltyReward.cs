@@ -18,4 +18,3 @@ public sealed class LoyaltyReward
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
 }
-

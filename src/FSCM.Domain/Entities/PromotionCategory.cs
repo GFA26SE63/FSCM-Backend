@@ -8,4 +8,3 @@ public sealed class PromotionCategory
     public Guid PromotionId { get; set; }
     public Guid ProductCategoryId { get; set; }
 }
-

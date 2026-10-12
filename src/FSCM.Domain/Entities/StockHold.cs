@@ -12,4 +12,3 @@ public sealed class StockHold
     public DateTimeOffset HeldAt { get; set; }
     public DateTimeOffset? ReleasedAt { get; set; }
 }
-

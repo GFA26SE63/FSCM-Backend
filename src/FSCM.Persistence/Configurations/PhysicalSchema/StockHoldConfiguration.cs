@@ -27,4 +27,3 @@ public sealed class StockHoldConfiguration : IEntityTypeConfiguration<StockHold>
             .OnDelete(DeleteBehavior.Restrict);
     }
 }
-

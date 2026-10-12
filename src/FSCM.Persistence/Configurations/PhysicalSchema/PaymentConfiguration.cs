@@ -30,4 +30,3 @@ public sealed class PaymentConfiguration : IEntityTypeConfiguration<Payment>
             .OnDelete(DeleteBehavior.Restrict);
     }
 }
-

@@ -30,4 +30,3 @@ public sealed class SalesOrderLineConfiguration : IEntityTypeConfiguration<Sales
             .OnDelete(DeleteBehavior.Restrict);
     }
 }
-

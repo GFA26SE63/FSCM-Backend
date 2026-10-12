@@ -28,4 +28,3 @@ public sealed class ReceiptDiscrepancyItemConfiguration : IEntityTypeConfigurati
             .OnDelete(DeleteBehavior.Restrict);
     }
 }
-

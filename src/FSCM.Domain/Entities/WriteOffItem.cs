@@ -11,4 +11,3 @@ public sealed class WriteOffItem
     public string? Reason { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
 }
-

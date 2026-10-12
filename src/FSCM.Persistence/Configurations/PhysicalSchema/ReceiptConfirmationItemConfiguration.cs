@@ -31,4 +31,3 @@ public sealed class ReceiptConfirmationItemConfiguration : IEntityTypeConfigurat
             .OnDelete(DeleteBehavior.Restrict);
     }
 }
-

@@ -26,4 +26,3 @@ public sealed class SalesGroupMemberConfiguration : IEntityTypeConfiguration<Sal
             .OnDelete(DeleteBehavior.Restrict);
     }
 }
-

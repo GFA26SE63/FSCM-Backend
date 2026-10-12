@@ -47,4 +47,3 @@ public sealed class BatchConfiguration : IEntityTypeConfiguration<Batch>
             .OnDelete(DeleteBehavior.Restrict);
     }
 }
-

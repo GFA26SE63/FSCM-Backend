@@ -13,4 +13,3 @@ public sealed class ProductCategory
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
 }
-

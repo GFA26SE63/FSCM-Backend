@@ -35,4 +35,3 @@ public sealed class AllocationConfiguration : IEntityTypeConfiguration<Allocatio
             .OnDelete(DeleteBehavior.Restrict);
     }
 }
-

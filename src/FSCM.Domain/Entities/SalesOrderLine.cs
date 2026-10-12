@@ -15,4 +15,3 @@ public sealed class SalesOrderLine
     public DateTimeOffset? EstimatedArrivalAt { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
 }
-

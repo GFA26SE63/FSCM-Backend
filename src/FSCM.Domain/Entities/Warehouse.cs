@@ -12,4 +12,3 @@ public sealed class Warehouse
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
 }
-

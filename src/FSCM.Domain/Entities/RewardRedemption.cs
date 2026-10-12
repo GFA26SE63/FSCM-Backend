@@ -19,4 +19,3 @@ public sealed class RewardRedemption
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
 }
-

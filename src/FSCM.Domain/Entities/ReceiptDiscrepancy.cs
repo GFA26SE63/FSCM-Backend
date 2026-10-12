@@ -15,4 +15,3 @@ public sealed class ReceiptDiscrepancy
     public DateTimeOffset? ReviewedAt { get; set; }
     public DateTimeOffset? ResolvedAt { get; set; }
 }
-

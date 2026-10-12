@@ -15,4 +15,3 @@ public sealed class TransitTimeRule
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
 }
-

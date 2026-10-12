@@ -28,4 +28,3 @@ public sealed class SalesOrderAttachmentConfiguration : IEntityTypeConfiguration
             .OnDelete(DeleteBehavior.Restrict);
     }
 }
-

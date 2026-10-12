@@ -12,4 +12,3 @@ public sealed class GoodsReceiptLine
     public DateTimeOffset ExpirationAt { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
 }
-

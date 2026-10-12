@@ -22,4 +22,3 @@ public sealed class UserAccountConfiguration : IEntityTypeConfiguration<UserAcco
         builder.HasIndex(entity => entity.Email).IsUnique();
     }
 }
-

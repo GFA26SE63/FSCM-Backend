@@ -28,4 +28,3 @@ public sealed class ReservationConfiguration : IEntityTypeConfiguration<Reservat
             .OnDelete(DeleteBehavior.Restrict);
     }
 }
-

@@ -29,4 +29,3 @@ public sealed class IdempotencyKeyConfiguration : IEntityTypeConfiguration<Idemp
             .OnDelete(DeleteBehavior.Restrict);
     }
 }
-

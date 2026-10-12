@@ -22,4 +22,3 @@ public sealed class OutboxMessageConfiguration : IEntityTypeConfiguration<Outbox
         builder.Property(entity => entity.LastError).HasColumnType("text").IsRequired(false);
     }
 }
-

@@ -25,4 +25,3 @@ public sealed class AuditLogConfiguration : IEntityTypeConfiguration<AuditLog>
             .OnDelete(DeleteBehavior.Restrict);
     }
 }
-

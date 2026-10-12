@@ -23,4 +23,3 @@ public sealed class ProductPriceConfiguration : IEntityTypeConfiguration<Product
             .OnDelete(DeleteBehavior.Restrict);
     }
 }
-

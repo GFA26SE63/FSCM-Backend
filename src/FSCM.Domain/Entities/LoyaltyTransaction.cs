@@ -15,4 +15,3 @@ public sealed class LoyaltyTransaction
     public string? Note { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
 }
-

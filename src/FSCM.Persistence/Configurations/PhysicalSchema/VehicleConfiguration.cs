@@ -20,4 +20,3 @@ public sealed class VehicleConfiguration : IEntityTypeConfiguration<Vehicle>
         builder.HasIndex(entity => entity.PlateNumber).IsUnique();
     }
 }
-

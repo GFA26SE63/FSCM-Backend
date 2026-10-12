@@ -12,4 +12,3 @@ public sealed class ProductPrice
     public bool IsActive { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
 }
-

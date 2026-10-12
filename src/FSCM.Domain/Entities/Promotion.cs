@@ -17,4 +17,3 @@ public sealed class Promotion
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
 }
-

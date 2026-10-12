@@ -12,4 +12,3 @@ public sealed class OrderStatusHistory
     public string? Reason { get; set; }
     public DateTimeOffset ChangedAt { get; set; }
 }
-

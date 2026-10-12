@@ -29,4 +29,3 @@ public sealed class MapLocationConfiguration : IEntityTypeConfiguration<MapLocat
             .OnDelete(DeleteBehavior.Restrict);
     }
 }
-

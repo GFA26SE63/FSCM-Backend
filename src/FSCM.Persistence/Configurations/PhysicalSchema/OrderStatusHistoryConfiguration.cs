@@ -27,4 +27,3 @@ public sealed class OrderStatusHistoryConfiguration : IEntityTypeConfiguration<O
             .OnDelete(DeleteBehavior.Restrict);
     }
 }
-

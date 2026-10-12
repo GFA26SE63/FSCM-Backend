@@ -13,4 +13,3 @@ public sealed class SalesOrderAttachment
     public string BlobUrl { get; set; } = string.Empty;
     public DateTimeOffset UploadedAt { get; set; }
 }
-

@@ -13,4 +13,3 @@ public sealed class RetailerProductMlor
     public DateTimeOffset? EffectiveTo { get; set; }
     public bool IsActive { get; set; }
 }
-

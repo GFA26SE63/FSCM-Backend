@@ -40,4 +40,3 @@ public sealed class PickingListConfiguration : IEntityTypeConfiguration<PickingL
             .OnDelete(DeleteBehavior.Restrict);
     }
 }
-

@@ -13,4 +13,3 @@ public sealed class ReceiptDiscrepancyItem
     public string? EvidenceBlobUrl { get; set; }
     public string? Note { get; set; }
 }
-

@@ -35,4 +35,3 @@ public sealed class DeliveryConfiguration : IEntityTypeConfiguration<Delivery>
             .OnDelete(DeleteBehavior.Restrict);
     }
 }
-

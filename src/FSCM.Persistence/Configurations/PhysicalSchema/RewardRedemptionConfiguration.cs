@@ -46,4 +46,3 @@ public sealed class RewardRedemptionConfiguration : IEntityTypeConfiguration<Rew
             .OnDelete(DeleteBehavior.Restrict);
     }
 }
-

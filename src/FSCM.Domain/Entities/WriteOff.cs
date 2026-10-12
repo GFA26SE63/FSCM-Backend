@@ -13,4 +13,3 @@ public sealed class WriteOff
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
 }
-

@@ -13,4 +13,3 @@ public sealed class BatchQrLabel
     public DateTimeOffset GeneratedAt { get; set; }
     public DateTimeOffset? InvalidatedAt { get; set; }
 }
-

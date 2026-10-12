@@ -12,4 +12,3 @@ public sealed class ReceiptConfirmation
     public string? Note { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
 }
-

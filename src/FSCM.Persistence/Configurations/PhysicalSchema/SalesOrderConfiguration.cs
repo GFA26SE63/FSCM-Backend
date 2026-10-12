@@ -51,4 +51,3 @@ public sealed class SalesOrderConfiguration : IEntityTypeConfiguration<SalesOrde
             .OnDelete(DeleteBehavior.Restrict);
     }
 }
-

@@ -25,4 +25,3 @@ public sealed class BatchQrLabelConfiguration : IEntityTypeConfiguration<BatchQr
             .OnDelete(DeleteBehavior.Restrict);
     }
 }
-

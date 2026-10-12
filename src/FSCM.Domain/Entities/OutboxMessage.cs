@@ -15,4 +15,3 @@ public sealed class OutboxMessage
     public DateTimeOffset? ProcessedAt { get; set; }
     public string? LastError { get; set; }
 }
-

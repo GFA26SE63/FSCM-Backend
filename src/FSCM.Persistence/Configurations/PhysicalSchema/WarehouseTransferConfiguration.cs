@@ -44,4 +44,3 @@ public sealed class WarehouseTransferConfiguration : IEntityTypeConfiguration<Wa
             .OnDelete(DeleteBehavior.Restrict);
     }
 }
-

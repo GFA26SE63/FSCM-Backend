@@ -29,4 +29,3 @@ public sealed class NotificationConfiguration : IEntityTypeConfiguration<Notific
             .OnDelete(DeleteBehavior.Restrict);
     }
 }
-

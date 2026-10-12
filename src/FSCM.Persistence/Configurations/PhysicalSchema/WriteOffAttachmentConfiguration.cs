@@ -27,4 +27,3 @@ public sealed class WriteOffAttachmentConfiguration : IEntityTypeConfiguration<W
             .OnDelete(DeleteBehavior.Restrict);
     }
 }
-

@@ -23,4 +23,3 @@ public sealed class PromotionRetailerConfiguration : IEntityTypeConfiguration<Pr
             .OnDelete(DeleteBehavior.Restrict);
     }
 }
-

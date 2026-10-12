@@ -31,4 +31,3 @@ public sealed class BatchPromotionConfiguration : IEntityTypeConfiguration<Batch
             .OnDelete(DeleteBehavior.Restrict);
     }
 }
-

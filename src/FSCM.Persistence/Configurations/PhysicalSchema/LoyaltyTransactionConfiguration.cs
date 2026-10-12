@@ -38,4 +38,3 @@ public sealed class LoyaltyTransactionConfiguration : IEntityTypeConfiguration<L
             .OnDelete(DeleteBehavior.Restrict);
     }
 }
-

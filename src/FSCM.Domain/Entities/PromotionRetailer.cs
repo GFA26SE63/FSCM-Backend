@@ -8,4 +8,3 @@ public sealed class PromotionRetailer
     public Guid PromotionId { get; set; }
     public Guid RetailerId { get; set; }
 }
-

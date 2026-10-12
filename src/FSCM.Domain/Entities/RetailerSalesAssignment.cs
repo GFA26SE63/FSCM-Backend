@@ -11,4 +11,3 @@ public sealed class RetailerSalesAssignment
     public DateTimeOffset? UnassignedAt { get; set; }
     public bool IsActive { get; set; }
 }
-

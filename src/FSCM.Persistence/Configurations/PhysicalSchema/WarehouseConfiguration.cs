@@ -20,4 +20,3 @@ public sealed class WarehouseConfiguration : IEntityTypeConfiguration<Warehouse>
         builder.HasIndex(entity => entity.Code).IsUnique();
     }
 }
-

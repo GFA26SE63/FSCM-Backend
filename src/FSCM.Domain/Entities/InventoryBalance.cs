@@ -13,4 +13,3 @@ public sealed class InventoryBalance
     public int Version { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
 }
-

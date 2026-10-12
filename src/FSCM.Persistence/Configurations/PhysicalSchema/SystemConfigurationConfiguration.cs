@@ -26,4 +26,3 @@ public sealed class SystemConfigurationConfiguration : IEntityTypeConfiguration<
             .OnDelete(DeleteBehavior.Restrict);
     }
 }
-

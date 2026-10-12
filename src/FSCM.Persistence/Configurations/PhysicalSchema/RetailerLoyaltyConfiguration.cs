@@ -23,4 +23,3 @@ public sealed class RetailerLoyaltyConfiguration : IEntityTypeConfiguration<Reta
             .OnDelete(DeleteBehavior.Restrict);
     }
 }
-

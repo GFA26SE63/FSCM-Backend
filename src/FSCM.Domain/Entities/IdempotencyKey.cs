@@ -13,4 +13,3 @@ public sealed class IdempotencyKey
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset ExpiresAt { get; set; }
 }
-

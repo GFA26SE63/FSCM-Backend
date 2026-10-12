@@ -25,4 +25,3 @@ public sealed class UserWarehouseAssignmentConfiguration : IEntityTypeConfigurat
             .OnDelete(DeleteBehavior.Restrict);
     }
 }
-

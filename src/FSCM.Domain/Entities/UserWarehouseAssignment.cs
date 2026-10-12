@@ -10,4 +10,3 @@ public sealed class UserWarehouseAssignment
     public DateTimeOffset AssignedAt { get; set; }
     public bool IsActive { get; set; }
 }
-

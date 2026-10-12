@@ -12,4 +12,3 @@ public sealed class OrderPromotion
     public bool IsServerFinal { get; set; }
     public DateTimeOffset AppliedAt { get; set; }
 }
-

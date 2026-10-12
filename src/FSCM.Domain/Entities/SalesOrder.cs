@@ -26,4 +26,3 @@ public sealed class SalesOrder
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
 }
-

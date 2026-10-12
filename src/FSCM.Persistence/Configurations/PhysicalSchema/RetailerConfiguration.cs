@@ -52,4 +52,3 @@ public sealed class RetailerConfiguration : IEntityTypeConfiguration<Retailer>
             .OnDelete(DeleteBehavior.Restrict);
     }
 }
-

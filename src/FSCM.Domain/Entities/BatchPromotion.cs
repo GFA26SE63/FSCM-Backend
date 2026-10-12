@@ -12,4 +12,3 @@ public sealed class BatchPromotion
     public DateTimeOffset AssignedAt { get; set; }
     public DateTimeOffset? RemovedAt { get; set; }
 }
-

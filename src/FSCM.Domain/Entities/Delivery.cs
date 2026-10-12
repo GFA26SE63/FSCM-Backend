@@ -16,4 +16,3 @@ public sealed class Delivery
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
 }
-

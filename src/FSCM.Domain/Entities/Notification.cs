@@ -14,4 +14,3 @@ public sealed class Notification
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset? ReadAt { get; set; }
 }
-
