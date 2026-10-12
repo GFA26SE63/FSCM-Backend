@@ -25,6 +25,7 @@ Create an ignored local settings file from the committed template:
 ```powershell
 Copy-Item src/FSCM.API/appsettings.example.json src/FSCM.API/appsettings.Local.json
 dotnet restore FSCM.slnx
+dotnet ef database update --project src/FSCM.Persistence/FSCM.Persistence.csproj --startup-project src/FSCM.API/FSCM.API.csproj --context AppDbContext
 dotnet run --project src/FSCM.API/FSCM.API.csproj --launch-profile https
 ```
 
