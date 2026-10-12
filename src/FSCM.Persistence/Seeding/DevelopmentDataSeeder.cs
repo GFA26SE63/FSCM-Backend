@@ -42,6 +42,8 @@ public sealed class DevelopmentDataSeeder(
         var warehouse = await SeedWarehouseAsync(now, cancellationToken);
         var salesGroup = await SeedSalesGroupAsync(region.Id, now, cancellationToken);
         var retailer = await SeedRetailerAsync(region.Id, users[SystemRoles.Sales].Id, now, cancellationToken);
+        var categories = await SeedCategoriesAsync(now, cancellationToken);
+        var products = await SeedProductsAsync(categories, now, cancellationToken);
 
         await SeedWarehouseAssignmentsAsync(users, warehouse.Id, now, cancellationToken);
         await SeedSalesGroupMembershipsAsync(users, salesGroup.Id, now, cancellationToken);
@@ -49,11 +51,189 @@ public sealed class DevelopmentDataSeeder(
         await dbContext.SaveChangesAsync(cancellationToken);
 
         logger.LogInformation(
-            "Development data seeded: {UserCount} users, warehouse {WarehouseCode}, sales group {SalesGroupCode}, retailer {RetailerCode}.",
+            "Development data seeded: {UserCount} users, {CategoryCount} categories, {ProductCount} products, warehouse {WarehouseCode}, sales group {SalesGroupCode}, retailer {RetailerCode}.",
             users.Count,
+            categories.Count,
+            products.Count,
             DemoWarehouseCode,
             DemoSalesGroupCode,
             DemoRetailerCode);
+    }
+
+    private async Task<Dictionary<string, ProductCategory>> SeedCategoriesAsync(
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        var definitions = new[]
+        {
+            new CategorySeed("CAT-01", "Beverages", "Short shelf-life beverages", (string?)null),
+            new CategorySeed("CAT-02", "Dairy", "Milk and cultured dairy products", "CAT-01"),
+            new CategorySeed("CAT-03", "Fresh Food", "Fresh packaged foods", (string?)null),
+            new CategorySeed("CAT-04", "Seasonal", "Inactive category for catalog testing", (string?)null, false)
+        };
+        var categories = new Dictionary<string, ProductCategory>(StringComparer.Ordinal);
+
+        foreach (var definition in definitions.Where(item => item.ParentCode is null))
+        {
+            categories[definition.Code] = await UpsertCategoryAsync(definition, null, now, cancellationToken);
+        }
+
+        foreach (var definition in definitions.Where(item => item.ParentCode is not null))
+        {
+            categories[definition.Code] = await UpsertCategoryAsync(
+                definition,
+                categories[definition.ParentCode!].Id,
+                now,
+                cancellationToken);
+        }
+
+        await dbContext.SaveChangesAsync(cancellationToken);
+        return categories;
+    }
+
+    private async Task<ProductCategory> UpsertCategoryAsync(
+        CategorySeed definition,
+        Guid? parentCategoryId,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        var category = await dbContext.ProductCategoryRecords.SingleOrDefaultAsync(
+            candidate => candidate.Code == definition.Code,
+            cancellationToken);
+        if (category is null)
+        {
+            category = new ProductCategory
+            {
+                Id = Guid.NewGuid(),
+                Code = definition.Code,
+                CreatedAt = now
+            };
+            dbContext.ProductCategoryRecords.Add(category);
+        }
+
+        category.ParentCategoryId = parentCategoryId;
+        category.Name = definition.Name;
+        category.Description = definition.Description;
+        category.IsActive = definition.IsActive;
+        category.UpdatedAt = now;
+        return category;
+    }
+
+    private async Task<Dictionary<string, Product>> SeedProductsAsync(
+        IReadOnlyDictionary<string, ProductCategory> categories,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        var definitions = new[]
+        {
+            new ProductSeed("SKU001", "Fresh Milk 1L", "Carton", 168, 24, "CAT-02", ProductStatuses.Published),
+            new ProductSeed("SKU002", "Drinking Yogurt 180ml", "Carton", 336, 48, "CAT-02", ProductStatuses.Published),
+            new ProductSeed("SKU003", "Fresh Sandwich", "Case", 72, 12, "CAT-03", ProductStatuses.Draft),
+            new ProductSeed("SKU004", "Orange Juice 250ml - 48 pack", "Carton", 720, 120, "CAT-01", ProductStatuses.Inactive),
+            new ProductSeed("SKU005", "Orange Juice 250ml - 36 pack", "Carton", 720, 120, "CAT-01", ProductStatuses.Published, "SKU004")
+        };
+        var products = new Dictionary<string, Product>(StringComparer.Ordinal);
+
+        foreach (var definition in definitions.Where(item => item.ReplacesSku is null))
+        {
+            products[definition.Sku] = await UpsertProductAsync(
+                definition,
+                categories[definition.CategoryCode].Id,
+                null,
+                now,
+                cancellationToken);
+        }
+
+        foreach (var definition in definitions.Where(item => item.ReplacesSku is not null))
+        {
+            products[definition.Sku] = await UpsertProductAsync(
+                definition,
+                categories[definition.CategoryCode].Id,
+                products[definition.ReplacesSku!].Id,
+                now,
+                cancellationToken);
+        }
+
+        await dbContext.SaveChangesAsync(cancellationToken);
+
+        await SeedPriceHistoryAsync(products["SKU001"], [235_000m, 245_000m, 252_000m], now, cancellationToken);
+        await SeedPriceHistoryAsync(products["SKU002"], [310_000m, 320_000m], now, cancellationToken);
+        await SeedPriceHistoryAsync(products["SKU003"], [180_000m], now, cancellationToken);
+        await SeedPriceHistoryAsync(products["SKU004"], [400_000m, 415_000m], now, cancellationToken);
+        await SeedPriceHistoryAsync(products["SKU005"], [325_000m], now, cancellationToken);
+        await dbContext.SaveChangesAsync(cancellationToken);
+        return products;
+    }
+
+    private async Task<Product> UpsertProductAsync(
+        ProductSeed definition,
+        Guid categoryId,
+        Guid? replacesProductId,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        var product = await dbContext.ProductRecords.SingleOrDefaultAsync(
+            candidate => candidate.Sku == definition.Sku,
+            cancellationToken);
+        if (product is null)
+        {
+            product = new Product
+            {
+                Id = Guid.NewGuid(),
+                Sku = definition.Sku,
+                CreatedAt = now.AddDays(-90)
+            };
+            dbContext.ProductRecords.Add(product);
+        }
+
+        product.ProductCategoryId = categoryId;
+        product.ReplacesProductId = replacesProductId;
+        product.Name = definition.Name;
+        product.Unit = definition.Unit;
+        product.ShelfLifeHours = definition.ShelfLifeHours;
+        product.NearDateThresholdHours = definition.NearDateThresholdHours;
+        product.Status = definition.Status;
+        product.PublishedAt = definition.Status is ProductStatuses.Published or ProductStatuses.Inactive
+            ? now.AddDays(-60)
+            : null;
+        product.InactivatedAt = definition.Status == ProductStatuses.Inactive ? now.AddDays(-15) : null;
+        product.UpdatedAt = now;
+        return product;
+    }
+
+    private async Task SeedPriceHistoryAsync(
+        Product product,
+        IReadOnlyList<decimal> prices,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        if (await dbContext.ProductPriceRecords.AnyAsync(
+                candidate => candidate.ProductId == product.Id,
+                cancellationToken))
+        {
+            return;
+        }
+
+        for (var index = 0; index < prices.Count; index++)
+        {
+            var effectiveFrom = now.AddDays(-30 * (prices.Count - index));
+            var isLast = index == prices.Count - 1;
+            var isActive = isLast && product.Status != ProductStatuses.Inactive;
+            dbContext.ProductPriceRecords.Add(new ProductPrice
+            {
+                Id = Guid.NewGuid(),
+                ProductId = product.Id,
+                UnitPrice = prices[index],
+                EffectiveFrom = effectiveFrom,
+                EffectiveTo = isActive
+                    ? null
+                    : isLast
+                        ? product.InactivatedAt ?? now
+                        : now.AddDays(-30 * (prices.Count - index - 1)),
+                IsActive = isActive,
+                CreatedAt = effectiveFrom
+            });
+        }
     }
 
     private async Task<Dictionary<string, UserAccount>> SeedUsersAsync(
@@ -324,5 +504,22 @@ public sealed class DevelopmentDataSeeder(
                 "SeedData:DefaultPassword must be at least 12 characters and contain uppercase, lowercase, numeric, and special characters.");
         }
     }
+
+    private sealed record CategorySeed(
+        string Code,
+        string Name,
+        string Description,
+        string? ParentCode,
+        bool IsActive = true);
+
+    private sealed record ProductSeed(
+        string Sku,
+        string Name,
+        string Unit,
+        int ShelfLifeHours,
+        int NearDateThresholdHours,
+        string CategoryCode,
+        string Status,
+        string? ReplacesSku = null);
 }
 

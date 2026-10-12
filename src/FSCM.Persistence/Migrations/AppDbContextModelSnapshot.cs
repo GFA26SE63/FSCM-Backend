@@ -1103,6 +1103,9 @@ namespace FSCM.Persistence.Migrations
                     b.Property<DateTimeOffset?>("PublishedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<Guid?>("ReplacesProductId")
+                        .HasColumnType("uuid");
+
                     b.Property<int>("ShelfLifeHours")
                         .HasColumnType("integer");
 
@@ -1128,10 +1131,22 @@ namespace FSCM.Persistence.Migrations
 
                     b.HasIndex("ProductCategoryId");
 
+                    b.HasIndex("ReplacesProductId")
+                        .IsUnique();
+
                     b.HasIndex("Sku")
                         .IsUnique();
 
-                    b.ToTable("PRODUCT", (string)null);
+                    b.ToTable("PRODUCT", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_PRODUCT_NearDateThresholdHours", "\"NearDateThresholdHours\" >= 0 AND \"NearDateThresholdHours\" < \"ShelfLifeHours\"");
+
+                            t.HasCheckConstraint("CK_PRODUCT_Replacement", "\"ReplacesProductId\" IS NULL OR \"ReplacesProductId\" <> \"Id\"");
+
+                            t.HasCheckConstraint("CK_PRODUCT_ShelfLifeHours", "\"ShelfLifeHours\" > 0");
+
+                            t.HasCheckConstraint("CK_PRODUCT_Status", "\"Status\" IN ('Draft', 'Published', 'Inactive')");
+                        });
                 });
 
             modelBuilder.Entity("FSCM.Domain.Entities.ProductCategory", b =>
@@ -1202,9 +1217,16 @@ namespace FSCM.Persistence.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("ProductId");
+                    b.HasIndex("ProductId")
+                        .IsUnique()
+                        .HasFilter("\"IsActive\" = TRUE");
 
-                    b.ToTable("PRODUCT_PRICE", (string)null);
+                    b.ToTable("PRODUCT_PRICE", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_PRODUCT_PRICE_EffectiveRange", "\"EffectiveTo\" IS NULL OR \"EffectiveTo\" >= \"EffectiveFrom\"");
+
+                            t.HasCheckConstraint("CK_PRODUCT_PRICE_UnitPrice", "\"UnitPrice\" > 0");
+                        });
                 });
 
             modelBuilder.Entity("FSCM.Domain.Entities.Promotion", b =>
@@ -3018,6 +3040,11 @@ namespace FSCM.Persistence.Migrations
                         .HasForeignKey("ProductCategoryId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
+
+                    b.HasOne("FSCM.Domain.Entities.Product", null)
+                        .WithMany()
+                        .HasForeignKey("ReplacesProductId")
+                        .OnDelete(DeleteBehavior.Restrict);
                 });
 
             modelBuilder.Entity("FSCM.Domain.Entities.ProductCategory", b =>

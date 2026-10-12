@@ -25,6 +25,7 @@ public static class ServiceCollectionExtensions
         services.AddOpenApi();
         services.AddHealthChecks();
         services.AddProblemDetails();
+        services.AddExceptionHandler<CatalogExceptionHandler>();
         services.AddExceptionHandler<IdentityExceptionHandler>();
 
         services.AddCors(options =>

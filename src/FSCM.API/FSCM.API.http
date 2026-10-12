@@ -1,5 +1,5 @@
 @FSCM.API_HostAddress = http://localhost:5246
-@email = sales@fscm.local
+@email = admin@fscm.local
 @password = FscmDemo#2026
 
 GET {{FSCM.API_HostAddress}}/health
@@ -39,3 +39,28 @@ Content-Type: application/json
 {
   "email": "{{email}}"
 }
+
+###
+
+GET {{FSCM.API_HostAddress}}/api/v1/categories?includeInactive=true
+Authorization: Bearer {{login.response.body.$.accessToken}}
+Accept: application/json
+
+###
+
+# @name products
+GET {{FSCM.API_HostAddress}}/api/v1/products?status=Published&page=1&pageSize=20
+Authorization: Bearer {{login.response.body.$.accessToken}}
+Accept: application/json
+
+###
+
+GET {{FSCM.API_HostAddress}}/api/v1/products/{{products.response.body.$.items[0].id}}/prices
+Authorization: Bearer {{login.response.body.$.accessToken}}
+Accept: application/json
+
+###
+
+GET {{FSCM.API_HostAddress}}/api/v1/products/{{products.response.body.$.items[0].id}}/price-suggestion
+Authorization: Bearer {{login.response.body.$.accessToken}}
+Accept: application/json

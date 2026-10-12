@@ -82,8 +82,8 @@ public sealed class PhysicalSchemaModelTests
 
         Assert.Equal(ExpectedTables, tableNames);
         Assert.Equal(57, entityTypes.Length);
-        Assert.Equal(514, entityTypes.Sum(entityType => entityType.GetProperties().Count()));
-        Assert.Equal(115, entityTypes.Sum(entityType => entityType.GetForeignKeys().Count()));
+        Assert.Equal(515, entityTypes.Sum(entityType => entityType.GetProperties().Count()));
+        Assert.Equal(116, entityTypes.Sum(entityType => entityType.GetForeignKeys().Count()));
         Assert.All(
             entityTypes.SelectMany(entityType => entityType.GetForeignKeys()),
             foreignKey => Assert.Equal(DeleteBehavior.Restrict, foreignKey.DeleteBehavior));
@@ -121,6 +121,8 @@ public sealed class PhysicalSchemaModelTests
         var sku = product!.FindProperty(nameof(Product.Sku));
         Assert.Equal(50, sku!.GetMaxLength());
         Assert.True(product.GetIndexes().Single(index => index.Properties.Contains(sku)).IsUnique);
+        var replacesProductId = product.FindProperty(nameof(Product.ReplacesProductId));
+        Assert.True(product.GetIndexes().Single(index => index.Properties.Contains(replacesProductId!)).IsUnique);
 
         var inventoryBalance = context.Model.FindEntityType(typeof(InventoryBalance));
         var physicalQuantity = inventoryBalance!.FindProperty(nameof(InventoryBalance.PhysicalQuantity));

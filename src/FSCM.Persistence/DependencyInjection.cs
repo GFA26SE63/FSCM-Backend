@@ -1,4 +1,6 @@
+using FSCM.Application.Features.Catalog;
 using FSCM.Application.Features.Identity;
+using FSCM.Persistence.Catalog;
 using FSCM.Persistence.DbContexts;
 using FSCM.Persistence.Identity;
 using FSCM.Persistence.Seeding;
@@ -26,6 +28,7 @@ public static class DependencyInjection
             });
         }
 
+        services.AddScoped<ICatalogStore, CatalogStore>();
         services.AddScoped<IIdentityStore, IdentityStore>();
         services.AddScoped<DevelopmentDataSeeder>();
 
