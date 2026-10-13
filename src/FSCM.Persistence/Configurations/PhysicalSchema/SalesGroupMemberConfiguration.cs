@@ -16,6 +16,10 @@ public sealed class SalesGroupMemberConfiguration : IEntityTypeConfiguration<Sal
         builder.Property(entity => entity.AssignedAt).HasColumnType("timestamp with time zone").IsRequired();
         builder.Property(entity => entity.UnassignedAt).HasColumnType("timestamp with time zone").IsRequired(false);
         builder.Property(entity => entity.IsActive).IsRequired();
+        builder.HasIndex(entity => entity.UserAccountId)
+            .IsUnique()
+            .HasFilter("\"IsActive\" = TRUE");
+        builder.HasIndex(entity => new { entity.SalesGroupId, entity.AssignedAt });
         builder.HasOne<SalesGroup>()
             .WithMany()
             .HasForeignKey(entity => entity.SalesGroupId)

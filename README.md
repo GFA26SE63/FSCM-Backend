@@ -48,16 +48,18 @@ The command is idempotent and creates active users for all six roles plus BE-02 
 | --- | --- | --- |
 | Admin | `admin@fscm.local` | System-wide administration |
 | Operator | `operator@fscm.local` | `WH-HCM-01` |
-| SalesManager | `sales.manager@fscm.local` | `SG-HCM-01`, `RTL-HCM-001` |
-| Sales | `sales@fscm.local` | `SG-HCM-01`, `RTL-HCM-001` |
+| SalesManager | `sales.manager@fscm.local` | `HCM-A`, `RTL-HCM-001` |
+| Sales | `sales@fscm.local` | `HCM-A`, `RTL-HCM-001` |
 | WarehouseKeeper | `warehouse.keeper@fscm.local` | `WH-HCM-01` |
-| Retailer | `retailer@fscm.local` | `SG-HCM-01`, `RTL-HCM-001` |
+| Retailer | `retailer@fscm.local` | Retailer account only |
 
 Admin accounts are bootstrap-only: the user-management API rejects both Admin creation and Admin role promotion.
 
 BE-02 exposes authenticated category and product reads under `/api/v1/categories` and `/api/v1/products`. Admin-only commands manage category relationships, Draft products, publication, inactivation, replacement SKUs, and effective price history. Publishing a replacement SKU automatically inactivates its predecessor. Published product master data is immutable; price changes are recorded as history instead of overwriting prior values.
 
 BE-03 exposes warehouse master data and coordinates under `/api/v1/warehouses`, per-warehouse ETA rules under `/api/v1/warehouses/{warehouseId}/transit-time-rules`, retailer-product MLOR under `/api/v1/mlor-configurations`, and versioned business settings under `/api/v1/configurations`. Authenticated users can read current data and history; only Admin can mutate it. Warehouse records are inactivated instead of deleted, and each configuration update preserves the previous version.
+
+BE-04 exposes region and Sales-group master data under `/api/v1/regions` and `/api/v1/sales-groups`. Admin and scoped Sales Managers can manage Sales and Retailer assignments under `/api/v1/territory-assignments`; every transfer closes the previous row and creates a new row so assignment history remains intact. Sales order eligibility is checked under `/api/v1/territory-access/retailers/{retailerId}/order-eligibility`. Only an active Sales user whose current group owns the Retailer in the same region is eligible. Later orders retain `CreatedByUserId` and `SalesGroupId` snapshots even after reassignment.
 
 The development catalog dump contains:
 
@@ -70,6 +72,9 @@ The development catalog dump contains:
 | Transit time | Per-warehouse rules for up to 10 km in one day and up to 20 km in two days |
 | MLOR | Retailer-product rules for `SKU001` and `SKU002` |
 | Configuration | Allocation weights `0.5 / 0.3 / 0.2`, 20 km radius, 35-carton threshold, and 25% default MLOR |
+| Regions | Hồ Chí Minh, Bình Dương, and an inactive Long An example |
+| Sales groups | `HCM-A`, `HCM-B`, `BD-A`, and inactive `LA-A`, all with Vietnamese names |
+| Assignment history | Current and previous Sales/retailer territory assignments for transfer testing |
 
 Use [the HTTP request collection](src/FSCM.API/FSCM.API.http) after seeding to log in, query the catalog, inspect price history, and request a historical-price suggestion.
 

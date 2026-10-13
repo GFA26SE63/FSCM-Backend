@@ -16,6 +16,10 @@ public sealed class RetailerSalesAssignmentConfiguration : IEntityTypeConfigurat
         builder.Property(entity => entity.AssignedAt).HasColumnType("timestamp with time zone").IsRequired();
         builder.Property(entity => entity.UnassignedAt).HasColumnType("timestamp with time zone").IsRequired(false);
         builder.Property(entity => entity.IsActive).IsRequired();
+        builder.HasIndex(entity => entity.RetailerId)
+            .IsUnique()
+            .HasFilter("\"IsActive\" = TRUE");
+        builder.HasIndex(entity => new { entity.SalesGroupId, entity.AssignedAt });
         builder.HasOne<Retailer>()
             .WithMany()
             .HasForeignKey(entity => entity.RetailerId)

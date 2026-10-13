@@ -17,8 +17,8 @@ public sealed class DevelopmentDataSeeder(
     ILogger<DevelopmentDataSeeder> logger)
 {
     private const string DemoWarehouseCode = "WH-HCM-01";
-    private const string DemoRegionCode = "REG-HCM";
-    private const string DemoSalesGroupCode = "SG-HCM-01";
+    private const string DemoRegionCode = "HCM";
+    private const string DemoSalesGroupCode = "HCM-A";
     private const string DemoRetailerCode = "RTL-HCM-001";
 
     private static readonly (string Email, string FullName, string Role)[] DemoUsers =
@@ -39,27 +39,28 @@ public sealed class DevelopmentDataSeeder(
 
         var now = timeProvider.GetUtcNow();
         var users = await SeedUsersAsync(password!, now, cancellationToken);
-        var region = await SeedRegionAsync(now, cancellationToken);
+        var regions = await SeedRegionsAsync(now, cancellationToken);
         var warehouse = await SeedWarehouseAsync(now, cancellationToken);
-        var salesGroup = await SeedSalesGroupAsync(region.Id, now, cancellationToken);
-        var retailer = await SeedRetailerAsync(region.Id, users[SystemRoles.Sales].Id, now, cancellationToken);
+        var salesGroups = await SeedSalesGroupsAsync(regions, now, cancellationToken);
+        var retailer = await SeedRetailerAsync(regions[DemoRegionCode].Id, users[SystemRoles.Sales].Id, now, cancellationToken);
         var categories = await SeedCategoriesAsync(now, cancellationToken);
         var products = await SeedProductsAsync(categories, now, cancellationToken);
         var configuredWarehouses = await SeedWarehouseConfigurationDataAsync(
             warehouse, retailer, products, users[SystemRoles.Admin].Id, now, cancellationToken);
 
         await SeedWarehouseAssignmentsAsync(users, warehouse.Id, now, cancellationToken);
-        await SeedSalesGroupMembershipsAsync(users, salesGroup.Id, now, cancellationToken);
-        await SeedRetailerAssignmentAsync(retailer.Id, salesGroup.Id, now, cancellationToken);
+        await SeedSalesGroupMembershipsAsync(users, salesGroups, now, cancellationToken);
+        await SeedRetailerAssignmentsAsync(retailer.Id, salesGroups, now, cancellationToken);
         await dbContext.SaveChangesAsync(cancellationToken);
 
         logger.LogInformation(
-            "Development data seeded: {UserCount} users, {CategoryCount} categories, {ProductCount} products, {WarehouseCount} warehouses, sales group {SalesGroupCode}, retailer {RetailerCode}.",
+            "Development data seeded: {UserCount} users, {CategoryCount} categories, {ProductCount} products, {WarehouseCount} warehouses, {RegionCount} regions, {SalesGroupCount} sales groups, retailer {RetailerCode}.",
             users.Count,
             categories.Count,
             products.Count,
             configuredWarehouses.Count,
-            DemoSalesGroupCode,
+            regions.Count,
+            salesGroups.Count,
             DemoRetailerCode);
     }
 
@@ -300,29 +301,40 @@ public sealed class DevelopmentDataSeeder(
         return usersByRole;
     }
 
-    private async Task<Region> SeedRegionAsync(DateTimeOffset now, CancellationToken cancellationToken)
+    private async Task<IReadOnlyDictionary<string, Region>> SeedRegionsAsync(
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
     {
-        var region = await dbContext.RegionRecords.SingleOrDefaultAsync(
-            candidate => candidate.Code == DemoRegionCode,
-            cancellationToken);
-        if (region is not null)
+        var definitions = new[]
         {
-            return region;
+            new RegionSeed("HCM", "Thành phố Hồ Chí Minh", "Khu vực bán hàng Thành phố Hồ Chí Minh", true),
+            new RegionSeed("BD", "Bình Dương", "Khu vực bán hàng tỉnh Bình Dương", true),
+            new RegionSeed("LA", "Long An", "Khu vực tạm ngừng hoạt động dùng để kiểm thử", false)
+        };
+        var regions = new Dictionary<string, Region>(StringComparer.Ordinal);
+        foreach (var definition in definitions)
+        {
+            var region = definition.Code == DemoRegionCode
+                ? await dbContext.RegionRecords.SingleOrDefaultAsync(
+                    candidate => candidate.Code == definition.Code || candidate.Code == "REG-HCM", cancellationToken)
+                : await dbContext.RegionRecords.SingleOrDefaultAsync(
+                    candidate => candidate.Code == definition.Code, cancellationToken);
+            if (region is null)
+            {
+                region = new Region { Id = Guid.NewGuid(), CreatedAt = now };
+                dbContext.RegionRecords.Add(region);
+            }
+
+            region.Code = definition.Code;
+            region.Name = definition.Name;
+            region.Description = definition.Description;
+            region.IsActive = definition.IsActive;
+            region.UpdatedAt = now;
+            regions[definition.Code] = region;
         }
 
-        region = new Region
-        {
-            Id = Guid.NewGuid(),
-            Code = DemoRegionCode,
-            Name = "Thành phố Hồ Chí Minh",
-            Description = "Khu vực dữ liệu mẫu dùng cho môi trường phát triển",
-            IsActive = true,
-            CreatedAt = now,
-            UpdatedAt = now
-        };
-        dbContext.RegionRecords.Add(region);
         await dbContext.SaveChangesAsync(cancellationToken);
-        return region;
+        return regions;
     }
 
     private async Task<Warehouse> SeedWarehouseAsync(DateTimeOffset now, CancellationToken cancellationToken)
@@ -481,32 +493,42 @@ public sealed class DevelopmentDataSeeder(
             UpdatedAt = now
         };
 
-    private async Task<SalesGroup> SeedSalesGroupAsync(
-        Guid regionId,
+    private async Task<IReadOnlyDictionary<string, SalesGroup>> SeedSalesGroupsAsync(
+        IReadOnlyDictionary<string, Region> regions,
         DateTimeOffset now,
         CancellationToken cancellationToken)
     {
-        var salesGroup = await dbContext.SalesGroupRecords.SingleOrDefaultAsync(
-            candidate => candidate.Code == DemoSalesGroupCode,
-            cancellationToken);
-        if (salesGroup is not null)
+        var definitions = new[]
         {
-            return salesGroup;
+            new SalesGroupSeed("HCM-A", "Nhóm bán hàng Hồ Chí Minh A", "HCM", true),
+            new SalesGroupSeed("HCM-B", "Nhóm bán hàng Hồ Chí Minh B", "HCM", true),
+            new SalesGroupSeed("BD-A", "Nhóm bán hàng Bình Dương A", "BD", true),
+            new SalesGroupSeed("LA-A", "Nhóm bán hàng Long An A", "LA", false)
+        };
+        var groups = new Dictionary<string, SalesGroup>(StringComparer.Ordinal);
+        foreach (var definition in definitions)
+        {
+            var group = definition.Code == DemoSalesGroupCode
+                ? await dbContext.SalesGroupRecords.SingleOrDefaultAsync(
+                    candidate => candidate.Code == definition.Code || candidate.Code == "SG-HCM-01", cancellationToken)
+                : await dbContext.SalesGroupRecords.SingleOrDefaultAsync(
+                    candidate => candidate.Code == definition.Code, cancellationToken);
+            if (group is null)
+            {
+                group = new SalesGroup { Id = Guid.NewGuid(), CreatedAt = now };
+                dbContext.SalesGroupRecords.Add(group);
+            }
+
+            group.RegionId = regions[definition.RegionCode].Id;
+            group.Code = definition.Code;
+            group.Name = definition.Name;
+            group.IsActive = definition.IsActive;
+            group.UpdatedAt = now;
+            groups[definition.Code] = group;
         }
 
-        salesGroup = new SalesGroup
-        {
-            Id = Guid.NewGuid(),
-            RegionId = regionId,
-            Code = DemoSalesGroupCode,
-            Name = "Nhóm bán hàng Thành phố Hồ Chí Minh 01",
-            IsActive = true,
-            CreatedAt = now,
-            UpdatedAt = now
-        };
-        dbContext.SalesGroupRecords.Add(salesGroup);
         await dbContext.SaveChangesAsync(cancellationToken);
-        return salesGroup;
+        return groups;
     }
 
     private async Task<Retailer> SeedRetailerAsync(
@@ -518,27 +540,21 @@ public sealed class DevelopmentDataSeeder(
         var retailer = await dbContext.RetailerRecords.SingleOrDefaultAsync(
             candidate => candidate.Code == DemoRetailerCode,
             cancellationToken);
-        if (retailer is not null)
+        if (retailer is null)
         {
-            return retailer;
+            retailer = new Retailer { Id = Guid.NewGuid(), Code = DemoRetailerCode, CreatedAt = now };
+            dbContext.RetailerRecords.Add(retailer);
         }
 
-        retailer = new Retailer
-        {
-            Id = Guid.NewGuid(),
-            RegionId = regionId,
-            Code = DemoRetailerCode,
-            Name = "Cửa hàng bán lẻ mẫu FSCM",
-            ContactName = "Nguyễn Văn Minh",
-            Phone = "+84 28 0000 0001",
-            Email = "store@fscm.local",
-            Address = "Quận 1, Thành phố Hồ Chí Minh",
-            Status = "Active",
-            DeclaredByUserId = declaredByUserId,
-            CreatedAt = now,
-            UpdatedAt = now
-        };
-        dbContext.RetailerRecords.Add(retailer);
+        retailer.RegionId = regionId;
+        retailer.Name = "Cửa hàng An Phú";
+        retailer.ContactName = "Nguyễn Văn Minh";
+        retailer.Phone = "+84 28 0000 0001";
+        retailer.Email = "cuahang.anphu@fscm.local";
+        retailer.Address = "Phường An Phú, thành phố Thủ Đức, Thành phố Hồ Chí Minh";
+        retailer.Status = "Active";
+        retailer.DeclaredByUserId = declaredByUserId;
+        retailer.UpdatedAt = now;
         await dbContext.SaveChangesAsync(cancellationToken);
         return retailer;
     }
@@ -573,15 +589,17 @@ public sealed class DevelopmentDataSeeder(
 
     private async Task SeedSalesGroupMembershipsAsync(
         IReadOnlyDictionary<string, UserAccount> users,
-        Guid salesGroupId,
+        IReadOnlyDictionary<string, SalesGroup> salesGroups,
         DateTimeOffset now,
         CancellationToken cancellationToken)
     {
-        foreach (var role in new[] { SystemRoles.SalesManager, SystemRoles.Sales, SystemRoles.Retailer })
+        var primaryGroupId = salesGroups[DemoSalesGroupCode].Id;
+        foreach (var role in new[] { SystemRoles.SalesManager, SystemRoles.Sales })
         {
             var userId = users[role].Id;
             var membership = await dbContext.SalesGroupMemberRecords.SingleOrDefaultAsync(
-                candidate => candidate.UserAccountId == userId && candidate.SalesGroupId == salesGroupId,
+                candidate => candidate.UserAccountId == userId &&
+                    candidate.SalesGroupId == primaryGroupId && candidate.IsActive,
                 cancellationToken);
             if (membership is null)
             {
@@ -589,7 +607,7 @@ public sealed class DevelopmentDataSeeder(
                 {
                     Id = Guid.NewGuid(),
                     UserAccountId = userId,
-                    SalesGroupId = salesGroupId,
+                    SalesGroupId = primaryGroupId,
                     AssignedAt = now
                 };
                 dbContext.SalesGroupMemberRecords.Add(membership);
@@ -598,16 +616,46 @@ public sealed class DevelopmentDataSeeder(
             membership.IsActive = true;
             membership.UnassignedAt = null;
         }
+
+        var retailerUserId = users[SystemRoles.Retailer].Id;
+        var invalidRetailerMemberships = await dbContext.SalesGroupMemberRecords
+            .Where(candidate => candidate.UserAccountId == retailerUserId && candidate.IsActive)
+            .ToArrayAsync(cancellationToken);
+        foreach (var membership in invalidRetailerMemberships)
+        {
+            membership.IsActive = false;
+            membership.UnassignedAt = now;
+        }
+
+        var salesUserId = users[SystemRoles.Sales].Id;
+        var previousGroupId = salesGroups["HCM-B"].Id;
+        if (!await dbContext.SalesGroupMemberRecords.AnyAsync(
+                candidate => candidate.UserAccountId == salesUserId &&
+                    candidate.SalesGroupId == previousGroupId && !candidate.IsActive,
+                cancellationToken))
+        {
+            dbContext.SalesGroupMemberRecords.Add(new SalesGroupMember
+            {
+                Id = Guid.NewGuid(),
+                UserAccountId = salesUserId,
+                SalesGroupId = previousGroupId,
+                AssignedAt = now.AddDays(-60),
+                UnassignedAt = now.AddDays(-30),
+                IsActive = false
+            });
+        }
     }
 
-    private async Task SeedRetailerAssignmentAsync(
+    private async Task SeedRetailerAssignmentsAsync(
         Guid retailerId,
-        Guid salesGroupId,
+        IReadOnlyDictionary<string, SalesGroup> salesGroups,
         DateTimeOffset now,
         CancellationToken cancellationToken)
     {
+        var salesGroupId = salesGroups[DemoSalesGroupCode].Id;
         var assignment = await dbContext.RetailerSalesAssignmentRecords.SingleOrDefaultAsync(
-            candidate => candidate.RetailerId == retailerId && candidate.SalesGroupId == salesGroupId,
+            candidate => candidate.RetailerId == retailerId &&
+                candidate.SalesGroupId == salesGroupId && candidate.IsActive,
             cancellationToken);
         if (assignment is null)
         {
@@ -623,6 +671,23 @@ public sealed class DevelopmentDataSeeder(
 
         assignment.IsActive = true;
         assignment.UnassignedAt = null;
+
+        var previousGroupId = salesGroups["HCM-B"].Id;
+        if (!await dbContext.RetailerSalesAssignmentRecords.AnyAsync(
+                candidate => candidate.RetailerId == retailerId &&
+                    candidate.SalesGroupId == previousGroupId && !candidate.IsActive,
+                cancellationToken))
+        {
+            dbContext.RetailerSalesAssignmentRecords.Add(new RetailerSalesAssignment
+            {
+                Id = Guid.NewGuid(),
+                RetailerId = retailerId,
+                SalesGroupId = previousGroupId,
+                AssignedAt = now.AddDays(-90),
+                UnassignedAt = now.AddDays(-60),
+                IsActive = false
+            });
+        }
     }
 
     private static void ValidatePassword(string? password)
@@ -663,6 +728,18 @@ public sealed class DevelopmentDataSeeder(
         string Address,
         decimal Latitude,
         decimal Longitude);
+
+    private sealed record RegionSeed(
+        string Code,
+        string Name,
+        string Description,
+        bool IsActive);
+
+    private sealed record SalesGroupSeed(
+        string Code,
+        string Name,
+        string RegionCode,
+        bool IsActive);
 
     private sealed record ConfigurationSeed(
         string Key,
