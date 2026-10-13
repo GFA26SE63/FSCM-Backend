@@ -27,6 +27,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<Batch> BatchRecords => Set<Batch>();
     public DbSet<BatchQrLabel> BatchQrLabelRecords => Set<BatchQrLabel>();
     public DbSet<InventoryBalance> InventoryBalanceRecords => Set<InventoryBalance>();
+    public DbSet<InventoryTransaction> InventoryTransactionRecords => Set<InventoryTransaction>();
+    public DbSet<BusinessDocumentSequence> BusinessDocumentSequenceRecords => Set<BusinessDocumentSequence>();
     public DbSet<Promotion> PromotionRecords => Set<Promotion>();
     public DbSet<PromotionProduct> PromotionProductRecords => Set<PromotionProduct>();
     public DbSet<PromotionCategory> PromotionCategoryRecords => Set<PromotionCategory>();

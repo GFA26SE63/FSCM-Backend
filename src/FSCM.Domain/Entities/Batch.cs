@@ -12,7 +12,7 @@ public sealed class Batch
     public Guid? GoodsReceiptLineId { get; set; }
     public string BatchCode { get; set; } = string.Empty;
     public decimal Quantity { get; set; }
-    public DateTimeOffset ExpirationAt { get; set; }
+    public DateOnly ExpirationDate { get; set; }
     public string ExpiryStatus { get; set; } = string.Empty;
     public string StockStatus { get; set; } = string.Empty;
     public int Version { get; set; }

@@ -13,12 +13,14 @@ public sealed class PhysicalSchemaModelTests
         "BATCH",
         "BATCH_PROMOTION",
         "BATCH_QR_LABEL",
+        "BUSINESS_DOCUMENT_SEQUENCE",
         "DELIVERY",
         "DRIVER",
         "GOODS_RECEIPT",
         "GOODS_RECEIPT_LINE",
         "IDEMPOTENCY_KEY",
         "INVENTORY_BALANCE",
+        "INVENTORY_TRANSACTION",
         "LOYALTY_PROGRAM",
         "LOYALTY_REWARD",
         "LOYALTY_TRANSACTION",
@@ -81,9 +83,9 @@ public sealed class PhysicalSchemaModelTests
             .ToArray();
 
         Assert.Equal(ExpectedTables, tableNames);
-        Assert.Equal(57, entityTypes.Length);
-        Assert.Equal(522, entityTypes.Sum(entityType => entityType.GetProperties().Count()));
-        Assert.Equal(116, entityTypes.Sum(entityType => entityType.GetForeignKeys().Count()));
+        Assert.Equal(59, entityTypes.Length);
+        Assert.Equal(545, entityTypes.Sum(entityType => entityType.GetProperties().Count()));
+        Assert.Equal(122, entityTypes.Sum(entityType => entityType.GetForeignKeys().Count()));
         Assert.All(
             entityTypes.SelectMany(entityType => entityType.GetForeignKeys()),
             foreignKey => Assert.Equal(DeleteBehavior.Restrict, foreignKey.DeleteBehavior));
@@ -166,6 +168,20 @@ public sealed class PhysicalSchemaModelTests
         Assert.False(retailer.FindProperty(nameof(Retailer.StoreSizeCategory))!.IsNullable);
         Assert.False(retailer.FindProperty(nameof(Retailer.PurchaseFrequencyPerMonth))!.IsNullable);
         Assert.False(retailer.FindProperty(nameof(Retailer.CreditTermDays))!.IsNullable);
+    }
+
+    [Fact]
+    public void Model_uses_date_only_expiry_and_optimistic_inventory_versions()
+    {
+        using var context = CreateContext();
+        var batch = context.Model.FindEntityType(typeof(Batch))!;
+        var balance = context.Model.FindEntityType(typeof(InventoryBalance))!;
+        var receiptLine = context.Model.FindEntityType(typeof(GoodsReceiptLine))!;
+
+        Assert.Equal("date", batch.FindProperty(nameof(Batch.ExpirationDate))!.GetColumnType());
+        Assert.Equal("date", receiptLine.FindProperty(nameof(GoodsReceiptLine.ExpirationDate))!.GetColumnType());
+        Assert.True(batch.FindProperty(nameof(Batch.Version))!.IsConcurrencyToken);
+        Assert.True(balance.FindProperty(nameof(InventoryBalance.Version))!.IsConcurrencyToken);
     }
 
     private static AppDbContext CreateContext()

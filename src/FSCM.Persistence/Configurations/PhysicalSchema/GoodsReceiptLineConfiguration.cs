@@ -15,12 +15,14 @@ public sealed class GoodsReceiptLineConfiguration : IEntityTypeConfiguration<Goo
         builder.Property(entity => entity.ProductId).HasColumnType("uuid").IsRequired();
         builder.Property(entity => entity.SourceLotCode).HasMaxLength(80).IsRequired(false);
         builder.Property(entity => entity.ReceivedQuantity).HasPrecision(18, 3).IsRequired();
-        builder.Property(entity => entity.ExpirationAt).HasColumnType("timestamp with time zone").IsRequired();
+        builder.Property(entity => entity.ExpirationDate).HasColumnType("date").IsRequired();
         builder.Property(entity => entity.CreatedAt).HasColumnType("timestamp with time zone").IsRequired();
         builder.HasOne<GoodsReceipt>()
             .WithMany()
             .HasForeignKey(entity => entity.GoodsReceiptId)
             .OnDelete(DeleteBehavior.Restrict);
+        builder.ToTable(table => table.HasCheckConstraint(
+            "CK_GOODS_RECEIPT_LINE_ReceivedQuantity", "\"ReceivedQuantity\" > 0 AND TRUNC(\"ReceivedQuantity\") = \"ReceivedQuantity\""));
         builder.HasOne<Product>()
             .WithMany()
             .HasForeignKey(entity => entity.ProductId)

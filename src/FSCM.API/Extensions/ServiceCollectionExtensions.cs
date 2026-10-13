@@ -26,6 +26,7 @@ public static class ServiceCollectionExtensions
         services.AddHealthChecks();
         services.AddProblemDetails();
         services.AddExceptionHandler<CatalogExceptionHandler>();
+        services.AddExceptionHandler<InventoryExceptionHandler>();
         services.AddExceptionHandler<RetailerExceptionHandler>();
         services.AddExceptionHandler<TerritoryExceptionHandler>();
         services.AddExceptionHandler<WarehouseConfigurationExceptionHandler>();
