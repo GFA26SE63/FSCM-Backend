@@ -82,7 +82,7 @@ public sealed class PhysicalSchemaModelTests
 
         Assert.Equal(ExpectedTables, tableNames);
         Assert.Equal(57, entityTypes.Length);
-        Assert.Equal(518, entityTypes.Sum(entityType => entityType.GetProperties().Count()));
+        Assert.Equal(522, entityTypes.Sum(entityType => entityType.GetProperties().Count()));
         Assert.Equal(116, entityTypes.Sum(entityType => entityType.GetForeignKeys().Count()));
         Assert.All(
             entityTypes.SelectMany(entityType => entityType.GetForeignKeys()),
@@ -154,6 +154,18 @@ public sealed class PhysicalSchemaModelTests
         var order = context.Model.FindEntityType(typeof(SalesOrder))!;
         Assert.False(order.FindProperty(nameof(SalesOrder.CreatedByUserId))!.IsNullable);
         Assert.False(order.FindProperty(nameof(SalesOrder.SalesGroupId))!.IsNullable);
+    }
+
+    [Fact]
+    public void Model_contains_retailer_evaluation_and_payment_term_fields()
+    {
+        using var context = CreateContext();
+        var retailer = context.Model.FindEntityType(typeof(Retailer))!;
+
+        Assert.False(retailer.FindProperty(nameof(Retailer.RetailerType))!.IsNullable);
+        Assert.False(retailer.FindProperty(nameof(Retailer.StoreSizeCategory))!.IsNullable);
+        Assert.False(retailer.FindProperty(nameof(Retailer.PurchaseFrequencyPerMonth))!.IsNullable);
+        Assert.False(retailer.FindProperty(nameof(Retailer.CreditTermDays))!.IsNullable);
     }
 
     private static AppDbContext CreateContext()

@@ -22,6 +22,12 @@ namespace FSCM.Persistence.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
+            modelBuilder.HasSequence("RetailerBusinessCodeSequence")
+                .StartsAt(10005000L);
+
+            modelBuilder.HasSequence("RetailerDeclarationCodeSequence")
+                .StartsAt(100L);
+
             modelBuilder.Entity("FSCM.Domain.Entities.AccountToken", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1661,6 +1667,9 @@ namespace FSCM.Persistence.Migrations
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<int>("CreditTermDays")
+                        .HasColumnType("integer");
+
                     b.Property<Guid>("DeclaredByUserId")
                         .HasColumnType("uuid");
 
@@ -1689,12 +1698,20 @@ namespace FSCM.Persistence.Migrations
                         .HasMaxLength(30)
                         .HasColumnType("character varying(30)");
 
+                    b.Property<int>("PurchaseFrequencyPerMonth")
+                        .HasColumnType("integer");
+
                     b.Property<decimal?>("PurchasingCapacity")
                         .HasPrecision(18, 2)
                         .HasColumnType("numeric(18,2)");
 
                     b.Property<Guid>("RegionId")
                         .HasColumnType("uuid");
+
+                    b.Property<string>("RetailerType")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)");
 
                     b.Property<string>("ReviewReason")
                         .HasColumnType("text");
@@ -1709,6 +1726,11 @@ namespace FSCM.Persistence.Migrations
                         .IsRequired()
                         .HasMaxLength(30)
                         .HasColumnType("character varying(30)");
+
+                    b.Property<string>("StoreSizeCategory")
+                        .IsRequired()
+                        .HasMaxLength(1)
+                        .HasColumnType("character varying(1)");
 
                     b.Property<decimal?>("StoreSizeSquareMeters")
                         .HasPrecision(12, 2)
@@ -1730,7 +1752,14 @@ namespace FSCM.Persistence.Migrations
 
                     b.HasIndex("ReviewedByUserId");
 
-                    b.ToTable("RETAILER", (string)null);
+                    b.ToTable("RETAILER", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_RETAILER_CreditTermDays", "\"CreditTermDays\" IN (0, 7, 14, 30)");
+
+                            t.HasCheckConstraint("CK_RETAILER_PurchaseFrequencyPerMonth", "\"PurchaseFrequencyPerMonth\" > 0");
+
+                            t.HasCheckConstraint("CK_RETAILER_StoreSizeCategory", "\"StoreSizeCategory\" IN ('S', 'M', 'L')");
+                        });
                 });
 
             modelBuilder.Entity("FSCM.Domain.Entities.RetailerLoyalty", b =>

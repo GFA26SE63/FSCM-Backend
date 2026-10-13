@@ -13,9 +13,13 @@ public sealed class Retailer
     public string? Email { get; set; }
     public string? Address { get; set; }
     public string Status { get; set; } = string.Empty;
+    public string RetailerType { get; set; } = string.Empty;
     public decimal? ForecastRevenue { get; set; }
     public decimal? StoreSizeSquareMeters { get; set; }
+    public string StoreSizeCategory { get; set; } = string.Empty;
     public decimal? PurchasingCapacity { get; set; }
+    public int PurchaseFrequencyPerMonth { get; set; }
+    public int CreditTermDays { get; set; }
     public string? PotentialStatus { get; set; }
     public decimal? PotentialScore { get; set; }
     public string? AssessmentNote { get; set; }

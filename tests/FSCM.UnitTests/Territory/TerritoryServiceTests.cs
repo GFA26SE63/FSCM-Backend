@@ -1,4 +1,5 @@
 using FSCM.Application.Features.Territory;
+using FSCM.Application.Features.Retailers;
 using FSCM.Domain.Authorization;
 using FSCM.Domain.Entities;
 
@@ -135,7 +136,7 @@ public sealed class TerritoryServiceTests
 
         public Retailer AddRetailer(Guid regionId)
         {
-            var item = new Retailer { Id = Guid.NewGuid(), RegionId = regionId, Code = "10004127", Name = "Cửa hàng An Phú" };
+            var item = new Retailer { Id = Guid.NewGuid(), RegionId = regionId, Code = "10004127", Name = "Cửa hàng An Phú", Status = RetailerStatuses.Active };
             Store.Retailers.Add(item);
             return item;
         }
