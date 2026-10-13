@@ -3,6 +3,7 @@ using FSCM.Application.Features.Catalog;
 using FSCM.Application.Features.Identity;
 using FSCM.Application.Features.Inventory;
 using FSCM.Application.Features.Retailers;
+using FSCM.Application.Features.QrLabels;
 using FSCM.Application.Features.Territory;
 using FSCM.Application.Features.WarehouseConfiguration;
 using Microsoft.Extensions.DependencyInjection;
@@ -19,6 +20,7 @@ public static class DependencyInjection
         services.AddScoped<CatalogService>();
         services.AddScoped<IdentityService>();
         services.AddScoped<InventoryService>();
+        services.AddScoped<QrLabelService>();
         services.AddScoped<RetailerService>();
         services.AddScoped<TerritoryService>();
         services.AddScoped<WarehouseConfigurationService>();

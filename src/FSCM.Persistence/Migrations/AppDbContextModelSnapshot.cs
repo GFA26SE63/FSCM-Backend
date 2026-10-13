@@ -22,6 +22,9 @@ namespace FSCM.Persistence.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
+            modelBuilder.HasSequence("QrLabelCodeSequence")
+                .StartsAt(1000L);
+
             modelBuilder.HasSequence("RetailerBusinessCodeSequence")
                 .StartsAt(10005000L);
 
@@ -280,11 +283,17 @@ namespace FSCM.Persistence.Migrations
                     b.Property<string>("BlobUrl")
                         .HasColumnType("text");
 
+                    b.Property<Guid>("CurrentWarehouseId")
+                        .HasColumnType("uuid");
+
                     b.Property<DateTimeOffset>("GeneratedAt")
                         .HasColumnType("timestamp with time zone");
 
                     b.Property<DateTimeOffset?>("InvalidatedAt")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("ParentLabelId")
+                        .HasColumnType("uuid");
 
                     b.Property<string>("QrCode")
                         .IsRequired()
@@ -295,17 +304,33 @@ namespace FSCM.Persistence.Migrations
                         .HasPrecision(18, 3)
                         .HasColumnType("numeric(18,3)");
 
+                    b.Property<Guid?>("RootLabelId")
+                        .HasColumnType("uuid");
+
                     b.Property<string>("Status")
                         .IsRequired()
                         .HasMaxLength(30)
                         .HasColumnType("character varying(30)");
 
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("integer");
+
                     b.HasKey("Id");
 
                     b.HasIndex("BatchId");
 
+                    b.HasIndex("CurrentWarehouseId");
+
+                    b.HasIndex("ParentLabelId");
+
                     b.HasIndex("QrCode")
                         .IsUnique();
+
+                    b.HasIndex("RootLabelId");
 
                     b.ToTable("BATCH_QR_LABEL", (string)null);
                 });
@@ -1488,6 +1513,70 @@ namespace FSCM.Persistence.Migrations
                     b.HasIndex("RetailerId");
 
                     b.ToTable("PROMOTION_RETAILER", (string)null);
+                });
+
+            modelBuilder.Entity("FSCM.Domain.Entities.QrLabelEvent", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("BatchQrLabelId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("EventType")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)");
+
+                    b.Property<string>("FromStatus")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)");
+
+                    b.Property<string>("Note")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<DateTimeOffset>("OccurredAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("OperationKey")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<Guid>("PerformedByUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<decimal>("Quantity")
+                        .HasPrecision(18, 3)
+                        .HasColumnType("numeric(18,3)");
+
+                    b.Property<string>("ReferenceCode")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("ToStatus")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)");
+
+                    b.Property<Guid>("WarehouseId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OperationKey")
+                        .IsUnique();
+
+                    b.HasIndex("PerformedByUserId");
+
+                    b.HasIndex("WarehouseId");
+
+                    b.HasIndex("BatchQrLabelId", "OccurredAt");
+
+                    b.ToTable("QR_LABEL_EVENT", (string)null);
                 });
 
             modelBuilder.Entity("FSCM.Domain.Entities.ReceiptConfirmation", b =>
@@ -2972,6 +3061,22 @@ namespace FSCM.Persistence.Migrations
                         .HasForeignKey("BatchId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
+
+                    b.HasOne("FSCM.Domain.Entities.Warehouse", null)
+                        .WithMany()
+                        .HasForeignKey("CurrentWarehouseId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("FSCM.Domain.Entities.BatchQrLabel", null)
+                        .WithMany()
+                        .HasForeignKey("ParentLabelId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("FSCM.Domain.Entities.BatchQrLabel", null)
+                        .WithMany()
+                        .HasForeignKey("RootLabelId")
+                        .OnDelete(DeleteBehavior.Restrict);
                 });
 
             modelBuilder.Entity("FSCM.Domain.Entities.Delivery", b =>
@@ -3336,6 +3441,27 @@ namespace FSCM.Persistence.Migrations
                     b.HasOne("FSCM.Domain.Entities.Retailer", null)
                         .WithMany()
                         .HasForeignKey("RetailerId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("FSCM.Domain.Entities.QrLabelEvent", b =>
+                {
+                    b.HasOne("FSCM.Domain.Entities.BatchQrLabel", null)
+                        .WithMany()
+                        .HasForeignKey("BatchQrLabelId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("FSCM.Domain.Entities.UserAccount", null)
+                        .WithMany()
+                        .HasForeignKey("PerformedByUserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("FSCM.Domain.Entities.Warehouse", null)
+                        .WithMany()
+                        .HasForeignKey("WarehouseId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
                 });
