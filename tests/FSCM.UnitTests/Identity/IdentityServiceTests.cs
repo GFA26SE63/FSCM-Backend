@@ -238,7 +238,16 @@ public sealed class IdentityServiceTests
             Guid salesGroupId,
             CancellationToken cancellationToken) =>
             Task.FromResult(SalesGroupMemberships.SingleOrDefault(
-                membership => membership.UserAccountId == userId && membership.SalesGroupId == salesGroupId));
+                membership => membership.UserAccountId == userId &&
+                    membership.SalesGroupId == salesGroupId &&
+                    membership.IsActive));
+
+        public Task<IReadOnlyCollection<SalesGroupMember>> ListActiveSalesGroupMembershipsAsync(
+            Guid userId,
+            CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyCollection<SalesGroupMember>>(SalesGroupMemberships
+                .Where(membership => membership.UserAccountId == userId && membership.IsActive)
+                .ToArray());
 
         public Task<IReadOnlyCollection<RefreshToken>> GetActiveRefreshTokensAsync(
             Guid userId,

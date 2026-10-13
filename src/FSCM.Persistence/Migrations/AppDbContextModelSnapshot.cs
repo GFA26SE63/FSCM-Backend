@@ -1827,9 +1827,11 @@ namespace FSCM.Persistence.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("RetailerId");
+                    b.HasIndex("RetailerId")
+                        .IsUnique()
+                        .HasFilter("\"IsActive\" = TRUE");
 
-                    b.HasIndex("SalesGroupId");
+                    b.HasIndex("SalesGroupId", "AssignedAt");
 
                     b.ToTable("RETAILER_SALES_ASSIGNMENT", (string)null);
                 });
@@ -1958,9 +1960,11 @@ namespace FSCM.Persistence.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("SalesGroupId");
+                    b.HasIndex("UserAccountId")
+                        .IsUnique()
+                        .HasFilter("\"IsActive\" = TRUE");
 
-                    b.HasIndex("UserAccountId");
+                    b.HasIndex("SalesGroupId", "AssignedAt");
 
                     b.ToTable("SALES_GROUP_MEMBER", (string)null);
                 });

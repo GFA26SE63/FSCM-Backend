@@ -33,6 +33,10 @@ public interface IIdentityStore
         Guid salesGroupId,
         CancellationToken cancellationToken);
 
+    Task<IReadOnlyCollection<SalesGroupMember>> ListActiveSalesGroupMembershipsAsync(
+        Guid userId,
+        CancellationToken cancellationToken);
+
     Task<IReadOnlyCollection<RefreshToken>> GetActiveRefreshTokensAsync(
         Guid userId,
         DateTimeOffset now,

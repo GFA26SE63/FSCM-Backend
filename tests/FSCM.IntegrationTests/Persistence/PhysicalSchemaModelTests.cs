@@ -134,6 +134,28 @@ public sealed class PhysicalSchemaModelTests
         Assert.Equal("jsonb", auditLog.FindProperty(nameof(AuditLog.NewValues))!.GetColumnType());
     }
 
+    [Fact]
+    public void Model_enforces_current_territory_assignments_and_order_creator_snapshot()
+    {
+        using var context = CreateContext();
+
+        var membership = context.Model.FindEntityType(typeof(SalesGroupMember))!;
+        var memberUserId = membership.FindProperty(nameof(SalesGroupMember.UserAccountId))!;
+        var memberIndex = membership.GetIndexes().Single(index => index.Properties.SequenceEqual([memberUserId]));
+        Assert.True(memberIndex.IsUnique);
+        Assert.Equal("\"IsActive\" = TRUE", memberIndex.GetFilter());
+
+        var retailerAssignment = context.Model.FindEntityType(typeof(RetailerSalesAssignment))!;
+        var retailerId = retailerAssignment.FindProperty(nameof(RetailerSalesAssignment.RetailerId))!;
+        var retailerIndex = retailerAssignment.GetIndexes().Single(index => index.Properties.SequenceEqual([retailerId]));
+        Assert.True(retailerIndex.IsUnique);
+        Assert.Equal("\"IsActive\" = TRUE", retailerIndex.GetFilter());
+
+        var order = context.Model.FindEntityType(typeof(SalesOrder))!;
+        Assert.False(order.FindProperty(nameof(SalesOrder.CreatedByUserId))!.IsNullable);
+        Assert.False(order.FindProperty(nameof(SalesOrder.SalesGroupId))!.IsNullable);
+    }
+
     private static AppDbContext CreateContext()
     {
         var options = new DbContextOptionsBuilder<AppDbContext>()

@@ -81,8 +81,17 @@ public sealed class IdentityStore(AppDbContext dbContext) : IIdentityStore
         Guid salesGroupId,
         CancellationToken cancellationToken) =>
         dbContext.SalesGroupMemberRecords.SingleOrDefaultAsync(
-            membership => membership.UserAccountId == userId && membership.SalesGroupId == salesGroupId,
+            membership => membership.UserAccountId == userId &&
+                membership.SalesGroupId == salesGroupId &&
+                membership.IsActive,
             cancellationToken);
+
+    public async Task<IReadOnlyCollection<SalesGroupMember>> ListActiveSalesGroupMembershipsAsync(
+        Guid userId,
+        CancellationToken cancellationToken) =>
+        await dbContext.SalesGroupMemberRecords
+            .Where(membership => membership.UserAccountId == userId && membership.IsActive)
+            .ToArrayAsync(cancellationToken);
 
     public async Task<IReadOnlyCollection<RefreshToken>> GetActiveRefreshTokensAsync(
         Guid userId,
