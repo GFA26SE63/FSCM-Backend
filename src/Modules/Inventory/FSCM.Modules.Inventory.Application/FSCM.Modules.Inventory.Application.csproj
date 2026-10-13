@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="..\FSCM.Modules.Inventory.Domain\FSCM.Modules.Inventory.Domain.csproj" />
+    <ProjectReference Include="..\FSCM.Modules.Inventory.Contracts\FSCM.Modules.Inventory.Contracts.csproj" />
+    <ProjectReference Include="..\..\..\BuildingBlocks\FSCM.BuildingBlocks.Application\FSCM.BuildingBlocks.Application.csproj" />
+    <ProjectReference Include="..\..\Logistics\FSCM.Modules.Logistics.Contracts\FSCM.Modules.Logistics.Contracts.csproj" />
+    <ProjectReference Include="..\..\Catalog\FSCM.Modules.Catalog.Contracts\FSCM.Modules.Catalog.Contracts.csproj" />
+    <ProjectReference Include="..\..\Partners\FSCM.Modules.Partners.Contracts\FSCM.Modules.Partners.Contracts.csproj" />
+    <ProjectReference Include="..\..\Ordering\FSCM.Modules.Ordering.Contracts\FSCM.Modules.Ordering.Contracts.csproj" />
+  </ItemGroup>
+</Project>

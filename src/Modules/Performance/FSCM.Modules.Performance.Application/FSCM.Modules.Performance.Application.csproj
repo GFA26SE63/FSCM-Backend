@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="..\FSCM.Modules.Performance.Domain\FSCM.Modules.Performance.Domain.csproj" />
+    <ProjectReference Include="..\FSCM.Modules.Performance.Contracts\FSCM.Modules.Performance.Contracts.csproj" />
+    <ProjectReference Include="..\..\..\BuildingBlocks\FSCM.BuildingBlocks.Application\FSCM.BuildingBlocks.Application.csproj" />
+    <ProjectReference Include="..\..\Ordering\FSCM.Modules.Ordering.Contracts\FSCM.Modules.Ordering.Contracts.csproj" />
+    <ProjectReference Include="..\..\Partners\FSCM.Modules.Partners.Contracts\FSCM.Modules.Partners.Contracts.csproj" />
+    <ProjectReference Include="..\..\Identity\FSCM.Modules.Identity.Contracts\FSCM.Modules.Identity.Contracts.csproj" />
+  </ItemGroup>
+</Project>
