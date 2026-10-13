@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.Configuration;
 
 namespace FSCM.IntegrationTests.GraphQL;
 
@@ -12,8 +13,23 @@ public sealed class GraphQlReadLayerTests : IClassFixture<WebApplicationFactory<
 
     public GraphQlReadLayerTests(WebApplicationFactory<Program> factory)
     {
-        client = factory.WithWebHostBuilder(builder => builder.UseEnvironment("Development")).CreateClient(
-            new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+        client = factory.WithWebHostBuilder(builder =>
+        {
+            builder.UseEnvironment("Development");
+            builder.ConfigureAppConfiguration((_, configuration) =>
+            {
+                configuration.AddInMemoryCollection(new Dictionary<string, string?>
+                {
+                    ["Jwt:Issuer"] = "FSCM.IntegrationTests",
+                    ["Jwt:Audience"] = "FSCM.IntegrationTests.Client",
+                    ["Jwt:Secret"] = "fscm-integration-tests-only-secret-key-with-adequate-length"
+                });
+            });
+        }).CreateClient(new WebApplicationFactoryClientOptions
+        {
+            AllowAutoRedirect = false,
+            BaseAddress = new Uri("https://localhost")
+        });
     }
 
     [Fact]
