@@ -22,6 +22,44 @@ namespace FSCM.Persistence.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
+            modelBuilder.Entity("FSCM.Domain.Entities.AccountToken", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset?>("ConsumedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Purpose")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)");
+
+                    b.Property<string>("TokenHash")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<Guid>("UserAccountId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TokenHash")
+                        .IsUnique();
+
+                    b.HasIndex("UserAccountId", "Purpose", "ExpiresAt");
+
+                    b.ToTable("ACCOUNT_TOKEN", (string)null);
+                });
+
             modelBuilder.Entity("FSCM.Domain.Entities.Allocation", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1065,6 +1103,9 @@ namespace FSCM.Persistence.Migrations
                     b.Property<DateTimeOffset?>("PublishedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<Guid?>("ReplacesProductId")
+                        .HasColumnType("uuid");
+
                     b.Property<int>("ShelfLifeHours")
                         .HasColumnType("integer");
 
@@ -1090,10 +1131,22 @@ namespace FSCM.Persistence.Migrations
 
                     b.HasIndex("ProductCategoryId");
 
+                    b.HasIndex("ReplacesProductId")
+                        .IsUnique();
+
                     b.HasIndex("Sku")
                         .IsUnique();
 
-                    b.ToTable("PRODUCT", (string)null);
+                    b.ToTable("PRODUCT", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_PRODUCT_NearDateThresholdHours", "\"NearDateThresholdHours\" >= 0 AND \"NearDateThresholdHours\" < \"ShelfLifeHours\"");
+
+                            t.HasCheckConstraint("CK_PRODUCT_Replacement", "\"ReplacesProductId\" IS NULL OR \"ReplacesProductId\" <> \"Id\"");
+
+                            t.HasCheckConstraint("CK_PRODUCT_ShelfLifeHours", "\"ShelfLifeHours\" > 0");
+
+                            t.HasCheckConstraint("CK_PRODUCT_Status", "\"Status\" IN ('Draft', 'Published', 'Inactive')");
+                        });
                 });
 
             modelBuilder.Entity("FSCM.Domain.Entities.ProductCategory", b =>
@@ -1164,9 +1217,16 @@ namespace FSCM.Persistence.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("ProductId");
+                    b.HasIndex("ProductId")
+                        .IsUnique()
+                        .HasFilter("\"IsActive\" = TRUE");
 
-                    b.ToTable("PRODUCT_PRICE", (string)null);
+                    b.ToTable("PRODUCT_PRICE", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_PRODUCT_PRICE_EffectiveRange", "\"EffectiveTo\" IS NULL OR \"EffectiveTo\" >= \"EffectiveFrom\"");
+
+                            t.HasCheckConstraint("CK_PRODUCT_PRICE_UnitPrice", "\"UnitPrice\" > 0");
+                        });
                 });
 
             modelBuilder.Entity("FSCM.Domain.Entities.Promotion", b =>
@@ -1448,6 +1508,52 @@ namespace FSCM.Persistence.Migrations
                     b.HasIndex("ReceiptDiscrepancyId");
 
                     b.ToTable("RECEIPT_DISCREPANCY_ITEM", (string)null);
+                });
+
+            modelBuilder.Entity("FSCM.Domain.Entities.RefreshToken", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("CreatedByIpAddress")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<DateTimeOffset>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("ReplacedByTokenId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset?>("RevokedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("RevokedByIpAddress")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("TokenHash")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<Guid>("UserAccountId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ReplacedByTokenId");
+
+                    b.HasIndex("TokenHash")
+                        .IsUnique();
+
+                    b.HasIndex("UserAccountId", "ExpiresAt");
+
+                    b.ToTable("REFRESH_TOKEN", (string)null);
                 });
 
             modelBuilder.Entity("FSCM.Domain.Entities.Region", b =>
@@ -2213,6 +2319,46 @@ namespace FSCM.Persistence.Migrations
                     b.ToTable("USER_ACCOUNT", (string)null);
                 });
 
+            modelBuilder.Entity("FSCM.Domain.Entities.UserCredential", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("FailedLoginCount")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTimeOffset?>("LockoutEndAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<bool>("MustChangePassword")
+                        .HasColumnType("boolean");
+
+                    b.Property<DateTimeOffset?>("PasswordChangedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("PasswordHash")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("UserAccountId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserAccountId")
+                        .IsUnique();
+
+                    b.ToTable("USER_CREDENTIAL", (string)null);
+                });
+
             modelBuilder.Entity("FSCM.Domain.Entities.UserWarehouseAssignment", b =>
                 {
                     b.Property<Guid>("Id")
@@ -2543,6 +2689,15 @@ namespace FSCM.Persistence.Migrations
                     b.HasIndex("WriteOffId");
 
                     b.ToTable("WRITE_OFF_ITEM", (string)null);
+                });
+
+            modelBuilder.Entity("FSCM.Domain.Entities.AccountToken", b =>
+                {
+                    b.HasOne("FSCM.Domain.Entities.UserAccount", null)
+                        .WithMany()
+                        .HasForeignKey("UserAccountId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("FSCM.Domain.Entities.Allocation", b =>
@@ -2885,6 +3040,11 @@ namespace FSCM.Persistence.Migrations
                         .HasForeignKey("ProductCategoryId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
+
+                    b.HasOne("FSCM.Domain.Entities.Product", null)
+                        .WithMany()
+                        .HasForeignKey("ReplacesProductId")
+                        .OnDelete(DeleteBehavior.Restrict);
                 });
 
             modelBuilder.Entity("FSCM.Domain.Entities.ProductCategory", b =>
@@ -3031,6 +3191,20 @@ namespace FSCM.Persistence.Migrations
                         .WithMany()
                         .HasForeignKey("ReceiptDiscrepancyId")
                         .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("FSCM.Domain.Entities.RefreshToken", b =>
+                {
+                    b.HasOne("FSCM.Domain.Entities.RefreshToken", null)
+                        .WithMany()
+                        .HasForeignKey("ReplacedByTokenId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("FSCM.Domain.Entities.UserAccount", null)
+                        .WithMany()
+                        .HasForeignKey("UserAccountId")
+                        .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });
 
@@ -3253,6 +3427,15 @@ namespace FSCM.Persistence.Migrations
                         .WithMany()
                         .HasForeignKey("WarehouseId")
                         .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("FSCM.Domain.Entities.UserCredential", b =>
+                {
+                    b.HasOne("FSCM.Domain.Entities.UserAccount", null)
+                        .WithOne()
+                        .HasForeignKey("FSCM.Domain.Entities.UserCredential", "UserAccountId")
+                        .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });
 

@@ -1,4 +1,9 @@
+using FSCM.Application.Features.Catalog;
+using FSCM.Application.Features.Identity;
+using FSCM.Persistence.Catalog;
 using FSCM.Persistence.DbContexts;
+using FSCM.Persistence.Identity;
+using FSCM.Persistence.Seeding;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -22,6 +27,10 @@ public static class DependencyInjection
                     postgresOptions => postgresOptions.EnableRetryOnFailure());
             });
         }
+
+        services.AddScoped<ICatalogStore, CatalogStore>();
+        services.AddScoped<IIdentityStore, IdentityStore>();
+        services.AddScoped<DevelopmentDataSeeder>();
 
         return services;
     }

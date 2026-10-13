@@ -1,4 +1,6 @@
 using FluentValidation;
+using FSCM.Application.Features.Catalog;
+using FSCM.Application.Features.Identity;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace FSCM.Application;
@@ -9,6 +11,9 @@ public static class DependencyInjection
     {
         services.AddAutoMapper(_ => { }, typeof(DependencyInjection).Assembly);
         services.AddValidatorsFromAssembly(typeof(DependencyInjection).Assembly);
+        services.AddSingleton(TimeProvider.System);
+        services.AddScoped<CatalogService>();
+        services.AddScoped<IdentityService>();
 
         return services;
     }

@@ -72,7 +72,9 @@ public sealed class PhysicalSchemaModelTests
     {
         using var context = CreateContext();
 
-        var entityTypes = context.Model.GetEntityTypes().ToArray();
+        var entityTypes = context.Model.GetEntityTypes()
+            .Where(entityType => ExpectedTables.Contains(entityType.GetTableName(), StringComparer.Ordinal))
+            .ToArray();
         var tableNames = entityTypes
             .Select(entityType => entityType.GetTableName())
             .Order(StringComparer.Ordinal)
@@ -80,11 +82,34 @@ public sealed class PhysicalSchemaModelTests
 
         Assert.Equal(ExpectedTables, tableNames);
         Assert.Equal(57, entityTypes.Length);
-        Assert.Equal(514, entityTypes.Sum(entityType => entityType.GetProperties().Count()));
-        Assert.Equal(115, entityTypes.Sum(entityType => entityType.GetForeignKeys().Count()));
+        Assert.Equal(515, entityTypes.Sum(entityType => entityType.GetProperties().Count()));
+        Assert.Equal(116, entityTypes.Sum(entityType => entityType.GetForeignKeys().Count()));
         Assert.All(
             entityTypes.SelectMany(entityType => entityType.GetForeignKeys()),
             foreignKey => Assert.Equal(DeleteBehavior.Restrict, foreignKey.DeleteBehavior));
+    }
+
+    [Fact]
+    public void Model_contains_identity_authentication_tables()
+    {
+        using var context = CreateContext();
+
+        var identityTables = context.Model.GetEntityTypes()
+            .Select(entityType => entityType.GetTableName())
+            .Where(tableName => tableName is "ACCOUNT_TOKEN" or "REFRESH_TOKEN" or "USER_CREDENTIAL")
+            .Select(tableName => tableName!)
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+
+        Assert.Equal(["ACCOUNT_TOKEN", "REFRESH_TOKEN", "USER_CREDENTIAL"], identityTables);
+
+        var credential = context.Model.FindEntityType(typeof(UserCredential));
+        var userAccountId = credential!.FindProperty(nameof(UserCredential.UserAccountId));
+        Assert.True(credential.GetIndexes().Single(index => index.Properties.Contains(userAccountId!)).IsUnique);
+
+        var refreshToken = context.Model.FindEntityType(typeof(RefreshToken));
+        var tokenHash = refreshToken!.FindProperty(nameof(RefreshToken.TokenHash));
+        Assert.True(refreshToken.GetIndexes().Single(index => index.Properties.Contains(tokenHash!)).IsUnique);
     }
 
     [Fact]
@@ -96,6 +121,8 @@ public sealed class PhysicalSchemaModelTests
         var sku = product!.FindProperty(nameof(Product.Sku));
         Assert.Equal(50, sku!.GetMaxLength());
         Assert.True(product.GetIndexes().Single(index => index.Properties.Contains(sku)).IsUnique);
+        var replacesProductId = product.FindProperty(nameof(Product.ReplacesProductId));
+        Assert.True(product.GetIndexes().Single(index => index.Properties.Contains(replacesProductId!)).IsUnique);
 
         var inventoryBalance = context.Model.FindEntityType(typeof(InventoryBalance));
         var physicalQuantity = inventoryBalance!.FindProperty(nameof(InventoryBalance.PhysicalQuantity));

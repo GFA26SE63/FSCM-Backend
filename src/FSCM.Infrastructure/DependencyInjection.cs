@@ -1,4 +1,6 @@
 using System.Net.Http.Headers;
+using FSCM.Application.Features.Identity;
+using FSCM.Infrastructure.Identity;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -12,6 +14,8 @@ public static class DependencyInjection
     {
         services.AddMemoryCache();
         services.AddHttpClient();
+        services.AddSingleton<IPasswordHasher, BcryptPasswordHasher>();
+        services.AddSingleton<IIdentityTokenProvider, JwtIdentityTokenProvider>();
 
         services.AddHttpClient("OpenAI", client =>
         {
