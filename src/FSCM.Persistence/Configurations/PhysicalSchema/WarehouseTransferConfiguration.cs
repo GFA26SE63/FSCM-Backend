@@ -19,6 +19,7 @@ public sealed class WarehouseTransferConfiguration : IEntityTypeConfiguration<Wa
         builder.Property(entity => entity.Status).HasMaxLength(30).IsRequired();
         builder.Property(entity => entity.Note).HasColumnType("text").IsRequired(false);
         builder.Property(entity => entity.RejectionReason).HasColumnType("text").IsRequired(false);
+        builder.Property(entity => entity.Version).IsConcurrencyToken().IsRequired();
         builder.Property(entity => entity.RequestedAt).HasColumnType("timestamp with time zone").IsRequired();
         builder.Property(entity => entity.ApprovedAt).HasColumnType("timestamp with time zone").IsRequired(false);
         builder.Property(entity => entity.DispatchedAt).HasColumnType("timestamp with time zone").IsRequired(false);

@@ -13,6 +13,7 @@ public sealed class WarehouseTransfer
     public string Status { get; set; } = string.Empty;
     public string? Note { get; set; }
     public string? RejectionReason { get; set; }
+    public int Version { get; set; }
     public DateTimeOffset RequestedAt { get; set; }
     public DateTimeOffset? ApprovedAt { get; set; }
     public DateTimeOffset? DispatchedAt { get; set; }

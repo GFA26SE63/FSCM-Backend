@@ -20,6 +20,13 @@ public sealed class TransitTimeRuleConfiguration : IEntityTypeConfiguration<Tran
         builder.Property(entity => entity.IsActive).IsRequired();
         builder.Property(entity => entity.CreatedAt).HasColumnType("timestamp with time zone").IsRequired();
         builder.Property(entity => entity.UpdatedAt).HasColumnType("timestamp with time zone").IsRequired();
+        builder.HasIndex(entity => new
+        {
+            entity.WarehouseId,
+            entity.MinDistanceMeters,
+            entity.MaxDistanceMeters,
+            entity.IsActive
+        });
         builder.HasOne<Warehouse>()
             .WithMany()
             .HasForeignKey(entity => entity.WarehouseId)

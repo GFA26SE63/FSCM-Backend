@@ -1,4 +1,9 @@
 using FSCM.Application.Features.Identity;
+using FSCM.Application.Features.Inventory;
+using FSCM.Application.Features.InternalTransfers;
+using FSCM.Application.Features.Retailers;
+using FSCM.Application.Features.QrLabels;
+using FSCM.Application.Features.WarehouseConfiguration;
 using FSCM.Domain.Authorization;
 using FSCM.Domain.Entities;
 using FSCM.Persistence.DbContexts;
@@ -16,9 +21,10 @@ public sealed class DevelopmentDataSeeder(
     ILogger<DevelopmentDataSeeder> logger)
 {
     private const string DemoWarehouseCode = "WH-HCM-01";
-    private const string DemoRegionCode = "REG-HCM";
-    private const string DemoSalesGroupCode = "SG-HCM-01";
-    private const string DemoRetailerCode = "RTL-HCM-001";
+    private const string DemoRegionCode = "HCM";
+    private const string DemoSalesGroupCode = "HCM-A";
+    private const string DemoRetailerCode = "10004127";
+    private const string LegacyDemoRetailerCode = "RTL-HCM-001";
 
     private static readonly (string Email, string FullName, string Role)[] DemoUsers =
     [
@@ -38,26 +44,214 @@ public sealed class DevelopmentDataSeeder(
 
         var now = timeProvider.GetUtcNow();
         var users = await SeedUsersAsync(password!, now, cancellationToken);
-        var region = await SeedRegionAsync(now, cancellationToken);
+        var regions = await SeedRegionsAsync(now, cancellationToken);
         var warehouse = await SeedWarehouseAsync(now, cancellationToken);
-        var salesGroup = await SeedSalesGroupAsync(region.Id, now, cancellationToken);
-        var retailer = await SeedRetailerAsync(region.Id, users[SystemRoles.Sales].Id, now, cancellationToken);
+        var salesGroups = await SeedSalesGroupsAsync(regions, now, cancellationToken);
+        var retailer = await SeedRetailerAsync(regions[DemoRegionCode].Id, users[SystemRoles.Sales].Id,
+            users[SystemRoles.Admin].Id, now, cancellationToken);
         var categories = await SeedCategoriesAsync(now, cancellationToken);
         var products = await SeedProductsAsync(categories, now, cancellationToken);
+        var configuredWarehouses = await SeedWarehouseConfigurationDataAsync(
+            warehouse, retailer, products, users[SystemRoles.Admin].Id, now, cancellationToken);
 
         await SeedWarehouseAssignmentsAsync(users, warehouse.Id, now, cancellationToken);
-        await SeedSalesGroupMembershipsAsync(users, salesGroup.Id, now, cancellationToken);
-        await SeedRetailerAssignmentAsync(retailer.Id, salesGroup.Id, now, cancellationToken);
+        await dbContext.SaveChangesAsync(cancellationToken);
+        await SeedInventoryDataAsync(configuredWarehouses, products, users[SystemRoles.WarehouseKeeper].Id, now, cancellationToken);
+        await dbContext.SaveChangesAsync(cancellationToken);
+        await SeedQrLabelDataAsync(users[SystemRoles.WarehouseKeeper].Id, now, cancellationToken);
+        await SeedInternalTransferDataAsync(users[SystemRoles.Operator].Id, now, cancellationToken);
+        await SeedSalesGroupMembershipsAsync(users, salesGroups, now, cancellationToken);
+        await SeedRetailerAssignmentsAsync(retailer.Id, salesGroups, now, cancellationToken);
+        await SeedAdditionalRetailersAsync(regions, salesGroups, users, now, cancellationToken);
         await dbContext.SaveChangesAsync(cancellationToken);
 
         logger.LogInformation(
-            "Development data seeded: {UserCount} users, {CategoryCount} categories, {ProductCount} products, warehouse {WarehouseCode}, sales group {SalesGroupCode}, retailer {RetailerCode}.",
+            "Development data seeded: {UserCount} users, {CategoryCount} categories, {ProductCount} products, {WarehouseCount} warehouses, {RegionCount} regions, {SalesGroupCount} sales groups, retailer {RetailerCode}.",
             users.Count,
             categories.Count,
             products.Count,
-            DemoWarehouseCode,
-            DemoSalesGroupCode,
+            configuredWarehouses.Count,
+            regions.Count,
+            salesGroups.Count,
             DemoRetailerCode);
+    }
+
+    private async Task SeedInternalTransferDataAsync(Guid operatorId, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        var source = await dbContext.WarehouseRecords.SingleAsync(item => item.Code == "WH-HCM-01", cancellationToken);
+        var destinations = await dbContext.WarehouseRecords.Where(item => item.Code == "WH-TD" || item.Code == "WH-Q7")
+            .ToDictionaryAsync(item => item.Code, StringComparer.Ordinal, cancellationToken);
+        var sourceBatch = await dbContext.BatchRecords.SingleAsync(
+            item => item.BatchCode == "WH-HCM-01-SKU001-30042027", cancellationToken);
+        var definitions = new[]
+        {
+            new InternalTransferSeed("DC-261001-01", "WH-TD", 20m, InternalTransferStatuses.Requested,
+                "Đề nghị bổ sung sữa tiệt trùng cho kho vùng Thủ Đức", null),
+            new InternalTransferSeed("DC-261002-01", "WH-Q7", 10m, InternalTransferStatuses.Rejected,
+                "Đề nghị bổ sung sữa tiệt trùng cho kho vùng Quận 7", "Kho vùng đang tạm sắp xếp lại khu vực lưu trữ")
+        };
+        foreach (var definition in definitions)
+        {
+            var transfer = await dbContext.WarehouseTransferRecords.SingleOrDefaultAsync(
+                item => item.TransferCode == definition.Code, cancellationToken);
+            if (transfer is null)
+            {
+                transfer = new WarehouseTransfer { Id = Guid.NewGuid(), TransferCode = definition.Code, CreatedAt = now.AddDays(-12) };
+                dbContext.WarehouseTransferRecords.Add(transfer);
+            }
+            transfer.SourceWarehouseId = source.Id;
+            transfer.DestinationWarehouseId = destinations[definition.DestinationCode].Id;
+            transfer.CreatedByUserId = operatorId;
+            transfer.Status = definition.Status;
+            transfer.Note = definition.Note;
+            transfer.RejectionReason = definition.RejectionReason;
+            transfer.RequestedAt = now.AddDays(-12);
+            transfer.Version = Math.Max(transfer.Version, 1);
+            transfer.UpdatedAt = now;
+            await dbContext.SaveChangesAsync(cancellationToken);
+
+            var item = await dbContext.WarehouseTransferItemRecords.SingleOrDefaultAsync(
+                candidate => candidate.WarehouseTransferId == transfer.Id && candidate.SourceBatchId == sourceBatch.Id,
+                cancellationToken);
+            if (item is null)
+            {
+                item = new WarehouseTransferItem
+                {
+                    Id = Guid.NewGuid(),
+                    WarehouseTransferId = transfer.Id,
+                    SourceBatchId = sourceBatch.Id,
+                    CreatedAt = now.AddDays(-12)
+                };
+                dbContext.WarehouseTransferItemRecords.Add(item);
+            }
+            item.RequestedQuantity = definition.Quantity;
+            item.Status = definition.Status;
+            item.Note = "Dòng hàng điều chuyển mẫu bằng tiếng Việt";
+            item.UpdatedAt = now;
+
+            var createdKey = $"du-lieu-mau-{definition.Code.ToLowerInvariant()}-tao-phieu";
+            await UpsertTransferEventAsync(transfer, operatorId, createdKey, InternalTransferActions.Created,
+                string.Empty, InternalTransferStatuses.Requested, "Tạo phiếu điều chuyển nội bộ mẫu", now.AddDays(-12), cancellationToken);
+            if (definition.Status == InternalTransferStatuses.Rejected)
+            {
+                var rejectedKey = $"du-lieu-mau-{definition.Code.ToLowerInvariant()}-tu-choi";
+                await UpsertTransferEventAsync(transfer, operatorId, rejectedKey, InternalTransferActions.Rejected,
+                    InternalTransferStatuses.Requested, InternalTransferStatuses.Rejected,
+                    definition.RejectionReason, now.AddDays(-11), cancellationToken);
+            }
+        }
+        await dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    private async Task UpsertTransferEventAsync(WarehouseTransfer transfer, Guid userId, string key,
+        string action, string fromStatus, string toStatus, string? note, DateTimeOffset occurredAt,
+        CancellationToken cancellationToken)
+    {
+        var transferEvent = await dbContext.WarehouseTransferEventRecords.SingleOrDefaultAsync(
+            item => item.OperationKey == key, cancellationToken);
+        if (transferEvent is null)
+        {
+            transferEvent = new WarehouseTransferEvent { Id = Guid.NewGuid(), OperationKey = key };
+            dbContext.WarehouseTransferEventRecords.Add(transferEvent);
+        }
+        transferEvent.WarehouseTransferId = transfer.Id;
+        transferEvent.PerformedByUserId = userId;
+        transferEvent.Action = action;
+        transferEvent.FromStatus = fromStatus;
+        transferEvent.ToStatus = toStatus;
+        transferEvent.Note = note;
+        transferEvent.OccurredAt = occurredAt;
+    }
+
+    private async Task SeedQrLabelDataAsync(Guid warehouseKeeperId, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        var definitions = new[]
+        {
+            new QrLabelSeed("TEM-000204", "WH-HCM-01-SKU001-30042027", 300m, null, QrLabelStatuses.Available, "Tem gốc cho lô sữa tiệt trùng"),
+            new QrLabelSeed("TEM-000205", "WH-HCM-01-SKU001-30042027", 100m, "TEM-000204", QrLabelStatuses.Available, "Tem con tách từ tem TEM-000204"),
+            new QrLabelSeed("TEM-000206", "WH-TD-SKU002-20102026", 80m, null, QrLabelStatuses.Available, "Tem cho lô sữa chua gần hạn"),
+            new QrLabelSeed("TEM-000207", "WH-Q7-SKU003-10102026", 20m, null, QrLabelStatuses.Invalidated, "Tem lô thực phẩm hết hạn đã vô hiệu hóa")
+        };
+        var labels = new Dictionary<string, BatchQrLabel>(StringComparer.Ordinal);
+        foreach (var definition in definitions.Where(item => item.ParentQrCode is null))
+            labels[definition.QrCode] = await UpsertQrLabelAsync(definition, null, null, now, cancellationToken);
+        foreach (var definition in definitions.Where(item => item.ParentQrCode is not null))
+        {
+            var parent = labels[definition.ParentQrCode!];
+            labels[definition.QrCode] = await UpsertQrLabelAsync(definition, parent.Id, parent.RootLabelId ?? parent.Id, now, cancellationToken);
+        }
+        await dbContext.SaveChangesAsync(cancellationToken);
+
+        foreach (var definition in definitions)
+        {
+            var label = labels[definition.QrCode];
+            var eventType = definition.ParentQrCode is not null ? QrLabelEventTypes.Split : QrLabelEventTypes.Generated;
+            var operationKey = $"du-lieu-mau-{definition.QrCode.ToLowerInvariant()}-{eventType.ToLowerInvariant()}";
+            var labelEvent = await dbContext.QrLabelEventRecords.SingleOrDefaultAsync(
+                item => item.OperationKey == operationKey, cancellationToken);
+            if (labelEvent is null)
+            {
+                labelEvent = new QrLabelEvent { Id = Guid.NewGuid(), OperationKey = operationKey };
+                dbContext.QrLabelEventRecords.Add(labelEvent);
+            }
+            labelEvent.BatchQrLabelId = label.Id;
+            labelEvent.WarehouseId = label.CurrentWarehouseId;
+            labelEvent.PerformedByUserId = warehouseKeeperId;
+            labelEvent.EventType = eventType;
+            labelEvent.FromStatus = definition.ParentQrCode is null ? string.Empty : QrLabelStatuses.Available;
+            labelEvent.ToStatus = QrLabelStatuses.Available;
+            labelEvent.Quantity = definition.ParentQrCode is null
+                ? labels.Values.Where(item => item.RootLabelId == label.Id).Sum(item => item.Quantity)
+                : label.Quantity;
+            labelEvent.ReferenceCode = definition.ParentQrCode;
+            labelEvent.Note = definition.Note;
+            labelEvent.OccurredAt = now.AddDays(-20);
+            if (definition.Status == QrLabelStatuses.Invalidated)
+            {
+                var invalidationKey = $"du-lieu-mau-{definition.QrCode.ToLowerInvariant()}-vo-hieu-hoa";
+                var invalidation = await dbContext.QrLabelEventRecords.SingleOrDefaultAsync(
+                    item => item.OperationKey == invalidationKey, cancellationToken);
+                if (invalidation is null)
+                {
+                    invalidation = new QrLabelEvent { Id = Guid.NewGuid(), OperationKey = invalidationKey };
+                    dbContext.QrLabelEventRecords.Add(invalidation);
+                }
+                invalidation.BatchQrLabelId = label.Id;
+                invalidation.WarehouseId = label.CurrentWarehouseId;
+                invalidation.PerformedByUserId = warehouseKeeperId;
+                invalidation.EventType = QrLabelEventTypes.Invalidated;
+                invalidation.FromStatus = QrLabelStatuses.Available;
+                invalidation.ToStatus = QrLabelStatuses.Invalidated;
+                invalidation.Quantity = label.Quantity;
+                invalidation.Note = "Vô hiệu hóa tem vì lô hàng đã hết hạn";
+                invalidation.OccurredAt = now.AddDays(-1);
+            }
+        }
+        await dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    private async Task<BatchQrLabel> UpsertQrLabelAsync(
+        QrLabelSeed definition, Guid? parentId, Guid? rootId, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        var batch = await dbContext.BatchRecords.SingleAsync(item => item.BatchCode == definition.BatchCode, cancellationToken);
+        var label = await dbContext.BatchQrLabelRecords.SingleOrDefaultAsync(item => item.QrCode == definition.QrCode, cancellationToken);
+        if (label is null)
+        {
+            var id = Guid.NewGuid();
+            label = new BatchQrLabel { Id = id, QrCode = definition.QrCode, GeneratedAt = now.AddDays(-20) };
+            dbContext.BatchQrLabelRecords.Add(label);
+        }
+        label.BatchId = batch.Id;
+        label.CurrentWarehouseId = batch.WarehouseId;
+        label.ParentLabelId = parentId;
+        label.RootLabelId = rootId ?? label.Id;
+        label.Quantity = definition.Quantity;
+        label.Status = definition.Status;
+        label.Version = Math.Max(label.Version, 1);
+        label.UpdatedAt = now;
+        label.InvalidatedAt = definition.Status == QrLabelStatuses.Invalidated ? now.AddDays(-1) : null;
+        await dbContext.SaveChangesAsync(cancellationToken);
+        return label;
     }
 
     private async Task<Dictionary<string, ProductCategory>> SeedCategoriesAsync(
@@ -297,29 +491,40 @@ public sealed class DevelopmentDataSeeder(
         return usersByRole;
     }
 
-    private async Task<Region> SeedRegionAsync(DateTimeOffset now, CancellationToken cancellationToken)
+    private async Task<IReadOnlyDictionary<string, Region>> SeedRegionsAsync(
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
     {
-        var region = await dbContext.RegionRecords.SingleOrDefaultAsync(
-            candidate => candidate.Code == DemoRegionCode,
-            cancellationToken);
-        if (region is not null)
+        var definitions = new[]
         {
-            return region;
+            new RegionSeed("HCM", "Thành phố Hồ Chí Minh", "Khu vực bán hàng Thành phố Hồ Chí Minh", true),
+            new RegionSeed("BD", "Bình Dương", "Khu vực bán hàng tỉnh Bình Dương", true),
+            new RegionSeed("LA", "Long An", "Khu vực tạm ngừng hoạt động dùng để kiểm thử", false)
+        };
+        var regions = new Dictionary<string, Region>(StringComparer.Ordinal);
+        foreach (var definition in definitions)
+        {
+            var region = definition.Code == DemoRegionCode
+                ? await dbContext.RegionRecords.SingleOrDefaultAsync(
+                    candidate => candidate.Code == definition.Code || candidate.Code == "REG-HCM", cancellationToken)
+                : await dbContext.RegionRecords.SingleOrDefaultAsync(
+                    candidate => candidate.Code == definition.Code, cancellationToken);
+            if (region is null)
+            {
+                region = new Region { Id = Guid.NewGuid(), CreatedAt = now };
+                dbContext.RegionRecords.Add(region);
+            }
+
+            region.Code = definition.Code;
+            region.Name = definition.Name;
+            region.Description = definition.Description;
+            region.IsActive = definition.IsActive;
+            region.UpdatedAt = now;
+            regions[definition.Code] = region;
         }
 
-        region = new Region
-        {
-            Id = Guid.NewGuid(),
-            Code = DemoRegionCode,
-            Name = "Thành phố Hồ Chí Minh",
-            Description = "Khu vực dữ liệu mẫu dùng cho môi trường phát triển",
-            IsActive = true,
-            CreatedAt = now,
-            UpdatedAt = now
-        };
-        dbContext.RegionRecords.Add(region);
         await dbContext.SaveChangesAsync(cancellationToken);
-        return region;
+        return regions;
     }
 
     private async Task<Warehouse> SeedWarehouseAsync(DateTimeOffset now, CancellationToken cancellationToken)
@@ -327,86 +532,308 @@ public sealed class DevelopmentDataSeeder(
         var warehouse = await dbContext.WarehouseRecords.SingleOrDefaultAsync(
             candidate => candidate.Code == DemoWarehouseCode,
             cancellationToken);
-        if (warehouse is not null)
+        if (warehouse is null)
         {
-            return warehouse;
+            warehouse = new Warehouse { Id = Guid.NewGuid(), Code = DemoWarehouseCode, CreatedAt = now };
+            dbContext.WarehouseRecords.Add(warehouse);
         }
 
-        warehouse = new Warehouse
-        {
-            Id = Guid.NewGuid(),
-            Code = DemoWarehouseCode,
-            Name = "Kho trung tâm Củ Chi",
-            Address = "Huyện Củ Chi, Thành phố Hồ Chí Minh",
-            IsActive = true,
-            CreatedAt = now,
-            UpdatedAt = now
-        };
-        dbContext.WarehouseRecords.Add(warehouse);
+        warehouse.Name = "Kho trung tâm Củ Chi";
+        warehouse.Type = WarehouseTypes.Central;
+        warehouse.Address = "Đường Nguyễn Thị Rành, huyện Củ Chi, Thành phố Hồ Chí Minh";
+        warehouse.IsActive = true;
+        warehouse.UpdatedAt = now;
         await dbContext.SaveChangesAsync(cancellationToken);
         return warehouse;
     }
 
-    private async Task<SalesGroup> SeedSalesGroupAsync(
-        Guid regionId,
+    private async Task<IReadOnlyCollection<Warehouse>> SeedWarehouseConfigurationDataAsync(
+        Warehouse centralWarehouse,
+        Retailer retailer,
+        IReadOnlyDictionary<string, Product> products,
+        Guid adminUserId,
         DateTimeOffset now,
         CancellationToken cancellationToken)
     {
-        var salesGroup = await dbContext.SalesGroupRecords.SingleOrDefaultAsync(
-            candidate => candidate.Code == DemoSalesGroupCode,
-            cancellationToken);
-        if (salesGroup is not null)
+        var definitions = new[]
         {
-            return salesGroup;
+            new WarehouseSeed(centralWarehouse.Code, "Kho trung tâm Củ Chi", WarehouseTypes.Central,
+                "Đường Nguyễn Thị Rành, huyện Củ Chi, Thành phố Hồ Chí Minh", 10.9747000m, 106.4931000m),
+            new WarehouseSeed("WH-TD", "Kho vùng Thủ Đức", WarehouseTypes.Regional,
+                "Đường Võ Chí Công, thành phố Thủ Đức, Thành phố Hồ Chí Minh", 10.8480000m, 106.7720000m),
+            new WarehouseSeed("WH-Q7", "Kho vùng Quận 7", WarehouseTypes.Regional,
+                "Đường Nguyễn Văn Linh, Quận 7, Thành phố Hồ Chí Minh", 10.7298000m, 106.7219000m)
+        };
+        var warehouses = new List<Warehouse>();
+        foreach (var definition in definitions)
+        {
+            var warehouse = await dbContext.WarehouseRecords.SingleOrDefaultAsync(
+                item => item.Code == definition.Code, cancellationToken);
+            if (warehouse is null)
+            {
+                warehouse = new Warehouse { Id = Guid.NewGuid(), Code = definition.Code, CreatedAt = now };
+                dbContext.WarehouseRecords.Add(warehouse);
+            }
+
+            warehouse.Name = definition.Name;
+            warehouse.Type = definition.Type;
+            warehouse.Address = definition.Address;
+            warehouse.IsActive = true;
+            warehouse.UpdatedAt = now;
+            await dbContext.SaveChangesAsync(cancellationToken);
+
+            var location = await dbContext.MapLocationRecords.SingleOrDefaultAsync(
+                item => item.WarehouseId == warehouse.Id, cancellationToken);
+            if (location is null)
+            {
+                location = new MapLocation { Id = Guid.NewGuid(), WarehouseId = warehouse.Id, CreatedAt = now };
+                dbContext.MapLocationRecords.Add(location);
+            }
+
+            location.Latitude = definition.Latitude;
+            location.Longitude = definition.Longitude;
+            location.FormattedAddress = definition.Address;
+            location.ProviderPlaceId = $"du-lieu-mau-{definition.Code.ToLowerInvariant()}";
+            location.UpdatedAt = now;
+            warehouses.Add(warehouse);
         }
 
-        salesGroup = new SalesGroup
+        await dbContext.SaveChangesAsync(cancellationToken);
+        foreach (var warehouse in warehouses)
+        {
+            if (!await dbContext.TransitTimeRuleRecords.AnyAsync(
+                    item => item.WarehouseId == warehouse.Id && item.IsActive, cancellationToken))
+            {
+                dbContext.TransitTimeRuleRecords.AddRange(
+                    CreateTransitRule(warehouse.Id, 0, 10_000, 60, 1_440, now),
+                    CreateTransitRule(warehouse.Id, 10_001, 20_000, 60, 2_880, now));
+            }
+        }
+
+        foreach (var definition in new[] { (Product: products["SKU001"], Ratio: 0.25m), (Product: products["SKU002"], Ratio: 0.30m) })
+        {
+            if (!await dbContext.RetailerProductMlorRecords.AnyAsync(
+                    item => item.RetailerId == retailer.Id && item.ProductId == definition.Product.Id && item.IsActive,
+                    cancellationToken))
+            {
+                dbContext.RetailerProductMlorRecords.Add(new RetailerProductMlor
+                {
+                    Id = Guid.NewGuid(),
+                    RetailerId = retailer.Id,
+                    ProductId = definition.Product.Id,
+                    MinimumLifeRatio = definition.Ratio,
+                    MinimumLifeHours = (int)Math.Ceiling(definition.Product.ShelfLifeHours * definition.Ratio),
+                    EffectiveFrom = now,
+                    IsActive = true
+                });
+            }
+        }
+
+        var configurations = new[]
+        {
+            new ConfigurationSeed(BusinessConfigurationKeys.AllocationWeights,
+                "{\"expiry\":0.5,\"distance\":0.3,\"coverage\":0.2}", "object",
+                "Trọng số phân bổ ưu tiên hạn sử dụng, khoảng cách và độ phủ"),
+            new ConfigurationSeed(BusinessConfigurationKeys.ServiceRadiusMeters, "20000", "integer",
+                "Bán kính phục vụ tối đa mặc định là 20 kilômét"),
+            new ConfigurationSeed(BusinessConfigurationKeys.RegionalMinimumStockCartons, "35", "integer",
+                "Ngưỡng tồn kho tối thiểu tại kho vùng là 35 thùng"),
+            new ConfigurationSeed(BusinessConfigurationKeys.DefaultMlorRatio, "0.25", "decimal",
+                "Tỷ lệ hạn sử dụng còn lại tối thiểu mặc định là 25 phần trăm")
+        };
+        foreach (var definition in configurations)
+        {
+            if (!await dbContext.SystemConfigurationRecords.AnyAsync(
+                    item => item.ConfigKey == definition.Key && item.IsActive, cancellationToken))
+            {
+                dbContext.SystemConfigurationRecords.Add(new SystemConfiguration
+                {
+                    Id = Guid.NewGuid(),
+                    ConfigKey = definition.Key,
+                    ConfigValue = definition.Value,
+                    ValueType = definition.ValueType,
+                    Description = definition.Description,
+                    Version = 1,
+                    IsActive = true,
+                    UpdatedByUserId = adminUserId,
+                    EffectiveFrom = now,
+                    CreatedAt = now,
+                    UpdatedAt = now
+                });
+            }
+        }
+
+        await dbContext.SaveChangesAsync(cancellationToken);
+        return warehouses;
+    }
+
+    private static TransitTimeRule CreateTransitRule(
+        Guid warehouseId, int minimumDistance, int maximumDistance,
+        int handlingMinutes, int transitMinutes, DateTimeOffset now) => new()
         {
             Id = Guid.NewGuid(),
-            RegionId = regionId,
-            Code = DemoSalesGroupCode,
-            Name = "Nhóm bán hàng Thành phố Hồ Chí Minh 01",
+            WarehouseId = warehouseId,
+            MinDistanceMeters = minimumDistance,
+            MaxDistanceMeters = maximumDistance,
+            HandlingMinutes = handlingMinutes,
+            TransitMinutes = transitMinutes,
+            MaxServingDistanceMeters = 20_000,
             IsActive = true,
             CreatedAt = now,
             UpdatedAt = now
         };
-        dbContext.SalesGroupRecords.Add(salesGroup);
+
+    private async Task<IReadOnlyDictionary<string, SalesGroup>> SeedSalesGroupsAsync(
+        IReadOnlyDictionary<string, Region> regions,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        var definitions = new[]
+        {
+            new SalesGroupSeed("HCM-A", "Nhóm bán hàng Hồ Chí Minh A", "HCM", true),
+            new SalesGroupSeed("HCM-B", "Nhóm bán hàng Hồ Chí Minh B", "HCM", true),
+            new SalesGroupSeed("BD-A", "Nhóm bán hàng Bình Dương A", "BD", true),
+            new SalesGroupSeed("LA-A", "Nhóm bán hàng Long An A", "LA", false)
+        };
+        var groups = new Dictionary<string, SalesGroup>(StringComparer.Ordinal);
+        foreach (var definition in definitions)
+        {
+            var group = definition.Code == DemoSalesGroupCode
+                ? await dbContext.SalesGroupRecords.SingleOrDefaultAsync(
+                    candidate => candidate.Code == definition.Code || candidate.Code == "SG-HCM-01", cancellationToken)
+                : await dbContext.SalesGroupRecords.SingleOrDefaultAsync(
+                    candidate => candidate.Code == definition.Code, cancellationToken);
+            if (group is null)
+            {
+                group = new SalesGroup { Id = Guid.NewGuid(), CreatedAt = now };
+                dbContext.SalesGroupRecords.Add(group);
+            }
+
+            group.RegionId = regions[definition.RegionCode].Id;
+            group.Code = definition.Code;
+            group.Name = definition.Name;
+            group.IsActive = definition.IsActive;
+            group.UpdatedAt = now;
+            groups[definition.Code] = group;
+        }
+
         await dbContext.SaveChangesAsync(cancellationToken);
-        return salesGroup;
+        return groups;
     }
 
     private async Task<Retailer> SeedRetailerAsync(
         Guid regionId,
         Guid declaredByUserId,
+        Guid reviewedByUserId,
         DateTimeOffset now,
         CancellationToken cancellationToken)
     {
         var retailer = await dbContext.RetailerRecords.SingleOrDefaultAsync(
-            candidate => candidate.Code == DemoRetailerCode,
+            candidate => candidate.Code == DemoRetailerCode || candidate.Code == LegacyDemoRetailerCode,
             cancellationToken);
-        if (retailer is not null)
+        if (retailer is null)
         {
-            return retailer;
+            retailer = new Retailer { Id = Guid.NewGuid(), Code = DemoRetailerCode, CreatedAt = now };
+            dbContext.RetailerRecords.Add(retailer);
         }
 
-        retailer = new Retailer
-        {
-            Id = Guid.NewGuid(),
-            RegionId = regionId,
-            Code = DemoRetailerCode,
-            Name = "Cửa hàng bán lẻ mẫu FSCM",
-            ContactName = "Nguyễn Văn Minh",
-            Phone = "+84 28 0000 0001",
-            Email = "store@fscm.local",
-            Address = "Quận 1, Thành phố Hồ Chí Minh",
-            Status = "Active",
-            DeclaredByUserId = declaredByUserId,
-            CreatedAt = now,
-            UpdatedAt = now
-        };
-        dbContext.RetailerRecords.Add(retailer);
+        retailer.RegionId = regionId;
+        retailer.Code = DemoRetailerCode;
+        retailer.Name = "Cửa hàng An Phú";
+        retailer.ContactName = "Nguyễn Văn Minh";
+        retailer.Phone = "+84 28 0000 0001";
+        retailer.Email = "cuahang.anphu@fscm.local";
+        retailer.Address = "Phường An Phú, thành phố Thủ Đức, Thành phố Hồ Chí Minh";
+        retailer.Status = RetailerStatuses.Active;
+        retailer.RetailerType = RetailerTypes.GroceryStore;
+        retailer.ForecastRevenue = 72_000_000;
+        retailer.StoreSizeSquareMeters = 48;
+        retailer.StoreSizeCategory = "M";
+        retailer.PurchasingCapacity = 135;
+        retailer.PurchaseFrequencyPerMonth = 8;
+        retailer.CreditTermDays = 14;
+        retailer.PotentialStatus = "A";
+        retailer.AssessmentNote = "Điểm bán có doanh thu ổn định và tần suất nhập hàng cao.";
+        retailer.DeclaredByUserId = declaredByUserId;
+        retailer.AssessedByUserId = declaredByUserId;
+        retailer.AssessedAt = now.AddDays(-31);
+        retailer.ReviewedByUserId = reviewedByUserId;
+        retailer.ReviewedAt = now.AddDays(-30);
+        retailer.ReviewReason = "Thông tin hợp lệ, đủ điều kiện kích hoạt.";
+        retailer.UpdatedAt = now;
         await dbContext.SaveChangesAsync(cancellationToken);
         return retailer;
+    }
+
+    private async Task SeedAdditionalRetailersAsync(
+        IReadOnlyDictionary<string, Region> regions,
+        IReadOnlyDictionary<string, SalesGroup> salesGroups,
+        IReadOnlyDictionary<string, UserAccount> users,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        var definitions = new[]
+        {
+            new RetailerSeed("10004128", "Siêu thị mini Bình Minh", "Trần Thị Mai", "0909000102", "Phường Bến Nghé, Quận 1, Thành phố Hồ Chí Minh", "HCM", "HCM-A", RetailerStatuses.Active, RetailerTypes.MiniSupermarket, 55_000_000m, 72m, 125m, 10, 30, "A", "Mặt bằng lớn, năng lực nhập hàng thuộc nhóm A."),
+            new RetailerSeed("KB-0012", "Cửa hàng Tân Lập", "Lê Quốc Bảo", "0909000103", "Phường Tân Hiệp, Thành phố Tân Uyên, Bình Dương", "BD", "BD-A", RetailerStatuses.PendingApproval, RetailerTypes.ConvenienceStore, 38_000_000m, 42m, 75m, 6, 7, "B", "Hồ sơ đang chờ quản trị viên phê duyệt."),
+            new RetailerSeed("KB-0013", "Sạp Minh Châu", "Phạm Ngọc Châu", "0909000104", "Chợ Tân An, Thành phố Tân An, Long An", "LA", "LA-A", RetailerStatuses.Rejected, RetailerTypes.MarketStall, 18_000_000m, 22m, 35m, 4, 0, "C", "Cần bổ sung giấy tờ xác minh địa chỉ kinh doanh."),
+            new RetailerSeed("10004129", "Tạp hóa Hòa Phát", "Võ Thanh Hòa", "0909000105", "Phường Hiệp Bình Chánh, thành phố Thủ Đức, Thành phố Hồ Chí Minh", "HCM", "HCM-B", RetailerStatuses.Inactive, RetailerTypes.GroceryStore, 32_000_000m, 28m, 65m, 5, 7, "B", "Điểm bán tạm ngừng hoạt động theo đề nghị của chủ cửa hàng.")
+        };
+
+        foreach (var definition in definitions)
+        {
+            var retailer = await dbContext.RetailerRecords.SingleOrDefaultAsync(item => item.Code == definition.Code, cancellationToken);
+            if (retailer is null)
+            {
+                retailer = new Retailer { Id = Guid.NewGuid(), Code = definition.Code, CreatedAt = now.AddDays(-20) };
+                dbContext.RetailerRecords.Add(retailer);
+            }
+            retailer.RegionId = regions[definition.RegionCode].Id;
+            retailer.Name = definition.Name;
+            retailer.ContactName = definition.ContactName;
+            retailer.Phone = definition.Phone;
+            retailer.Email = null;
+            retailer.Address = definition.Address;
+            retailer.Status = definition.Status;
+            retailer.RetailerType = definition.RetailerType;
+            retailer.ForecastRevenue = definition.ForecastRevenue;
+            retailer.StoreSizeSquareMeters = definition.StoreSize;
+            retailer.StoreSizeCategory = definition.StoreSize < 30 ? "S" : definition.StoreSize <= 60 ? "M" : "L";
+            retailer.PurchasingCapacity = definition.Capacity;
+            retailer.PurchaseFrequencyPerMonth = definition.Frequency;
+            retailer.CreditTermDays = definition.CreditTermDays;
+            retailer.PotentialStatus = definition.PotentialClass;
+            retailer.AssessmentNote = definition.Note;
+            retailer.DeclaredByUserId = users[SystemRoles.Sales].Id;
+            retailer.AssessedByUserId = users[SystemRoles.Sales].Id;
+            retailer.AssessedAt = now.AddDays(-19);
+            retailer.ReviewedByUserId = definition.Status == RetailerStatuses.PendingApproval ? null : users[SystemRoles.Admin].Id;
+            retailer.ReviewedAt = definition.Status == RetailerStatuses.PendingApproval ? null : now.AddDays(-18);
+            retailer.ReviewReason = definition.Status switch
+            {
+                RetailerStatuses.Rejected => "Từ chối do chưa đủ giấy tờ xác minh địa chỉ.",
+                RetailerStatuses.Inactive => "Đã duyệt trước đây và hiện tạm ngừng hoạt động.",
+                RetailerStatuses.Active => "Thông tin hợp lệ, đủ điều kiện kích hoạt.",
+                _ => null
+            };
+            retailer.UpdatedAt = now;
+            await dbContext.SaveChangesAsync(cancellationToken);
+
+            var groupId = salesGroups[definition.SalesGroupCode].Id;
+            if (!await dbContext.RetailerSalesAssignmentRecords.AnyAsync(
+                    item => item.RetailerId == retailer.Id && item.SalesGroupId == groupId && item.IsActive,
+                    cancellationToken))
+            {
+                dbContext.RetailerSalesAssignmentRecords.Add(new RetailerSalesAssignment
+                {
+                    Id = Guid.NewGuid(),
+                    RetailerId = retailer.Id,
+                    SalesGroupId = groupId,
+                    AssignedAt = now.AddDays(-20),
+                    IsActive = true
+                });
+            }
+        }
     }
 
     private async Task SeedWarehouseAssignmentsAsync(
@@ -437,17 +864,141 @@ public sealed class DevelopmentDataSeeder(
         }
     }
 
-    private async Task SeedSalesGroupMembershipsAsync(
-        IReadOnlyDictionary<string, UserAccount> users,
-        Guid salesGroupId,
+    private async Task SeedInventoryDataAsync(
+        IReadOnlyCollection<Warehouse> warehouses,
+        IReadOnlyDictionary<string, Product> products,
+        Guid warehouseKeeperId,
         DateTimeOffset now,
         CancellationToken cancellationToken)
     {
-        foreach (var role in new[] { SystemRoles.SalesManager, SystemRoles.Sales, SystemRoles.Retailer })
+        var warehouseByCode = warehouses.ToDictionary(item => item.Code, StringComparer.Ordinal);
+        var definitions = new[]
+        {
+            new InventorySeed("PN-260901-01", "WH-HCM-01", "SKU001", new DateOnly(2027, 4, 30), 500m, 40m, 60m, "LÔ-SỮA-THÁNG-09", BatchExpiryStatuses.Valid),
+            new InventorySeed("PN-261001-01", "WH-TD", "SKU002", new DateOnly(2026, 10, 20), 120m, 10m, 20m, "LÔ-SỮA-CHUA-THÁNG-10", BatchExpiryStatuses.NearExpiry),
+            new InventorySeed("PN-260901-02", "WH-Q7", "SKU003", new DateOnly(2026, 10, 10), 30m, 0m, 0m, "LÔ-THỰC-PHẨM-THÁNG-09", BatchExpiryStatuses.Expired)
+        };
+
+        foreach (var definition in definitions)
+        {
+            var warehouse = warehouseByCode[definition.WarehouseCode];
+            var product = products[definition.Sku];
+            if (!await dbContext.UserWarehouseAssignmentRecords.AnyAsync(item =>
+                    item.UserAccountId == warehouseKeeperId && item.WarehouseId == warehouse.Id && item.IsActive,
+                    cancellationToken))
+            {
+                dbContext.UserWarehouseAssignmentRecords.Add(new UserWarehouseAssignment
+                {
+                    Id = Guid.NewGuid(),
+                    UserAccountId = warehouseKeeperId,
+                    WarehouseId = warehouse.Id,
+                    AssignedAt = now.AddDays(-60),
+                    IsActive = true
+                });
+                await dbContext.SaveChangesAsync(cancellationToken);
+            }
+            var receivedAt = now.AddDays(-30);
+            var receipt = await dbContext.GoodsReceiptRecords.SingleOrDefaultAsync(
+                item => item.ReceiptCode == definition.ReceiptCode, cancellationToken);
+            if (receipt is null)
+            {
+                receipt = new GoodsReceipt { Id = Guid.NewGuid(), ReceiptCode = definition.ReceiptCode, CreatedAt = receivedAt };
+                dbContext.GoodsReceiptRecords.Add(receipt);
+            }
+            receipt.IdempotencyKey = $"du-lieu-mau-{definition.ReceiptCode.ToLowerInvariant()}";
+            receipt.RequestHash = new string('0', 64);
+            receipt.WarehouseId = warehouse.Id;
+            receipt.CreatedByUserId = warehouseKeeperId;
+            receipt.Status = GoodsReceiptStatuses.Received;
+            receipt.ReceivedAt = receivedAt;
+            receipt.UpdatedAt = now;
+            await dbContext.SaveChangesAsync(cancellationToken);
+
+            var line = await dbContext.GoodsReceiptLineRecords.SingleOrDefaultAsync(item =>
+                item.GoodsReceiptId == receipt.Id && item.ProductId == product.Id &&
+                item.ExpirationDate == definition.ExpirationDate, cancellationToken);
+            if (line is null)
+            {
+                line = new GoodsReceiptLine { Id = Guid.NewGuid(), GoodsReceiptId = receipt.Id, ProductId = product.Id, CreatedAt = receivedAt };
+                dbContext.GoodsReceiptLineRecords.Add(line);
+            }
+            line.SourceLotCode = definition.SourceLotCode;
+            line.ReceivedQuantity = definition.OnHand;
+            line.ExpirationDate = definition.ExpirationDate;
+            await dbContext.SaveChangesAsync(cancellationToken);
+
+            var batchCode = $"{warehouse.Code}-{product.Sku}-{definition.ExpirationDate:ddMMyyyy}";
+            var batch = await dbContext.BatchRecords.SingleOrDefaultAsync(item => item.BatchCode == batchCode, cancellationToken);
+            if (batch is null)
+            {
+                var batchId = Guid.NewGuid();
+                batch = new Batch { Id = batchId, RootBatchId = batchId, BatchCode = batchCode, CreatedAt = receivedAt };
+                dbContext.BatchRecords.Add(batch);
+            }
+            batch.WarehouseId = warehouse.Id;
+            batch.ProductId = product.Id;
+            batch.GoodsReceiptLineId = line.Id;
+            batch.Quantity = definition.OnHand;
+            batch.ExpirationDate = definition.ExpirationDate;
+            batch.ExpiryStatus = definition.ExpiryStatus;
+            batch.StockStatus = BatchStockStatuses.InStock;
+            batch.Version = Math.Max(batch.Version, 1);
+            batch.UpdatedAt = now;
+            await dbContext.SaveChangesAsync(cancellationToken);
+
+            var balance = await dbContext.InventoryBalanceRecords.SingleOrDefaultAsync(item => item.BatchId == batch.Id, cancellationToken);
+            if (balance is null)
+            {
+                balance = new InventoryBalance { Id = Guid.NewGuid(), BatchId = batch.Id };
+                dbContext.InventoryBalanceRecords.Add(balance);
+            }
+            balance.PhysicalQuantity = definition.OnHand;
+            balance.HeldQuantity = definition.Held;
+            balance.ReservedQuantity = definition.Reserved;
+            balance.AvailableQuantity = definition.OnHand - definition.Held - definition.Reserved;
+            balance.Version = Math.Max(balance.Version, 1);
+            balance.UpdatedAt = now;
+
+            if (!await dbContext.InventoryTransactionRecords.AnyAsync(item =>
+                    item.BatchId == batch.Id && item.ReferenceCode == receipt.ReceiptCode &&
+                    item.TransactionType == InventoryTransactionTypes.GoodsReceipt, cancellationToken))
+            {
+                dbContext.InventoryTransactionRecords.Add(new InventoryTransaction
+                {
+                    Id = Guid.NewGuid(),
+                    BatchId = batch.Id,
+                    WarehouseId = warehouse.Id,
+                    ProductId = product.Id,
+                    GoodsReceiptId = receipt.Id,
+                    GoodsReceiptLineId = line.Id,
+                    CreatedByUserId = warehouseKeeperId,
+                    TransactionType = InventoryTransactionTypes.GoodsReceipt,
+                    ReferenceCode = receipt.ReceiptCode,
+                    PhysicalQuantityDelta = definition.OnHand,
+                    PhysicalQuantityAfter = definition.OnHand,
+                    HeldQuantityAfter = definition.Held,
+                    ReservedQuantityAfter = definition.Reserved,
+                    AvailableQuantityAfter = definition.OnHand - definition.Held - definition.Reserved,
+                    Note = "Dữ liệu mẫu nhập hàng vào kho",
+                    OccurredAt = receivedAt
+                });
+            }
+        }
+    }
+
+    private async Task SeedSalesGroupMembershipsAsync(
+        IReadOnlyDictionary<string, UserAccount> users,
+        IReadOnlyDictionary<string, SalesGroup> salesGroups,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        var primaryGroupId = salesGroups[DemoSalesGroupCode].Id;
+        foreach (var role in new[] { SystemRoles.SalesManager, SystemRoles.Sales })
         {
             var userId = users[role].Id;
             var membership = await dbContext.SalesGroupMemberRecords.SingleOrDefaultAsync(
-                candidate => candidate.UserAccountId == userId && candidate.SalesGroupId == salesGroupId,
+                candidate => candidate.UserAccountId == userId &&
+                    candidate.SalesGroupId == primaryGroupId && candidate.IsActive,
                 cancellationToken);
             if (membership is null)
             {
@@ -455,7 +1006,7 @@ public sealed class DevelopmentDataSeeder(
                 {
                     Id = Guid.NewGuid(),
                     UserAccountId = userId,
-                    SalesGroupId = salesGroupId,
+                    SalesGroupId = primaryGroupId,
                     AssignedAt = now
                 };
                 dbContext.SalesGroupMemberRecords.Add(membership);
@@ -464,16 +1015,46 @@ public sealed class DevelopmentDataSeeder(
             membership.IsActive = true;
             membership.UnassignedAt = null;
         }
+
+        var retailerUserId = users[SystemRoles.Retailer].Id;
+        var invalidRetailerMemberships = await dbContext.SalesGroupMemberRecords
+            .Where(candidate => candidate.UserAccountId == retailerUserId && candidate.IsActive)
+            .ToArrayAsync(cancellationToken);
+        foreach (var membership in invalidRetailerMemberships)
+        {
+            membership.IsActive = false;
+            membership.UnassignedAt = now;
+        }
+
+        var salesUserId = users[SystemRoles.Sales].Id;
+        var previousGroupId = salesGroups["HCM-B"].Id;
+        if (!await dbContext.SalesGroupMemberRecords.AnyAsync(
+                candidate => candidate.UserAccountId == salesUserId &&
+                    candidate.SalesGroupId == previousGroupId && !candidate.IsActive,
+                cancellationToken))
+        {
+            dbContext.SalesGroupMemberRecords.Add(new SalesGroupMember
+            {
+                Id = Guid.NewGuid(),
+                UserAccountId = salesUserId,
+                SalesGroupId = previousGroupId,
+                AssignedAt = now.AddDays(-60),
+                UnassignedAt = now.AddDays(-30),
+                IsActive = false
+            });
+        }
     }
 
-    private async Task SeedRetailerAssignmentAsync(
+    private async Task SeedRetailerAssignmentsAsync(
         Guid retailerId,
-        Guid salesGroupId,
+        IReadOnlyDictionary<string, SalesGroup> salesGroups,
         DateTimeOffset now,
         CancellationToken cancellationToken)
     {
+        var salesGroupId = salesGroups[DemoSalesGroupCode].Id;
         var assignment = await dbContext.RetailerSalesAssignmentRecords.SingleOrDefaultAsync(
-            candidate => candidate.RetailerId == retailerId && candidate.SalesGroupId == salesGroupId,
+            candidate => candidate.RetailerId == retailerId &&
+                candidate.SalesGroupId == salesGroupId && candidate.IsActive,
             cancellationToken);
         if (assignment is null)
         {
@@ -489,6 +1070,23 @@ public sealed class DevelopmentDataSeeder(
 
         assignment.IsActive = true;
         assignment.UnassignedAt = null;
+
+        var previousGroupId = salesGroups["HCM-B"].Id;
+        if (!await dbContext.RetailerSalesAssignmentRecords.AnyAsync(
+                candidate => candidate.RetailerId == retailerId &&
+                    candidate.SalesGroupId == previousGroupId && !candidate.IsActive,
+                cancellationToken))
+        {
+            dbContext.RetailerSalesAssignmentRecords.Add(new RetailerSalesAssignment
+            {
+                Id = Guid.NewGuid(),
+                RetailerId = retailerId,
+                SalesGroupId = previousGroupId,
+                AssignedAt = now.AddDays(-90),
+                UnassignedAt = now.AddDays(-60),
+                IsActive = false
+            });
+        }
     }
 
     private static void ValidatePassword(string? password)
@@ -521,5 +1119,49 @@ public sealed class DevelopmentDataSeeder(
         string CategoryCode,
         string Status,
         string? ReplacesSku = null);
+
+    private sealed record WarehouseSeed(
+        string Code,
+        string Name,
+        string Type,
+        string Address,
+        decimal Latitude,
+        decimal Longitude);
+
+    private sealed record RegionSeed(
+        string Code,
+        string Name,
+        string Description,
+        bool IsActive);
+
+    private sealed record SalesGroupSeed(
+        string Code,
+        string Name,
+        string RegionCode,
+        bool IsActive);
+
+    private sealed record RetailerSeed(
+        string Code, string Name, string ContactName, string Phone, string Address,
+        string RegionCode, string SalesGroupCode, string Status, string RetailerType,
+        decimal ForecastRevenue, decimal StoreSize, decimal Capacity, int Frequency,
+        int CreditTermDays, string PotentialClass, string Note);
+
+    private sealed record InventorySeed(
+        string ReceiptCode, string WarehouseCode, string Sku, DateOnly ExpirationDate,
+        decimal OnHand, decimal Held, decimal Reserved, string SourceLotCode, string ExpiryStatus);
+
+    private sealed record QrLabelSeed(
+        string QrCode, string BatchCode, decimal Quantity, string? ParentQrCode,
+        string Status, string Note);
+
+    private sealed record InternalTransferSeed(
+        string Code, string DestinationCode, decimal Quantity, string Status,
+        string Note, string? RejectionReason);
+
+    private sealed record ConfigurationSeed(
+        string Key,
+        string Value,
+        string ValueType,
+        string Description);
 }
 

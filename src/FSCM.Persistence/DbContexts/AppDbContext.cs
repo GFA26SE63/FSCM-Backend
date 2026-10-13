@@ -26,7 +26,10 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<GoodsReceiptLine> GoodsReceiptLineRecords => Set<GoodsReceiptLine>();
     public DbSet<Batch> BatchRecords => Set<Batch>();
     public DbSet<BatchQrLabel> BatchQrLabelRecords => Set<BatchQrLabel>();
+    public DbSet<QrLabelEvent> QrLabelEventRecords => Set<QrLabelEvent>();
     public DbSet<InventoryBalance> InventoryBalanceRecords => Set<InventoryBalance>();
+    public DbSet<InventoryTransaction> InventoryTransactionRecords => Set<InventoryTransaction>();
+    public DbSet<BusinessDocumentSequence> BusinessDocumentSequenceRecords => Set<BusinessDocumentSequence>();
     public DbSet<Promotion> PromotionRecords => Set<Promotion>();
     public DbSet<PromotionProduct> PromotionProductRecords => Set<PromotionProduct>();
     public DbSet<PromotionCategory> PromotionCategoryRecords => Set<PromotionCategory>();
@@ -60,6 +63,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<SalesOrderAttachment> SalesOrderAttachmentRecords => Set<SalesOrderAttachment>();
     public DbSet<WarehouseTransfer> WarehouseTransferRecords => Set<WarehouseTransfer>();
     public DbSet<WarehouseTransferItem> WarehouseTransferItemRecords => Set<WarehouseTransferItem>();
+    public DbSet<WarehouseTransferEvent> WarehouseTransferEventRecords => Set<WarehouseTransferEvent>();
+    public DbSet<WarehouseTransferLabel> WarehouseTransferLabelRecords => Set<WarehouseTransferLabel>();
     public DbSet<LoyaltyProgram> LoyaltyProgramRecords => Set<LoyaltyProgram>();
     public DbSet<LoyaltyReward> LoyaltyRewardRecords => Set<LoyaltyReward>();
     public DbSet<RewardRedemption> RewardRedemptionRecords => Set<RewardRedemption>();
@@ -70,6 +75,9 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
+        modelBuilder.HasSequence<long>("RetailerDeclarationCodeSequence").StartsAt(100);
+        modelBuilder.HasSequence<long>("RetailerBusinessCodeSequence").StartsAt(10005000);
+        modelBuilder.HasSequence<long>("QrLabelCodeSequence").StartsAt(1000);
         modelBuilder.ApplyConfigurationsFromAssembly(typeof(AppDbContext).Assembly);
     }
 }

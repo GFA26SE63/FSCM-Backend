@@ -9,6 +9,6 @@ public sealed class GoodsReceiptLine
     public Guid ProductId { get; set; }
     public string? SourceLotCode { get; set; }
     public decimal ReceivedQuantity { get; set; }
-    public DateTimeOffset ExpirationAt { get; set; }
+    public DateOnly ExpirationDate { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
 }

@@ -6,6 +6,8 @@ public sealed class GoodsReceipt
 {
     public Guid Id { get; set; }
     public string ReceiptCode { get; set; } = string.Empty;
+    public string? IdempotencyKey { get; set; }
+    public string? RequestHash { get; set; }
     public Guid WarehouseId { get; set; }
     public Guid CreatedByUserId { get; set; }
     public Guid? ApprovedByUserId { get; set; }

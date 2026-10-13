@@ -15,11 +15,16 @@ public sealed class SystemConfigurationConfiguration : IEntityTypeConfiguration<
         builder.Property(entity => entity.ConfigValue).HasColumnType("jsonb").IsRequired();
         builder.Property(entity => entity.Description).HasColumnType("text").IsRequired();
         builder.Property(entity => entity.ValueType).HasMaxLength(50).IsRequired();
+        builder.Property(entity => entity.Version).IsRequired();
         builder.Property(entity => entity.IsActive).IsRequired();
         builder.Property(entity => entity.UpdatedByUserId).HasColumnType("uuid").IsRequired(false);
+        builder.Property(entity => entity.EffectiveFrom).HasColumnType("timestamp with time zone").IsRequired();
         builder.Property(entity => entity.CreatedAt).HasColumnType("timestamp with time zone").IsRequired();
         builder.Property(entity => entity.UpdatedAt).HasColumnType("timestamp with time zone").IsRequired();
-        builder.HasIndex(entity => entity.ConfigKey).IsUnique();
+        builder.HasIndex(entity => new { entity.ConfigKey, entity.Version }).IsUnique();
+        builder.HasIndex(entity => entity.ConfigKey)
+            .IsUnique()
+            .HasFilter("\"IsActive\" = TRUE");
         builder.HasOne<UserAccount>()
             .WithMany()
             .HasForeignKey(entity => entity.UpdatedByUserId)

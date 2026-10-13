@@ -26,6 +26,12 @@ public static class ServiceCollectionExtensions
         services.AddHealthChecks();
         services.AddProblemDetails();
         services.AddExceptionHandler<CatalogExceptionHandler>();
+        services.AddExceptionHandler<InventoryExceptionHandler>();
+        services.AddExceptionHandler<InternalTransferExceptionHandler>();
+        services.AddExceptionHandler<QrLabelExceptionHandler>();
+        services.AddExceptionHandler<RetailerExceptionHandler>();
+        services.AddExceptionHandler<TerritoryExceptionHandler>();
+        services.AddExceptionHandler<WarehouseConfigurationExceptionHandler>();
         services.AddExceptionHandler<IdentityExceptionHandler>();
 
         services.AddCors(options =>

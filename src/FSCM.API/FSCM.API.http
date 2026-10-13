@@ -1,6 +1,7 @@
 @FSCM.API_HostAddress = http://localhost:5246
 @email = admin@fscm.local
 @password = FscmDemo#2026
+@salesEmail = sales@fscm.local
 
 GET {{FSCM.API_HostAddress}}/health
 Accept: application/json
@@ -63,4 +64,78 @@ Accept: application/json
 
 GET {{FSCM.API_HostAddress}}/api/v1/products/{{products.response.body.$.items[0].id}}/price-suggestion
 Authorization: Bearer {{login.response.body.$.accessToken}}
+Accept: application/json
+
+###
+
+# @name warehouses
+GET {{FSCM.API_HostAddress}}/api/v1/warehouses?includeInactive=true
+Authorization: Bearer {{login.response.body.$.accessToken}}
+Accept: application/json
+
+###
+
+GET {{FSCM.API_HostAddress}}/api/v1/warehouses/{{warehouses.response.body.$.[0].id}}/transit-time-rules
+Authorization: Bearer {{login.response.body.$.accessToken}}
+Accept: application/json
+
+###
+
+GET {{FSCM.API_HostAddress}}/api/v1/configurations
+Authorization: Bearer {{login.response.body.$.accessToken}}
+Accept: application/json
+
+###
+
+GET {{FSCM.API_HostAddress}}/api/v1/configurations/allocation.weights/history
+Authorization: Bearer {{login.response.body.$.accessToken}}
+Accept: application/json
+
+###
+
+GET {{FSCM.API_HostAddress}}/api/v1/mlor-configurations
+Authorization: Bearer {{login.response.body.$.accessToken}}
+Accept: application/json
+
+###
+
+# @name regions
+GET {{FSCM.API_HostAddress}}/api/v1/regions?includeInactive=true
+Authorization: Bearer {{login.response.body.$.accessToken}}
+Accept: application/json
+
+###
+
+# @name salesGroups
+GET {{FSCM.API_HostAddress}}/api/v1/sales-groups?includeInactive=true
+Authorization: Bearer {{login.response.body.$.accessToken}}
+Accept: application/json
+
+###
+
+GET {{FSCM.API_HostAddress}}/api/v1/territory-assignments/sales?includeInactive=true
+Authorization: Bearer {{login.response.body.$.accessToken}}
+Accept: application/json
+
+###
+
+GET {{FSCM.API_HostAddress}}/api/v1/territory-assignments/retailers?includeInactive=true
+Authorization: Bearer {{login.response.body.$.accessToken}}
+Accept: application/json
+
+###
+
+# @name salesLogin
+POST {{FSCM.API_HostAddress}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "{{salesEmail}}",
+  "password": "{{password}}"
+}
+
+###
+
+GET {{FSCM.API_HostAddress}}/api/v1/territory-access/retailers/{{salesLogin.response.body.$.user.scope.retailerIds[0]}}/order-eligibility
+Authorization: Bearer {{salesLogin.response.body.$.accessToken}}
 Accept: application/json

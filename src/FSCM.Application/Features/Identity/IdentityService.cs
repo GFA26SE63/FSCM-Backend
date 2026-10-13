@@ -331,31 +331,38 @@ public sealed class IdentityService(
         Guid salesGroupId,
         CancellationToken cancellationToken)
     {
-        await GetManageableUserAsync(userId, cancellationToken);
+        var user = await GetManageableUserAsync(userId, cancellationToken);
+        if (user.Role is not (SystemRoles.Sales or SystemRoles.SalesManager))
+        {
+            throw IdentityOperationException.Validation(
+                "Only Sales and Sales Manager users can be assigned to a Sales group.");
+        }
         if (!await store.SalesGroupExistsAsync(salesGroupId, cancellationToken))
         {
             throw IdentityOperationException.NotFound("Sales group was not found.");
         }
 
         var now = timeProvider.GetUtcNow();
-        var membership = await store.FindSalesGroupMembershipAsync(userId, salesGroupId, cancellationToken);
-        if (membership is null)
+        var activeMemberships = await store.ListActiveSalesGroupMembershipsAsync(userId, cancellationToken);
+        if (activeMemberships.Any(membership => membership.SalesGroupId == salesGroupId))
         {
-            store.AddSalesGroupMembership(new SalesGroupMember
-            {
-                Id = Guid.NewGuid(),
-                UserAccountId = userId,
-                SalesGroupId = salesGroupId,
-                AssignedAt = now,
-                IsActive = true
-            });
+            return;
         }
-        else
+
+        foreach (var activeMembership in activeMemberships)
         {
-            membership.IsActive = true;
-            membership.AssignedAt = now;
-            membership.UnassignedAt = null;
+            activeMembership.IsActive = false;
+            activeMembership.UnassignedAt = now;
         }
+
+        store.AddSalesGroupMembership(new SalesGroupMember
+        {
+            Id = Guid.NewGuid(),
+            UserAccountId = userId,
+            SalesGroupId = salesGroupId,
+            AssignedAt = now,
+            IsActive = true
+        });
 
         await store.SaveChangesAsync(cancellationToken);
     }

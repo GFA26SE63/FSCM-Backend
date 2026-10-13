@@ -12,6 +12,8 @@ public sealed class GoodsReceiptConfiguration : IEntityTypeConfiguration<GoodsRe
         builder.HasKey(entity => entity.Id);
         builder.Property(entity => entity.Id).HasColumnType("uuid").IsRequired();
         builder.Property(entity => entity.ReceiptCode).HasMaxLength(40).IsRequired();
+        builder.Property(entity => entity.IdempotencyKey).HasMaxLength(150).IsRequired(false);
+        builder.Property(entity => entity.RequestHash).HasMaxLength(64).IsRequired(false);
         builder.Property(entity => entity.WarehouseId).HasColumnType("uuid").IsRequired();
         builder.Property(entity => entity.CreatedByUserId).HasColumnType("uuid").IsRequired();
         builder.Property(entity => entity.ApprovedByUserId).HasColumnType("uuid").IsRequired(false);
@@ -22,6 +24,7 @@ public sealed class GoodsReceiptConfiguration : IEntityTypeConfiguration<GoodsRe
         builder.Property(entity => entity.CreatedAt).HasColumnType("timestamp with time zone").IsRequired();
         builder.Property(entity => entity.UpdatedAt).HasColumnType("timestamp with time zone").IsRequired();
         builder.HasIndex(entity => entity.ReceiptCode).IsUnique();
+        builder.HasIndex(entity => entity.IdempotencyKey).IsUnique().HasFilter("\"IdempotencyKey\" IS NOT NULL");
         builder.HasOne<Warehouse>()
             .WithMany()
             .HasForeignKey(entity => entity.WarehouseId)

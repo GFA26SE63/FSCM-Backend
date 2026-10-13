@@ -13,12 +13,14 @@ public sealed class PhysicalSchemaModelTests
         "BATCH",
         "BATCH_PROMOTION",
         "BATCH_QR_LABEL",
+        "BUSINESS_DOCUMENT_SEQUENCE",
         "DELIVERY",
         "DRIVER",
         "GOODS_RECEIPT",
         "GOODS_RECEIPT_LINE",
         "IDEMPOTENCY_KEY",
         "INVENTORY_BALANCE",
+        "INVENTORY_TRANSACTION",
         "LOYALTY_PROGRAM",
         "LOYALTY_REWARD",
         "LOYALTY_TRANSACTION",
@@ -37,6 +39,7 @@ public sealed class PhysicalSchemaModelTests
         "PROMOTION_CATEGORY",
         "PROMOTION_PRODUCT",
         "PROMOTION_RETAILER",
+        "QR_LABEL_EVENT",
         "RECEIPT_CONFIRMATION",
         "RECEIPT_CONFIRMATION_ITEM",
         "RECEIPT_DISCREPANCY",
@@ -61,7 +64,9 @@ public sealed class PhysicalSchemaModelTests
         "VEHICLE",
         "WAREHOUSE",
         "WAREHOUSE_TRANSFER",
+        "WAREHOUSE_TRANSFER_EVENT",
         "WAREHOUSE_TRANSFER_ITEM",
+        "WAREHOUSE_TRANSFER_LABEL",
         "WRITE_OFF",
         "WRITE_OFF_ATTACHMENT",
         "WRITE_OFF_ITEM"
@@ -81,9 +86,9 @@ public sealed class PhysicalSchemaModelTests
             .ToArray();
 
         Assert.Equal(ExpectedTables, tableNames);
-        Assert.Equal(57, entityTypes.Length);
-        Assert.Equal(515, entityTypes.Sum(entityType => entityType.GetProperties().Count()));
-        Assert.Equal(116, entityTypes.Sum(entityType => entityType.GetForeignKeys().Count()));
+        Assert.Equal(62, entityTypes.Length);
+        Assert.Equal(578, entityTypes.Sum(entityType => entityType.GetProperties().Count()));
+        Assert.Equal(132, entityTypes.Sum(entityType => entityType.GetForeignKeys().Count()));
         Assert.All(
             entityTypes.SelectMany(entityType => entityType.GetForeignKeys()),
             foreignKey => Assert.Equal(DeleteBehavior.Restrict, foreignKey.DeleteBehavior));
@@ -132,6 +137,85 @@ public sealed class PhysicalSchemaModelTests
         var auditLog = context.Model.FindEntityType(typeof(AuditLog));
         Assert.Equal("jsonb", auditLog!.FindProperty(nameof(AuditLog.OldValues))!.GetColumnType());
         Assert.Equal("jsonb", auditLog.FindProperty(nameof(AuditLog.NewValues))!.GetColumnType());
+    }
+
+    [Fact]
+    public void Model_enforces_current_territory_assignments_and_order_creator_snapshot()
+    {
+        using var context = CreateContext();
+
+        var membership = context.Model.FindEntityType(typeof(SalesGroupMember))!;
+        var memberUserId = membership.FindProperty(nameof(SalesGroupMember.UserAccountId))!;
+        var memberIndex = membership.GetIndexes().Single(index => index.Properties.SequenceEqual([memberUserId]));
+        Assert.True(memberIndex.IsUnique);
+        Assert.Equal("\"IsActive\" = TRUE", memberIndex.GetFilter());
+
+        var retailerAssignment = context.Model.FindEntityType(typeof(RetailerSalesAssignment))!;
+        var retailerId = retailerAssignment.FindProperty(nameof(RetailerSalesAssignment.RetailerId))!;
+        var retailerIndex = retailerAssignment.GetIndexes().Single(index => index.Properties.SequenceEqual([retailerId]));
+        Assert.True(retailerIndex.IsUnique);
+        Assert.Equal("\"IsActive\" = TRUE", retailerIndex.GetFilter());
+
+        var order = context.Model.FindEntityType(typeof(SalesOrder))!;
+        Assert.False(order.FindProperty(nameof(SalesOrder.CreatedByUserId))!.IsNullable);
+        Assert.False(order.FindProperty(nameof(SalesOrder.SalesGroupId))!.IsNullable);
+    }
+
+    [Fact]
+    public void Model_contains_retailer_evaluation_and_payment_term_fields()
+    {
+        using var context = CreateContext();
+        var retailer = context.Model.FindEntityType(typeof(Retailer))!;
+
+        Assert.False(retailer.FindProperty(nameof(Retailer.RetailerType))!.IsNullable);
+        Assert.False(retailer.FindProperty(nameof(Retailer.StoreSizeCategory))!.IsNullable);
+        Assert.False(retailer.FindProperty(nameof(Retailer.PurchaseFrequencyPerMonth))!.IsNullable);
+        Assert.False(retailer.FindProperty(nameof(Retailer.CreditTermDays))!.IsNullable);
+    }
+
+    [Fact]
+    public void Model_uses_date_only_expiry_and_optimistic_inventory_versions()
+    {
+        using var context = CreateContext();
+        var batch = context.Model.FindEntityType(typeof(Batch))!;
+        var balance = context.Model.FindEntityType(typeof(InventoryBalance))!;
+        var receiptLine = context.Model.FindEntityType(typeof(GoodsReceiptLine))!;
+
+        Assert.Equal("date", batch.FindProperty(nameof(Batch.ExpirationDate))!.GetColumnType());
+        Assert.Equal("date", receiptLine.FindProperty(nameof(GoodsReceiptLine.ExpirationDate))!.GetColumnType());
+        Assert.True(batch.FindProperty(nameof(Batch.Version))!.IsConcurrencyToken);
+        Assert.True(balance.FindProperty(nameof(InventoryBalance.Version))!.IsConcurrencyToken);
+    }
+
+    [Fact]
+    public void Model_enforces_qr_lineage_and_duplicate_operation_protection()
+    {
+        using var context = CreateContext();
+        var label = context.Model.FindEntityType(typeof(BatchQrLabel))!;
+        var labelEvent = context.Model.FindEntityType(typeof(QrLabelEvent))!;
+
+        Assert.True(label.FindProperty(nameof(BatchQrLabel.Version))!.IsConcurrencyToken);
+        Assert.False(label.FindProperty(nameof(BatchQrLabel.CurrentWarehouseId))!.IsNullable);
+        Assert.NotNull(label.FindProperty(nameof(BatchQrLabel.ParentLabelId)));
+        Assert.NotNull(label.FindProperty(nameof(BatchQrLabel.RootLabelId)));
+        var operationKey = labelEvent.FindProperty(nameof(QrLabelEvent.OperationKey))!;
+        Assert.True(labelEvent.GetIndexes().Single(index => index.Properties.SequenceEqual([operationKey])).IsUnique);
+    }
+
+    [Fact]
+    public void Model_enforces_transfer_concurrency_idempotency_and_label_binding()
+    {
+        using var context = CreateContext();
+        var transfer = context.Model.FindEntityType(typeof(WarehouseTransfer))!;
+        var transferEvent = context.Model.FindEntityType(typeof(WarehouseTransferEvent))!;
+        var transferLabel = context.Model.FindEntityType(typeof(WarehouseTransferLabel))!;
+
+        Assert.True(transfer.FindProperty(nameof(WarehouseTransfer.Version))!.IsConcurrencyToken);
+        var operationKey = transferEvent.FindProperty(nameof(WarehouseTransferEvent.OperationKey))!;
+        Assert.True(transferEvent.GetIndexes().Single(index => index.Properties.SequenceEqual([operationKey])).IsUnique);
+        var itemId = transferLabel.FindProperty(nameof(WarehouseTransferLabel.WarehouseTransferItemId))!;
+        var labelId = transferLabel.FindProperty(nameof(WarehouseTransferLabel.BatchQrLabelId))!;
+        Assert.True(transferLabel.GetIndexes().Single(index => index.Properties.SequenceEqual([itemId, labelId])).IsUnique);
     }
 
     private static AppDbContext CreateContext()
