@@ -10,9 +10,9 @@ Thumbs.db
 *.sln.docstates
 
 # .NET build and test output
-bin/
-obj/
-TestResults/
+[Bb]in/
+[Oo]bj/
+[Tt]est[Rr]esults/
 coverage/
 *.trx
 *.coverage
@@ -20,19 +20,12 @@ coverage/
 *.nupkg
 packages/
 
-# Runtime configuration and secrets
-appsettings.json
-appsettings.*.json
-!**/appsettings.example.json
+# Local runtime configuration
+appsettings.*.local.json
 *.local.env
 local.settings.json
 secrets.json
 *.secrets.json
-*.secret.json
-*.pem
-*.key
-*.pfx
-*.cer
 
 # Logs and temporary files
 logs/

@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <UserSecretsId>fscm-api-gfa26se63</UserSecretsId>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);1591</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\BuildingBlocks\FSCM.BuildingBlocks.Infrastructure\FSCM.BuildingBlocks.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\Modules\Identity\FSCM.Modules.Identity.Infrastructure\FSCM.Modules.Identity.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\Modules\Catalog\FSCM.Modules.Catalog.Infrastructure\FSCM.Modules.Catalog.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\Modules\Partners\FSCM.Modules.Partners.Infrastructure\FSCM.Modules.Partners.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\Modules\Logistics\FSCM.Modules.Logistics.Infrastructure\FSCM.Modules.Logistics.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\Modules\Inventory\FSCM.Modules.Inventory.Infrastructure\FSCM.Modules.Inventory.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\Modules\Ordering\FSCM.Modules.Ordering.Infrastructure\FSCM.Modules.Ordering.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\Modules\Pricing\FSCM.Modules.Pricing.Infrastructure\FSCM.Modules.Pricing.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\Modules\Finance\FSCM.Modules.Finance.Infrastructure\FSCM.Modules.Finance.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\Modules\Loyalty\FSCM.Modules.Loyalty.Infrastructure\FSCM.Modules.Loyalty.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\Modules\Performance\FSCM.Modules.Performance.Infrastructure\FSCM.Modules.Performance.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\Modules\Notifications\FSCM.Modules.Notifications.Infrastructure\FSCM.Modules.Notifications.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\Modules\Identity\FSCM.Modules.Identity.Api\FSCM.Modules.Identity.Api.csproj" />
+    <ProjectReference Include="..\..\Modules\Catalog\FSCM.Modules.Catalog.Api\FSCM.Modules.Catalog.Api.csproj" />
+    <ProjectReference Include="..\..\Modules\Partners\FSCM.Modules.Partners.Api\FSCM.Modules.Partners.Api.csproj" />
+    <ProjectReference Include="..\..\Modules\Logistics\FSCM.Modules.Logistics.Api\FSCM.Modules.Logistics.Api.csproj" />
+    <ProjectReference Include="..\..\Modules\Inventory\FSCM.Modules.Inventory.Api\FSCM.Modules.Inventory.Api.csproj" />
+    <ProjectReference Include="..\..\Modules\Ordering\FSCM.Modules.Ordering.Api\FSCM.Modules.Ordering.Api.csproj" />
+    <ProjectReference Include="..\..\Modules\Pricing\FSCM.Modules.Pricing.Api\FSCM.Modules.Pricing.Api.csproj" />
+    <ProjectReference Include="..\..\Modules\Finance\FSCM.Modules.Finance.Api\FSCM.Modules.Finance.Api.csproj" />
+    <ProjectReference Include="..\..\Modules\Loyalty\FSCM.Modules.Loyalty.Api\FSCM.Modules.Loyalty.Api.csproj" />
+    <ProjectReference Include="..\..\Modules\Performance\FSCM.Modules.Performance.Api\FSCM.Modules.Performance.Api.csproj" />
+    <ProjectReference Include="..\..\Modules\Notifications\FSCM.Modules.Notifications.Api\FSCM.Modules.Notifications.Api.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Identity.Web" />
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" />
+    <PackageReference Include="Swashbuckle.AspNetCore" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" PrivateAssets="all" />
+  </ItemGroup>
+</Project>

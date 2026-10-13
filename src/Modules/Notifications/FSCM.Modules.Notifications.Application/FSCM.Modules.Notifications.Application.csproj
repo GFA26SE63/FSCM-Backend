@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="..\FSCM.Modules.Notifications.Domain\FSCM.Modules.Notifications.Domain.csproj" />
+    <ProjectReference Include="..\FSCM.Modules.Notifications.Contracts\FSCM.Modules.Notifications.Contracts.csproj" />
+    <ProjectReference Include="..\..\..\BuildingBlocks\FSCM.BuildingBlocks.Application\FSCM.BuildingBlocks.Application.csproj" />
+    <ProjectReference Include="..\..\Identity\FSCM.Modules.Identity.Contracts\FSCM.Modules.Identity.Contracts.csproj" />
+    <ProjectReference Include="..\..\Ordering\FSCM.Modules.Ordering.Contracts\FSCM.Modules.Ordering.Contracts.csproj" />
+    <ProjectReference Include="..\..\Finance\FSCM.Modules.Finance.Contracts\FSCM.Modules.Finance.Contracts.csproj" />
+    <ProjectReference Include="..\..\Inventory\FSCM.Modules.Inventory.Contracts\FSCM.Modules.Inventory.Contracts.csproj" />
+    <ProjectReference Include="..\..\Loyalty\FSCM.Modules.Loyalty.Contracts\FSCM.Modules.Loyalty.Contracts.csproj" />
+    <ProjectReference Include="..\..\Partners\FSCM.Modules.Partners.Contracts\FSCM.Modules.Partners.Contracts.csproj" />
+  </ItemGroup>
+</Project>

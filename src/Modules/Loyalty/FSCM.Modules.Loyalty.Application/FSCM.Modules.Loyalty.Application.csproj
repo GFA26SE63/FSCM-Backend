@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="..\FSCM.Modules.Loyalty.Domain\FSCM.Modules.Loyalty.Domain.csproj" />
+    <ProjectReference Include="..\FSCM.Modules.Loyalty.Contracts\FSCM.Modules.Loyalty.Contracts.csproj" />
+    <ProjectReference Include="..\..\..\BuildingBlocks\FSCM.BuildingBlocks.Application\FSCM.BuildingBlocks.Application.csproj" />
+    <ProjectReference Include="..\..\Ordering\FSCM.Modules.Ordering.Contracts\FSCM.Modules.Ordering.Contracts.csproj" />
+    <ProjectReference Include="..\..\Finance\FSCM.Modules.Finance.Contracts\FSCM.Modules.Finance.Contracts.csproj" />
+  </ItemGroup>
+</Project>
