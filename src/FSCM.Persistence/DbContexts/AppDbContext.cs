@@ -26,6 +26,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<GoodsReceiptLine> GoodsReceiptLineRecords => Set<GoodsReceiptLine>();
     public DbSet<Batch> BatchRecords => Set<Batch>();
     public DbSet<BatchQrLabel> BatchQrLabelRecords => Set<BatchQrLabel>();
+    public DbSet<QrLabelEvent> QrLabelEventRecords => Set<QrLabelEvent>();
     public DbSet<InventoryBalance> InventoryBalanceRecords => Set<InventoryBalance>();
     public DbSet<InventoryTransaction> InventoryTransactionRecords => Set<InventoryTransaction>();
     public DbSet<BusinessDocumentSequence> BusinessDocumentSequenceRecords => Set<BusinessDocumentSequence>();
@@ -74,6 +75,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
         base.OnModelCreating(modelBuilder);
         modelBuilder.HasSequence<long>("RetailerDeclarationCodeSequence").StartsAt(100);
         modelBuilder.HasSequence<long>("RetailerBusinessCodeSequence").StartsAt(10005000);
+        modelBuilder.HasSequence<long>("QrLabelCodeSequence").StartsAt(1000);
         modelBuilder.ApplyConfigurationsFromAssembly(typeof(AppDbContext).Assembly);
     }
 }

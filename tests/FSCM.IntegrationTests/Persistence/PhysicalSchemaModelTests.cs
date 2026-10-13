@@ -39,6 +39,7 @@ public sealed class PhysicalSchemaModelTests
         "PROMOTION_CATEGORY",
         "PROMOTION_PRODUCT",
         "PROMOTION_RETAILER",
+        "QR_LABEL_EVENT",
         "RECEIPT_CONFIRMATION",
         "RECEIPT_CONFIRMATION_ITEM",
         "RECEIPT_DISCREPANCY",
@@ -83,9 +84,9 @@ public sealed class PhysicalSchemaModelTests
             .ToArray();
 
         Assert.Equal(ExpectedTables, tableNames);
-        Assert.Equal(59, entityTypes.Length);
-        Assert.Equal(545, entityTypes.Sum(entityType => entityType.GetProperties().Count()));
-        Assert.Equal(122, entityTypes.Sum(entityType => entityType.GetForeignKeys().Count()));
+        Assert.Equal(60, entityTypes.Length);
+        Assert.Equal(562, entityTypes.Sum(entityType => entityType.GetProperties().Count()));
+        Assert.Equal(128, entityTypes.Sum(entityType => entityType.GetForeignKeys().Count()));
         Assert.All(
             entityTypes.SelectMany(entityType => entityType.GetForeignKeys()),
             foreignKey => Assert.Equal(DeleteBehavior.Restrict, foreignKey.DeleteBehavior));
@@ -182,6 +183,21 @@ public sealed class PhysicalSchemaModelTests
         Assert.Equal("date", receiptLine.FindProperty(nameof(GoodsReceiptLine.ExpirationDate))!.GetColumnType());
         Assert.True(batch.FindProperty(nameof(Batch.Version))!.IsConcurrencyToken);
         Assert.True(balance.FindProperty(nameof(InventoryBalance.Version))!.IsConcurrencyToken);
+    }
+
+    [Fact]
+    public void Model_enforces_qr_lineage_and_duplicate_operation_protection()
+    {
+        using var context = CreateContext();
+        var label = context.Model.FindEntityType(typeof(BatchQrLabel))!;
+        var labelEvent = context.Model.FindEntityType(typeof(QrLabelEvent))!;
+
+        Assert.True(label.FindProperty(nameof(BatchQrLabel.Version))!.IsConcurrencyToken);
+        Assert.False(label.FindProperty(nameof(BatchQrLabel.CurrentWarehouseId))!.IsNullable);
+        Assert.NotNull(label.FindProperty(nameof(BatchQrLabel.ParentLabelId)));
+        Assert.NotNull(label.FindProperty(nameof(BatchQrLabel.RootLabelId)));
+        var operationKey = labelEvent.FindProperty(nameof(QrLabelEvent.OperationKey))!;
+        Assert.True(labelEvent.GetIndexes().Single(index => index.Properties.SequenceEqual([operationKey])).IsUnique);
     }
 
     private static AppDbContext CreateContext()

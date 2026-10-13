@@ -1,6 +1,7 @@
 using FSCM.Application.Features.Identity;
 using FSCM.Application.Features.Inventory;
 using FSCM.Application.Features.Retailers;
+using FSCM.Application.Features.QrLabels;
 using FSCM.Application.Features.WarehouseConfiguration;
 using FSCM.Domain.Authorization;
 using FSCM.Domain.Entities;
@@ -55,6 +56,8 @@ public sealed class DevelopmentDataSeeder(
         await SeedWarehouseAssignmentsAsync(users, warehouse.Id, now, cancellationToken);
         await dbContext.SaveChangesAsync(cancellationToken);
         await SeedInventoryDataAsync(configuredWarehouses, products, users[SystemRoles.WarehouseKeeper].Id, now, cancellationToken);
+        await dbContext.SaveChangesAsync(cancellationToken);
+        await SeedQrLabelDataAsync(users[SystemRoles.WarehouseKeeper].Id, now, cancellationToken);
         await SeedSalesGroupMembershipsAsync(users, salesGroups, now, cancellationToken);
         await SeedRetailerAssignmentsAsync(retailer.Id, salesGroups, now, cancellationToken);
         await SeedAdditionalRetailersAsync(regions, salesGroups, users, now, cancellationToken);
@@ -69,6 +72,97 @@ public sealed class DevelopmentDataSeeder(
             regions.Count,
             salesGroups.Count,
             DemoRetailerCode);
+    }
+
+    private async Task SeedQrLabelDataAsync(Guid warehouseKeeperId, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        var definitions = new[]
+        {
+            new QrLabelSeed("TEM-000204", "WH-HCM-01-SKU001-30042027", 300m, null, QrLabelStatuses.Available, "Tem gốc cho lô sữa tiệt trùng"),
+            new QrLabelSeed("TEM-000205", "WH-HCM-01-SKU001-30042027", 100m, "TEM-000204", QrLabelStatuses.Available, "Tem con tách từ tem TEM-000204"),
+            new QrLabelSeed("TEM-000206", "WH-TD-SKU002-20102026", 80m, null, QrLabelStatuses.Available, "Tem cho lô sữa chua gần hạn"),
+            new QrLabelSeed("TEM-000207", "WH-Q7-SKU003-10102026", 20m, null, QrLabelStatuses.Invalidated, "Tem lô thực phẩm hết hạn đã vô hiệu hóa")
+        };
+        var labels = new Dictionary<string, BatchQrLabel>(StringComparer.Ordinal);
+        foreach (var definition in definitions.Where(item => item.ParentQrCode is null))
+            labels[definition.QrCode] = await UpsertQrLabelAsync(definition, null, null, now, cancellationToken);
+        foreach (var definition in definitions.Where(item => item.ParentQrCode is not null))
+        {
+            var parent = labels[definition.ParentQrCode!];
+            labels[definition.QrCode] = await UpsertQrLabelAsync(definition, parent.Id, parent.RootLabelId ?? parent.Id, now, cancellationToken);
+        }
+        await dbContext.SaveChangesAsync(cancellationToken);
+
+        foreach (var definition in definitions)
+        {
+            var label = labels[definition.QrCode];
+            var eventType = definition.ParentQrCode is not null ? QrLabelEventTypes.Split : QrLabelEventTypes.Generated;
+            var operationKey = $"du-lieu-mau-{definition.QrCode.ToLowerInvariant()}-{eventType.ToLowerInvariant()}";
+            var labelEvent = await dbContext.QrLabelEventRecords.SingleOrDefaultAsync(
+                item => item.OperationKey == operationKey, cancellationToken);
+            if (labelEvent is null)
+            {
+                labelEvent = new QrLabelEvent { Id = Guid.NewGuid(), OperationKey = operationKey };
+                dbContext.QrLabelEventRecords.Add(labelEvent);
+            }
+            labelEvent.BatchQrLabelId = label.Id;
+            labelEvent.WarehouseId = label.CurrentWarehouseId;
+            labelEvent.PerformedByUserId = warehouseKeeperId;
+            labelEvent.EventType = eventType;
+            labelEvent.FromStatus = definition.ParentQrCode is null ? string.Empty : QrLabelStatuses.Available;
+            labelEvent.ToStatus = QrLabelStatuses.Available;
+            labelEvent.Quantity = definition.ParentQrCode is null
+                ? labels.Values.Where(item => item.RootLabelId == label.Id).Sum(item => item.Quantity)
+                : label.Quantity;
+            labelEvent.ReferenceCode = definition.ParentQrCode;
+            labelEvent.Note = definition.Note;
+            labelEvent.OccurredAt = now.AddDays(-20);
+            if (definition.Status == QrLabelStatuses.Invalidated)
+            {
+                var invalidationKey = $"du-lieu-mau-{definition.QrCode.ToLowerInvariant()}-vo-hieu-hoa";
+                var invalidation = await dbContext.QrLabelEventRecords.SingleOrDefaultAsync(
+                    item => item.OperationKey == invalidationKey, cancellationToken);
+                if (invalidation is null)
+                {
+                    invalidation = new QrLabelEvent { Id = Guid.NewGuid(), OperationKey = invalidationKey };
+                    dbContext.QrLabelEventRecords.Add(invalidation);
+                }
+                invalidation.BatchQrLabelId = label.Id;
+                invalidation.WarehouseId = label.CurrentWarehouseId;
+                invalidation.PerformedByUserId = warehouseKeeperId;
+                invalidation.EventType = QrLabelEventTypes.Invalidated;
+                invalidation.FromStatus = QrLabelStatuses.Available;
+                invalidation.ToStatus = QrLabelStatuses.Invalidated;
+                invalidation.Quantity = label.Quantity;
+                invalidation.Note = "Vô hiệu hóa tem vì lô hàng đã hết hạn";
+                invalidation.OccurredAt = now.AddDays(-1);
+            }
+        }
+        await dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    private async Task<BatchQrLabel> UpsertQrLabelAsync(
+        QrLabelSeed definition, Guid? parentId, Guid? rootId, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        var batch = await dbContext.BatchRecords.SingleAsync(item => item.BatchCode == definition.BatchCode, cancellationToken);
+        var label = await dbContext.BatchQrLabelRecords.SingleOrDefaultAsync(item => item.QrCode == definition.QrCode, cancellationToken);
+        if (label is null)
+        {
+            var id = Guid.NewGuid();
+            label = new BatchQrLabel { Id = id, QrCode = definition.QrCode, GeneratedAt = now.AddDays(-20) };
+            dbContext.BatchQrLabelRecords.Add(label);
+        }
+        label.BatchId = batch.Id;
+        label.CurrentWarehouseId = batch.WarehouseId;
+        label.ParentLabelId = parentId;
+        label.RootLabelId = rootId ?? label.Id;
+        label.Quantity = definition.Quantity;
+        label.Status = definition.Status;
+        label.Version = Math.Max(label.Version, 1);
+        label.UpdatedAt = now;
+        label.InvalidatedAt = definition.Status == QrLabelStatuses.Invalidated ? now.AddDays(-1) : null;
+        await dbContext.SaveChangesAsync(cancellationToken);
+        return label;
     }
 
     private async Task<Dictionary<string, ProductCategory>> SeedCategoriesAsync(
@@ -966,6 +1060,10 @@ public sealed class DevelopmentDataSeeder(
     private sealed record InventorySeed(
         string ReceiptCode, string WarehouseCode, string Sku, DateOnly ExpirationDate,
         decimal OnHand, decimal Held, decimal Reserved, string SourceLotCode, string ExpiryStatus);
+
+    private sealed record QrLabelSeed(
+        string QrCode, string BatchCode, decimal Quantity, string? ParentQrCode,
+        string Status, string Note);
 
     private sealed record ConfigurationSeed(
         string Key,
