@@ -16,6 +16,8 @@ public interface IWarehouseConfigurationStore
     void AddLocation(MapLocation location);
 
     Task<IReadOnlyCollection<TransitTimeRule>> ListTransitRulesAsync(Guid warehouseId, bool includeInactive, CancellationToken cancellationToken);
+    Task<IReadOnlyCollection<TransitTimeRule>> ListTransitRulesAsync(
+        IReadOnlyCollection<Guid> warehouseIds, bool includeInactive, CancellationToken cancellationToken);
     void AddTransitRules(IEnumerable<TransitTimeRule> rules);
 
     Task<IReadOnlyCollection<MlorView>> ListMlorAsync(Guid? retailerId, Guid? productId, bool includeInactive, CancellationToken cancellationToken);

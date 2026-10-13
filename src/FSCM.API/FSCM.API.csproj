@@ -10,6 +10,11 @@
   <ItemGroup>
     <PackageReference Include="HotChocolate.AspNetCore" Version="16.5.1" />
     <PackageReference Include="HotChocolate.AspNetCore.Authorization" Version="16.5.1" />
+    <PackageReference Include="HotChocolate.Data" Version="16.5.1" />
+    <PackageReference Include="HotChocolate.Types.Analyzers" Version="16.5.1">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.10" />
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.10" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.10">

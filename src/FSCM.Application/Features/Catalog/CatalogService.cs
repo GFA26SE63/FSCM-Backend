@@ -144,6 +144,18 @@ public sealed partial class CatalogService(ICatalogStore store, TimeProvider tim
             totalCount);
     }
 
+    public async Task<IReadOnlyCollection<ProductResult>> ListProductsForQueryAsync(
+        string? search,
+        Guid? categoryId,
+        string? status,
+        CancellationToken cancellationToken)
+    {
+        var normalized = NormalizeSearch(new ProductSearch(search, categoryId, status, 1, MaximumPageSize));
+        var items = await store.ListProductsForQueryAsync(
+            new ProductQuery(normalized.Search, normalized.CategoryId, normalized.Status), cancellationToken);
+        return items.Select(ToResult).ToArray();
+    }
+
     public async Task<ProductResult> GetProductAsync(Guid productId, CancellationToken cancellationToken)
     {
         var product = await store.FindProductViewAsync(productId, cancellationToken)
@@ -352,6 +364,15 @@ public sealed partial class CatalogService(ICatalogStore store, TimeProvider tim
         await RequireProductAsync(productId, cancellationToken);
         var prices = await store.ListPricesAsync(productId, cancellationToken);
         return prices.Select(ToResult).ToArray();
+    }
+
+    public async Task<Dictionary<Guid, ProductPriceResult[]>> ListPriceHistoryByProductIdsAsync(
+        IReadOnlyCollection<Guid> productIds,
+        CancellationToken cancellationToken)
+    {
+        var prices = await store.ListPricesAsync(productIds.Distinct().ToArray(), cancellationToken);
+        return prices.GroupBy(price => price.ProductId)
+            .ToDictionary(group => group.Key, group => group.Select(ToResult).ToArray());
     }
 
     public async Task<ProductPriceSuggestion> GetPriceSuggestionAsync(

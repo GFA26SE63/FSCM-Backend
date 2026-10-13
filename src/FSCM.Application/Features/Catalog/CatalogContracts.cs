@@ -63,6 +63,11 @@ public sealed record ProductSearch(
     int Page,
     int PageSize);
 
+public sealed record ProductQuery(
+    string? Search,
+    Guid? CategoryId,
+    string? Status);
+
 public sealed record CreateProductData(
     Guid ProductCategoryId,
     string Sku,

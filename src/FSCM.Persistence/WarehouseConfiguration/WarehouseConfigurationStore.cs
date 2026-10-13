@@ -38,6 +38,16 @@ public sealed class WarehouseConfigurationStore(AppDbContext dbContext) : IWareh
         return await query.OrderBy(item => item.MinDistanceMeters).ThenByDescending(item => item.CreatedAt).ToArrayAsync(cancellationToken);
     }
 
+    public async Task<IReadOnlyCollection<TransitTimeRule>> ListTransitRulesAsync(
+        IReadOnlyCollection<Guid> warehouseIds, bool includeInactive, CancellationToken cancellationToken)
+    {
+        var query = dbContext.TransitTimeRuleRecords.AsNoTracking()
+            .Where(item => warehouseIds.Contains(item.WarehouseId));
+        if (!includeInactive) query = query.Where(item => item.IsActive);
+        return await query.OrderBy(item => item.WarehouseId)
+            .ThenBy(item => item.MinDistanceMeters).ToArrayAsync(cancellationToken);
+    }
+
     public void AddTransitRules(IEnumerable<TransitTimeRule> rules) => dbContext.TransitTimeRuleRecords.AddRange(rules);
 
     public async Task<IReadOnlyCollection<MlorView>> ListMlorAsync(
