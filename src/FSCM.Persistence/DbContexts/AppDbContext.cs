@@ -63,6 +63,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<SalesOrderAttachment> SalesOrderAttachmentRecords => Set<SalesOrderAttachment>();
     public DbSet<WarehouseTransfer> WarehouseTransferRecords => Set<WarehouseTransfer>();
     public DbSet<WarehouseTransferItem> WarehouseTransferItemRecords => Set<WarehouseTransferItem>();
+    public DbSet<WarehouseTransferEvent> WarehouseTransferEventRecords => Set<WarehouseTransferEvent>();
+    public DbSet<WarehouseTransferLabel> WarehouseTransferLabelRecords => Set<WarehouseTransferLabel>();
     public DbSet<LoyaltyProgram> LoyaltyProgramRecords => Set<LoyaltyProgram>();
     public DbSet<LoyaltyReward> LoyaltyRewardRecords => Set<LoyaltyReward>();
     public DbSet<RewardRedemption> RewardRedemptionRecords => Set<RewardRedemption>();
