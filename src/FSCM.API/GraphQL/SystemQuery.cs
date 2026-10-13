@@ -4,6 +4,7 @@ using FSCM.Application.Features.Identity;
 using FSCM.Application.Features.InternalTransfers;
 using FSCM.Application.Features.Inventory;
 using FSCM.Application.Features.QrLabels;
+using FSCM.Application.Features.Promotions;
 using FSCM.Application.Features.Retailers;
 using FSCM.Application.Features.Territory;
 using FSCM.Application.Features.WarehouseConfiguration;
@@ -251,6 +252,40 @@ public sealed class SystemQuery
         var user = CurrentUser.From(accessor);
         return service.GetAsync(id, user.Id, user.Role, cancellationToken);
     }
+
+    [Authorize, UsePaging(DefaultPageSize = 20, MaxPageSize = 100, IncludeTotalCount = true, RequirePagingBoundaries = true), UseFiltering, UseSorting]
+    public async Task<IEnumerable<PromotionResult>> Promotions(
+        [DefaultValue(false)] bool includeInactive, [Service] PromotionService service,
+        CancellationToken cancellationToken) =>
+        await service.ListAsync(includeInactive, cancellationToken);
+
+    [Authorize]
+    public Task<PromotionResult> Promotion(Guid id, [Service] PromotionService service,
+        CancellationToken cancellationToken) => service.GetAsync(id, cancellationToken);
+
+    [Authorize(Roles = [SystemRoles.Admin])]
+    [UsePaging(DefaultPageSize = 20, MaxPageSize = 100, IncludeTotalCount = true, RequirePagingBoundaries = true), UseFiltering, UseSorting]
+    public async Task<IEnumerable<BatchDiscountSuggestionResult>> BatchDiscountSuggestions(
+        Guid? warehouseId, Guid? productId, [Service] PromotionService service,
+        CancellationToken cancellationToken) =>
+        await service.ListBatchSuggestionsAsync(warehouseId, productId, cancellationToken);
+
+    [Authorize, UsePaging(DefaultPageSize = 20, MaxPageSize = 100, IncludeTotalCount = true, RequirePagingBoundaries = true), UseFiltering, UseSorting]
+    public async Task<IEnumerable<BatchDiscountResult>> BatchDiscounts(
+        Guid? warehouseId, Guid? productId, [DefaultValue(false)] bool includeInactive,
+        [Service] PromotionService service, CancellationToken cancellationToken) =>
+        await service.ListBatchDiscountsAsync(warehouseId, productId, includeInactive, cancellationToken);
+
+    [Authorize]
+    public Task<BatchDiscountResult> BatchDiscount(Guid id, [Service] PromotionService service,
+        CancellationToken cancellationToken) => service.GetBatchDiscountAsync(id, cancellationToken);
+
+    [Authorize]
+    public Task<PriceSnapshotResult> PriceSnapshot(
+        Guid productId, decimal quantity, Guid? batchId, Guid? retailerId,
+        DateTimeOffset? at, [Service] PromotionService service,
+        CancellationToken cancellationToken) =>
+        service.CalculatePriceAsync(productId, quantity, batchId, retailerId, at, cancellationToken);
 }
 
 internal static class CurrentUser

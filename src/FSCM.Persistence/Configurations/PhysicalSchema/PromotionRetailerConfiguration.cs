@@ -13,6 +13,7 @@ public sealed class PromotionRetailerConfiguration : IEntityTypeConfiguration<Pr
         builder.Property(entity => entity.Id).HasColumnType("uuid").IsRequired();
         builder.Property(entity => entity.PromotionId).HasColumnType("uuid").IsRequired();
         builder.Property(entity => entity.RetailerId).HasColumnType("uuid").IsRequired();
+        builder.HasIndex(entity => new { entity.PromotionId, entity.RetailerId }).IsUnique();
         builder.HasOne<Promotion>()
             .WithMany()
             .HasForeignKey(entity => entity.PromotionId)

@@ -5,6 +5,7 @@ using FSCM.Application.Features.Inventory;
 using FSCM.Application.Features.InternalTransfers;
 using FSCM.Application.Features.Retailers;
 using FSCM.Application.Features.QrLabels;
+using FSCM.Application.Features.Promotions;
 using FSCM.Application.Features.Territory;
 using FSCM.Application.Features.WarehouseConfiguration;
 using Microsoft.Extensions.DependencyInjection;
@@ -23,6 +24,7 @@ public static class DependencyInjection
         services.AddScoped<InventoryService>();
         services.AddScoped<InternalTransferService>();
         services.AddScoped<QrLabelService>();
+        services.AddScoped<PromotionService>();
         services.AddScoped<RetailerService>();
         services.AddScoped<TerritoryService>();
         services.AddScoped<WarehouseConfigurationService>();
