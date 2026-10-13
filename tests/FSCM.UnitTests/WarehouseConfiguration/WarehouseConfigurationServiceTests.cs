@@ -176,6 +176,8 @@ public sealed class WarehouseConfigurationServiceTests
         public void AddLocation(MapLocation item) => Locations.Add(item);
         public Task<IReadOnlyCollection<TransitTimeRule>> ListTransitRulesAsync(Guid id, bool includeInactive, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyCollection<TransitTimeRule>>(TransitRules.Where(item => item.WarehouseId == id && (includeInactive || item.IsActive)).ToArray());
+        public Task<IReadOnlyCollection<TransitTimeRule>> ListTransitRulesAsync(IReadOnlyCollection<Guid> ids, bool includeInactive, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyCollection<TransitTimeRule>>(TransitRules.Where(item => ids.Contains(item.WarehouseId) && (includeInactive || item.IsActive)).ToArray());
         public void AddTransitRules(IEnumerable<TransitTimeRule> items) => TransitRules.AddRange(items);
         public Task<IReadOnlyCollection<MlorView>> ListMlorAsync(Guid? retailerId, Guid? productId, bool includeInactive, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyCollection<MlorView>>(Mlors.Where(item => (!retailerId.HasValue || item.RetailerId == retailerId) && (!productId.HasValue || item.ProductId == productId) && (includeInactive || item.IsActive)).Select(item =>

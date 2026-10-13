@@ -75,6 +75,16 @@ public sealed class CatalogStore(AppDbContext dbContext) : ICatalogStore
         return (records.Select(ToProductView).ToArray(), totalCount);
     }
 
+    public async Task<IReadOnlyCollection<ProductView>> ListProductsForQueryAsync(
+        ProductQuery filter,
+        CancellationToken cancellationToken)
+    {
+        var query = ApplyProductFilter(dbContext.ProductRecords.AsNoTracking(), filter);
+        var records = await CreateProductViewQuery(query.OrderBy(product => product.Sku))
+            .ToArrayAsync(cancellationToken);
+        return records.Select(ToProductView).ToArray();
+    }
+
     public Task<Product?> FindProductAsync(Guid productId, CancellationToken cancellationToken) =>
         dbContext.ProductRecords.SingleOrDefaultAsync(product => product.Id == productId, cancellationToken);
 
@@ -106,6 +116,15 @@ public sealed class CatalogStore(AppDbContext dbContext) : ICatalogStore
             .OrderByDescending(price => price.EffectiveFrom)
             .ToArrayAsync(cancellationToken);
 
+    public async Task<IReadOnlyCollection<ProductPrice>> ListPricesAsync(
+        IReadOnlyCollection<Guid> productIds,
+        CancellationToken cancellationToken) =>
+        await dbContext.ProductPriceRecords.AsNoTracking()
+            .Where(price => productIds.Contains(price.ProductId))
+            .OrderBy(price => price.ProductId)
+            .ThenByDescending(price => price.EffectiveFrom)
+            .ToArrayAsync(cancellationToken);
+
     public Task<ProductPrice?> FindActivePriceAsync(Guid productId, CancellationToken cancellationToken) =>
         dbContext.ProductPriceRecords
             .Where(price => price.ProductId == productId && price.IsActive)
@@ -132,6 +151,22 @@ public sealed class CatalogStore(AppDbContext dbContext) : ICatalogStore
                 .OrderByDescending(price => price.EffectiveFrom)
                 .Select(price => (decimal?)price.UnitPrice)
                 .FirstOrDefault());
+
+    private static IQueryable<Product> ApplyProductFilter(IQueryable<Product> query, ProductQuery filter)
+    {
+        if (!string.IsNullOrWhiteSpace(filter.Search))
+        {
+            var term = filter.Search.ToLower();
+            query = query.Where(product =>
+                product.Sku.ToLower().Contains(term) || product.Name.ToLower().Contains(term));
+        }
+
+        if (filter.CategoryId.HasValue)
+            query = query.Where(product => product.ProductCategoryId == filter.CategoryId.Value);
+        if (filter.Status is not null)
+            query = query.Where(product => product.Status == filter.Status);
+        return query;
+    }
 
     private static ProductView ToProductView(ProductViewRecord record) => new(
         record.Product,
