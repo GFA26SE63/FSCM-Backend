@@ -1,5 +1,6 @@
 using FSCM.Application.Features.Identity;
 using FSCM.Application.Features.Inventory;
+using FSCM.Application.Features.InternalTransfers;
 using FSCM.Application.Features.Retailers;
 using FSCM.Application.Features.QrLabels;
 using FSCM.Application.Features.WarehouseConfiguration;
@@ -58,6 +59,7 @@ public sealed class DevelopmentDataSeeder(
         await SeedInventoryDataAsync(configuredWarehouses, products, users[SystemRoles.WarehouseKeeper].Id, now, cancellationToken);
         await dbContext.SaveChangesAsync(cancellationToken);
         await SeedQrLabelDataAsync(users[SystemRoles.WarehouseKeeper].Id, now, cancellationToken);
+        await SeedInternalTransferDataAsync(users[SystemRoles.Operator].Id, now, cancellationToken);
         await SeedSalesGroupMembershipsAsync(users, salesGroups, now, cancellationToken);
         await SeedRetailerAssignmentsAsync(retailer.Id, salesGroups, now, cancellationToken);
         await SeedAdditionalRetailersAsync(regions, salesGroups, users, now, cancellationToken);
@@ -72,6 +74,93 @@ public sealed class DevelopmentDataSeeder(
             regions.Count,
             salesGroups.Count,
             DemoRetailerCode);
+    }
+
+    private async Task SeedInternalTransferDataAsync(Guid operatorId, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        var source = await dbContext.WarehouseRecords.SingleAsync(item => item.Code == "WH-HCM-01", cancellationToken);
+        var destinations = await dbContext.WarehouseRecords.Where(item => item.Code == "WH-TD" || item.Code == "WH-Q7")
+            .ToDictionaryAsync(item => item.Code, StringComparer.Ordinal, cancellationToken);
+        var sourceBatch = await dbContext.BatchRecords.SingleAsync(
+            item => item.BatchCode == "WH-HCM-01-SKU001-30042027", cancellationToken);
+        var definitions = new[]
+        {
+            new InternalTransferSeed("DC-261001-01", "WH-TD", 20m, InternalTransferStatuses.Requested,
+                "Đề nghị bổ sung sữa tiệt trùng cho kho vùng Thủ Đức", null),
+            new InternalTransferSeed("DC-261002-01", "WH-Q7", 10m, InternalTransferStatuses.Rejected,
+                "Đề nghị bổ sung sữa tiệt trùng cho kho vùng Quận 7", "Kho vùng đang tạm sắp xếp lại khu vực lưu trữ")
+        };
+        foreach (var definition in definitions)
+        {
+            var transfer = await dbContext.WarehouseTransferRecords.SingleOrDefaultAsync(
+                item => item.TransferCode == definition.Code, cancellationToken);
+            if (transfer is null)
+            {
+                transfer = new WarehouseTransfer { Id = Guid.NewGuid(), TransferCode = definition.Code, CreatedAt = now.AddDays(-12) };
+                dbContext.WarehouseTransferRecords.Add(transfer);
+            }
+            transfer.SourceWarehouseId = source.Id;
+            transfer.DestinationWarehouseId = destinations[definition.DestinationCode].Id;
+            transfer.CreatedByUserId = operatorId;
+            transfer.Status = definition.Status;
+            transfer.Note = definition.Note;
+            transfer.RejectionReason = definition.RejectionReason;
+            transfer.RequestedAt = now.AddDays(-12);
+            transfer.Version = Math.Max(transfer.Version, 1);
+            transfer.UpdatedAt = now;
+            await dbContext.SaveChangesAsync(cancellationToken);
+
+            var item = await dbContext.WarehouseTransferItemRecords.SingleOrDefaultAsync(
+                candidate => candidate.WarehouseTransferId == transfer.Id && candidate.SourceBatchId == sourceBatch.Id,
+                cancellationToken);
+            if (item is null)
+            {
+                item = new WarehouseTransferItem
+                {
+                    Id = Guid.NewGuid(),
+                    WarehouseTransferId = transfer.Id,
+                    SourceBatchId = sourceBatch.Id,
+                    CreatedAt = now.AddDays(-12)
+                };
+                dbContext.WarehouseTransferItemRecords.Add(item);
+            }
+            item.RequestedQuantity = definition.Quantity;
+            item.Status = definition.Status;
+            item.Note = "Dòng hàng điều chuyển mẫu bằng tiếng Việt";
+            item.UpdatedAt = now;
+
+            var createdKey = $"du-lieu-mau-{definition.Code.ToLowerInvariant()}-tao-phieu";
+            await UpsertTransferEventAsync(transfer, operatorId, createdKey, InternalTransferActions.Created,
+                string.Empty, InternalTransferStatuses.Requested, "Tạo phiếu điều chuyển nội bộ mẫu", now.AddDays(-12), cancellationToken);
+            if (definition.Status == InternalTransferStatuses.Rejected)
+            {
+                var rejectedKey = $"du-lieu-mau-{definition.Code.ToLowerInvariant()}-tu-choi";
+                await UpsertTransferEventAsync(transfer, operatorId, rejectedKey, InternalTransferActions.Rejected,
+                    InternalTransferStatuses.Requested, InternalTransferStatuses.Rejected,
+                    definition.RejectionReason, now.AddDays(-11), cancellationToken);
+            }
+        }
+        await dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    private async Task UpsertTransferEventAsync(WarehouseTransfer transfer, Guid userId, string key,
+        string action, string fromStatus, string toStatus, string? note, DateTimeOffset occurredAt,
+        CancellationToken cancellationToken)
+    {
+        var transferEvent = await dbContext.WarehouseTransferEventRecords.SingleOrDefaultAsync(
+            item => item.OperationKey == key, cancellationToken);
+        if (transferEvent is null)
+        {
+            transferEvent = new WarehouseTransferEvent { Id = Guid.NewGuid(), OperationKey = key };
+            dbContext.WarehouseTransferEventRecords.Add(transferEvent);
+        }
+        transferEvent.WarehouseTransferId = transfer.Id;
+        transferEvent.PerformedByUserId = userId;
+        transferEvent.Action = action;
+        transferEvent.FromStatus = fromStatus;
+        transferEvent.ToStatus = toStatus;
+        transferEvent.Note = note;
+        transferEvent.OccurredAt = occurredAt;
     }
 
     private async Task SeedQrLabelDataAsync(Guid warehouseKeeperId, DateTimeOffset now, CancellationToken cancellationToken)
@@ -1064,6 +1153,10 @@ public sealed class DevelopmentDataSeeder(
     private sealed record QrLabelSeed(
         string QrCode, string BatchCode, decimal Quantity, string? ParentQrCode,
         string Status, string Note);
+
+    private sealed record InternalTransferSeed(
+        string Code, string DestinationCode, decimal Quantity, string Status,
+        string Note, string? RejectionReason);
 
     private sealed record ConfigurationSeed(
         string Key,

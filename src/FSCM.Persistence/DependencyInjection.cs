@@ -1,6 +1,7 @@
 using FSCM.Application.Features.Catalog;
 using FSCM.Application.Features.Identity;
 using FSCM.Application.Features.Inventory;
+using FSCM.Application.Features.InternalTransfers;
 using FSCM.Application.Features.Retailers;
 using FSCM.Application.Features.QrLabels;
 using FSCM.Application.Features.Territory;
@@ -9,6 +10,7 @@ using FSCM.Persistence.Catalog;
 using FSCM.Persistence.DbContexts;
 using FSCM.Persistence.Identity;
 using FSCM.Persistence.Inventory;
+using FSCM.Persistence.InternalTransfers;
 using FSCM.Persistence.Retailers;
 using FSCM.Persistence.QrLabels;
 using FSCM.Persistence.Seeding;
@@ -41,6 +43,7 @@ public static class DependencyInjection
         services.AddScoped<ICatalogStore, CatalogStore>();
         services.AddScoped<IIdentityStore, IdentityStore>();
         services.AddScoped<IInventoryStore, InventoryStore>();
+        services.AddScoped<IInternalTransferStore, InternalTransferStore>();
         services.AddScoped<IQrLabelStore, QrLabelStore>();
         services.AddScoped<IRetailerStore, RetailerStore>();
         services.AddScoped<ITerritoryStore, TerritoryStore>();

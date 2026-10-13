@@ -64,7 +64,9 @@ public sealed class PhysicalSchemaModelTests
         "VEHICLE",
         "WAREHOUSE",
         "WAREHOUSE_TRANSFER",
+        "WAREHOUSE_TRANSFER_EVENT",
         "WAREHOUSE_TRANSFER_ITEM",
+        "WAREHOUSE_TRANSFER_LABEL",
         "WRITE_OFF",
         "WRITE_OFF_ATTACHMENT",
         "WRITE_OFF_ITEM"
@@ -84,9 +86,9 @@ public sealed class PhysicalSchemaModelTests
             .ToArray();
 
         Assert.Equal(ExpectedTables, tableNames);
-        Assert.Equal(60, entityTypes.Length);
-        Assert.Equal(562, entityTypes.Sum(entityType => entityType.GetProperties().Count()));
-        Assert.Equal(128, entityTypes.Sum(entityType => entityType.GetForeignKeys().Count()));
+        Assert.Equal(62, entityTypes.Length);
+        Assert.Equal(578, entityTypes.Sum(entityType => entityType.GetProperties().Count()));
+        Assert.Equal(132, entityTypes.Sum(entityType => entityType.GetForeignKeys().Count()));
         Assert.All(
             entityTypes.SelectMany(entityType => entityType.GetForeignKeys()),
             foreignKey => Assert.Equal(DeleteBehavior.Restrict, foreignKey.DeleteBehavior));
@@ -198,6 +200,22 @@ public sealed class PhysicalSchemaModelTests
         Assert.NotNull(label.FindProperty(nameof(BatchQrLabel.RootLabelId)));
         var operationKey = labelEvent.FindProperty(nameof(QrLabelEvent.OperationKey))!;
         Assert.True(labelEvent.GetIndexes().Single(index => index.Properties.SequenceEqual([operationKey])).IsUnique);
+    }
+
+    [Fact]
+    public void Model_enforces_transfer_concurrency_idempotency_and_label_binding()
+    {
+        using var context = CreateContext();
+        var transfer = context.Model.FindEntityType(typeof(WarehouseTransfer))!;
+        var transferEvent = context.Model.FindEntityType(typeof(WarehouseTransferEvent))!;
+        var transferLabel = context.Model.FindEntityType(typeof(WarehouseTransferLabel))!;
+
+        Assert.True(transfer.FindProperty(nameof(WarehouseTransfer.Version))!.IsConcurrencyToken);
+        var operationKey = transferEvent.FindProperty(nameof(WarehouseTransferEvent.OperationKey))!;
+        Assert.True(transferEvent.GetIndexes().Single(index => index.Properties.SequenceEqual([operationKey])).IsUnique);
+        var itemId = transferLabel.FindProperty(nameof(WarehouseTransferLabel.WarehouseTransferItemId))!;
+        var labelId = transferLabel.FindProperty(nameof(WarehouseTransferLabel.BatchQrLabelId))!;
+        Assert.True(transferLabel.GetIndexes().Single(index => index.Properties.SequenceEqual([itemId, labelId])).IsUnique);
     }
 
     private static AppDbContext CreateContext()
