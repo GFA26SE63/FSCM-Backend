@@ -1,4 +1,5 @@
 using FSCM.Application.Features.Identity;
+using FSCM.Application.Features.Retailers;
 using FSCM.Application.Features.WarehouseConfiguration;
 using FSCM.Domain.Authorization;
 using FSCM.Domain.Entities;
@@ -19,7 +20,8 @@ public sealed class DevelopmentDataSeeder(
     private const string DemoWarehouseCode = "WH-HCM-01";
     private const string DemoRegionCode = "HCM";
     private const string DemoSalesGroupCode = "HCM-A";
-    private const string DemoRetailerCode = "RTL-HCM-001";
+    private const string DemoRetailerCode = "10004127";
+    private const string LegacyDemoRetailerCode = "RTL-HCM-001";
 
     private static readonly (string Email, string FullName, string Role)[] DemoUsers =
     [
@@ -42,7 +44,8 @@ public sealed class DevelopmentDataSeeder(
         var regions = await SeedRegionsAsync(now, cancellationToken);
         var warehouse = await SeedWarehouseAsync(now, cancellationToken);
         var salesGroups = await SeedSalesGroupsAsync(regions, now, cancellationToken);
-        var retailer = await SeedRetailerAsync(regions[DemoRegionCode].Id, users[SystemRoles.Sales].Id, now, cancellationToken);
+        var retailer = await SeedRetailerAsync(regions[DemoRegionCode].Id, users[SystemRoles.Sales].Id,
+            users[SystemRoles.Admin].Id, now, cancellationToken);
         var categories = await SeedCategoriesAsync(now, cancellationToken);
         var products = await SeedProductsAsync(categories, now, cancellationToken);
         var configuredWarehouses = await SeedWarehouseConfigurationDataAsync(
@@ -51,6 +54,7 @@ public sealed class DevelopmentDataSeeder(
         await SeedWarehouseAssignmentsAsync(users, warehouse.Id, now, cancellationToken);
         await SeedSalesGroupMembershipsAsync(users, salesGroups, now, cancellationToken);
         await SeedRetailerAssignmentsAsync(retailer.Id, salesGroups, now, cancellationToken);
+        await SeedAdditionalRetailersAsync(regions, salesGroups, users, now, cancellationToken);
         await dbContext.SaveChangesAsync(cancellationToken);
 
         logger.LogInformation(
@@ -534,11 +538,12 @@ public sealed class DevelopmentDataSeeder(
     private async Task<Retailer> SeedRetailerAsync(
         Guid regionId,
         Guid declaredByUserId,
+        Guid reviewedByUserId,
         DateTimeOffset now,
         CancellationToken cancellationToken)
     {
         var retailer = await dbContext.RetailerRecords.SingleOrDefaultAsync(
-            candidate => candidate.Code == DemoRetailerCode,
+            candidate => candidate.Code == DemoRetailerCode || candidate.Code == LegacyDemoRetailerCode,
             cancellationToken);
         if (retailer is null)
         {
@@ -547,16 +552,102 @@ public sealed class DevelopmentDataSeeder(
         }
 
         retailer.RegionId = regionId;
+        retailer.Code = DemoRetailerCode;
         retailer.Name = "Cửa hàng An Phú";
         retailer.ContactName = "Nguyễn Văn Minh";
         retailer.Phone = "+84 28 0000 0001";
         retailer.Email = "cuahang.anphu@fscm.local";
         retailer.Address = "Phường An Phú, thành phố Thủ Đức, Thành phố Hồ Chí Minh";
-        retailer.Status = "Active";
+        retailer.Status = RetailerStatuses.Active;
+        retailer.RetailerType = RetailerTypes.GroceryStore;
+        retailer.ForecastRevenue = 72_000_000;
+        retailer.StoreSizeSquareMeters = 48;
+        retailer.StoreSizeCategory = "M";
+        retailer.PurchasingCapacity = 135;
+        retailer.PurchaseFrequencyPerMonth = 8;
+        retailer.CreditTermDays = 14;
+        retailer.PotentialStatus = "A";
+        retailer.AssessmentNote = "Điểm bán có doanh thu ổn định và tần suất nhập hàng cao.";
         retailer.DeclaredByUserId = declaredByUserId;
+        retailer.AssessedByUserId = declaredByUserId;
+        retailer.AssessedAt = now.AddDays(-31);
+        retailer.ReviewedByUserId = reviewedByUserId;
+        retailer.ReviewedAt = now.AddDays(-30);
+        retailer.ReviewReason = "Thông tin hợp lệ, đủ điều kiện kích hoạt.";
         retailer.UpdatedAt = now;
         await dbContext.SaveChangesAsync(cancellationToken);
         return retailer;
+    }
+
+    private async Task SeedAdditionalRetailersAsync(
+        IReadOnlyDictionary<string, Region> regions,
+        IReadOnlyDictionary<string, SalesGroup> salesGroups,
+        IReadOnlyDictionary<string, UserAccount> users,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        var definitions = new[]
+        {
+            new RetailerSeed("10004128", "Siêu thị mini Bình Minh", "Trần Thị Mai", "0909000102", "Phường Bến Nghé, Quận 1, Thành phố Hồ Chí Minh", "HCM", "HCM-A", RetailerStatuses.Active, RetailerTypes.MiniSupermarket, 55_000_000m, 72m, 125m, 10, 30, "A", "Mặt bằng lớn, năng lực nhập hàng thuộc nhóm A."),
+            new RetailerSeed("KB-0012", "Cửa hàng Tân Lập", "Lê Quốc Bảo", "0909000103", "Phường Tân Hiệp, Thành phố Tân Uyên, Bình Dương", "BD", "BD-A", RetailerStatuses.PendingApproval, RetailerTypes.ConvenienceStore, 38_000_000m, 42m, 75m, 6, 7, "B", "Hồ sơ đang chờ quản trị viên phê duyệt."),
+            new RetailerSeed("KB-0013", "Sạp Minh Châu", "Phạm Ngọc Châu", "0909000104", "Chợ Tân An, Thành phố Tân An, Long An", "LA", "LA-A", RetailerStatuses.Rejected, RetailerTypes.MarketStall, 18_000_000m, 22m, 35m, 4, 0, "C", "Cần bổ sung giấy tờ xác minh địa chỉ kinh doanh."),
+            new RetailerSeed("10004129", "Tạp hóa Hòa Phát", "Võ Thanh Hòa", "0909000105", "Phường Hiệp Bình Chánh, thành phố Thủ Đức, Thành phố Hồ Chí Minh", "HCM", "HCM-B", RetailerStatuses.Inactive, RetailerTypes.GroceryStore, 32_000_000m, 28m, 65m, 5, 7, "B", "Điểm bán tạm ngừng hoạt động theo đề nghị của chủ cửa hàng.")
+        };
+
+        foreach (var definition in definitions)
+        {
+            var retailer = await dbContext.RetailerRecords.SingleOrDefaultAsync(item => item.Code == definition.Code, cancellationToken);
+            if (retailer is null)
+            {
+                retailer = new Retailer { Id = Guid.NewGuid(), Code = definition.Code, CreatedAt = now.AddDays(-20) };
+                dbContext.RetailerRecords.Add(retailer);
+            }
+            retailer.RegionId = regions[definition.RegionCode].Id;
+            retailer.Name = definition.Name;
+            retailer.ContactName = definition.ContactName;
+            retailer.Phone = definition.Phone;
+            retailer.Email = null;
+            retailer.Address = definition.Address;
+            retailer.Status = definition.Status;
+            retailer.RetailerType = definition.RetailerType;
+            retailer.ForecastRevenue = definition.ForecastRevenue;
+            retailer.StoreSizeSquareMeters = definition.StoreSize;
+            retailer.StoreSizeCategory = definition.StoreSize < 30 ? "S" : definition.StoreSize <= 60 ? "M" : "L";
+            retailer.PurchasingCapacity = definition.Capacity;
+            retailer.PurchaseFrequencyPerMonth = definition.Frequency;
+            retailer.CreditTermDays = definition.CreditTermDays;
+            retailer.PotentialStatus = definition.PotentialClass;
+            retailer.AssessmentNote = definition.Note;
+            retailer.DeclaredByUserId = users[SystemRoles.Sales].Id;
+            retailer.AssessedByUserId = users[SystemRoles.Sales].Id;
+            retailer.AssessedAt = now.AddDays(-19);
+            retailer.ReviewedByUserId = definition.Status == RetailerStatuses.PendingApproval ? null : users[SystemRoles.Admin].Id;
+            retailer.ReviewedAt = definition.Status == RetailerStatuses.PendingApproval ? null : now.AddDays(-18);
+            retailer.ReviewReason = definition.Status switch
+            {
+                RetailerStatuses.Rejected => "Từ chối do chưa đủ giấy tờ xác minh địa chỉ.",
+                RetailerStatuses.Inactive => "Đã duyệt trước đây và hiện tạm ngừng hoạt động.",
+                RetailerStatuses.Active => "Thông tin hợp lệ, đủ điều kiện kích hoạt.",
+                _ => null
+            };
+            retailer.UpdatedAt = now;
+            await dbContext.SaveChangesAsync(cancellationToken);
+
+            var groupId = salesGroups[definition.SalesGroupCode].Id;
+            if (!await dbContext.RetailerSalesAssignmentRecords.AnyAsync(
+                    item => item.RetailerId == retailer.Id && item.SalesGroupId == groupId && item.IsActive,
+                    cancellationToken))
+            {
+                dbContext.RetailerSalesAssignmentRecords.Add(new RetailerSalesAssignment
+                {
+                    Id = Guid.NewGuid(),
+                    RetailerId = retailer.Id,
+                    SalesGroupId = groupId,
+                    AssignedAt = now.AddDays(-20),
+                    IsActive = true
+                });
+            }
+        }
     }
 
     private async Task SeedWarehouseAssignmentsAsync(
@@ -740,6 +831,12 @@ public sealed class DevelopmentDataSeeder(
         string Name,
         string RegionCode,
         bool IsActive);
+
+    private sealed record RetailerSeed(
+        string Code, string Name, string ContactName, string Phone, string Address,
+        string RegionCode, string SalesGroupCode, string Status, string RetailerType,
+        decimal ForecastRevenue, decimal StoreSize, decimal Capacity, int Frequency,
+        int CreditTermDays, string PotentialClass, string Note);
 
     private sealed record ConfigurationSeed(
         string Key,

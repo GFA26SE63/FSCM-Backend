@@ -70,6 +70,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
+        modelBuilder.HasSequence<long>("RetailerDeclarationCodeSequence").StartsAt(100);
+        modelBuilder.HasSequence<long>("RetailerBusinessCodeSequence").StartsAt(10005000);
         modelBuilder.ApplyConfigurationsFromAssembly(typeof(AppDbContext).Assembly);
     }
 }

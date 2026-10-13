@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using FSCM.Application.Features.Retailers;
 using FSCM.Domain.Authorization;
 using FSCM.Domain.Entities;
 
@@ -237,8 +238,11 @@ public sealed partial class TerritoryService(ITerritoryStore store, TimeProvider
             ?? throw TerritoryOperationException.NotFound("Sales user was not found.");
         if (!user.IsActive || user.Role != SystemRoles.Sales)
             return new(userId, retailerId, false, null, null, "Only an active Sales user can create a Retailer order.");
-        if (await store.FindRetailerAsync(retailerId, cancellationToken) is null)
+        var retailer = await store.FindRetailerAsync(retailerId, cancellationToken);
+        if (retailer is null)
             throw TerritoryOperationException.NotFound("Retailer was not found.");
+        if (retailer.Status != RetailerStatuses.Active)
+            return new(userId, retailerId, false, null, null, "Retailer must be approved and active before ordering.");
 
         var access = await store.FindOrderAccessAsync(userId, retailerId, cancellationToken);
         return access is null

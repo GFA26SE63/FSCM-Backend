@@ -19,9 +19,13 @@ public sealed class RetailerConfiguration : IEntityTypeConfiguration<Retailer>
         builder.Property(entity => entity.Email).HasMaxLength(150).IsRequired(false);
         builder.Property(entity => entity.Address).HasColumnType("text").IsRequired(false);
         builder.Property(entity => entity.Status).HasMaxLength(30).IsRequired();
+        builder.Property(entity => entity.RetailerType).HasMaxLength(30).IsRequired();
         builder.Property(entity => entity.ForecastRevenue).HasPrecision(18, 2).IsRequired(false);
         builder.Property(entity => entity.StoreSizeSquareMeters).HasPrecision(12, 2).IsRequired(false);
+        builder.Property(entity => entity.StoreSizeCategory).HasMaxLength(1).IsRequired();
         builder.Property(entity => entity.PurchasingCapacity).HasPrecision(18, 2).IsRequired(false);
+        builder.Property(entity => entity.PurchaseFrequencyPerMonth).IsRequired();
+        builder.Property(entity => entity.CreditTermDays).IsRequired();
         builder.Property(entity => entity.PotentialStatus).HasMaxLength(30).IsRequired(false);
         builder.Property(entity => entity.PotentialScore).HasPrecision(5, 2).IsRequired(false);
         builder.Property(entity => entity.AssessmentNote).HasColumnType("text").IsRequired(false);
@@ -34,6 +38,12 @@ public sealed class RetailerConfiguration : IEntityTypeConfiguration<Retailer>
         builder.Property(entity => entity.CreatedAt).HasColumnType("timestamp with time zone").IsRequired();
         builder.Property(entity => entity.UpdatedAt).HasColumnType("timestamp with time zone").IsRequired();
         builder.HasIndex(entity => entity.Code).IsUnique();
+        builder.ToTable(table =>
+        {
+            table.HasCheckConstraint("CK_RETAILER_CreditTermDays", "\"CreditTermDays\" IN (0, 7, 14, 30)");
+            table.HasCheckConstraint("CK_RETAILER_PurchaseFrequencyPerMonth", "\"PurchaseFrequencyPerMonth\" > 0");
+            table.HasCheckConstraint("CK_RETAILER_StoreSizeCategory", "\"StoreSizeCategory\" IN ('S', 'M', 'L')");
+        });
         builder.HasOne<Region>()
             .WithMany()
             .HasForeignKey(entity => entity.RegionId)
