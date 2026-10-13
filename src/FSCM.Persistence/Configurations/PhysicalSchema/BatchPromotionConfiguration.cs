@@ -17,6 +17,7 @@ public sealed class BatchPromotionConfiguration : IEntityTypeConfiguration<Batch
         builder.Property(entity => entity.IsActive).IsRequired();
         builder.Property(entity => entity.AssignedAt).HasColumnType("timestamp with time zone").IsRequired();
         builder.Property(entity => entity.RemovedAt).HasColumnType("timestamp with time zone").IsRequired(false);
+        builder.HasIndex(entity => new { entity.BatchId, entity.PromotionId }).IsUnique();
         builder.HasOne<Batch>()
             .WithMany()
             .HasForeignKey(entity => entity.BatchId)

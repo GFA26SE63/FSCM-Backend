@@ -3,6 +3,7 @@ using FSCM.Application.Features.Inventory;
 using FSCM.Application.Features.InternalTransfers;
 using FSCM.Application.Features.Retailers;
 using FSCM.Application.Features.QrLabels;
+using FSCM.Application.Features.Promotions;
 using FSCM.Application.Features.WarehouseConfiguration;
 using FSCM.Domain.Authorization;
 using FSCM.Domain.Entities;
@@ -63,6 +64,8 @@ public sealed class DevelopmentDataSeeder(
         await SeedSalesGroupMembershipsAsync(users, salesGroups, now, cancellationToken);
         await SeedRetailerAssignmentsAsync(retailer.Id, salesGroups, now, cancellationToken);
         await SeedAdditionalRetailersAsync(regions, salesGroups, users, now, cancellationToken);
+        await SeedPromotionDataAsync(products, categories, retailer, users[SystemRoles.Admin].Id,
+            now, cancellationToken);
         await dbContext.SaveChangesAsync(cancellationToken);
 
         logger.LogInformation(
@@ -74,6 +77,136 @@ public sealed class DevelopmentDataSeeder(
             regions.Count,
             salesGroups.Count,
             DemoRetailerCode);
+    }
+
+    private async Task SeedPromotionDataAsync(
+        IReadOnlyDictionary<string, Product> products,
+        IReadOnlyDictionary<string, ProductCategory> categories,
+        Retailer retailer,
+        Guid adminUserId,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        var campaignDefinitions = new[]
+        {
+            new
+            {
+                Code = "KM-001", Name = "Mừng khai trương - giảm giá sữa tươi",
+                MinimumQuantity = 10m, DiscountPercent = 8m,
+                StartAt = new DateTimeOffset(2026, 10, 1, 0, 0, 0, TimeSpan.FromHours(7)).ToUniversalTime(),
+                EndAt = new DateTimeOffset(2026, 12, 31, 23, 59, 59, TimeSpan.FromHours(7)).ToUniversalTime(),
+                ProductId = (Guid?)products["SKU001"].Id, CategoryId = (Guid?)null,
+                RetailerId = (Guid?)null
+            },
+            new
+            {
+                Code = "KM-002", Name = "Ưu đãi ngành hàng sữa cho khách hàng thân thiết",
+                MinimumQuantity = 5m, DiscountPercent = 6m,
+                StartAt = new DateTimeOffset(2026, 10, 1, 0, 0, 0, TimeSpan.FromHours(7)).ToUniversalTime(),
+                EndAt = new DateTimeOffset(2026, 11, 30, 23, 59, 59, TimeSpan.FromHours(7)).ToUniversalTime(),
+                ProductId = (Guid?)null, CategoryId = (Guid?)categories["CAT-02"].Id,
+                RetailerId = (Guid?)retailer.Id
+            }
+        };
+
+        foreach (var definition in campaignDefinitions)
+        {
+            var promotion = await dbContext.PromotionRecords.SingleOrDefaultAsync(
+                item => item.Code == definition.Code, cancellationToken);
+            if (promotion is null)
+            {
+                promotion = new Promotion
+                {
+                    Id = Guid.NewGuid(),
+                    Code = definition.Code,
+                    CreatedByUserId = adminUserId,
+                    CreatedAt = now
+                };
+                dbContext.PromotionRecords.Add(promotion);
+            }
+            promotion.Name = definition.Name;
+            promotion.PromotionType = PromotionTypes.Campaign;
+            promotion.MinimumQuantity = definition.MinimumQuantity;
+            promotion.DiscountPercent = definition.DiscountPercent;
+            promotion.StartAt = definition.StartAt;
+            promotion.EndAt = definition.EndAt;
+            promotion.IsActive = true;
+            promotion.UpdatedAt = now;
+            await dbContext.SaveChangesAsync(cancellationToken);
+
+            if (definition.ProductId.HasValue && !await dbContext.PromotionProductRecords.AnyAsync(
+                    item => item.PromotionId == promotion.Id && item.ProductId == definition.ProductId.Value,
+                    cancellationToken))
+                dbContext.PromotionProductRecords.Add(new PromotionProduct
+                {
+                    Id = Guid.NewGuid(),
+                    PromotionId = promotion.Id,
+                    ProductId = definition.ProductId.Value
+                });
+            if (definition.CategoryId.HasValue && !await dbContext.PromotionCategoryRecords.AnyAsync(
+                    item => item.PromotionId == promotion.Id && item.ProductCategoryId == definition.CategoryId.Value,
+                    cancellationToken))
+                dbContext.PromotionCategoryRecords.Add(new PromotionCategory
+                {
+                    Id = Guid.NewGuid(),
+                    PromotionId = promotion.Id,
+                    ProductCategoryId = definition.CategoryId.Value
+                });
+            if (definition.RetailerId.HasValue && !await dbContext.PromotionRetailerRecords.AnyAsync(
+                    item => item.PromotionId == promotion.Id && item.RetailerId == definition.RetailerId.Value,
+                    cancellationToken))
+                dbContext.PromotionRetailerRecords.Add(new PromotionRetailer
+                {
+                    Id = Guid.NewGuid(),
+                    PromotionId = promotion.Id,
+                    RetailerId = definition.RetailerId.Value
+                });
+        }
+        await dbContext.SaveChangesAsync(cancellationToken);
+
+        var batch = await dbContext.BatchRecords.SingleAsync(
+            item => item.BatchCode == "WH-TD-SKU002-20102026", cancellationToken);
+        var batchPromotion = await dbContext.PromotionRecords.SingleOrDefaultAsync(
+            item => item.Code == "KM-003", cancellationToken);
+        if (batchPromotion is null)
+        {
+            batchPromotion = new Promotion
+            {
+                Id = Guid.NewGuid(),
+                Code = "KM-003",
+                CreatedByUserId = adminUserId,
+                CreatedAt = now
+            };
+            dbContext.PromotionRecords.Add(batchPromotion);
+        }
+        batchPromotion.Name = "Chiết khấu lô sữa chua gần hạn";
+        batchPromotion.PromotionType = PromotionTypes.BatchDiscount;
+        batchPromotion.MinimumQuantity = 1m;
+        batchPromotion.DiscountPercent = 15m;
+        batchPromotion.StartAt = new DateTimeOffset(2026, 10, 10, 0, 0, 0, TimeSpan.FromHours(7)).ToUniversalTime();
+        batchPromotion.EndAt = new DateTimeOffset(2026, 10, 20, 23, 59, 59, TimeSpan.FromHours(7)).ToUniversalTime();
+        batchPromotion.IsActive = true;
+        batchPromotion.UpdatedAt = now;
+        await dbContext.SaveChangesAsync(cancellationToken);
+
+        var assignment = await dbContext.BatchPromotionRecords.SingleOrDefaultAsync(
+            item => item.BatchId == batch.Id && item.PromotionId == batchPromotion.Id,
+            cancellationToken);
+        if (assignment is null)
+        {
+            assignment = new BatchPromotion
+            {
+                Id = Guid.NewGuid(),
+                BatchId = batch.Id,
+                PromotionId = batchPromotion.Id,
+                AssignedByUserId = adminUserId,
+                AssignedAt = now
+            };
+            dbContext.BatchPromotionRecords.Add(assignment);
+        }
+        assignment.IsActive = true;
+        assignment.RemovedAt = null;
+        await dbContext.SaveChangesAsync(cancellationToken);
     }
 
     private async Task SeedInternalTransferDataAsync(Guid operatorId, DateTimeOffset now, CancellationToken cancellationToken)

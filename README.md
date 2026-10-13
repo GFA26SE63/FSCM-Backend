@@ -61,6 +61,8 @@ BE-03 exposes warehouse master data and coordinates under `/api/v1/warehouses`, 
 
 BE-04 exposes region and Sales-group master data under `/api/v1/regions` and `/api/v1/sales-groups`. Admin and scoped Sales Managers can manage Sales and Retailer assignments under `/api/v1/territory-assignments`; every transfer closes the previous row and creates a new row so assignment history remains intact. Sales order eligibility is checked under `/api/v1/territory-access/retailers/{retailerId}/order-eligibility`. Only an active Sales user whose current group owns the Retailer in the same region is eligible. Later orders retain `CreatedByUserId` and `SalesGroupId` snapshots even after reassignment.
 
+BE-09 exposes campaign management under `/api/v1/promotions`, shelf-life suggestions and batch assignments under `/api/v1/batch-discounts`, and deterministic price snapshots under `/api/v1/pricing/snapshot`. Admin manages campaigns and batch discounts; authenticated users can read applicable offers and calculate prices. Campaign and batch discounts do not compound: the highest eligible rate wins, an equal batch-specific rate wins over a campaign, and promotion code is the final stable tie-breaker. Every REST GET has an equivalent GraphQL query at `/graphql`.
+
 The development catalog dump contains:
 
 | Data | Seeded examples |
@@ -75,6 +77,7 @@ The development catalog dump contains:
 | Regions | Hồ Chí Minh, Bình Dương, and an inactive Long An example |
 | Sales groups | `HCM-A`, `HCM-B`, `BD-A`, and inactive `LA-A`, all with Vietnamese names |
 | Assignment history | Current and previous Sales/retailer territory assignments for transfer testing |
+| Promotions | Two Vietnamese campaigns (`KM-001`, `KM-002`) and one near-expiry batch discount (`KM-003`) |
 
 Use [the HTTP request collection](src/FSCM.API/FSCM.API.http) after seeding to log in, query the catalog, inspect price history, and request a historical-price suggestion.
 
