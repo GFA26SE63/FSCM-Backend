@@ -9,8 +9,10 @@ public sealed class SystemConfiguration
     public string ConfigValue { get; set; } = string.Empty;
     public string Description { get; set; } = string.Empty;
     public string ValueType { get; set; } = string.Empty;
+    public int Version { get; set; }
     public bool IsActive { get; set; }
     public Guid? UpdatedByUserId { get; set; }
+    public DateTimeOffset EffectiveFrom { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
 }

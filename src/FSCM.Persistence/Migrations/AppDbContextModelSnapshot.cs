@@ -1797,7 +1797,9 @@ namespace FSCM.Persistence.Migrations
 
                     b.HasIndex("ProductId");
 
-                    b.HasIndex("RetailerId");
+                    b.HasIndex("RetailerId", "ProductId")
+                        .IsUnique()
+                        .HasFilter("\"IsActive\" = TRUE");
 
                     b.ToTable("RETAILER_PRODUCT_MLOR", (string)null);
                 });
@@ -2209,6 +2211,9 @@ namespace FSCM.Persistence.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<DateTimeOffset>("EffectiveFrom")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<bool>("IsActive")
                         .HasColumnType("boolean");
 
@@ -2223,12 +2228,19 @@ namespace FSCM.Persistence.Migrations
                         .HasMaxLength(50)
                         .HasColumnType("character varying(50)");
 
+                    b.Property<int>("Version")
+                        .HasColumnType("integer");
+
                     b.HasKey("Id");
 
                     b.HasIndex("ConfigKey")
-                        .IsUnique();
+                        .IsUnique()
+                        .HasFilter("\"IsActive\" = TRUE");
 
                     b.HasIndex("UpdatedByUserId");
+
+                    b.HasIndex("ConfigKey", "Version")
+                        .IsUnique();
 
                     b.ToTable("SYSTEM_CONFIGURATION", (string)null);
                 });
@@ -2268,7 +2280,7 @@ namespace FSCM.Persistence.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("WarehouseId");
+                    b.HasIndex("WarehouseId", "MinDistanceMeters", "MaxDistanceMeters", "IsActive");
 
                     b.ToTable("TRANSIT_TIME_RULE", (string)null);
                 });
@@ -2447,6 +2459,11 @@ namespace FSCM.Persistence.Migrations
                         .IsRequired()
                         .HasMaxLength(150)
                         .HasColumnType("character varying(150)");
+
+                    b.Property<string>("Type")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
 
                     b.Property<DateTimeOffset>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");

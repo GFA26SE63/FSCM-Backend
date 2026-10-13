@@ -13,6 +13,7 @@ public sealed class WarehouseConfiguration : IEntityTypeConfiguration<Warehouse>
         builder.Property(entity => entity.Id).HasColumnType("uuid").IsRequired();
         builder.Property(entity => entity.Code).HasMaxLength(30).IsRequired();
         builder.Property(entity => entity.Name).HasMaxLength(150).IsRequired();
+        builder.Property(entity => entity.Type).HasMaxLength(20).IsRequired();
         builder.Property(entity => entity.Address).HasColumnType("text").IsRequired(false);
         builder.Property(entity => entity.IsActive).IsRequired();
         builder.Property(entity => entity.CreatedAt).HasColumnType("timestamp with time zone").IsRequired();
