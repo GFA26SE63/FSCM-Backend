@@ -18,6 +18,9 @@ public sealed class RetailerProductMlorConfiguration : IEntityTypeConfiguration<
         builder.Property(entity => entity.EffectiveFrom).HasColumnType("timestamp with time zone").IsRequired();
         builder.Property(entity => entity.EffectiveTo).HasColumnType("timestamp with time zone").IsRequired(false);
         builder.Property(entity => entity.IsActive).IsRequired();
+        builder.HasIndex(entity => new { entity.RetailerId, entity.ProductId })
+            .IsUnique()
+            .HasFilter("\"IsActive\" = TRUE");
         builder.HasOne<Retailer>()
             .WithMany()
             .HasForeignKey(entity => entity.RetailerId)

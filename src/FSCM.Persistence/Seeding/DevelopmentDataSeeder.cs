@@ -1,4 +1,5 @@
 using FSCM.Application.Features.Identity;
+using FSCM.Application.Features.WarehouseConfiguration;
 using FSCM.Domain.Authorization;
 using FSCM.Domain.Entities;
 using FSCM.Persistence.DbContexts;
@@ -44,6 +45,8 @@ public sealed class DevelopmentDataSeeder(
         var retailer = await SeedRetailerAsync(region.Id, users[SystemRoles.Sales].Id, now, cancellationToken);
         var categories = await SeedCategoriesAsync(now, cancellationToken);
         var products = await SeedProductsAsync(categories, now, cancellationToken);
+        var configuredWarehouses = await SeedWarehouseConfigurationDataAsync(
+            warehouse, retailer, products, users[SystemRoles.Admin].Id, now, cancellationToken);
 
         await SeedWarehouseAssignmentsAsync(users, warehouse.Id, now, cancellationToken);
         await SeedSalesGroupMembershipsAsync(users, salesGroup.Id, now, cancellationToken);
@@ -51,11 +54,11 @@ public sealed class DevelopmentDataSeeder(
         await dbContext.SaveChangesAsync(cancellationToken);
 
         logger.LogInformation(
-            "Development data seeded: {UserCount} users, {CategoryCount} categories, {ProductCount} products, warehouse {WarehouseCode}, sales group {SalesGroupCode}, retailer {RetailerCode}.",
+            "Development data seeded: {UserCount} users, {CategoryCount} categories, {ProductCount} products, {WarehouseCount} warehouses, sales group {SalesGroupCode}, retailer {RetailerCode}.",
             users.Count,
             categories.Count,
             products.Count,
-            DemoWarehouseCode,
+            configuredWarehouses.Count,
             DemoSalesGroupCode,
             DemoRetailerCode);
     }
@@ -327,25 +330,156 @@ public sealed class DevelopmentDataSeeder(
         var warehouse = await dbContext.WarehouseRecords.SingleOrDefaultAsync(
             candidate => candidate.Code == DemoWarehouseCode,
             cancellationToken);
-        if (warehouse is not null)
+        if (warehouse is null)
         {
-            return warehouse;
+            warehouse = new Warehouse { Id = Guid.NewGuid(), Code = DemoWarehouseCode, CreatedAt = now };
+            dbContext.WarehouseRecords.Add(warehouse);
         }
 
-        warehouse = new Warehouse
+        warehouse.Name = "Kho trung tâm Củ Chi";
+        warehouse.Type = WarehouseTypes.Central;
+        warehouse.Address = "Đường Nguyễn Thị Rành, huyện Củ Chi, Thành phố Hồ Chí Minh";
+        warehouse.IsActive = true;
+        warehouse.UpdatedAt = now;
+        await dbContext.SaveChangesAsync(cancellationToken);
+        return warehouse;
+    }
+
+    private async Task<IReadOnlyCollection<Warehouse>> SeedWarehouseConfigurationDataAsync(
+        Warehouse centralWarehouse,
+        Retailer retailer,
+        IReadOnlyDictionary<string, Product> products,
+        Guid adminUserId,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        var definitions = new[]
+        {
+            new WarehouseSeed(centralWarehouse.Code, "Kho trung tâm Củ Chi", WarehouseTypes.Central,
+                "Đường Nguyễn Thị Rành, huyện Củ Chi, Thành phố Hồ Chí Minh", 10.9747000m, 106.4931000m),
+            new WarehouseSeed("WH-TD", "Kho vùng Thủ Đức", WarehouseTypes.Regional,
+                "Đường Võ Chí Công, thành phố Thủ Đức, Thành phố Hồ Chí Minh", 10.8480000m, 106.7720000m),
+            new WarehouseSeed("WH-Q7", "Kho vùng Quận 7", WarehouseTypes.Regional,
+                "Đường Nguyễn Văn Linh, Quận 7, Thành phố Hồ Chí Minh", 10.7298000m, 106.7219000m)
+        };
+        var warehouses = new List<Warehouse>();
+        foreach (var definition in definitions)
+        {
+            var warehouse = await dbContext.WarehouseRecords.SingleOrDefaultAsync(
+                item => item.Code == definition.Code, cancellationToken);
+            if (warehouse is null)
+            {
+                warehouse = new Warehouse { Id = Guid.NewGuid(), Code = definition.Code, CreatedAt = now };
+                dbContext.WarehouseRecords.Add(warehouse);
+            }
+
+            warehouse.Name = definition.Name;
+            warehouse.Type = definition.Type;
+            warehouse.Address = definition.Address;
+            warehouse.IsActive = true;
+            warehouse.UpdatedAt = now;
+            await dbContext.SaveChangesAsync(cancellationToken);
+
+            var location = await dbContext.MapLocationRecords.SingleOrDefaultAsync(
+                item => item.WarehouseId == warehouse.Id, cancellationToken);
+            if (location is null)
+            {
+                location = new MapLocation { Id = Guid.NewGuid(), WarehouseId = warehouse.Id, CreatedAt = now };
+                dbContext.MapLocationRecords.Add(location);
+            }
+
+            location.Latitude = definition.Latitude;
+            location.Longitude = definition.Longitude;
+            location.FormattedAddress = definition.Address;
+            location.ProviderPlaceId = $"du-lieu-mau-{definition.Code.ToLowerInvariant()}";
+            location.UpdatedAt = now;
+            warehouses.Add(warehouse);
+        }
+
+        await dbContext.SaveChangesAsync(cancellationToken);
+        foreach (var warehouse in warehouses)
+        {
+            if (!await dbContext.TransitTimeRuleRecords.AnyAsync(
+                    item => item.WarehouseId == warehouse.Id && item.IsActive, cancellationToken))
+            {
+                dbContext.TransitTimeRuleRecords.AddRange(
+                    CreateTransitRule(warehouse.Id, 0, 10_000, 60, 1_440, now),
+                    CreateTransitRule(warehouse.Id, 10_001, 20_000, 60, 2_880, now));
+            }
+        }
+
+        foreach (var definition in new[] { (Product: products["SKU001"], Ratio: 0.25m), (Product: products["SKU002"], Ratio: 0.30m) })
+        {
+            if (!await dbContext.RetailerProductMlorRecords.AnyAsync(
+                    item => item.RetailerId == retailer.Id && item.ProductId == definition.Product.Id && item.IsActive,
+                    cancellationToken))
+            {
+                dbContext.RetailerProductMlorRecords.Add(new RetailerProductMlor
+                {
+                    Id = Guid.NewGuid(),
+                    RetailerId = retailer.Id,
+                    ProductId = definition.Product.Id,
+                    MinimumLifeRatio = definition.Ratio,
+                    MinimumLifeHours = (int)Math.Ceiling(definition.Product.ShelfLifeHours * definition.Ratio),
+                    EffectiveFrom = now,
+                    IsActive = true
+                });
+            }
+        }
+
+        var configurations = new[]
+        {
+            new ConfigurationSeed(BusinessConfigurationKeys.AllocationWeights,
+                "{\"expiry\":0.5,\"distance\":0.3,\"coverage\":0.2}", "object",
+                "Trọng số phân bổ ưu tiên hạn sử dụng, khoảng cách và độ phủ"),
+            new ConfigurationSeed(BusinessConfigurationKeys.ServiceRadiusMeters, "20000", "integer",
+                "Bán kính phục vụ tối đa mặc định là 20 kilômét"),
+            new ConfigurationSeed(BusinessConfigurationKeys.RegionalMinimumStockCartons, "35", "integer",
+                "Ngưỡng tồn kho tối thiểu tại kho vùng là 35 thùng"),
+            new ConfigurationSeed(BusinessConfigurationKeys.DefaultMlorRatio, "0.25", "decimal",
+                "Tỷ lệ hạn sử dụng còn lại tối thiểu mặc định là 25 phần trăm")
+        };
+        foreach (var definition in configurations)
+        {
+            if (!await dbContext.SystemConfigurationRecords.AnyAsync(
+                    item => item.ConfigKey == definition.Key && item.IsActive, cancellationToken))
+            {
+                dbContext.SystemConfigurationRecords.Add(new SystemConfiguration
+                {
+                    Id = Guid.NewGuid(),
+                    ConfigKey = definition.Key,
+                    ConfigValue = definition.Value,
+                    ValueType = definition.ValueType,
+                    Description = definition.Description,
+                    Version = 1,
+                    IsActive = true,
+                    UpdatedByUserId = adminUserId,
+                    EffectiveFrom = now,
+                    CreatedAt = now,
+                    UpdatedAt = now
+                });
+            }
+        }
+
+        await dbContext.SaveChangesAsync(cancellationToken);
+        return warehouses;
+    }
+
+    private static TransitTimeRule CreateTransitRule(
+        Guid warehouseId, int minimumDistance, int maximumDistance,
+        int handlingMinutes, int transitMinutes, DateTimeOffset now) => new()
         {
             Id = Guid.NewGuid(),
-            Code = DemoWarehouseCode,
-            Name = "Kho trung tâm Củ Chi",
-            Address = "Huyện Củ Chi, Thành phố Hồ Chí Minh",
+            WarehouseId = warehouseId,
+            MinDistanceMeters = minimumDistance,
+            MaxDistanceMeters = maximumDistance,
+            HandlingMinutes = handlingMinutes,
+            TransitMinutes = transitMinutes,
+            MaxServingDistanceMeters = 20_000,
             IsActive = true,
             CreatedAt = now,
             UpdatedAt = now
         };
-        dbContext.WarehouseRecords.Add(warehouse);
-        await dbContext.SaveChangesAsync(cancellationToken);
-        return warehouse;
-    }
 
     private async Task<SalesGroup> SeedSalesGroupAsync(
         Guid regionId,
@@ -521,5 +655,19 @@ public sealed class DevelopmentDataSeeder(
         string CategoryCode,
         string Status,
         string? ReplacesSku = null);
+
+    private sealed record WarehouseSeed(
+        string Code,
+        string Name,
+        string Type,
+        string Address,
+        decimal Latitude,
+        decimal Longitude);
+
+    private sealed record ConfigurationSeed(
+        string Key,
+        string Value,
+        string ValueType,
+        string Description);
 }
 

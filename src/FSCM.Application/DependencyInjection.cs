@@ -1,6 +1,7 @@
 using FluentValidation;
 using FSCM.Application.Features.Catalog;
 using FSCM.Application.Features.Identity;
+using FSCM.Application.Features.WarehouseConfiguration;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace FSCM.Application;
@@ -14,6 +15,7 @@ public static class DependencyInjection
         services.AddSingleton(TimeProvider.System);
         services.AddScoped<CatalogService>();
         services.AddScoped<IdentityService>();
+        services.AddScoped<WarehouseConfigurationService>();
 
         return services;
     }

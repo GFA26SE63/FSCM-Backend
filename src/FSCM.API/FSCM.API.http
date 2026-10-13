@@ -64,3 +64,34 @@ Accept: application/json
 GET {{FSCM.API_HostAddress}}/api/v1/products/{{products.response.body.$.items[0].id}}/price-suggestion
 Authorization: Bearer {{login.response.body.$.accessToken}}
 Accept: application/json
+
+###
+
+# @name warehouses
+GET {{FSCM.API_HostAddress}}/api/v1/warehouses?includeInactive=true
+Authorization: Bearer {{login.response.body.$.accessToken}}
+Accept: application/json
+
+###
+
+GET {{FSCM.API_HostAddress}}/api/v1/warehouses/{{warehouses.response.body.$.[0].id}}/transit-time-rules
+Authorization: Bearer {{login.response.body.$.accessToken}}
+Accept: application/json
+
+###
+
+GET {{FSCM.API_HostAddress}}/api/v1/configurations
+Authorization: Bearer {{login.response.body.$.accessToken}}
+Accept: application/json
+
+###
+
+GET {{FSCM.API_HostAddress}}/api/v1/configurations/allocation.weights/history
+Authorization: Bearer {{login.response.body.$.accessToken}}
+Accept: application/json
+
+###
+
+GET {{FSCM.API_HostAddress}}/api/v1/mlor-configurations
+Authorization: Bearer {{login.response.body.$.accessToken}}
+Accept: application/json
