@@ -1,4 +1,5 @@
 using FSCM.Application.Features.Identity;
+using FSCM.Application.Features.Inventory;
 using FSCM.Application.Features.Retailers;
 using FSCM.Application.Features.WarehouseConfiguration;
 using FSCM.Domain.Authorization;
@@ -52,6 +53,8 @@ public sealed class DevelopmentDataSeeder(
             warehouse, retailer, products, users[SystemRoles.Admin].Id, now, cancellationToken);
 
         await SeedWarehouseAssignmentsAsync(users, warehouse.Id, now, cancellationToken);
+        await dbContext.SaveChangesAsync(cancellationToken);
+        await SeedInventoryDataAsync(configuredWarehouses, products, users[SystemRoles.WarehouseKeeper].Id, now, cancellationToken);
         await SeedSalesGroupMembershipsAsync(users, salesGroups, now, cancellationToken);
         await SeedRetailerAssignmentsAsync(retailer.Id, salesGroups, now, cancellationToken);
         await SeedAdditionalRetailersAsync(regions, salesGroups, users, now, cancellationToken);
@@ -678,6 +681,128 @@ public sealed class DevelopmentDataSeeder(
         }
     }
 
+    private async Task SeedInventoryDataAsync(
+        IReadOnlyCollection<Warehouse> warehouses,
+        IReadOnlyDictionary<string, Product> products,
+        Guid warehouseKeeperId,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        var warehouseByCode = warehouses.ToDictionary(item => item.Code, StringComparer.Ordinal);
+        var definitions = new[]
+        {
+            new InventorySeed("PN-260901-01", "WH-HCM-01", "SKU001", new DateOnly(2027, 4, 30), 500m, 40m, 60m, "LÔ-SỮA-THÁNG-09", BatchExpiryStatuses.Valid),
+            new InventorySeed("PN-261001-01", "WH-TD", "SKU002", new DateOnly(2026, 10, 20), 120m, 10m, 20m, "LÔ-SỮA-CHUA-THÁNG-10", BatchExpiryStatuses.NearExpiry),
+            new InventorySeed("PN-260901-02", "WH-Q7", "SKU003", new DateOnly(2026, 10, 10), 30m, 0m, 0m, "LÔ-THỰC-PHẨM-THÁNG-09", BatchExpiryStatuses.Expired)
+        };
+
+        foreach (var definition in definitions)
+        {
+            var warehouse = warehouseByCode[definition.WarehouseCode];
+            var product = products[definition.Sku];
+            if (!await dbContext.UserWarehouseAssignmentRecords.AnyAsync(item =>
+                    item.UserAccountId == warehouseKeeperId && item.WarehouseId == warehouse.Id && item.IsActive,
+                    cancellationToken))
+            {
+                dbContext.UserWarehouseAssignmentRecords.Add(new UserWarehouseAssignment
+                {
+                    Id = Guid.NewGuid(),
+                    UserAccountId = warehouseKeeperId,
+                    WarehouseId = warehouse.Id,
+                    AssignedAt = now.AddDays(-60),
+                    IsActive = true
+                });
+                await dbContext.SaveChangesAsync(cancellationToken);
+            }
+            var receivedAt = now.AddDays(-30);
+            var receipt = await dbContext.GoodsReceiptRecords.SingleOrDefaultAsync(
+                item => item.ReceiptCode == definition.ReceiptCode, cancellationToken);
+            if (receipt is null)
+            {
+                receipt = new GoodsReceipt { Id = Guid.NewGuid(), ReceiptCode = definition.ReceiptCode, CreatedAt = receivedAt };
+                dbContext.GoodsReceiptRecords.Add(receipt);
+            }
+            receipt.IdempotencyKey = $"du-lieu-mau-{definition.ReceiptCode.ToLowerInvariant()}";
+            receipt.RequestHash = new string('0', 64);
+            receipt.WarehouseId = warehouse.Id;
+            receipt.CreatedByUserId = warehouseKeeperId;
+            receipt.Status = GoodsReceiptStatuses.Received;
+            receipt.ReceivedAt = receivedAt;
+            receipt.UpdatedAt = now;
+            await dbContext.SaveChangesAsync(cancellationToken);
+
+            var line = await dbContext.GoodsReceiptLineRecords.SingleOrDefaultAsync(item =>
+                item.GoodsReceiptId == receipt.Id && item.ProductId == product.Id &&
+                item.ExpirationDate == definition.ExpirationDate, cancellationToken);
+            if (line is null)
+            {
+                line = new GoodsReceiptLine { Id = Guid.NewGuid(), GoodsReceiptId = receipt.Id, ProductId = product.Id, CreatedAt = receivedAt };
+                dbContext.GoodsReceiptLineRecords.Add(line);
+            }
+            line.SourceLotCode = definition.SourceLotCode;
+            line.ReceivedQuantity = definition.OnHand;
+            line.ExpirationDate = definition.ExpirationDate;
+            await dbContext.SaveChangesAsync(cancellationToken);
+
+            var batchCode = $"{warehouse.Code}-{product.Sku}-{definition.ExpirationDate:ddMMyyyy}";
+            var batch = await dbContext.BatchRecords.SingleOrDefaultAsync(item => item.BatchCode == batchCode, cancellationToken);
+            if (batch is null)
+            {
+                var batchId = Guid.NewGuid();
+                batch = new Batch { Id = batchId, RootBatchId = batchId, BatchCode = batchCode, CreatedAt = receivedAt };
+                dbContext.BatchRecords.Add(batch);
+            }
+            batch.WarehouseId = warehouse.Id;
+            batch.ProductId = product.Id;
+            batch.GoodsReceiptLineId = line.Id;
+            batch.Quantity = definition.OnHand;
+            batch.ExpirationDate = definition.ExpirationDate;
+            batch.ExpiryStatus = definition.ExpiryStatus;
+            batch.StockStatus = BatchStockStatuses.InStock;
+            batch.Version = Math.Max(batch.Version, 1);
+            batch.UpdatedAt = now;
+            await dbContext.SaveChangesAsync(cancellationToken);
+
+            var balance = await dbContext.InventoryBalanceRecords.SingleOrDefaultAsync(item => item.BatchId == batch.Id, cancellationToken);
+            if (balance is null)
+            {
+                balance = new InventoryBalance { Id = Guid.NewGuid(), BatchId = batch.Id };
+                dbContext.InventoryBalanceRecords.Add(balance);
+            }
+            balance.PhysicalQuantity = definition.OnHand;
+            balance.HeldQuantity = definition.Held;
+            balance.ReservedQuantity = definition.Reserved;
+            balance.AvailableQuantity = definition.OnHand - definition.Held - definition.Reserved;
+            balance.Version = Math.Max(balance.Version, 1);
+            balance.UpdatedAt = now;
+
+            if (!await dbContext.InventoryTransactionRecords.AnyAsync(item =>
+                    item.BatchId == batch.Id && item.ReferenceCode == receipt.ReceiptCode &&
+                    item.TransactionType == InventoryTransactionTypes.GoodsReceipt, cancellationToken))
+            {
+                dbContext.InventoryTransactionRecords.Add(new InventoryTransaction
+                {
+                    Id = Guid.NewGuid(),
+                    BatchId = batch.Id,
+                    WarehouseId = warehouse.Id,
+                    ProductId = product.Id,
+                    GoodsReceiptId = receipt.Id,
+                    GoodsReceiptLineId = line.Id,
+                    CreatedByUserId = warehouseKeeperId,
+                    TransactionType = InventoryTransactionTypes.GoodsReceipt,
+                    ReferenceCode = receipt.ReceiptCode,
+                    PhysicalQuantityDelta = definition.OnHand,
+                    PhysicalQuantityAfter = definition.OnHand,
+                    HeldQuantityAfter = definition.Held,
+                    ReservedQuantityAfter = definition.Reserved,
+                    AvailableQuantityAfter = definition.OnHand - definition.Held - definition.Reserved,
+                    Note = "Dữ liệu mẫu nhập hàng vào kho",
+                    OccurredAt = receivedAt
+                });
+            }
+        }
+    }
+
     private async Task SeedSalesGroupMembershipsAsync(
         IReadOnlyDictionary<string, UserAccount> users,
         IReadOnlyDictionary<string, SalesGroup> salesGroups,
@@ -837,6 +962,10 @@ public sealed class DevelopmentDataSeeder(
         string RegionCode, string SalesGroupCode, string Status, string RetailerType,
         decimal ForecastRevenue, decimal StoreSize, decimal Capacity, int Frequency,
         int CreditTermDays, string PotentialClass, string Note);
+
+    private sealed record InventorySeed(
+        string ReceiptCode, string WarehouseCode, string Sku, DateOnly ExpirationDate,
+        decimal OnHand, decimal Held, decimal Reserved, string SourceLotCode, string ExpiryStatus);
 
     private sealed record ConfigurationSeed(
         string Key,
