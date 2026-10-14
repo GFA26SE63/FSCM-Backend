@@ -1,7 +1,0 @@
-<Project Sdk="Microsoft.NET.Sdk">
-  <ItemGroup>
-    <ProjectReference Include="..\FSCM.Modules.Catalog.Domain\FSCM.Modules.Catalog.Domain.csproj" />
-    <ProjectReference Include="..\FSCM.Modules.Catalog.Contracts\FSCM.Modules.Catalog.Contracts.csproj" />
-    <ProjectReference Include="..\..\..\BuildingBlocks\FSCM.BuildingBlocks.Application\FSCM.BuildingBlocks.Application.csproj" />
-  </ItemGroup>
-</Project>

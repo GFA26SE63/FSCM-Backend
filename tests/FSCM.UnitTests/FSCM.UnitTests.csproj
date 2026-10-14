@@ -1,19 +1,26 @@
 <Project Sdk="Microsoft.NET.Sdk">
+
   <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
-    <IsTestProject>true</IsTestProject>
   </PropertyGroup>
+
   <ItemGroup>
-    <PackageReference Include="Microsoft.NET.Test.Sdk" />
-    <PackageReference Include="xunit" />
-    <PackageReference Include="xunit.runner.visualstudio" />
+    <PackageReference Include="coverlet.collector" Version="6.0.4" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
   </ItemGroup>
+
   <ItemGroup>
-    <ProjectReference Include="..\..\src\BuildingBlocks\FSCM.SharedKernel\FSCM.SharedKernel.csproj" />
-    <ProjectReference Include="..\..\src\Modules\Ordering\FSCM.Modules.Ordering.Domain\FSCM.Modules.Ordering.Domain.csproj" />
-    <ProjectReference Include="..\..\src\Modules\Inventory\FSCM.Modules.Inventory.Domain\FSCM.Modules.Inventory.Domain.csproj" />
-    <ProjectReference Include="..\..\src\Modules\Logistics\FSCM.Modules.Logistics.Domain\FSCM.Modules.Logistics.Domain.csproj" />
-    <!-- Same scenarios as the demo console, so the documents, the demo and the tests can never disagree. -->
-    <Compile Include="..\..\tools\FSCM.AlgoDemo\Scenarios.cs" Link="Scenarios.cs" />
+    <Using Include="Xunit" />
   </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\FSCM.Application\FSCM.Application.csproj" />
+    <ProjectReference Include="..\..\src\FSCM.Domain\FSCM.Domain.csproj" />
+  </ItemGroup>
+
 </Project>

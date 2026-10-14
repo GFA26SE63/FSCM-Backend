@@ -1,9 +1,0 @@
-<Project Sdk="Microsoft.NET.Sdk">
-  <ItemGroup>
-    <ProjectReference Include="..\FSCM.Modules.Performance.Application\FSCM.Modules.Performance.Application.csproj" />
-    <ProjectReference Include="..\..\..\BuildingBlocks\FSCM.BuildingBlocks.Infrastructure\FSCM.BuildingBlocks.Infrastructure.csproj" />
-  </ItemGroup>
-  <ItemGroup>
-    <FrameworkReference Include="Microsoft.AspNetCore.App" />
-  </ItemGroup>
-</Project>
