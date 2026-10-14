@@ -87,8 +87,8 @@ public sealed class PhysicalSchemaModelTests
 
         Assert.Equal(ExpectedTables, tableNames);
         Assert.Equal(62, entityTypes.Length);
-        Assert.Equal(578, entityTypes.Sum(entityType => entityType.GetProperties().Count()));
-        Assert.Equal(132, entityTypes.Sum(entityType => entityType.GetForeignKeys().Count()));
+        Assert.Equal(605, entityTypes.Sum(entityType => entityType.GetProperties().Count()));
+        Assert.Equal(134, entityTypes.Sum(entityType => entityType.GetForeignKeys().Count()));
         Assert.All(
             entityTypes.SelectMany(entityType => entityType.GetForeignKeys()),
             foreignKey => Assert.Equal(DeleteBehavior.Restrict, foreignKey.DeleteBehavior));
@@ -232,6 +232,37 @@ public sealed class PhysicalSchemaModelTests
         Assert.Contains(retailerLink.GetIndexes(), index => index.IsUnique && index.Properties.Count == 2);
         Assert.Contains(batchLink.GetIndexes(), index => index.IsUnique && index.Properties.Count == 2);
         Assert.Contains(context.Model.GetSequences(), sequence => sequence.Name == "PromotionCodeSequence");
+    }
+
+    [Fact]
+    public void Model_preserves_assisted_order_snapshots_trace_and_concurrency()
+    {
+        using var context = CreateContext();
+        var order = context.Model.FindEntityType(typeof(SalesOrder))!;
+        var line = context.Model.FindEntityType(typeof(SalesOrderLine))!;
+        var allocation = context.Model.FindEntityType(typeof(Allocation))!;
+        var retailer = context.Model.FindEntityType(typeof(Retailer))!;
+
+        Assert.Equal("jsonb", order.FindProperty(nameof(SalesOrder.AllocationTraceJson))!.GetColumnType());
+        Assert.True(order.FindProperty(nameof(SalesOrder.Version))!.IsConcurrencyToken);
+        Assert.False(order.FindProperty(nameof(SalesOrder.RetailerCodeSnapshot))!.IsNullable);
+        Assert.False(order.FindProperty(nameof(SalesOrder.RetailerNameSnapshot))!.IsNullable);
+
+        var orderId = line.FindProperty(nameof(SalesOrderLine.SalesOrderId))!;
+        var lineNumber = line.FindProperty(nameof(SalesOrderLine.LineNumber))!;
+        Assert.True(line.GetIndexes().Single(index =>
+            index.Properties.SequenceEqual([orderId, lineNumber])).IsUnique);
+
+        var salesOrderLineId = allocation.FindProperty(nameof(Allocation.SalesOrderLineId))!;
+        var allocationSequence = allocation.FindProperty(nameof(Allocation.AllocationSequence))!;
+        Assert.True(allocation.GetIndexes().Single(index =>
+            index.Properties.SequenceEqual([salesOrderLineId, allocationSequence])).IsUnique);
+        Assert.NotNull(allocation.FindProperty(nameof(Allocation.PromotionId)));
+
+        var retailerUserId = retailer.FindProperty(nameof(Retailer.UserAccountId))!;
+        Assert.True(retailer.GetIndexes().Single(index =>
+            index.Properties.SequenceEqual([retailerUserId])).IsUnique);
+        Assert.Contains(context.Model.GetSequences(), sequence => sequence.Name == "SalesOrderCodeSequence");
     }
 
     private static AppDbContext CreateContext()

@@ -3,6 +3,7 @@ using FSCM.Application.Features.Catalog;
 using FSCM.Application.Features.Identity;
 using FSCM.Application.Features.InternalTransfers;
 using FSCM.Application.Features.Inventory;
+using FSCM.Application.Features.Orders;
 using FSCM.Application.Features.QrLabels;
 using FSCM.Application.Features.Promotions;
 using FSCM.Application.Features.Retailers;
@@ -286,6 +287,41 @@ public sealed class SystemQuery
         DateTimeOffset? at, [Service] PromotionService service,
         CancellationToken cancellationToken) =>
         service.CalculatePriceAsync(productId, quantity, batchId, retailerId, at, cancellationToken);
+
+    [Authorize(Roles = [SystemRoles.Admin, SystemRoles.Operator, SystemRoles.SalesManager, SystemRoles.Sales, SystemRoles.WarehouseKeeper, SystemRoles.Retailer])]
+    [UsePaging(DefaultPageSize = 20, MaxPageSize = 100, IncludeTotalCount = true, RequirePagingBoundaries = true), UseFiltering, UseSorting]
+    public async Task<IEnumerable<OrderSummaryResult>> Orders(
+        string? status,
+        Guid? retailerId,
+        [Service] OrderService service,
+        [Service] IHttpContextAccessor accessor,
+        CancellationToken cancellationToken)
+    {
+        var user = CurrentUser.From(accessor);
+        return await service.ListAsync(user.Id, user.Role, status, retailerId, cancellationToken);
+    }
+
+    [Authorize(Roles = [SystemRoles.Admin, SystemRoles.Operator, SystemRoles.SalesManager, SystemRoles.Sales, SystemRoles.WarehouseKeeper, SystemRoles.Retailer])]
+    public Task<OrderDetailResult> Order(
+        Guid id,
+        [Service] OrderService service,
+        [Service] IHttpContextAccessor accessor,
+        CancellationToken cancellationToken)
+    {
+        var user = CurrentUser.From(accessor);
+        return service.GetAsync(id, user.Id, user.Role, cancellationToken);
+    }
+
+    [Authorize(Roles = [SystemRoles.Admin, SystemRoles.Operator, SystemRoles.SalesManager, SystemRoles.Sales, SystemRoles.WarehouseKeeper, SystemRoles.Retailer])]
+    public Task<OrderTraceResult> OrderAllocationTrace(
+        Guid id,
+        [Service] OrderService service,
+        [Service] IHttpContextAccessor accessor,
+        CancellationToken cancellationToken)
+    {
+        var user = CurrentUser.From(accessor);
+        return service.GetTraceAsync(id, user.Id, user.Role, cancellationToken);
+    }
 }
 
 internal static class CurrentUser

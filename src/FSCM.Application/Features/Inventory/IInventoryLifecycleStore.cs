@@ -24,3 +24,11 @@ public interface IInventoryLifecycleStore
     void AddTransaction(InventoryTransaction transaction);
     Task SaveChangesAsync(CancellationToken cancellationToken);
 }
+
+public interface IInventoryLifecycleService
+{
+    Task<InventoryLifecycleResult> HoldAsync(Guid allocationId, Guid actorUserId, int expectedVersion, CancellationToken cancellationToken);
+    Task<InventoryLifecycleResult> ReserveAsync(Guid allocationId, Guid actorUserId, int expectedVersion, CancellationToken cancellationToken);
+    Task<InventoryLifecycleResult> ReleaseAsync(Guid allocationId, Guid actorUserId, int expectedVersion, CancellationToken cancellationToken);
+    Task<InventoryLifecycleResult> IssueAsync(Guid allocationId, Guid actorUserId, int expectedVersion, CancellationToken cancellationToken);
+}
