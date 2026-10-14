@@ -1861,7 +1861,8 @@ namespace FSCM.Persistence.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("AllocationId");
+                    b.HasIndex("AllocationId")
+                        .IsUnique();
 
                     b.HasIndex("BatchId");
 
@@ -2446,7 +2447,8 @@ namespace FSCM.Persistence.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("AllocationId");
+                    b.HasIndex("AllocationId")
+                        .IsUnique();
 
                     b.HasIndex("BatchId");
 

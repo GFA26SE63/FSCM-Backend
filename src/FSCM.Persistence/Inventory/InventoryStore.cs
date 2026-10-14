@@ -8,7 +8,7 @@ using Npgsql;
 
 namespace FSCM.Persistence.Inventory;
 
-public sealed class InventoryStore(AppDbContext dbContext) : IInventoryStore
+public sealed class InventoryStore(AppDbContext dbContext) : IInventoryStore, IInventoryLifecycleStore
 {
     public Task<bool> CanAccessWarehouseAsync(Guid userId, string role, Guid warehouseId, CancellationToken cancellationToken) =>
         role is SystemRoles.Admin or SystemRoles.Operator
@@ -68,6 +68,25 @@ public sealed class InventoryStore(AppDbContext dbContext) : IInventoryStore
 
     public Task<InventoryBalance?> FindBalanceForUpdateAsync(Guid batchId, CancellationToken cancellationToken) =>
         dbContext.InventoryBalanceRecords.SingleOrDefaultAsync(item => item.BatchId == batchId, cancellationToken);
+
+    public async Task<InventoryLifecycleView?> FindForUpdateAsync(
+        Guid allocationId, CancellationToken cancellationToken)
+    {
+        var allocation = await dbContext.AllocationRecords
+            .SingleOrDefaultAsync(item => item.Id == allocationId, cancellationToken);
+        if (allocation is null) return null;
+        var batch = await dbContext.BatchRecords
+            .SingleOrDefaultAsync(item => item.Id == allocation.BatchId, cancellationToken);
+        if (batch is null) return null;
+        var balance = await dbContext.InventoryBalanceRecords
+            .SingleOrDefaultAsync(item => item.BatchId == batch.Id, cancellationToken);
+        if (balance is null) return null;
+        var hold = await dbContext.StockHoldRecords
+            .SingleOrDefaultAsync(item => item.AllocationId == allocationId, cancellationToken);
+        var reservation = await dbContext.ReservationRecords
+            .SingleOrDefaultAsync(item => item.AllocationId == allocationId, cancellationToken);
+        return new InventoryLifecycleView(allocation, batch, balance, hold, reservation);
+    }
 
     public async Task<IReadOnlyCollection<BatchInventoryView>> ListInventoryAsync(
         Guid actorUserId, string actorRole, Guid? warehouseId, Guid? productId, CancellationToken cancellationToken)
@@ -135,6 +154,8 @@ public sealed class InventoryStore(AppDbContext dbContext) : IInventoryStore
     public void AddBatch(Batch batch) => dbContext.BatchRecords.Add(batch);
     public void AddBalance(InventoryBalance balance) => dbContext.InventoryBalanceRecords.Add(balance);
     public void AddTransaction(InventoryTransaction transaction) => dbContext.InventoryTransactionRecords.Add(transaction);
+    public void AddHold(StockHold hold) => dbContext.StockHoldRecords.Add(hold);
+    public void AddReservation(Reservation reservation) => dbContext.ReservationRecords.Add(reservation);
 
     public async Task SaveChangesAsync(CancellationToken cancellationToken)
     {
@@ -148,7 +169,7 @@ public sealed class InventoryStore(AppDbContext dbContext) : IInventoryStore
         }
         catch (DbUpdateException exception) when (exception.InnerException is PostgresException { SqlState: PostgresErrorCodes.UniqueViolation })
         {
-            throw InventoryOperationException.Conflict("A concurrent receipt created the same business record. Retry with the same idempotency key.");
+            throw InventoryOperationException.Conflict("A concurrent inventory operation created the same business record. Refresh and retry.");
         }
     }
 

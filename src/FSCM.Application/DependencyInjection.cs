@@ -22,6 +22,7 @@ public static class DependencyInjection
         services.AddScoped<CatalogService>();
         services.AddScoped<IdentityService>();
         services.AddScoped<InventoryService>();
+        services.AddScoped<InventoryLifecycleService>();
         services.AddScoped<InternalTransferService>();
         services.AddScoped<QrLabelService>();
         services.AddScoped<PromotionService>();
