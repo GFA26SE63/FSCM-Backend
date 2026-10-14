@@ -139,3 +139,39 @@ Content-Type: application/json
 GET {{FSCM.API_HostAddress}}/api/v1/territory-access/retailers/{{salesLogin.response.body.$.user.scope.retailerIds[0]}}/order-eligibility
 Authorization: Bearer {{salesLogin.response.body.$.accessToken}}
 Accept: application/json
+
+###
+
+# @name promotions
+GET {{FSCM.API_HostAddress}}/api/v1/promotions
+Authorization: Bearer {{login.response.body.$.accessToken}}
+Accept: application/json
+
+###
+
+# @name batchDiscounts
+GET {{FSCM.API_HostAddress}}/api/v1/batch-discounts
+Authorization: Bearer {{login.response.body.$.accessToken}}
+Accept: application/json
+
+###
+
+GET {{FSCM.API_HostAddress}}/api/v1/batch-discounts/suggestions
+Authorization: Bearer {{login.response.body.$.accessToken}}
+Accept: application/json
+
+###
+
+GET {{FSCM.API_HostAddress}}/api/v1/pricing/snapshot?productId={{batchDiscounts.response.body.$.[0].productId}}&quantity=10&batchId={{batchDiscounts.response.body.$.[0].batchId}}
+Authorization: Bearer {{login.response.body.$.accessToken}}
+Accept: application/json
+
+###
+
+POST {{FSCM.API_HostAddress}}/graphql
+Authorization: Bearer {{login.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "query": "{ promotions(first: 20) { totalCount nodes { code name discountPercent } } batchDiscounts(first: 20) { totalCount nodes { promotionCode batchCode discountPercent } } batchDiscountSuggestions(first: 20) { totalCount nodes { batchCode remainingShelfLifePercent suggestedDiscountPercent } } }"
+}

@@ -87,6 +87,15 @@ public sealed partial class WarehouseConfigurationService(
             .Select(ToTransitResult).ToArray();
     }
 
+    public async Task<Dictionary<Guid, TransitTimeRuleResult[]>> ListTransitRulesByWarehouseIdsAsync(
+        IReadOnlyCollection<Guid> warehouseIds,
+        CancellationToken cancellationToken)
+    {
+        var rules = await store.ListTransitRulesAsync(warehouseIds.Distinct().ToArray(), false, cancellationToken);
+        return rules.GroupBy(rule => rule.WarehouseId)
+            .ToDictionary(group => group.Key, group => group.Select(ToTransitResult).ToArray());
+    }
+
     public async Task<IReadOnlyCollection<TransitTimeRuleResult>> ReplaceTransitRulesAsync(
         Guid warehouseId, IReadOnlyCollection<TransitTimeRuleData> definitions, CancellationToken cancellationToken)
     {

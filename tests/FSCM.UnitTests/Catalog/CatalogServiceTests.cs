@@ -237,6 +237,15 @@ public sealed class CatalogServiceTests
             return Task.FromResult<(IReadOnlyCollection<ProductView>, int)>((items, matches.Length));
         }
 
+        public async Task<IReadOnlyCollection<ProductView>> ListProductsForQueryAsync(
+            ProductQuery query,
+            CancellationToken cancellationToken)
+        {
+            var page = await ListProductsAsync(
+                new ProductSearch(query.Search, query.CategoryId, query.Status, 1, 100), cancellationToken);
+            return page.Items;
+        }
+
         public Task<Product?> FindProductAsync(Guid productId, CancellationToken cancellationToken) =>
             Task.FromResult(Products.SingleOrDefault(product => product.Id == productId));
 
@@ -261,6 +270,15 @@ public sealed class CatalogServiceTests
             Task.FromResult<IReadOnlyCollection<ProductPrice>>(Prices
                 .Where(price => price.ProductId == productId)
                 .OrderByDescending(price => price.EffectiveFrom)
+                .ToArray());
+
+        public Task<IReadOnlyCollection<ProductPrice>> ListPricesAsync(
+            IReadOnlyCollection<Guid> productIds,
+            CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyCollection<ProductPrice>>(Prices
+                .Where(price => productIds.Contains(price.ProductId))
+                .OrderBy(price => price.ProductId)
+                .ThenByDescending(price => price.EffectiveFrom)
                 .ToArray());
 
         public Task<ProductPrice?> FindActivePriceAsync(Guid productId, CancellationToken cancellationToken) =>

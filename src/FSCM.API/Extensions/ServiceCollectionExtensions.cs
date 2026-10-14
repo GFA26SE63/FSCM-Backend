@@ -29,6 +29,7 @@ public static class ServiceCollectionExtensions
         services.AddExceptionHandler<InventoryExceptionHandler>();
         services.AddExceptionHandler<InternalTransferExceptionHandler>();
         services.AddExceptionHandler<QrLabelExceptionHandler>();
+        services.AddExceptionHandler<PromotionExceptionHandler>();
         services.AddExceptionHandler<RetailerExceptionHandler>();
         services.AddExceptionHandler<TerritoryExceptionHandler>();
         services.AddExceptionHandler<WarehouseConfigurationExceptionHandler>();
@@ -59,11 +60,33 @@ public static class ServiceCollectionExtensions
 
         services.AddAuthenticationServices(configuration);
         services.AddAuthorization();
+        services.AddHttpContextAccessor();
+        services.AddFscmGraphQlDataLoaders();
 
         services
             .AddGraphQLServer()
             .AddAuthorization()
-            .AddQueryType<SystemQuery>();
+            .AddFiltering()
+            .AddSorting()
+            .AddMaxExecutionDepthRule(12)
+            .AddMaxAllowedFieldCycleDepthRule(2)
+            .ModifyPagingOptions(options =>
+            {
+                options.DefaultPageSize = 20;
+                options.MaxPageSize = 100;
+                options.IncludeTotalCount = true;
+                options.RequirePagingBoundaries = true;
+            })
+            .AddQueryType<SystemQuery>()
+            .AddTypeExtension<ProductGraphQlExtensions>()
+            .AddTypeExtension<WarehouseGraphQlExtensions>()
+            .AddTypeExtension<RetailerGraphQlExtensions>()
+            .AddTypeExtension<InventoryGraphQlExtensions>()
+            .AddTypeExtension<GoodsReceiptGraphQlExtensions>()
+            .AddTypeExtension<GoodsReceiptLineGraphQlExtensions>()
+            .AddTypeExtension<QrLabelGraphQlExtensions>()
+            .AddTypeExtension<InternalTransferGraphQlExtensions>()
+            .AddTypeExtension<InternalTransferItemGraphQlExtensions>();
 
         return services;
     }

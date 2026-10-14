@@ -22,6 +22,9 @@ namespace FSCM.Persistence.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
+            modelBuilder.HasSequence("PromotionCodeSequence")
+                .StartsAt(4L);
+
             modelBuilder.HasSequence("QrLabelCodeSequence")
                 .StartsAt(1000L);
 
@@ -264,9 +267,10 @@ namespace FSCM.Persistence.Migrations
 
                     b.HasIndex("AssignedByUserId");
 
-                    b.HasIndex("BatchId");
-
                     b.HasIndex("PromotionId");
+
+                    b.HasIndex("BatchId", "PromotionId")
+                        .IsUnique();
 
                     b.ToTable("BATCH_PROMOTION", (string)null);
                 });
@@ -1468,7 +1472,8 @@ namespace FSCM.Persistence.Migrations
 
                     b.HasIndex("ProductCategoryId");
 
-                    b.HasIndex("PromotionId");
+                    b.HasIndex("PromotionId", "ProductCategoryId")
+                        .IsUnique();
 
                     b.ToTable("PROMOTION_CATEGORY", (string)null);
                 });
@@ -1489,7 +1494,8 @@ namespace FSCM.Persistence.Migrations
 
                     b.HasIndex("ProductId");
 
-                    b.HasIndex("PromotionId");
+                    b.HasIndex("PromotionId", "ProductId")
+                        .IsUnique();
 
                     b.ToTable("PROMOTION_PRODUCT", (string)null);
                 });
@@ -1508,9 +1514,10 @@ namespace FSCM.Persistence.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("PromotionId");
-
                     b.HasIndex("RetailerId");
+
+                    b.HasIndex("PromotionId", "RetailerId")
+                        .IsUnique();
 
                     b.ToTable("PROMOTION_RETAILER", (string)null);
                 });
@@ -1854,7 +1861,8 @@ namespace FSCM.Persistence.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("AllocationId");
+                    b.HasIndex("AllocationId")
+                        .IsUnique();
 
                     b.HasIndex("BatchId");
 
@@ -2439,7 +2447,8 @@ namespace FSCM.Persistence.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("AllocationId");
+                    b.HasIndex("AllocationId")
+                        .IsUnique();
 
                     b.HasIndex("BatchId");
 

@@ -218,6 +218,22 @@ public sealed class PhysicalSchemaModelTests
         Assert.True(transferLabel.GetIndexes().Single(index => index.Properties.SequenceEqual([itemId, labelId])).IsUnique);
     }
 
+    [Fact]
+    public void Model_enforces_unique_promotion_scopes_and_business_code_sequence()
+    {
+        using var context = CreateContext();
+        var productLink = context.Model.FindEntityType(typeof(PromotionProduct))!;
+        var categoryLink = context.Model.FindEntityType(typeof(PromotionCategory))!;
+        var retailerLink = context.Model.FindEntityType(typeof(PromotionRetailer))!;
+        var batchLink = context.Model.FindEntityType(typeof(BatchPromotion))!;
+
+        Assert.Contains(productLink.GetIndexes(), index => index.IsUnique && index.Properties.Count == 2);
+        Assert.Contains(categoryLink.GetIndexes(), index => index.IsUnique && index.Properties.Count == 2);
+        Assert.Contains(retailerLink.GetIndexes(), index => index.IsUnique && index.Properties.Count == 2);
+        Assert.Contains(batchLink.GetIndexes(), index => index.IsUnique && index.Properties.Count == 2);
+        Assert.Contains(context.Model.GetSequences(), sequence => sequence.Name == "PromotionCodeSequence");
+    }
+
     private static AppDbContext CreateContext()
     {
         var options = new DbContextOptionsBuilder<AppDbContext>()

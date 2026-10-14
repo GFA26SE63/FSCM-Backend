@@ -18,6 +18,7 @@ public sealed class ReservationConfiguration : IEntityTypeConfiguration<Reservat
         builder.Property(entity => entity.ReservedAt).HasColumnType("timestamp with time zone").IsRequired();
         builder.Property(entity => entity.ReleasedAt).HasColumnType("timestamp with time zone").IsRequired(false);
         builder.Property(entity => entity.ConsumedAt).HasColumnType("timestamp with time zone").IsRequired(false);
+        builder.HasIndex(entity => entity.AllocationId).IsUnique();
         builder.HasOne<Allocation>()
             .WithMany()
             .HasForeignKey(entity => entity.AllocationId)

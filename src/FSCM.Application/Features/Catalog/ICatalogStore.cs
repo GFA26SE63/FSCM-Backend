@@ -24,6 +24,10 @@ public interface ICatalogStore
         ProductSearch search,
         CancellationToken cancellationToken);
 
+    Task<IReadOnlyCollection<ProductView>> ListProductsForQueryAsync(
+        ProductQuery query,
+        CancellationToken cancellationToken);
+
     Task<Product?> FindProductAsync(Guid productId, CancellationToken cancellationToken);
     Task<Product?> FindProductBySkuAsync(string sku, CancellationToken cancellationToken);
     Task<Product?> FindReplacementAsync(Guid replacedProductId, CancellationToken cancellationToken);
@@ -33,6 +37,10 @@ public interface ICatalogStore
 
     Task<IReadOnlyCollection<ProductPrice>> ListPricesAsync(
         Guid productId,
+        CancellationToken cancellationToken);
+
+    Task<IReadOnlyCollection<ProductPrice>> ListPricesAsync(
+        IReadOnlyCollection<Guid> productIds,
         CancellationToken cancellationToken);
 
     Task<ProductPrice?> FindActivePriceAsync(Guid productId, CancellationToken cancellationToken);
