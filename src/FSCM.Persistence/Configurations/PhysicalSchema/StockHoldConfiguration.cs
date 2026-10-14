@@ -17,6 +17,7 @@ public sealed class StockHoldConfiguration : IEntityTypeConfiguration<StockHold>
         builder.Property(entity => entity.Status).HasMaxLength(30).IsRequired();
         builder.Property(entity => entity.HeldAt).HasColumnType("timestamp with time zone").IsRequired();
         builder.Property(entity => entity.ReleasedAt).HasColumnType("timestamp with time zone").IsRequired(false);
+        builder.HasIndex(entity => entity.AllocationId).IsUnique();
         builder.HasOne<Allocation>()
             .WithMany()
             .HasForeignKey(entity => entity.AllocationId)

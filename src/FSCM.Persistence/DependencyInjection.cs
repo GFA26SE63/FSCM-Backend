@@ -45,6 +45,7 @@ public static class DependencyInjection
         services.AddScoped<ICatalogStore, CatalogStore>();
         services.AddScoped<IIdentityStore, IdentityStore>();
         services.AddScoped<IInventoryStore, InventoryStore>();
+        services.AddScoped<IInventoryLifecycleStore, InventoryStore>();
         services.AddScoped<IInternalTransferStore, InternalTransferStore>();
         services.AddScoped<IQrLabelStore, QrLabelStore>();
         services.AddScoped<IPromotionStore, PromotionStore>();
