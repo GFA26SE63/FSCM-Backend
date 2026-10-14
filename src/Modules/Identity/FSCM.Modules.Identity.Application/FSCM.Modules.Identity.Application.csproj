@@ -1,8 +1,0 @@
-<Project Sdk="Microsoft.NET.Sdk">
-  <ItemGroup>
-    <ProjectReference Include="..\FSCM.Modules.Identity.Domain\FSCM.Modules.Identity.Domain.csproj" />
-    <ProjectReference Include="..\FSCM.Modules.Identity.Contracts\FSCM.Modules.Identity.Contracts.csproj" />
-    <ProjectReference Include="..\..\..\BuildingBlocks\FSCM.BuildingBlocks.Application\FSCM.BuildingBlocks.Application.csproj" />
-    <ProjectReference Include="..\..\Partners\FSCM.Modules.Partners.Contracts\FSCM.Modules.Partners.Contracts.csproj" />
-  </ItemGroup>
-</Project>
