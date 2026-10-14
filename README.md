@@ -63,6 +63,8 @@ BE-04 exposes region and Sales-group master data under `/api/v1/regions` and `/a
 
 BE-09 exposes campaign management under `/api/v1/promotions`, shelf-life suggestions and batch assignments under `/api/v1/batch-discounts`, and deterministic price snapshots under `/api/v1/pricing/snapshot`. Admin manages campaigns and batch discounts; authenticated users can read applicable offers and calculate prices. Campaign and batch discounts do not compound: the highest eligible rate wins, an equal batch-specific rate wins over a campaign, and promotion code is the final stable tie-breaker. Every REST GET has an equivalent GraphQL query at `/graphql`.
 
+Assisted ordering is exposed under `/api/v1/orders`. Sales can create an order only for an active retailer in their current territory; the server validates carton steps, calculates the final promotion, allocates eligible batches, stores the scoring trace, and holds inventory atomically. Operator approval converts holds to reservations, rejection releases them, and cancellation is restricted to the owning Sales user while pending or to Operator/Admin. Scoped list, detail, and allocation-trace reads are also available through GraphQL.
+
 The development catalog dump contains:
 
 | Data | Seeded examples |
@@ -73,11 +75,12 @@ The development catalog dump contains:
 | Warehouses | One central warehouse and two regional warehouses with Vietnamese addresses and coordinates |
 | Transit time | Per-warehouse rules for up to 10 km in one day and up to 20 km in two days |
 | MLOR | Retailer-product rules for `SKU001` and `SKU002` |
-| Configuration | Allocation weights `0.5 / 0.3 / 0.2`, 20 km radius, 35-carton threshold, and 25% default MLOR |
+| Configuration | Allocation weights `0.5 / 0.3 / 0.2`, 20 km radius, 35-carton threshold, 25% default MLOR, zero-carton order buffer, and one-carton order step |
 | Regions | Hồ Chí Minh, Bình Dương, and an inactive Long An example |
 | Sales groups | `HCM-A`, `HCM-B`, `BD-A`, and inactive `LA-A`, all with Vietnamese names |
 | Assignment history | Current and previous Sales/retailer territory assignments for transfer testing |
 | Promotions | Two Vietnamese campaigns (`KM-001`, `KM-002`) and one near-expiry batch discount (`KM-003`) |
+| Assisted order | One idempotent Vietnamese `PendingApproval` order for retailer `10004127`, including price/allocation snapshots and an active stock hold |
 
 Use [the HTTP request collection](src/FSCM.API/FSCM.API.http) after seeding to log in, query the catalog, inspect price history, and request a historical-price suggestion.
 

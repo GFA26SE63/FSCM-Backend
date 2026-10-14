@@ -79,6 +79,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
         modelBuilder.HasSequence<long>("RetailerBusinessCodeSequence").StartsAt(10005000);
         modelBuilder.HasSequence<long>("QrLabelCodeSequence").StartsAt(1000);
         modelBuilder.HasSequence<long>("PromotionCodeSequence").StartsAt(4);
+        modelBuilder.HasSequence<long>("SalesOrderCodeSequence").StartsAt(1030);
         modelBuilder.ApplyConfigurationsFromAssembly(typeof(AppDbContext).Assembly);
     }
 }

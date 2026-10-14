@@ -13,6 +13,18 @@ public sealed class Allocation
     public decimal DistanceMeters { get; set; }
     public DateTimeOffset EstimatedArrivalAt { get; set; }
     public int RemainingLifeHoursAtArrival { get; set; }
+    public decimal ShelfLifeScore { get; set; }
+    public decimal DistanceScore { get; set; }
+    public decimal CoverageScore { get; set; }
+    public decimal WeightedScore { get; set; }
+    public decimal UnitPrice { get; set; }
+    public decimal GrossAmount { get; set; }
+    public decimal DiscountPercent { get; set; }
+    public decimal DiscountAmount { get; set; }
+    public decimal NetAmount { get; set; }
+    public Guid? PromotionId { get; set; }
+    public string? DiscountSourceType { get; set; }
+    public string? DiscountSourceCode { get; set; }
     public string Status { get; set; } = string.Empty;
     public DateTimeOffset CreatedAt { get; set; }
 }

@@ -36,7 +36,7 @@ public sealed record InventoryLifecycleResult(
     decimal AvailableQuantity,
     int Version);
 
-public sealed class InventoryLifecycleService(IInventoryLifecycleStore store, TimeProvider timeProvider)
+public sealed class InventoryLifecycleService(IInventoryLifecycleStore store, TimeProvider timeProvider) : IInventoryLifecycleService
 {
     public async Task<InventoryLifecycleResult> HoldAsync(
         Guid allocationId,

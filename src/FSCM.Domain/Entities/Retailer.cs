@@ -6,6 +6,7 @@ public sealed class Retailer
 {
     public Guid Id { get; set; }
     public Guid RegionId { get; set; }
+    public Guid? UserAccountId { get; set; }
     public string Code { get; set; } = string.Empty;
     public string Name { get; set; } = string.Empty;
     public string? ContactName { get; set; }

@@ -2,6 +2,7 @@
 @email = admin@fscm.local
 @password = FscmDemo#2026
 @salesEmail = sales@fscm.local
+@operatorEmail = operator@fscm.local
 
 GET {{FSCM.API_HostAddress}}/health
 Accept: application/json
@@ -174,4 +175,61 @@ Content-Type: application/json
 
 {
   "query": "{ promotions(first: 20) { totalCount nodes { code name discountPercent } } batchDiscounts(first: 20) { totalCount nodes { promotionCode batchCode discountPercent } } batchDiscountSuggestions(first: 20) { totalCount nodes { batchCode remainingShelfLifePercent suggestedDiscountPercent } } }"
+}
+
+###
+
+# @name assistedOrder
+POST {{FSCM.API_HostAddress}}/api/v1/orders
+Authorization: Bearer {{salesLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "clientOrderKey": "{{$guid}}",
+  "retailerId": "{{salesLogin.response.body.$.user.scope.retailerIds[0]}}",
+  "paymentMethod": "COD",
+  "note": "Đơn hỗ trợ tạo tại điểm bán",
+  "lines": [
+    {
+      "productId": "{{products.response.body.$.items[0].id}}",
+      "quantity": 10
+    }
+  ]
+}
+
+###
+
+GET {{FSCM.API_HostAddress}}/api/v1/orders/{{assistedOrder.response.body.$.id}}/allocation-trace
+Authorization: Bearer {{salesLogin.response.body.$.accessToken}}
+Accept: application/json
+
+###
+
+POST {{FSCM.API_HostAddress}}/graphql
+Authorization: Bearer {{salesLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "query": "{ orders(first: 20) { totalCount nodes { id orderCode status finalAmount version } } }"
+}
+
+###
+
+# @name operatorLogin
+POST {{FSCM.API_HostAddress}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "{{operatorEmail}}",
+  "password": "{{password}}"
+}
+
+###
+
+POST {{FSCM.API_HostAddress}}/api/v1/orders/{{assistedOrder.response.body.$.id}}/approve
+Authorization: Bearer {{operatorLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "expectedVersion": {{assistedOrder.response.body.$.version}}
 }
