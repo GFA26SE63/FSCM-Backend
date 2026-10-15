@@ -88,6 +88,10 @@ The development catalog dump contains:
 
 Approved orders create warehouse picking lists. Completing every list issues inventory and moves the order to `Issued`. Admin or Operator can then assign an active same-warehouse driver and vehicle, which snapshots their details and changes the order and picked QR labels to delivery state. The Retailer linked to the order must scan every dispatched QR label exactly once to confirm receipt and move the order to `Delivered`. Dispatch and receipt commands require idempotency keys and expected order versions.
 
+Retailer receipt also creates one payment snapshot per order. COD and prepaid orders settle automatically on delivery. Credit orders create an unpaid receivable whose due date is the Vietnam delivery date plus the Retailer's 7, 14, or 30-day term. Sales may record one full cash collection for their own orders; Operator may record one full bank-transfer collection. A scoped user can also create a payOS VietQR checkout for an unpaid Credit receivable; its signed webhook records the payment as `BankTransfer` and keeps the payOS link/reference for reconciliation. Once a payOS checkout exists, manual collection is blocked to prevent duplicate settlement. Payment reads expose effective overdue status without implementing out-of-scope partial payments, credit limits, or debt-aging reports.
+
+Configure `PayOS:ClientId`, `PayOS:ApiKey`, `PayOS:ChecksumKey`, `PayOS:ReturnUrl`, and `PayOS:CancelUrl` through user secrets or environment variables. Register the public `POST /api/v1/payments/payos/webhook` URL in the payOS dashboard; the endpoint accepts anonymous delivery but verifies every payload signature before changing payment state.
+
 Use [the HTTP request collection](src/FSCM.API/FSCM.API.http) after seeding to log in, query the catalog, inspect price history, and request a historical-price suggestion.
 
 ## Validation

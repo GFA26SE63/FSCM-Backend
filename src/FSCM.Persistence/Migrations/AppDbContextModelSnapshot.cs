@@ -1213,6 +1213,10 @@ namespace FSCM.Persistence.Migrations
                         .HasPrecision(18, 2)
                         .HasColumnType("numeric(18,2)");
 
+                    b.Property<string>("CollectionMethod")
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)");
+
                     b.Property<DateTimeOffset?>("ConfirmedAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -1222,6 +1226,12 @@ namespace FSCM.Persistence.Migrations
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<DateOnly>("DeliveredDate")
+                        .HasColumnType("date");
+
+                    b.Property<DateOnly?>("DueDate")
+                        .HasColumnType("date");
+
                     b.Property<string>("Method")
                         .IsRequired()
                         .HasMaxLength(30)
@@ -1229,6 +1239,41 @@ namespace FSCM.Persistence.Migrations
 
                     b.Property<string>("Note")
                         .HasColumnType("text");
+
+                    b.Property<string>("OperationKey")
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)");
+
+                    b.Property<DateOnly?>("PaidDate")
+                        .HasColumnType("date");
+
+                    b.Property<string>("PayOsCheckoutUrl")
+                        .HasColumnType("text");
+
+                    b.Property<long?>("PayOsExpiredAt")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("PayOsLinkStatus")
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)");
+
+                    b.Property<long?>("PayOsOrderCode")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("PayOsPaymentLinkId")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("PayOsQrCode")
+                        .HasColumnType("text");
+
+                    b.Property<string>("PayOsReference")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("RequestHash")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
 
                     b.Property<Guid>("SalesOrderId")
                         .HasColumnType("uuid");
@@ -1241,11 +1286,34 @@ namespace FSCM.Persistence.Migrations
                     b.Property<DateTimeOffset>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<int>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("integer");
+
                     b.HasKey("Id");
 
                     b.HasIndex("ConfirmedByUserId");
 
-                    b.HasIndex("SalesOrderId");
+                    b.HasIndex("OperationKey")
+                        .IsUnique()
+                        .HasFilter("\"OperationKey\" IS NOT NULL");
+
+                    b.HasIndex("PayOsOrderCode")
+                        .IsUnique()
+                        .HasFilter("\"PayOsOrderCode\" IS NOT NULL");
+
+                    b.HasIndex("PayOsPaymentLinkId")
+                        .IsUnique()
+                        .HasFilter("\"PayOsPaymentLinkId\" IS NOT NULL");
+
+                    b.HasIndex("PayOsReference")
+                        .IsUnique()
+                        .HasFilter("\"PayOsReference\" IS NOT NULL");
+
+                    b.HasIndex("SalesOrderId")
+                        .IsUnique();
+
+                    b.HasIndex("Status", "DueDate");
 
                     b.ToTable("PAYMENT", (string)null);
                 });

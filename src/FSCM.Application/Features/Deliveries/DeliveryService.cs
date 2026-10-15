@@ -1,13 +1,17 @@
 using System.Security.Cryptography;
 using System.Text;
 using FSCM.Application.Features.Orders;
+using FSCM.Application.Features.Payments;
 using FSCM.Application.Features.QrLabels;
 using FSCM.Domain.Authorization;
 using FSCM.Domain.Entities;
 
 namespace FSCM.Application.Features.Deliveries;
 
-public sealed class DeliveryService(IDeliveryStore store, TimeProvider timeProvider)
+public sealed class DeliveryService(
+    IDeliveryStore store,
+    IPaymentPlanService paymentPlanService,
+    TimeProvider timeProvider)
 {
     public async Task<IReadOnlyCollection<DriverResult>> ListDriversAsync(
         string actorRole, bool includeInactive, CancellationToken cancellationToken)
@@ -241,6 +245,8 @@ public sealed class DeliveryService(IDeliveryStore store, TimeProvider timeProvi
             deliveryView.Delivery.Version++;
             deliveryView.Delivery.UpdatedAt = now;
             TransitionOrder(order.Order, OrderStatuses.Delivered, now);
+            await paymentPlanService.CreateForDeliveredOrderAsync(
+                order.Order, retailerUserId, now, transactionCancellationToken);
             store.AddOrderHistory(NewHistory(orderId, OrderStatuses.Delivering, OrderStatuses.Delivered,
                 retailerUserId, "Nhà bán lẻ quét đủ tem và xác nhận nhận hàng", now));
             await store.SaveChangesAsync(transactionCancellationToken);

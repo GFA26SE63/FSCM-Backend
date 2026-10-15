@@ -1,5 +1,6 @@
 using FSCM.Application.Features.Deliveries;
 using FSCM.Application.Features.Orders;
+using FSCM.Application.Features.Payments;
 using FSCM.Application.Features.QrLabels;
 using FSCM.Domain.Authorization;
 using FSCM.Domain.Entities;
@@ -206,7 +207,7 @@ public sealed class DeliveryServiceTests
             };
             Labels = [CreateLabel("TEM-001010", 5), CreateLabel("TEM-001011", 5)];
             Store = new FakeDeliveryStore(this);
-            Service = new DeliveryService(Store, new FixedTimeProvider(Now));
+            Service = new DeliveryService(Store, new FakePaymentPlan(), new FixedTimeProvider(Now));
         }
 
         public Task<DeliveryResult> DispatchAsync(int expectedVersion = 3) =>
@@ -316,5 +317,11 @@ public sealed class DeliveryServiceTests
     private sealed class FixedTimeProvider(DateTimeOffset now) : TimeProvider
     {
         public override DateTimeOffset GetUtcNow() => now;
+    }
+
+    private sealed class FakePaymentPlan : IPaymentPlanService
+    {
+        public Task CreateForDeliveredOrderAsync(SalesOrder order, Guid receiptActorUserId,
+            DateTimeOffset deliveredAt, CancellationToken cancellationToken) => Task.CompletedTask;
     }
 }

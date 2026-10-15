@@ -348,3 +348,45 @@ Content-Type: application/json
 {
   "query": "{ deliveries(first: 20) { totalCount nodes { orderCode status orderStatus plateNumber driverCode driverName receipt { status confirmedAt items { qrCode receivedQuantity } } } } }"
 }
+
+###
+
+GET {{FSCM.API_HostAddress}}/api/v1/payments?status=Unpaid
+Authorization: Bearer {{salesLogin.response.body.$.accessToken}}
+Accept: application/json
+
+###
+
+# Supply a Delivered Credit order ID and its current payment version.
+# The response includes checkoutUrl and VietQR qrCode. Configure PayOS secrets first.
+POST {{FSCM.API_HostAddress}}/api/v1/payments/orders/00000000-0000-0000-0000-000000000000/payos-checkout
+Authorization: Bearer {{retailerLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "expectedVersion": 0
+}
+
+###
+
+# Supply a Delivered Credit order ID and its current payment version.
+POST {{FSCM.API_HostAddress}}/api/v1/payments/orders/00000000-0000-0000-0000-000000000000/collect
+Authorization: Bearer {{salesLogin.response.body.$.accessToken}}
+Idempotency-Key: {{$guid}}
+Content-Type: application/json
+
+{
+  "collectionMethod": "Cash",
+  "expectedVersion": 0,
+  "note": "Sales đã thu đủ tiền mặt"
+}
+
+###
+
+POST {{FSCM.API_HostAddress}}/graphql
+Authorization: Bearer {{salesLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "query": "{ payments(first: 20) { totalCount nodes { orderCode orderPaymentMethod status amount creditTermDays deliveredDate dueDate daysOverdue paidDate collectionMethod payOsCheckoutUrl payOsQrCode payOsLinkStatus payOsReference version } } }"
+}
