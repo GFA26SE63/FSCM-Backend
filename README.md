@@ -47,10 +47,10 @@ The command is idempotent and creates active users for all six roles plus BE-02 
 | Role | Email | Seeded scope |
 | --- | --- | --- |
 | Admin | `admin@fscm.local` | System-wide administration |
-| Operator | `operator@fscm.local` | `WH-HCM-01` |
+| Operator | `operator@fscm.local` | All three demo warehouses |
 | SalesManager | `sales.manager@fscm.local` | `HCM-A`, `RTL-HCM-001` |
 | Sales | `sales@fscm.local` | `HCM-A`, `RTL-HCM-001` |
-| WarehouseKeeper | `warehouse.keeper@fscm.local` | `WH-HCM-01` |
+| WarehouseKeeper | `warehouse.keeper@fscm.local` | All three demo warehouses |
 | Retailer | `retailer@fscm.local` | Retailer account only |
 
 Admin accounts are bootstrap-only: the user-management API rejects both Admin creation and Admin role promotion.
@@ -64,6 +64,8 @@ BE-04 exposes region and Sales-group master data under `/api/v1/regions` and `/a
 BE-09 exposes campaign management under `/api/v1/promotions`, shelf-life suggestions and batch assignments under `/api/v1/batch-discounts`, and deterministic price snapshots under `/api/v1/pricing/snapshot`. Admin manages campaigns and batch discounts; authenticated users can read applicable offers and calculate prices. Campaign and batch discounts do not compound: the highest eligible rate wins, an equal batch-specific rate wins over a campaign, and promotion code is the final stable tie-breaker. Every REST GET has an equivalent GraphQL query at `/graphql`.
 
 Assisted ordering is exposed under `/api/v1/orders`. Sales can create an order only for an active retailer in their current territory; the server validates carton steps, calculates the final promotion, allocates eligible batches, stores the scoring trace, and holds inventory atomically. Operator approval converts holds to reservations, rejection releases them, and cancellation is restricted to the owning Sales user while pending or to Operator/Admin. Scoped list, detail, and allocation-trace reads are also available through GraphQL.
+
+Order picking is exposed under `/api/v1/picking-lists`. Approval creates one immutable-code list per allocated warehouse (`{OrderCode}A`, `{OrderCode}B`, ...). An assigned Warehouse Keeper scans only available QR labels for the exact allocated warehouse, batch, and SKU. Partial scans create child labels while preserving lineage; every scan is idempotent and version checked. Completing a list issues its reservations, and completing every warehouse list moves the order to `Issued`. REST GET operations have equivalent scoped GraphQL queries.
 
 The development catalog dump contains:
 
@@ -80,7 +82,8 @@ The development catalog dump contains:
 | Sales groups | `HCM-A`, `HCM-B`, `BD-A`, and inactive `LA-A`, all with Vietnamese names |
 | Assignment history | Current and previous Sales/retailer territory assignments for transfer testing |
 | Promotions | Two Vietnamese campaigns (`KM-001`, `KM-002`) and one near-expiry batch discount (`KM-003`) |
-| Assisted order | One idempotent Vietnamese `PendingApproval` order for retailer `10004127`, including price/allocation snapshots and an active stock hold |
+| Assisted order | One idempotent Vietnamese `Approved` order for retailer `10004127`, including price/allocation snapshots, an active reservation, and an open Thủ Đức picking list |
+| Picking QR | `TEM-000208` labels the seeded Thủ Đức `SKU001` batch and can demonstrate partial-label splitting during picking |
 
 Use [the HTTP request collection](src/FSCM.API/FSCM.API.http) after seeding to log in, query the catalog, inspect price history, and request a historical-price suggestion.
 

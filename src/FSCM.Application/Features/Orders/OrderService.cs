@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using FSCM.Application.Features.Inventory;
+using FSCM.Application.Features.Picking;
 using FSCM.Application.Features.WarehouseConfiguration;
 using FSCM.Domain.Allocation;
 using FSCM.Domain.Authorization;
@@ -15,6 +16,7 @@ public sealed class OrderService(
     IOrderStore store,
     IOrderPricingService pricingService,
     IInventoryLifecycleService inventoryLifecycleService,
+    IPickingPlanService pickingPlanService,
     TimeProvider timeProvider)
 {
     private const int MaximumPlacementAttempts = 3;
@@ -194,6 +196,8 @@ public sealed class OrderService(
             }
 
             EnsureOrderVersion(view.Order, expectedVersion);
+            await pickingPlanService.CancelForOrderAsync(
+                view.Order.Id, timeProvider.GetUtcNow(), transactionCancellationToken);
             await ReleaseInventoryAsync(view, actorUserId, transactionCancellationToken);
             var fromStatus = view.Order.Status;
             var now = timeProvider.GetUtcNow();
@@ -225,7 +229,16 @@ public sealed class OrderService(
         {
             var view = await store.FindAsync(orderId, true, transactionCancellationToken)
                 ?? throw OrderOperationException.NotFound("Order was not found.");
-            if (view.Order.Status == targetStatus) return;
+            if (view.Order.Status == targetStatus)
+            {
+                if (targetStatus == OrderStatuses.Approved)
+                {
+                    await pickingPlanService.CreateForApprovedOrderAsync(
+                        view, timeProvider.GetUtcNow(), transactionCancellationToken);
+                    await store.SaveChangesAsync(transactionCancellationToken);
+                }
+                return;
+            }
             if (view.Order.Status != OrderStatuses.PendingApproval)
             {
                 throw OrderOperationException.Conflict("Only pending orders can be approved or rejected.");
@@ -251,6 +264,10 @@ public sealed class OrderService(
             }
 
             ApplyTransition(view.Order, targetStatus, actorUserId, reason, now);
+            if (targetStatus == OrderStatuses.Approved)
+            {
+                await pickingPlanService.CreateForApprovedOrderAsync(view, now, transactionCancellationToken);
+            }
             store.AddHistory(NewHistory(view.Order.Id, OrderStatuses.PendingApproval,
                 targetStatus, actorUserId, reason, now));
             await store.SaveChangesAsync(transactionCancellationToken);
@@ -796,6 +813,7 @@ public sealed class OrderService(
     [
         OrderStatuses.PendingApproval,
         OrderStatuses.Approved,
+        OrderStatuses.Picking,
         OrderStatuses.Rejected,
         OrderStatuses.Cancelled,
         OrderStatuses.Issued,

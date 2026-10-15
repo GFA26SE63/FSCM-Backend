@@ -1233,7 +1233,8 @@ namespace FSCM.Persistence.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("AllocationId");
+                    b.HasIndex("AllocationId")
+                        .IsUnique();
 
                     b.HasIndex("PickingListId");
 
@@ -1281,6 +1282,10 @@ namespace FSCM.Persistence.Migrations
                     b.Property<DateTimeOffset>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<int>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("integer");
+
                     b.Property<Guid>("WarehouseId")
                         .HasColumnType("uuid");
 
@@ -1293,9 +1298,10 @@ namespace FSCM.Persistence.Migrations
                     b.HasIndex("PickingCode")
                         .IsUnique();
 
-                    b.HasIndex("SalesOrderId");
-
                     b.HasIndex("WarehouseId");
+
+                    b.HasIndex("SalesOrderId", "WarehouseId")
+                        .IsUnique();
 
                     b.ToTable("PICKING_LIST", (string)null);
                 });

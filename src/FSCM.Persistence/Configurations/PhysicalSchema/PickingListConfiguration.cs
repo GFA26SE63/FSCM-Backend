@@ -19,9 +19,11 @@ public sealed class PickingListConfiguration : IEntityTypeConfiguration<PickingL
         builder.Property(entity => entity.StartedAt).HasColumnType("timestamp with time zone").IsRequired(false);
         builder.Property(entity => entity.ConfirmedAt).HasColumnType("timestamp with time zone").IsRequired(false);
         builder.Property(entity => entity.ConfirmedByUserId).HasColumnType("uuid").IsRequired(false);
+        builder.Property(entity => entity.Version).IsConcurrencyToken().IsRequired();
         builder.Property(entity => entity.CreatedAt).HasColumnType("timestamp with time zone").IsRequired();
         builder.Property(entity => entity.UpdatedAt).HasColumnType("timestamp with time zone").IsRequired();
         builder.HasIndex(entity => entity.PickingCode).IsUnique();
+        builder.HasIndex(entity => new { entity.SalesOrderId, entity.WarehouseId }).IsUnique();
         builder.HasOne<SalesOrder>()
             .WithMany()
             .HasForeignKey(entity => entity.SalesOrderId)
