@@ -30,6 +30,7 @@ public static class ServiceCollectionExtensions
         services.AddExceptionHandler<InventoryExceptionHandler>();
         services.AddExceptionHandler<InternalTransferExceptionHandler>();
         services.AddExceptionHandler<OrderExceptionHandler>();
+        services.AddExceptionHandler<PaymentExceptionHandler>();
         services.AddExceptionHandler<PickingExceptionHandler>();
         services.AddExceptionHandler<QrLabelExceptionHandler>();
         services.AddExceptionHandler<PromotionExceptionHandler>();
