@@ -11,7 +11,88 @@ The solution follows Clean Architecture boundaries across API, Application, Doma
 - [FSCM Frontend](https://github.com/GFA26SE63/FSCM-Frontend)
 - [FSCM Mobile](https://github.com/GFA26SE63/FSCM-Mobile)
 
-Cross-system architecture documentation is stored beside the local repositories under `FSCM/.docs` and `FSCM/diagram`.
+Cross-system architecture documentation is stored beside the local repositories under `FSCM/.docs` and `FSCM/.diagram`.
+
+## Architecture and folder structure
+
+The solution uses Clean Architecture plus feature-oriented application modules. Dependencies point inward:
+
+```text
+FSCM.API ───────► FSCM.Application ───────► FSCM.Domain
+    │                    │                       ▲
+    ├──► FSCM.Infrastructure ────────────────────┘
+    └──► FSCM.Persistence ──► Application + Domain
+
+FSCM.Application ───────► FSCM.Shared
+```
+
+`Domain` must not depend on ASP.NET Core, EF Core, PostgreSQL, HTTP clients, or another outer project. `Application` owns use cases and ports (interfaces); `Persistence` and `Infrastructure` implement those ports; `API` is the composition and transport boundary.
+
+```text
+src/
+├─ FSCM.API/
+│  ├─ Controllers/       REST transport only: routing, authorization, request mapping
+│  ├─ Contracts/         HTTP request DTOs grouped by feature
+│  ├─ GraphQL/           read-only Query surface, type extensions and DataLoaders
+│  ├─ Errors/            feature exception → RFC ProblemDetails mapping
+│  ├─ Extensions/        DI, middleware pipeline and configuration composition
+│  ├─ Options/           strongly typed external configuration
+│  └─ Program.cs         composition root; no business rules
+├─ FSCM.Application/
+│  ├─ Features/<Feature>/
+│  │  ├─ <Feature>Service.cs               use-case orchestration and business policy
+│  │  ├─ I<Feature>Store.cs                 persistence port owned by Application
+│  │  ├─ <Feature>Contracts.cs              commands/results shared with transports
+│  │  └─ <Feature>OperationException.cs     stable business error codes
+│  ├─ Abstractions/      cross-cutting ports (clock, identity, transactions, gateways)
+│  └─ Common/            reusable application-level concerns, not feature dumping ground
+├─ FSCM.Domain/
+│  ├─ Entities/          persisted domain state and domain constants
+│  ├─ Authorization/     roles, scope claim names and token purposes
+│  ├─ Allocation/        deterministic allocation domain algorithm
+│  └─ Common/            domain primitives shared by multiple aggregates
+├─ FSCM.Persistence/
+│  ├─ DbContexts/        EF Core context and model configuration entry point
+│  ├─ <Feature>/         store implementation and database query/mapping logic
+│  ├─ Interceptors/      EF Core cross-cutting behavior
+│  ├─ Migrations/        immutable migration history
+│  └─ Seeding/           development-only deterministic dataset
+├─ FSCM.Infrastructure/
+│  ├─ Identity/          JWT and password hashing implementations
+│  ├─ Payments/          payOS gateway adapter
+│  ├─ Audit/, Rbac/      infrastructure cross-cutting adapters
+│  └─ ExternalServices/  template/location for new third-party adapters
+└─ FSCM.Shared/           small dependency-free primitives genuinely shared across layers
+
+tests/
+├─ FSCM.UnitTests/        tests feature services and domain algorithms without real I/O
+├─ FSCM.IntegrationTests/ tests EF schema, GraphQL and external adapter boundaries
+└─ FSCM.LoadTests/        repeatable performance/load scenarios
+```
+
+### Request flow
+
+```text
+REST Controller / GraphQL Query
+  → Application Feature Service
+  → Application store/gateway interface
+  → Persistence store or Infrastructure adapter
+  → PostgreSQL / external service
+```
+
+Controllers and GraphQL resolvers must stay thin: bind input, resolve actor identity/role, call one application use case, and map the transport result. Business validation, state transitions, idempotency, concurrency, allocation, pricing, and scope enforcement belong in Application/Domain. Persistence may optimize queries but must not become the owner of business policy.
+
+### Adding or extending a feature
+
+1. Put domain state/constants in `FSCM.Domain` only when they are independent of transport and storage.
+2. Add contracts, operation exception, store/gateway port, and service under one `Application/Features/<Feature>` folder.
+3. Implement database access under `Persistence/<Feature>` or third-party access under `Infrastructure/<Feature>`; register it in that project's `DependencyInjection.cs`.
+4. Add REST request DTOs and a controller under `API`. Reads that clients need to compose may also be added to `SystemQuery`; GraphQL remains query-only unless the architecture is deliberately changed.
+5. Map feature exceptions to Problem Details in `API/Errors` and register the handler before the generic handler.
+6. Add unit tests beside the matching feature test folder; add integration tests for EF mappings, authorization, GraphQL schema, or real adapter contracts.
+7. For state-changing operations, preserve existing conventions: actor and scope checks, `expectedVersion`, `Idempotency-Key`, immutable history/audit rows, and cancellation tokens.
+
+Do not reference `FSCM.API`, `FSCM.Persistence`, or `FSCM.Infrastructure` from Domain/Application. Do not expose EF entities directly from controllers. Do not place a feature's query logic in another feature store merely for convenience. Reuse `Features/_template` and the READMEs under `Application/Common`, `Infrastructure`, and `Domain/Common` when their concern applies.
 
 ## Prerequisites
 
