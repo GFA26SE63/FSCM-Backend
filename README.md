@@ -84,6 +84,9 @@ The development catalog dump contains:
 | Promotions | Two Vietnamese campaigns (`KM-001`, `KM-002`) and one near-expiry batch discount (`KM-003`) |
 | Assisted order | One idempotent Vietnamese `Approved` order for retailer `10004127`, including price/allocation snapshots, an active reservation, and an open Thủ Đức picking list |
 | Picking QR | `TEM-000208` labels the seeded Thủ Đức `SKU001` batch and can demonstrate partial-label splitting during picking |
+| Delivery | `NG-010`–`NG-012` and three Vietnamese warehouse vehicles support order dispatch demonstrations |
+
+Approved orders create warehouse picking lists. Completing every list issues inventory and moves the order to `Issued`. Admin or Operator can then assign an active same-warehouse driver and vehicle, which snapshots their details and changes the order and picked QR labels to delivery state. The Retailer linked to the order must scan every dispatched QR label exactly once to confirm receipt and move the order to `Delivered`. Dispatch and receipt commands require idempotency keys and expected order versions.
 
 Use [the HTTP request collection](src/FSCM.API/FSCM.API.http) after seeding to log in, query the catalog, inspect price history, and request a historical-price suggestion.
 

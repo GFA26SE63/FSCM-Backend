@@ -11,11 +11,16 @@ public sealed class DriverConfiguration : IEntityTypeConfiguration<Driver>
         builder.ToTable("DRIVER");
         builder.HasKey(entity => entity.Id);
         builder.Property(entity => entity.Id).HasColumnType("uuid").IsRequired();
+        builder.Property(entity => entity.WarehouseId).HasColumnType("uuid").IsRequired();
+        builder.Property(entity => entity.Code).HasMaxLength(20).IsRequired();
         builder.Property(entity => entity.FullName).HasMaxLength(150).IsRequired();
         builder.Property(entity => entity.Phone).HasMaxLength(30).IsRequired();
         builder.Property(entity => entity.LicenseNumber).HasMaxLength(80).IsRequired();
         builder.Property(entity => entity.IsActive).IsRequired();
         builder.Property(entity => entity.CreatedAt).HasColumnType("timestamp with time zone").IsRequired();
         builder.Property(entity => entity.UpdatedAt).HasColumnType("timestamp with time zone").IsRequired();
+        builder.HasIndex(entity => entity.Code).IsUnique();
+        builder.HasOne<Warehouse>().WithMany().HasForeignKey(entity => entity.WarehouseId)
+            .OnDelete(DeleteBehavior.Restrict);
     }
 }
