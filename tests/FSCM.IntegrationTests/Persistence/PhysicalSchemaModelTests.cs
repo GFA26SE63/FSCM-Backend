@@ -87,11 +87,32 @@ public sealed class PhysicalSchemaModelTests
 
         Assert.Equal(ExpectedTables, tableNames);
         Assert.Equal(62, entityTypes.Length);
-        Assert.Equal(606, entityTypes.Sum(entityType => entityType.GetProperties().Count()));
-        Assert.Equal(134, entityTypes.Sum(entityType => entityType.GetForeignKeys().Count()));
+        Assert.Equal(619, entityTypes.Sum(entityType => entityType.GetProperties().Count()));
+        Assert.Equal(136, entityTypes.Sum(entityType => entityType.GetForeignKeys().Count()));
         Assert.All(
             entityTypes.SelectMany(entityType => entityType.GetForeignKeys()),
             foreignKey => Assert.Equal(DeleteBehavior.Restrict, foreignKey.DeleteBehavior));
+    }
+
+    [Fact]
+    public void Model_enforces_delivery_and_receipt_idempotency()
+    {
+        using var context = CreateContext();
+
+        var delivery = context.Model.FindEntityType(typeof(Delivery))!;
+        Assert.True(delivery.FindProperty(nameof(Delivery.Version))!.IsConcurrencyToken);
+        Assert.True(delivery.GetIndexes().Single(index => index.Properties
+            .Single().Name == nameof(Delivery.SalesOrderId)).IsUnique);
+        Assert.True(delivery.GetIndexes().Single(index => index.Properties
+            .Single().Name == nameof(Delivery.OperationKey)).IsUnique);
+
+        var receipt = context.Model.FindEntityType(typeof(ReceiptConfirmation))!;
+        Assert.True(receipt.GetIndexes().Single(index => index.Properties
+            .Single().Name == nameof(ReceiptConfirmation.OperationKey)).IsUnique);
+
+        var driver = context.Model.FindEntityType(typeof(Driver))!;
+        Assert.True(driver.GetIndexes().Single(index => index.Properties
+            .Single().Name == nameof(Driver.Code)).IsUnique);
     }
 
     [Fact]

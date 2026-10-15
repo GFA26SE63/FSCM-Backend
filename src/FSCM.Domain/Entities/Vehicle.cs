@@ -5,6 +5,7 @@ namespace FSCM.Domain.Entities;
 public sealed class Vehicle
 {
     public Guid Id { get; set; }
+    public Guid WarehouseId { get; set; }
     public string PlateNumber { get; set; } = string.Empty;
     public string VehicleType { get; set; } = string.Empty;
     public decimal Capacity { get; set; }

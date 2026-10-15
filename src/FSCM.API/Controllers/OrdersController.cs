@@ -1,5 +1,7 @@
 using System.Security.Claims;
+using FSCM.API.Contracts.Deliveries;
 using FSCM.API.Contracts.Orders;
+using FSCM.Application.Features.Deliveries;
 using FSCM.Application.Features.Orders;
 using FSCM.Domain.Authorization;
 using Microsoft.AspNetCore.Authorization;
@@ -10,7 +12,7 @@ namespace FSCM.API.Controllers;
 [ApiController]
 [Authorize]
 [Route("api/v1/orders")]
-public sealed class OrdersController(OrderService service) : ControllerBase
+public sealed class OrdersController(OrderService service, DeliveryService deliveryService) : ControllerBase
 {
     [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator},{SystemRoles.SalesManager},{SystemRoles.Sales},{SystemRoles.WarehouseKeeper},{SystemRoles.Retailer}")]
     [HttpGet]
@@ -74,6 +76,28 @@ public sealed class OrdersController(OrderService service) : ControllerBase
         CancellationToken cancellationToken) =>
         service.CancelAsync(id, request.ExpectedVersion, GetActorUserId(), GetActorRole(),
             request.Reason, cancellationToken);
+
+    [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator}")]
+    [HttpPost("{id:guid}/dispatch")]
+    public Task<DeliveryResult> Dispatch(
+        Guid id,
+        DispatchOrderRequest request,
+        [FromHeader(Name = "Idempotency-Key")] string operationKey,
+        CancellationToken cancellationToken) =>
+        deliveryService.DispatchAsync(id, new(
+            request.DriverId, request.VehicleId, request.ExpectedOrderVersion, request.Note),
+            operationKey, GetActorUserId(), GetActorRole(), cancellationToken);
+
+    [Authorize(Roles = SystemRoles.Retailer)]
+    [HttpPost("{id:guid}/confirm-receipt")]
+    public Task<DeliveryResult> ConfirmReceipt(
+        Guid id,
+        ConfirmRetailerReceiptRequest request,
+        [FromHeader(Name = "Idempotency-Key")] string operationKey,
+        CancellationToken cancellationToken) =>
+        deliveryService.ConfirmReceiptAsync(id, new(
+            request.QrCodes, request.ExpectedOrderVersion, request.Note),
+            operationKey, GetActorUserId(), GetActorRole(), cancellationToken);
 
     private Guid GetActorUserId() =>
         Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var userId)

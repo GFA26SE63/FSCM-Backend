@@ -14,13 +14,23 @@ public sealed class DeliveryConfiguration : IEntityTypeConfiguration<Delivery>
         builder.Property(entity => entity.SalesOrderId).HasColumnType("uuid").IsRequired();
         builder.Property(entity => entity.DriverId).HasColumnType("uuid").IsRequired();
         builder.Property(entity => entity.VehicleId).HasColumnType("uuid").IsRequired();
+        builder.Property(entity => entity.OperationKey).HasMaxLength(80).IsRequired();
         builder.Property(entity => entity.Status).HasMaxLength(30).IsRequired();
+        builder.Property(entity => entity.DriverCodeSnapshot).HasMaxLength(20).IsRequired();
+        builder.Property(entity => entity.DriverNameSnapshot).HasMaxLength(150).IsRequired();
+        builder.Property(entity => entity.DriverPhoneSnapshot).HasMaxLength(30).IsRequired();
+        builder.Property(entity => entity.DriverLicenseSnapshot).HasMaxLength(80).IsRequired();
+        builder.Property(entity => entity.PlateNumberSnapshot).HasMaxLength(30).IsRequired();
+        builder.Property(entity => entity.VehicleTypeSnapshot).HasMaxLength(50).IsRequired();
+        builder.Property(entity => entity.Version).IsRequired().IsConcurrencyToken();
         builder.Property(entity => entity.AssignedAt).HasColumnType("timestamp with time zone").IsRequired();
         builder.Property(entity => entity.DispatchedAt).HasColumnType("timestamp with time zone").IsRequired(false);
         builder.Property(entity => entity.DeliveredAt).HasColumnType("timestamp with time zone").IsRequired(false);
         builder.Property(entity => entity.Note).HasColumnType("text").IsRequired(false);
         builder.Property(entity => entity.CreatedAt).HasColumnType("timestamp with time zone").IsRequired();
         builder.Property(entity => entity.UpdatedAt).HasColumnType("timestamp with time zone").IsRequired();
+        builder.HasIndex(entity => entity.SalesOrderId).IsUnique();
+        builder.HasIndex(entity => entity.OperationKey).IsUnique();
         builder.HasOne<SalesOrder>()
             .WithMany()
             .HasForeignKey(entity => entity.SalesOrderId)

@@ -7,6 +7,8 @@ public sealed class ReceiptConfirmation
     public Guid Id { get; set; }
     public Guid SalesOrderId { get; set; }
     public Guid ConfirmedByRetailerUserId { get; set; }
+    public string OperationKey { get; set; } = string.Empty;
+    public string RequestHash { get; set; } = string.Empty;
     public string Status { get; set; } = string.Empty;
     public DateTimeOffset ConfirmedAt { get; set; }
     public string? Note { get; set; }

@@ -4,6 +4,7 @@
 @salesEmail = sales@fscm.local
 @operatorEmail = operator@fscm.local
 @warehouseKeeperEmail = warehouse.keeper@fscm.local
+@retailerEmail = retailer@fscm.local
 
 GET {{FSCM.API_HostAddress}}/health
 Accept: application/json
@@ -282,4 +283,68 @@ Content-Type: application/json
 
 {
   "query": "{ pickingLists(first: 20) { totalCount nodes { pickingCode orderCode warehouseCode status version items { sku batchCode requestedQuantity pickedQuantity remainingQuantity } } } }"
+}
+
+###
+
+# @name deliveryDrivers
+GET {{FSCM.API_HostAddress}}/api/v1/deliveries/drivers
+Authorization: Bearer {{operatorLogin.response.body.$.accessToken}}
+Accept: application/json
+
+###
+
+# @name deliveryVehicles
+GET {{FSCM.API_HostAddress}}/api/v1/deliveries/vehicles
+Authorization: Bearer {{operatorLogin.response.body.$.accessToken}}
+Accept: application/json
+
+###
+
+# Supply an Issued order ID/version and matching driver/vehicle warehouse from the responses above.
+POST {{FSCM.API_HostAddress}}/api/v1/orders/00000000-0000-0000-0000-000000000000/dispatch
+Authorization: Bearer {{operatorLogin.response.body.$.accessToken}}
+Idempotency-Key: {{$guid}}
+Content-Type: application/json
+
+{
+  "driverId": "{{deliveryDrivers.response.body.$.[0].id}}",
+  "vehicleId": "{{deliveryVehicles.response.body.$.[0].id}}",
+  "expectedOrderVersion": 3,
+  "note": "Bàn giao đơn cho xe giao hàng"
+}
+
+###
+
+# @name retailerLogin
+POST {{FSCM.API_HostAddress}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "{{retailerEmail}}",
+  "password": "{{password}}"
+}
+
+###
+
+# Supply the Delivering order ID/version and every QR code shown on its completed picking lists.
+POST {{FSCM.API_HostAddress}}/api/v1/orders/00000000-0000-0000-0000-000000000000/confirm-receipt
+Authorization: Bearer {{retailerLogin.response.body.$.accessToken}}
+Idempotency-Key: {{$guid}}
+Content-Type: application/json
+
+{
+  "qrCodes": ["TEM-000000"],
+  "expectedOrderVersion": 4,
+  "note": "Cửa hàng đã kiểm đếm và nhận đủ hàng"
+}
+
+###
+
+POST {{FSCM.API_HostAddress}}/graphql
+Authorization: Bearer {{retailerLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "query": "{ deliveries(first: 20) { totalCount nodes { orderCode status orderStatus plateNumber driverCode driverName receipt { status confirmedAt items { qrCode receivedQuantity } } } } }"
 }

@@ -11,6 +11,7 @@ public sealed class VehicleConfiguration : IEntityTypeConfiguration<Vehicle>
         builder.ToTable("VEHICLE");
         builder.HasKey(entity => entity.Id);
         builder.Property(entity => entity.Id).HasColumnType("uuid").IsRequired();
+        builder.Property(entity => entity.WarehouseId).HasColumnType("uuid").IsRequired();
         builder.Property(entity => entity.PlateNumber).HasMaxLength(30).IsRequired();
         builder.Property(entity => entity.VehicleType).HasMaxLength(50).IsRequired();
         builder.Property(entity => entity.Capacity).HasPrecision(18, 3).IsRequired();
@@ -18,5 +19,7 @@ public sealed class VehicleConfiguration : IEntityTypeConfiguration<Vehicle>
         builder.Property(entity => entity.CreatedAt).HasColumnType("timestamp with time zone").IsRequired();
         builder.Property(entity => entity.UpdatedAt).HasColumnType("timestamp with time zone").IsRequired();
         builder.HasIndex(entity => entity.PlateNumber).IsUnique();
+        builder.HasOne<Warehouse>().WithMany().HasForeignKey(entity => entity.WarehouseId)
+            .OnDelete(DeleteBehavior.Restrict);
     }
 }

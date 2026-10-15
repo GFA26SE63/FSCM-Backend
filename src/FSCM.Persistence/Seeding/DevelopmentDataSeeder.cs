@@ -62,6 +62,7 @@ public sealed class DevelopmentDataSeeder(
         {
             await SeedWarehouseAssignmentsAsync(users, configuredWarehouse.Id, now, cancellationToken);
         }
+        await SeedDeliveryMasterDataAsync(configuredWarehouses, now, cancellationToken);
         await dbContext.SaveChangesAsync(cancellationToken);
         await SeedInventoryDataAsync(configuredWarehouses, products, users[SystemRoles.WarehouseKeeper].Id, now, cancellationToken);
         await dbContext.SaveChangesAsync(cancellationToken);
@@ -100,6 +101,53 @@ public sealed class DevelopmentDataSeeder(
             salesGroups.Count,
             DemoRetailerCode,
             demoOrder.OrderCode);
+    }
+
+    private async Task SeedDeliveryMasterDataAsync(
+        IReadOnlyCollection<Warehouse> warehouses,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        var definitions = new[]
+        {
+            new { WarehouseCode = "WH-HCM-01", DriverCode = "NG-010", DriverName = "Nguyễn Văn Minh",
+                Phone = "0901000010", License = "GPLX-C-010", Plate = "51C-482.17", Type = "Xe tải 2.5 tấn", Capacity = 500m },
+            new { WarehouseCode = "WH-TD", DriverCode = "NG-011", DriverName = "Trần Quốc Bảo",
+                Phone = "0901000011", License = "GPLX-C-011", Plate = "51D-318.26", Type = "Xe tải 1.5 tấn", Capacity = 300m },
+            new { WarehouseCode = "WH-Q7", DriverCode = "NG-012", DriverName = "Lê Hoàng Nam",
+                Phone = "0901000012", License = "GPLX-C-012", Plate = "51D-725.39", Type = "Xe tải 1.5 tấn", Capacity = 300m }
+        };
+        var warehousesByCode = warehouses.ToDictionary(item => item.Code, StringComparer.Ordinal);
+        foreach (var definition in definitions)
+        {
+            var warehouse = warehousesByCode[definition.WarehouseCode];
+            var driver = await dbContext.DriverRecords.SingleOrDefaultAsync(
+                item => item.Code == definition.DriverCode, cancellationToken);
+            if (driver is null)
+            {
+                driver = new Driver { Id = Guid.NewGuid(), Code = definition.DriverCode, CreatedAt = now };
+                dbContext.DriverRecords.Add(driver);
+            }
+            driver.WarehouseId = warehouse.Id;
+            driver.FullName = definition.DriverName;
+            driver.Phone = definition.Phone;
+            driver.LicenseNumber = definition.License;
+            driver.IsActive = true;
+            driver.UpdatedAt = now;
+
+            var vehicle = await dbContext.VehicleRecords.SingleOrDefaultAsync(
+                item => item.PlateNumber == definition.Plate, cancellationToken);
+            if (vehicle is null)
+            {
+                vehicle = new Vehicle { Id = Guid.NewGuid(), PlateNumber = definition.Plate, CreatedAt = now };
+                dbContext.VehicleRecords.Add(vehicle);
+            }
+            vehicle.WarehouseId = warehouse.Id;
+            vehicle.VehicleType = definition.Type;
+            vehicle.Capacity = definition.Capacity;
+            vehicle.IsActive = true;
+            vehicle.UpdatedAt = now;
+        }
     }
 
     private async Task SeedPromotionDataAsync(
