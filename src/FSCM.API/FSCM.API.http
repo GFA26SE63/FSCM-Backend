@@ -3,6 +3,7 @@
 @password = FscmDemo#2026
 @salesEmail = sales@fscm.local
 @operatorEmail = operator@fscm.local
+@warehouseKeeperEmail = warehouse.keeper@fscm.local
 
 GET {{FSCM.API_HostAddress}}/health
 Accept: application/json
@@ -232,4 +233,53 @@ Content-Type: application/json
 
 {
   "expectedVersion": {{assistedOrder.response.body.$.version}}
+}
+
+###
+
+# @name warehouseKeeperLogin
+POST {{FSCM.API_HostAddress}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "{{warehouseKeeperEmail}}",
+  "password": "{{password}}"
+}
+
+###
+
+# @name pickingLists
+GET {{FSCM.API_HostAddress}}/api/v1/picking-lists?status=Open
+Authorization: Bearer {{warehouseKeeperLogin.response.body.$.accessToken}}
+Accept: application/json
+
+###
+
+# @name pickingLabel
+GET {{FSCM.API_HostAddress}}/api/v1/qr-labels/TEM-000208
+Authorization: Bearer {{warehouseKeeperLogin.response.body.$.accessToken}}
+Accept: application/json
+
+###
+
+POST {{FSCM.API_HostAddress}}/api/v1/picking-lists/{{pickingLists.response.body.$.[0].pickingCode}}/scans
+Authorization: Bearer {{warehouseKeeperLogin.response.body.$.accessToken}}
+Idempotency-Key: {{$guid}}
+Content-Type: application/json
+
+{
+  "qrCode": "TEM-000208",
+  "quantity": 5,
+  "expectedPickingVersion": {{pickingLists.response.body.$.[0].version}},
+  "expectedLabelVersion": {{pickingLabel.response.body.$.label.version}}
+}
+
+###
+
+POST {{FSCM.API_HostAddress}}/graphql
+Authorization: Bearer {{warehouseKeeperLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "query": "{ pickingLists(first: 20) { totalCount nodes { pickingCode orderCode warehouseCode status version items { sku batchCode requestedQuantity pickedQuantity remainingQuantity } } } }"
 }

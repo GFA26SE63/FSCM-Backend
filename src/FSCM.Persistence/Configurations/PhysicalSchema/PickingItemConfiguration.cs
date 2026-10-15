@@ -20,6 +20,7 @@ public sealed class PickingItemConfiguration : IEntityTypeConfiguration<PickingI
         builder.Property(entity => entity.Status).HasMaxLength(30).IsRequired();
         builder.Property(entity => entity.ScannedAt).HasColumnType("timestamp with time zone").IsRequired(false);
         builder.Property(entity => entity.CompletedAt).HasColumnType("timestamp with time zone").IsRequired(false);
+        builder.HasIndex(entity => entity.AllocationId).IsUnique();
         builder.HasOne<PickingList>()
             .WithMany()
             .HasForeignKey(entity => entity.PickingListId)

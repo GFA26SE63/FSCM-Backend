@@ -13,6 +13,7 @@ public sealed class PickingList
     public DateTimeOffset? StartedAt { get; set; }
     public DateTimeOffset? ConfirmedAt { get; set; }
     public Guid? ConfirmedByUserId { get; set; }
+    public int Version { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
 }

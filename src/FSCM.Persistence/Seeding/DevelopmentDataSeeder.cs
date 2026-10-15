@@ -58,7 +58,10 @@ public sealed class DevelopmentDataSeeder(
         var configuredWarehouses = await SeedWarehouseConfigurationDataAsync(
             warehouse, retailer, products, users[SystemRoles.Admin].Id, now, cancellationToken);
 
-        await SeedWarehouseAssignmentsAsync(users, warehouse.Id, now, cancellationToken);
+        foreach (var configuredWarehouse in configuredWarehouses)
+        {
+            await SeedWarehouseAssignmentsAsync(users, configuredWarehouse.Id, now, cancellationToken);
+        }
         await dbContext.SaveChangesAsync(cancellationToken);
         await SeedInventoryDataAsync(configuredWarehouses, products, users[SystemRoles.WarehouseKeeper].Id, now, cancellationToken);
         await dbContext.SaveChangesAsync(cancellationToken);
@@ -81,6 +84,11 @@ public sealed class DevelopmentDataSeeder(
                 [new CreateOrderLineData(products["SKU001"].Id, 12)]),
             users[SystemRoles.Sales].Id,
             cancellationToken);
+        if (demoOrder.Status is OrderStatuses.PendingApproval or OrderStatuses.Approved)
+        {
+            demoOrder = await orderService.ApproveAsync(
+                demoOrder.Id, demoOrder.Version, users[SystemRoles.Operator].Id, cancellationToken);
+        }
 
         logger.LogInformation(
             "Development data seeded: {UserCount} users, {CategoryCount} categories, {ProductCount} products, {WarehouseCount} warehouses, {RegionCount} regions, {SalesGroupCount} sales groups, retailer {RetailerCode}, assisted order {OrderCode}.",
@@ -318,7 +326,8 @@ public sealed class DevelopmentDataSeeder(
             new QrLabelSeed("TEM-000204", "WH-HCM-01-SKU001-30042027", 300m, null, QrLabelStatuses.Available, "Tem gốc cho lô sữa tiệt trùng"),
             new QrLabelSeed("TEM-000205", "WH-HCM-01-SKU001-30042027", 100m, "TEM-000204", QrLabelStatuses.Available, "Tem con tách từ tem TEM-000204"),
             new QrLabelSeed("TEM-000206", "WH-TD-SKU002-20102026", 80m, null, QrLabelStatuses.Available, "Tem cho lô sữa chua gần hạn"),
-            new QrLabelSeed("TEM-000207", "WH-Q7-SKU003-10102026", 20m, null, QrLabelStatuses.Invalidated, "Tem lô thực phẩm hết hạn đã vô hiệu hóa")
+            new QrLabelSeed("TEM-000207", "WH-Q7-SKU003-10102026", 20m, null, QrLabelStatuses.Invalidated, "Tem lô thực phẩm hết hạn đã vô hiệu hóa"),
+            new QrLabelSeed("TEM-000208", "WH-TD-SKU001-31032027", 200m, null, QrLabelStatuses.Available, "Tem gốc cho lô sữa tươi phục vụ soạn đơn tại kho Thủ Đức")
         };
         var labels = new Dictionary<string, BatchQrLabel>(StringComparer.Ordinal);
         foreach (var definition in definitions.Where(item => item.ParentQrCode is null))
@@ -339,21 +348,25 @@ public sealed class DevelopmentDataSeeder(
                 item => item.OperationKey == operationKey, cancellationToken);
             if (labelEvent is null)
             {
-                labelEvent = new QrLabelEvent { Id = Guid.NewGuid(), OperationKey = operationKey };
+                labelEvent = new QrLabelEvent
+                {
+                    Id = Guid.NewGuid(),
+                    OperationKey = operationKey,
+                    BatchQrLabelId = label.Id,
+                    WarehouseId = label.CurrentWarehouseId,
+                    PerformedByUserId = warehouseKeeperId,
+                    EventType = eventType,
+                    FromStatus = definition.ParentQrCode is null ? string.Empty : QrLabelStatuses.Available,
+                    ToStatus = QrLabelStatuses.Available,
+                    Quantity = definition.ParentQrCode is null
+                        ? labels.Values.Where(item => item.RootLabelId == label.Id).Sum(item => item.Quantity)
+                        : label.Quantity,
+                    ReferenceCode = definition.ParentQrCode,
+                    Note = definition.Note,
+                    OccurredAt = now.AddDays(-20)
+                };
                 dbContext.QrLabelEventRecords.Add(labelEvent);
             }
-            labelEvent.BatchQrLabelId = label.Id;
-            labelEvent.WarehouseId = label.CurrentWarehouseId;
-            labelEvent.PerformedByUserId = warehouseKeeperId;
-            labelEvent.EventType = eventType;
-            labelEvent.FromStatus = definition.ParentQrCode is null ? string.Empty : QrLabelStatuses.Available;
-            labelEvent.ToStatus = QrLabelStatuses.Available;
-            labelEvent.Quantity = definition.ParentQrCode is null
-                ? labels.Values.Where(item => item.RootLabelId == label.Id).Sum(item => item.Quantity)
-                : label.Quantity;
-            labelEvent.ReferenceCode = definition.ParentQrCode;
-            labelEvent.Note = definition.Note;
-            labelEvent.OccurredAt = now.AddDays(-20);
             if (definition.Status == QrLabelStatuses.Invalidated)
             {
                 var invalidationKey = $"du-lieu-mau-{definition.QrCode.ToLowerInvariant()}-vo-hieu-hoa";
@@ -361,18 +374,22 @@ public sealed class DevelopmentDataSeeder(
                     item => item.OperationKey == invalidationKey, cancellationToken);
                 if (invalidation is null)
                 {
-                    invalidation = new QrLabelEvent { Id = Guid.NewGuid(), OperationKey = invalidationKey };
+                    invalidation = new QrLabelEvent
+                    {
+                        Id = Guid.NewGuid(),
+                        OperationKey = invalidationKey,
+                        BatchQrLabelId = label.Id,
+                        WarehouseId = label.CurrentWarehouseId,
+                        PerformedByUserId = warehouseKeeperId,
+                        EventType = QrLabelEventTypes.Invalidated,
+                        FromStatus = QrLabelStatuses.Available,
+                        ToStatus = QrLabelStatuses.Invalidated,
+                        Quantity = label.Quantity,
+                        Note = "Vô hiệu hóa tem vì lô hàng đã hết hạn",
+                        OccurredAt = now.AddDays(-1)
+                    };
                     dbContext.QrLabelEventRecords.Add(invalidation);
                 }
-                invalidation.BatchQrLabelId = label.Id;
-                invalidation.WarehouseId = label.CurrentWarehouseId;
-                invalidation.PerformedByUserId = warehouseKeeperId;
-                invalidation.EventType = QrLabelEventTypes.Invalidated;
-                invalidation.FromStatus = QrLabelStatuses.Available;
-                invalidation.ToStatus = QrLabelStatuses.Invalidated;
-                invalidation.Quantity = label.Quantity;
-                invalidation.Note = "Vô hiệu hóa tem vì lô hàng đã hết hạn";
-                invalidation.OccurredAt = now.AddDays(-1);
             }
         }
         await dbContext.SaveChangesAsync(cancellationToken);
@@ -383,6 +400,7 @@ public sealed class DevelopmentDataSeeder(
     {
         var batch = await dbContext.BatchRecords.SingleAsync(item => item.BatchCode == definition.BatchCode, cancellationToken);
         var label = await dbContext.BatchQrLabelRecords.SingleOrDefaultAsync(item => item.QrCode == definition.QrCode, cancellationToken);
+        var isNewLabel = label is null;
         if (label is null)
         {
             var id = Guid.NewGuid();
@@ -393,11 +411,14 @@ public sealed class DevelopmentDataSeeder(
         label.CurrentWarehouseId = batch.WarehouseId;
         label.ParentLabelId = parentId;
         label.RootLabelId = rootId ?? label.Id;
-        label.Quantity = definition.Quantity;
-        label.Status = definition.Status;
-        label.Version = Math.Max(label.Version, 1);
-        label.UpdatedAt = now;
-        label.InvalidatedAt = definition.Status == QrLabelStatuses.Invalidated ? now.AddDays(-1) : null;
+        if (isNewLabel)
+        {
+            label.Quantity = definition.Quantity;
+            label.Status = definition.Status;
+            label.Version = 1;
+            label.UpdatedAt = now;
+            label.InvalidatedAt = definition.Status == QrLabelStatuses.Invalidated ? now.AddDays(-1) : null;
+        }
         await dbContext.SaveChangesAsync(cancellationToken);
         return label;
     }

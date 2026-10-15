@@ -109,6 +109,7 @@ public static class OrderStatuses
 {
     public const string PendingApproval = "PendingApproval";
     public const string Approved = "Approved";
+    public const string Picking = "Picking";
     public const string Rejected = "Rejected";
     public const string Cancelled = "Cancelled";
     public const string Issued = "Issued";

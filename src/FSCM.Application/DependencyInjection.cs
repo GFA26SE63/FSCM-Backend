@@ -4,6 +4,7 @@ using FSCM.Application.Features.Identity;
 using FSCM.Application.Features.Inventory;
 using FSCM.Application.Features.InternalTransfers;
 using FSCM.Application.Features.Orders;
+using FSCM.Application.Features.Picking;
 using FSCM.Application.Features.Retailers;
 using FSCM.Application.Features.QrLabels;
 using FSCM.Application.Features.Promotions;
@@ -28,6 +29,9 @@ public static class DependencyInjection
         services.AddScoped<InternalTransferService>();
         services.AddScoped<OrderService>();
         services.AddScoped<IOrderPricingService, OrderPricingService>();
+        services.AddScoped<PickingService>();
+        services.AddScoped<PickingPlanService>();
+        services.AddScoped<IPickingPlanService>(provider => provider.GetRequiredService<PickingPlanService>());
         services.AddScoped<QrLabelService>();
         services.AddScoped<PromotionService>();
         services.AddScoped<RetailerService>();

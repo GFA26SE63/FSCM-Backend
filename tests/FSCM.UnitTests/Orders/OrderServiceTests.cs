@@ -1,5 +1,6 @@
 using FSCM.Application.Features.Inventory;
 using FSCM.Application.Features.Orders;
+using FSCM.Application.Features.Picking;
 using FSCM.Application.Features.WarehouseConfiguration;
 using FSCM.Domain.Authorization;
 using FSCM.Domain.Entities;
@@ -94,6 +95,7 @@ public sealed class OrderServiceTests
         Assert.Equal(10m, fixture.Store.Balance.ReservedQuantity);
         Assert.Equal(1, approved.Version);
         Assert.Equal(1, fixture.Inventory.ReserveCalls);
+        Assert.Equal(1, fixture.PickingPlan.Calls);
     }
 
     [Theory]
@@ -114,6 +116,7 @@ public sealed class OrderServiceTests
         Assert.Equal(0m, fixture.Store.Balance.HeldQuantity);
         Assert.Equal(50m, fixture.Store.Balance.AvailableQuantity);
         Assert.Equal(1, fixture.Inventory.ReleaseCalls);
+        Assert.Equal(cancel ? 1 : 0, fixture.PickingPlan.CancelCalls);
     }
 
     [Fact]
@@ -135,6 +138,7 @@ public sealed class OrderServiceTests
         public Guid OperatorUserId { get; } = Guid.NewGuid();
         public FakeStore Store { get; }
         public FakeInventoryLifecycle Inventory { get; }
+        public FakePickingPlan PickingPlan { get; }
         public OrderService Service { get; }
         public bool TerritoryAllowed { get => Store.TerritoryAllowed; set => Store.TerritoryAllowed = value; }
 
@@ -142,7 +146,8 @@ public sealed class OrderServiceTests
         {
             Store = new FakeStore(SalesUserId, physicalQuantity);
             Inventory = new FakeInventoryLifecycle(Store);
-            Service = new OrderService(Store, new FakePricing(), Inventory, new FixedTimeProvider(Now));
+            PickingPlan = new FakePickingPlan();
+            Service = new OrderService(Store, new FakePricing(), Inventory, PickingPlan, new FixedTimeProvider(Now));
         }
 
         public CreateAssistedOrderData Request(int quantity) => new(
@@ -156,6 +161,26 @@ public sealed class OrderServiceTests
 
         public Task<OrderDetailResult> CreateAsync(int quantity) =>
             Service.CreateAsync(Request(quantity), SalesUserId, default);
+    }
+
+    private sealed class FakePickingPlan : IPickingPlanService
+    {
+        public int Calls { get; private set; }
+        public int CancelCalls { get; private set; }
+
+        public Task CreateForApprovedOrderAsync(
+            OrderView order, DateTimeOffset now, CancellationToken cancellationToken)
+        {
+            Calls++;
+            return Task.CompletedTask;
+        }
+
+        public Task CancelForOrderAsync(
+            Guid orderId, DateTimeOffset now, CancellationToken cancellationToken)
+        {
+            CancelCalls++;
+            return Task.CompletedTask;
+        }
     }
 
     private sealed class FakeStore : IOrderStore

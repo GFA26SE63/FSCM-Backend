@@ -87,7 +87,7 @@ public sealed class PhysicalSchemaModelTests
 
         Assert.Equal(ExpectedTables, tableNames);
         Assert.Equal(62, entityTypes.Length);
-        Assert.Equal(605, entityTypes.Sum(entityType => entityType.GetProperties().Count()));
+        Assert.Equal(606, entityTypes.Sum(entityType => entityType.GetProperties().Count()));
         Assert.Equal(134, entityTypes.Sum(entityType => entityType.GetForeignKeys().Count()));
         Assert.All(
             entityTypes.SelectMany(entityType => entityType.GetForeignKeys()),
@@ -263,6 +263,24 @@ public sealed class PhysicalSchemaModelTests
         Assert.True(retailer.GetIndexes().Single(index =>
             index.Properties.SequenceEqual([retailerUserId])).IsUnique);
         Assert.Contains(context.Model.GetSequences(), sequence => sequence.Name == "SalesOrderCodeSequence");
+    }
+
+    [Fact]
+    public void Model_enforces_one_versioned_picking_list_per_order_warehouse_and_allocation()
+    {
+        using var context = CreateContext();
+        var list = context.Model.FindEntityType(typeof(PickingList))!;
+        var item = context.Model.FindEntityType(typeof(PickingItem))!;
+
+        Assert.True(list.FindProperty(nameof(PickingList.Version))!.IsConcurrencyToken);
+        var orderId = list.FindProperty(nameof(PickingList.SalesOrderId))!;
+        var warehouseId = list.FindProperty(nameof(PickingList.WarehouseId))!;
+        Assert.True(list.GetIndexes().Single(index =>
+            index.Properties.SequenceEqual([orderId, warehouseId])).IsUnique);
+
+        var allocationId = item.FindProperty(nameof(PickingItem.AllocationId))!;
+        Assert.True(item.GetIndexes().Single(index =>
+            index.Properties.SequenceEqual([allocationId])).IsUnique);
     }
 
     private static AppDbContext CreateContext()
