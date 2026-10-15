@@ -17,6 +17,8 @@ public interface IPaymentStore
 {
     Task<PaymentView?> FindByOrderAsync(Guid orderId, bool forUpdate, CancellationToken cancellationToken);
     Task<PaymentView?> FindByOperationKeyAsync(string operationKey, CancellationToken cancellationToken);
+    Task<PaymentView?> FindByPayOsOrderCodeAsync(
+        long payOsOrderCode, bool forUpdate, CancellationToken cancellationToken);
     Task<IReadOnlyCollection<PaymentView>> ListAsync(
         Guid actorUserId, string actorRole, CancellationToken cancellationToken);
     Task<bool> CanViewAsync(

@@ -358,6 +358,18 @@ Accept: application/json
 ###
 
 # Supply a Delivered Credit order ID and its current payment version.
+# The response includes checkoutUrl and VietQR qrCode. Configure PayOS secrets first.
+POST {{FSCM.API_HostAddress}}/api/v1/payments/orders/00000000-0000-0000-0000-000000000000/payos-checkout
+Authorization: Bearer {{retailerLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "expectedVersion": 0
+}
+
+###
+
+# Supply a Delivered Credit order ID and its current payment version.
 POST {{FSCM.API_HostAddress}}/api/v1/payments/orders/00000000-0000-0000-0000-000000000000/collect
 Authorization: Bearer {{salesLogin.response.body.$.accessToken}}
 Idempotency-Key: {{$guid}}
@@ -376,5 +388,5 @@ Authorization: Bearer {{salesLogin.response.body.$.accessToken}}
 Content-Type: application/json
 
 {
-  "query": "{ payments(first: 20) { totalCount nodes { orderCode orderPaymentMethod status amount creditTermDays deliveredDate dueDate daysOverdue paidDate collectionMethod version } } }"
+  "query": "{ payments(first: 20) { totalCount nodes { orderCode orderPaymentMethod status amount creditTermDays deliveredDate dueDate daysOverdue paidDate collectionMethod payOsCheckoutUrl payOsQrCode payOsLinkStatus payOsReference version } } }"
 }

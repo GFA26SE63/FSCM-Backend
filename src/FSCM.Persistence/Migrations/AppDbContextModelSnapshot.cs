@@ -1247,6 +1247,30 @@ namespace FSCM.Persistence.Migrations
                     b.Property<DateOnly?>("PaidDate")
                         .HasColumnType("date");
 
+                    b.Property<string>("PayOsCheckoutUrl")
+                        .HasColumnType("text");
+
+                    b.Property<long?>("PayOsExpiredAt")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("PayOsLinkStatus")
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)");
+
+                    b.Property<long?>("PayOsOrderCode")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("PayOsPaymentLinkId")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("PayOsQrCode")
+                        .HasColumnType("text");
+
+                    b.Property<string>("PayOsReference")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
                     b.Property<string>("RequestHash")
                         .HasMaxLength(64)
                         .HasColumnType("character varying(64)");
@@ -1273,6 +1297,18 @@ namespace FSCM.Persistence.Migrations
                     b.HasIndex("OperationKey")
                         .IsUnique()
                         .HasFilter("\"OperationKey\" IS NOT NULL");
+
+                    b.HasIndex("PayOsOrderCode")
+                        .IsUnique()
+                        .HasFilter("\"PayOsOrderCode\" IS NOT NULL");
+
+                    b.HasIndex("PayOsPaymentLinkId")
+                        .IsUnique()
+                        .HasFilter("\"PayOsPaymentLinkId\" IS NOT NULL");
+
+                    b.HasIndex("PayOsReference")
+                        .IsUnique()
+                        .HasFilter("\"PayOsReference\" IS NOT NULL");
 
                     b.HasIndex("SalesOrderId")
                         .IsUnique();

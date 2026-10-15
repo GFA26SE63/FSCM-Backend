@@ -136,6 +136,60 @@ public sealed class PaymentServiceTests
         Assert.Equal("conflict", exception.Code);
     }
 
+    [Fact]
+    public async Task Scoped_user_creates_payos_qr_checkout_for_unpaid_credit()
+    {
+        var fixture = new Fixture();
+
+        var result = await fixture.Service.CreatePayOsCheckoutAsync(
+            fixture.Order.Id, new(0), fixture.SalesUserId, SystemRoles.Sales, default);
+        var replay = await fixture.Service.CreatePayOsCheckoutAsync(
+            fixture.Order.Id, new(0), fixture.SalesUserId, SystemRoles.Sales, default);
+
+        Assert.Equal(fixture.Payment!.Amount, result.Amount);
+        Assert.Equal(result.PaymentLinkId, replay.PaymentLinkId);
+        Assert.Equal("https://pay.payos.vn/web/test-link", result.CheckoutUrl);
+        Assert.Equal("PAYOS-QR", result.QrCode);
+        Assert.Equal("PENDING", result.Status);
+        Assert.Equal(1, result.PaymentVersion);
+        Assert.Equal("PayOsCheckoutCreated", Assert.Single(fixture.Store.Audits).Action);
+    }
+
+    [Fact]
+    public async Task Verified_payos_webhook_records_bank_transfer_idempotently()
+    {
+        var fixture = new Fixture();
+        var checkout = await fixture.Service.CreatePayOsCheckoutAsync(
+            fixture.Order.Id, new(0), fixture.SalesUserId, SystemRoles.Sales, default);
+        var webhook = fixture.Gateway.CreateWebhook(checkout);
+
+        var first = await fixture.Service.HandlePayOsWebhookAsync(webhook, default);
+        var repeated = await fixture.Service.HandlePayOsWebhookAsync(webhook, default);
+
+        Assert.True(first.Processed);
+        Assert.True(repeated.Processed);
+        Assert.Equal(PaymentStatuses.Paid, fixture.Payment!.Status);
+        Assert.Equal(PaymentCollectionMethods.BankTransfer, fixture.Payment.CollectionMethod);
+        Assert.Equal("FT-PAYOS-001", fixture.Payment.PayOsReference);
+        Assert.Equal(2, fixture.Payment.Version);
+        Assert.Equal(2, fixture.Store.Audits.Count);
+        Assert.Equal("PayOsPaymentConfirmed", fixture.Store.Audits[1].Action);
+    }
+
+    [Fact]
+    public async Task Manual_collection_is_blocked_after_payos_checkout_is_created()
+    {
+        var fixture = new Fixture();
+        await fixture.Service.CreatePayOsCheckoutAsync(
+            fixture.Order.Id, new(0), fixture.SalesUserId, SystemRoles.Sales, default);
+
+        var exception = await Assert.ThrowsAsync<PaymentOperationException>(() => fixture.CollectAsync(
+            Guid.NewGuid(), SystemRoles.Operator, PaymentCollectionMethods.BankTransfer,
+            expectedVersion: 1));
+
+        Assert.Equal("conflict", exception.Code);
+    }
+
     private sealed class Fixture
     {
         public Guid SalesUserId { get; } = Guid.NewGuid();
@@ -146,6 +200,7 @@ public sealed class PaymentServiceTests
         public FakePaymentStore Store { get; }
         public PaymentPlanService Plan { get; }
         public PaymentService Service { get; }
+        public FakePayOsGateway Gateway { get; }
 
         public Fixture(
             string method = OrderPaymentMethods.Credit,
@@ -186,8 +241,9 @@ public sealed class PaymentServiceTests
                 UpdatedAt = Now
             } : null;
             Store = new FakePaymentStore(this);
+            Gateway = new FakePayOsGateway();
             Plan = new PaymentPlanService(Store);
-            Service = new PaymentService(Store, new FixedTimeProvider(Now));
+            Service = new PaymentService(Store, Gateway, new FixedTimeProvider(Now));
         }
 
         public Task<PaymentResult> CollectAsync(
@@ -223,6 +279,12 @@ public sealed class PaymentServiceTests
                 ? new(payment, fixture.Order, fixture.Retailer)
                 : null);
 
+        public Task<PaymentView?> FindByPayOsOrderCodeAsync(long payOsOrderCode, bool forUpdate,
+            CancellationToken cancellationToken) => Task.FromResult<PaymentView?>(
+            Payments.SingleOrDefault(item => item.PayOsOrderCode == payOsOrderCode) is { } payment
+                ? new(payment, fixture.Order, fixture.Retailer)
+                : null);
+
         public Task<IReadOnlyCollection<PaymentView>> ListAsync(Guid actorUserId, string actorRole,
             CancellationToken cancellationToken) => Task.FromResult<IReadOnlyCollection<PaymentView>>(
             Payments.Select(item => new PaymentView(item, fixture.Order, fixture.Retailer)).ToArray());
@@ -244,5 +306,26 @@ public sealed class PaymentServiceTests
     private sealed class FixedTimeProvider(DateTimeOffset now) : TimeProvider
     {
         public override DateTimeOffset GetUtcNow() => now;
+    }
+
+    private sealed class FakePayOsGateway : IPayOsGateway
+    {
+        public Task<PayOsLinkData> CreatePaymentLinkAsync(
+            PayOsCreateLinkData data,
+            CancellationToken cancellationToken) => Task.FromResult(new PayOsLinkData(
+                data.OrderCode, data.Amount, "test-link", "https://pay.payos.vn/web/test-link",
+                "PAYOS-QR", "PENDING", 1_797_000_000));
+
+        public Task<PayOsVerifiedWebhook> VerifyWebhookAsync(
+            PayOsWebhookEnvelope webhook,
+            CancellationToken cancellationToken) => Task.FromResult(
+                new PayOsVerifiedWebhook(webhook.Code, webhook.Success, webhook.Data));
+
+        public PayOsWebhookEnvelope CreateWebhook(PayOsCheckoutResult checkout) => new(
+            "00", "success", true,
+            new(checkout.OrderCode, decimal.ToInt64(checkout.Amount), "FSCM DH-001041",
+                "123456789", "FT-PAYOS-001", "2026-10-15 10:05:00", "VND",
+                checkout.PaymentLinkId, "00", "Thành công", null, null, null, null, null, null),
+            "valid-test-signature");
     }
 }

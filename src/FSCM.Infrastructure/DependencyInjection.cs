@@ -1,6 +1,8 @@
 using System.Net.Http.Headers;
 using FSCM.Application.Features.Identity;
+using FSCM.Application.Features.Payments;
 using FSCM.Infrastructure.Identity;
+using FSCM.Infrastructure.Payments;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -16,6 +18,7 @@ public static class DependencyInjection
         services.AddHttpClient();
         services.AddSingleton<IPasswordHasher, BcryptPasswordHasher>();
         services.AddSingleton<IIdentityTokenProvider, JwtIdentityTokenProvider>();
+        services.AddSingleton<IPayOsGateway>(_ => new PayOsGateway(configuration));
 
         services.AddHttpClient("OpenAI", client =>
         {

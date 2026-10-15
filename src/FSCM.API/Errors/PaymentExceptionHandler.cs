@@ -20,6 +20,7 @@ public sealed class PaymentExceptionHandler(
             "not_found" => StatusCodes.Status404NotFound,
             "forbidden" => StatusCodes.Status403Forbidden,
             "conflict" => StatusCodes.Status409Conflict,
+            "payment_gateway_error" => StatusCodes.Status502BadGateway,
             _ => StatusCodes.Status500InternalServerError
         };
         logger.LogWarning("Payment request failed with code {ErrorCode}: {ErrorMessage}",

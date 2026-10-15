@@ -34,6 +34,42 @@ public sealed class PaymentsController(PaymentService service) : ControllerBase
             new(request.CollectionMethod, request.ExpectedVersion, request.Note),
             operationKey, GetActorUserId(), GetActorRole(), cancellationToken);
 
+    [HttpPost("orders/{orderId:guid}/payos-checkout")]
+    public Task<PayOsCheckoutResult> CreatePayOsCheckout(
+        Guid orderId,
+        CreatePayOsCheckoutRequest request,
+        CancellationToken cancellationToken) =>
+        service.CreatePayOsCheckoutAsync(orderId, new(request.ExpectedVersion),
+            GetActorUserId(), GetActorRole(), cancellationToken);
+
+    [AllowAnonymous]
+    [HttpPost("payos/webhook")]
+    public Task<PayOsWebhookResult> PayOsWebhook(
+        PayOsWebhookRequest request,
+        CancellationToken cancellationToken) =>
+        service.HandlePayOsWebhookAsync(new(
+            request.Code,
+            request.Desc,
+            request.Success,
+            new(
+                request.Data.OrderCode,
+                request.Data.Amount,
+                request.Data.Description,
+                request.Data.AccountNumber,
+                request.Data.Reference,
+                request.Data.TransactionDateTime,
+                request.Data.Currency,
+                request.Data.PaymentLinkId,
+                request.Data.Code,
+                request.Data.Desc,
+                request.Data.CounterAccountBankId,
+                request.Data.CounterAccountBankName,
+                request.Data.CounterAccountName,
+                request.Data.CounterAccountNumber,
+                request.Data.VirtualAccountName,
+                request.Data.VirtualAccountNumber),
+            request.Signature), cancellationToken);
+
     private Guid GetActorUserId() =>
         Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var userId)
             ? userId

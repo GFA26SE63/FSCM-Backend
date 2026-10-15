@@ -87,7 +87,7 @@ public sealed class PhysicalSchemaModelTests
 
         Assert.Equal(ExpectedTables, tableNames);
         Assert.Equal(62, entityTypes.Length);
-        Assert.Equal(626, entityTypes.Sum(entityType => entityType.GetProperties().Count()));
+        Assert.Equal(633, entityTypes.Sum(entityType => entityType.GetProperties().Count()));
         Assert.Equal(136, entityTypes.Sum(entityType => entityType.GetForeignKeys().Count()));
         Assert.All(
             entityTypes.SelectMany(entityType => entityType.GetForeignKeys()),
@@ -128,6 +128,18 @@ public sealed class PhysicalSchemaModelTests
             index.Properties[0].Name == nameof(Payment.OperationKey));
         Assert.True(operationIndex.IsUnique);
         Assert.Equal("\"OperationKey\" IS NOT NULL", operationIndex.GetFilter());
+        foreach (var propertyName in new[]
+                 {
+                     nameof(Payment.PayOsOrderCode),
+                     nameof(Payment.PayOsPaymentLinkId),
+                     nameof(Payment.PayOsReference)
+                 })
+        {
+            var index = payment.GetIndexes().Single(candidate => candidate.Properties.Count == 1 &&
+                candidate.Properties[0].Name == propertyName);
+            Assert.True(index.IsUnique);
+            Assert.Equal($"\"{propertyName}\" IS NOT NULL", index.GetFilter());
+        }
     }
 
     [Fact]

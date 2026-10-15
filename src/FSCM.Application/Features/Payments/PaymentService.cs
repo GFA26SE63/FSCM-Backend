@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -7,7 +8,10 @@ using FSCM.Domain.Entities;
 
 namespace FSCM.Application.Features.Payments;
 
-public sealed class PaymentService(IPaymentStore store, TimeProvider timeProvider)
+public sealed class PaymentService(
+    IPaymentStore store,
+    IPayOsGateway payOsGateway,
+    TimeProvider timeProvider)
 {
     private static readonly TimeSpan VietnamOffset = TimeSpan.FromHours(7);
 
@@ -75,6 +79,9 @@ public sealed class PaymentService(IPaymentStore store, TimeProvider timeProvide
                 throw PaymentOperationException.Conflict("Only a credit receivable can be collected manually.");
             if (view.Payment.Status == PaymentStatuses.Paid)
                 throw PaymentOperationException.Conflict("Payment was already collected in full.");
+            if (view.Payment.PayOsPaymentLinkId is not null)
+                throw PaymentOperationException.Conflict(
+                    "Payment has an active payOS checkout and cannot be collected manually.");
             if (view.Payment.Version != data.ExpectedVersion)
                 throw PaymentOperationException.Conflict(
                     $"Payment version is {view.Payment.Version}; refresh and retry.");
@@ -131,6 +138,156 @@ public sealed class PaymentService(IPaymentStore store, TimeProvider timeProvide
                 "Payment was committed but could not be reloaded."), Today());
     }
 
+    public async Task<PayOsCheckoutResult> CreatePayOsCheckoutAsync(
+        Guid orderId,
+        CreatePayOsCheckoutData data,
+        Guid actorUserId,
+        string actorRole,
+        CancellationToken cancellationToken)
+    {
+        ValidateReadRole(actorRole);
+        var view = await store.FindByOrderAsync(orderId, false, cancellationToken)
+            ?? throw PaymentOperationException.NotFound("Payment was not found.");
+        if (!await store.CanViewAsync(view, actorUserId, actorRole, cancellationToken))
+            throw PaymentOperationException.Forbidden("You cannot create a checkout for this payment.");
+        if (view.Payment.Method != OrderPaymentMethods.Credit)
+            throw PaymentOperationException.Conflict("Only a credit receivable can use payOS checkout.");
+        if (view.Payment.Status == PaymentStatuses.Paid)
+            throw PaymentOperationException.Conflict("Payment was already collected in full.");
+        if (view.Payment.PayOsPaymentLinkId is not null) return ToCheckoutResult(view.Payment);
+        ValidatePayOsEligible(view, data.ExpectedVersion);
+
+        var orderCode = CreatePayOsOrderCode(view.Payment.Id);
+        var link = await payOsGateway.CreatePaymentLinkAsync(new(
+            orderCode,
+            ToPayOsAmount(view.Payment.Amount),
+            $"FSCM {view.Order.OrderCode}",
+            view.Order.RetailerNameSnapshot), cancellationToken);
+        if (link.OrderCode != orderCode || link.Amount != ToPayOsAmount(view.Payment.Amount) ||
+            string.IsNullOrWhiteSpace(link.PaymentLinkId) || string.IsNullOrWhiteSpace(link.CheckoutUrl))
+            throw PaymentOperationException.Gateway("payOS returned an inconsistent payment link.");
+
+        await store.ExecuteInTransactionAsync(async transactionCancellationToken =>
+        {
+            var current = await store.FindByOrderAsync(orderId, true, transactionCancellationToken)
+                ?? throw PaymentOperationException.NotFound("Payment was not found.");
+            if (current.Payment.PayOsPaymentLinkId is not null) return;
+            ValidatePayOsEligible(current, data.ExpectedVersion);
+
+            var now = timeProvider.GetUtcNow();
+            current.Payment.PayOsOrderCode = link.OrderCode;
+            current.Payment.PayOsPaymentLinkId = link.PaymentLinkId;
+            current.Payment.PayOsCheckoutUrl = link.CheckoutUrl;
+            current.Payment.PayOsQrCode = link.QrCode;
+            current.Payment.PayOsLinkStatus = link.Status;
+            current.Payment.PayOsExpiredAt = link.ExpiredAt;
+            current.Payment.Version++;
+            current.Payment.UpdatedAt = now;
+            store.AddAuditLog(new AuditLog
+            {
+                Id = Guid.NewGuid(),
+                UserAccountId = actorUserId,
+                EntityName = nameof(Payment),
+                EntityId = current.Payment.Id,
+                Action = "PayOsCheckoutCreated",
+                NewValues = JsonSerializer.Serialize(new
+                {
+                    current.Payment.PayOsOrderCode,
+                    current.Payment.PayOsPaymentLinkId,
+                    current.Payment.PayOsLinkStatus,
+                    current.Payment.Version
+                }),
+                Reason = "Tạo link thanh toán payOS cho công nợ",
+                CreatedAt = now
+            });
+            await store.SaveChangesAsync(transactionCancellationToken);
+        }, cancellationToken);
+
+        store.ClearTracking();
+        return ToCheckoutResult((await store.FindByOrderAsync(orderId, false, cancellationToken)
+            ?? throw PaymentOperationException.Conflict(
+                "payOS checkout was committed but could not be reloaded.")).Payment);
+    }
+
+    public async Task<PayOsWebhookResult> HandlePayOsWebhookAsync(
+        PayOsWebhookEnvelope webhook,
+        CancellationToken cancellationToken)
+    {
+        var verified = await payOsGateway.VerifyWebhookAsync(webhook, cancellationToken);
+        if (!verified.Success || verified.Code != "00" || verified.Data.Code != "00")
+            return new(false, "Webhook was verified but does not represent a successful payment.", null);
+
+        var existing = await store.FindByPayOsOrderCodeAsync(
+            verified.Data.OrderCode, false, cancellationToken);
+        if (existing is null)
+            return new(false, "Webhook was verified but does not match an FSCM payment.", null);
+
+        PayOsWebhookResult? result = null;
+        await store.ExecuteInTransactionAsync(async transactionCancellationToken =>
+        {
+            var current = await store.FindByPayOsOrderCodeAsync(
+                verified.Data.OrderCode, true, transactionCancellationToken)
+                ?? throw PaymentOperationException.NotFound("Payment was not found.");
+            ValidatePayOsWebhook(current.Payment, verified.Data);
+            if (current.Payment.Status == PaymentStatuses.Paid)
+            {
+                if (current.Payment.CollectionMethod == PaymentCollectionMethods.BankTransfer &&
+                    current.Payment.PayOsPaymentLinkId is not null &&
+                    current.Payment.PayOsReference == verified.Data.Reference)
+                {
+                    result = new(true, "Payment webhook was already processed.", current.Payment.Id);
+                    return;
+                }
+                throw PaymentOperationException.Conflict("Payment was already collected by another method.");
+            }
+
+            var now = timeProvider.GetUtcNow();
+            var paidAt = ParsePayOsTransactionTime(verified.Data.TransactionDateTime, now);
+            var oldValues = new
+            {
+                current.Payment.Status,
+                current.Payment.CollectionMethod,
+                current.Payment.Version
+            };
+            current.Payment.Status = PaymentStatuses.Paid;
+            current.Payment.PaidDate = DateOnly.FromDateTime(paidAt.ToOffset(VietnamOffset).DateTime);
+            current.Payment.CollectionMethod = PaymentCollectionMethods.BankTransfer;
+            current.Payment.OperationKey = $"payos:{verified.Data.Reference}";
+            current.Payment.RequestHash = HashPayOsWebhook(verified.Data);
+            current.Payment.PayOsLinkStatus = "PAID";
+            current.Payment.PayOsReference = verified.Data.Reference;
+            current.Payment.ConfirmedByUserId = null;
+            current.Payment.ConfirmedAt = paidAt;
+            current.Payment.Note = "payOS xác nhận đã nhận đủ tiền";
+            current.Payment.Version++;
+            current.Payment.UpdatedAt = now;
+            store.AddAuditLog(new AuditLog
+            {
+                Id = Guid.NewGuid(),
+                EntityName = nameof(Payment),
+                EntityId = current.Payment.Id,
+                Action = "PayOsPaymentConfirmed",
+                OldValues = JsonSerializer.Serialize(oldValues),
+                NewValues = JsonSerializer.Serialize(new
+                {
+                    current.Payment.Status,
+                    current.Payment.CollectionMethod,
+                    current.Payment.PayOsOrderCode,
+                    current.Payment.PayOsPaymentLinkId,
+                    current.Payment.PayOsReference,
+                    current.Payment.PaidDate,
+                    current.Payment.ConfirmedAt,
+                    current.Payment.Version
+                }),
+                Reason = current.Payment.Note,
+                CreatedAt = now
+            });
+            await store.SaveChangesAsync(transactionCancellationToken);
+            result = new(true, "Payment was confirmed by payOS.", current.Payment.Id);
+        }, cancellationToken);
+        return result ?? throw PaymentOperationException.Conflict("Payment webhook could not be processed.");
+    }
+
     private DateOnly Today() =>
         DateOnly.FromDateTime(timeProvider.GetUtcNow().ToOffset(VietnamOffset).DateTime);
 
@@ -146,7 +303,11 @@ public sealed class PaymentService(IPaymentStore store, TimeProvider timeProvide
             view.Order.CreatedByUserId, view.Payment.Method, effectiveStatus,
             view.Payment.Amount, view.Order.CreditTermDays, view.Payment.DeliveredDate,
             view.Payment.DueDate, daysOverdue, view.Payment.PaidDate,
-            view.Payment.CollectionMethod, view.Payment.ConfirmedByUserId,
+            view.Payment.CollectionMethod, view.Payment.PayOsOrderCode,
+            view.Payment.PayOsPaymentLinkId, view.Payment.PayOsCheckoutUrl,
+            view.Payment.PayOsQrCode, view.Payment.PayOsLinkStatus, view.Payment.PayOsExpiredAt,
+            view.Payment.PayOsReference,
+            view.Payment.ConfirmedByUserId,
             view.Payment.ConfirmedAt, view.Payment.Note, view.Payment.Version,
             view.Payment.CreatedAt, view.Payment.UpdatedAt);
     }
@@ -204,6 +365,67 @@ public sealed class PaymentService(IPaymentStore store, TimeProvider timeProvide
     private static string Hash(Guid orderId, string method, string? note)
     {
         var canonical = $"{orderId:N}|{method}|{note}";
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(canonical))).ToLowerInvariant();
+    }
+
+    private static void ValidatePayOsEligible(PaymentView view, int expectedVersion)
+    {
+        if (view.Payment.Method != OrderPaymentMethods.Credit)
+            throw PaymentOperationException.Conflict("Only a credit receivable can use payOS checkout.");
+        if (view.Payment.Status == PaymentStatuses.Paid)
+            throw PaymentOperationException.Conflict("Payment was already collected in full.");
+        if (view.Payment.Version != expectedVersion)
+            throw PaymentOperationException.Conflict(
+                $"Payment version is {view.Payment.Version}; refresh and retry.");
+    }
+
+    private static PayOsCheckoutResult ToCheckoutResult(Payment payment)
+    {
+        if (payment.PayOsOrderCode is null || payment.PayOsPaymentLinkId is null ||
+            payment.PayOsCheckoutUrl is null || payment.PayOsQrCode is null ||
+            payment.PayOsLinkStatus is null)
+            throw PaymentOperationException.Conflict("Payment does not have a complete payOS checkout.");
+        return new(payment.Id, payment.SalesOrderId, payment.PayOsOrderCode.Value,
+            payment.Amount, payment.PayOsPaymentLinkId, payment.PayOsCheckoutUrl,
+            payment.PayOsQrCode, payment.PayOsLinkStatus, payment.PayOsExpiredAt, payment.Version);
+    }
+
+    private static long CreatePayOsOrderCode(Guid paymentId)
+    {
+        var value = Convert.ToInt64(paymentId.ToString("N")[..13], 16);
+        return value == 0 ? 1 : value;
+    }
+
+    private static long ToPayOsAmount(decimal amount)
+    {
+        if (amount <= 0 || amount != decimal.Truncate(amount) || amount > long.MaxValue)
+            throw PaymentOperationException.Validation("payOS requires a positive whole-number VND amount.");
+        return decimal.ToInt64(amount);
+    }
+
+    private static void ValidatePayOsWebhook(Payment payment, PayOsWebhookPayload data)
+    {
+        if (payment.PayOsPaymentLinkId != data.PaymentLinkId)
+            throw PaymentOperationException.Conflict("payOS payment-link identifier does not match.");
+        if (ToPayOsAmount(payment.Amount) != data.Amount)
+            throw PaymentOperationException.Conflict("payOS payment amount does not match.");
+        if (!string.Equals(data.Currency, "VND", StringComparison.OrdinalIgnoreCase))
+            throw PaymentOperationException.Conflict("payOS payment currency must be VND.");
+        if (string.IsNullOrWhiteSpace(data.Reference) || data.Reference.Length > 74)
+            throw PaymentOperationException.Validation("payOS transaction reference is invalid.");
+    }
+
+    private static DateTimeOffset ParsePayOsTransactionTime(string value, DateTimeOffset fallback)
+    {
+        if (DateTime.TryParseExact(value, "yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture,
+                DateTimeStyles.None, out var local))
+            return new DateTimeOffset(DateTime.SpecifyKind(local, DateTimeKind.Unspecified), VietnamOffset);
+        return fallback;
+    }
+
+    private static string HashPayOsWebhook(PayOsWebhookPayload data)
+    {
+        var canonical = $"{data.OrderCode}|{data.Amount}|{data.PaymentLinkId}|{data.Reference}";
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(canonical))).ToLowerInvariant();
     }
 }

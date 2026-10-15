@@ -7,4 +7,5 @@ public sealed class PaymentOperationException(string code, string message) : Exc
     public static PaymentOperationException NotFound(string message) => new("not_found", message);
     public static PaymentOperationException Forbidden(string message) => new("forbidden", message);
     public static PaymentOperationException Conflict(string message) => new("conflict", message);
+    public static PaymentOperationException Gateway(string message) => new("payment_gateway_error", message);
 }

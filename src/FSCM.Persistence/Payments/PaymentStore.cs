@@ -28,6 +28,15 @@ public sealed class PaymentStore(AppDbContext dbContext) : IPaymentStore
         return orderId.HasValue ? await FindByOrderAsync(orderId.Value, false, cancellationToken) : null;
     }
 
+    public async Task<PaymentView?> FindByPayOsOrderCodeAsync(
+        long payOsOrderCode, bool forUpdate, CancellationToken cancellationToken)
+    {
+        var query = dbContext.PaymentRecords.Where(item => item.PayOsOrderCode == payOsOrderCode);
+        if (!forUpdate) query = query.AsNoTracking();
+        var payment = await query.SingleOrDefaultAsync(cancellationToken);
+        return payment is null ? null : await LoadAsync(payment, forUpdate, cancellationToken);
+    }
+
     public async Task<IReadOnlyCollection<PaymentView>> ListAsync(
         Guid actorUserId,
         string actorRole,

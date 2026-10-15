@@ -15,6 +15,13 @@ public sealed class Payment
     public string? CollectionMethod { get; set; }
     public string? OperationKey { get; set; }
     public string? RequestHash { get; set; }
+    public long? PayOsOrderCode { get; set; }
+    public string? PayOsPaymentLinkId { get; set; }
+    public string? PayOsCheckoutUrl { get; set; }
+    public string? PayOsQrCode { get; set; }
+    public string? PayOsLinkStatus { get; set; }
+    public long? PayOsExpiredAt { get; set; }
+    public string? PayOsReference { get; set; }
     public Guid? ConfirmedByUserId { get; set; }
     public DateTimeOffset? ConfirmedAt { get; set; }
     public string? Note { get; set; }

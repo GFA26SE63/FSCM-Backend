@@ -19,6 +19,75 @@ public sealed record CollectPaymentData(
     int ExpectedVersion,
     string? Note);
 
+public sealed record CreatePayOsCheckoutData(int ExpectedVersion);
+
+public sealed record PayOsCreateLinkData(
+    long OrderCode,
+    long Amount,
+    string Description,
+    string BuyerName);
+
+public sealed record PayOsLinkData(
+    long OrderCode,
+    long Amount,
+    string PaymentLinkId,
+    string CheckoutUrl,
+    string QrCode,
+    string Status,
+    long? ExpiredAt);
+
+public sealed record PayOsWebhookPayload(
+    long OrderCode,
+    long Amount,
+    string Description,
+    string AccountNumber,
+    string Reference,
+    string TransactionDateTime,
+    string Currency,
+    string PaymentLinkId,
+    string Code,
+    string Description2,
+    string? CounterAccountBankId,
+    string? CounterAccountBankName,
+    string? CounterAccountName,
+    string? CounterAccountNumber,
+    string? VirtualAccountName,
+    string? VirtualAccountNumber);
+
+public sealed record PayOsWebhookEnvelope(
+    string Code,
+    string Description,
+    bool Success,
+    PayOsWebhookPayload Data,
+    string Signature);
+
+public sealed record PayOsVerifiedWebhook(
+    string Code,
+    bool Success,
+    PayOsWebhookPayload Data);
+
+public interface IPayOsGateway
+{
+    Task<PayOsLinkData> CreatePaymentLinkAsync(
+        PayOsCreateLinkData data, CancellationToken cancellationToken);
+    Task<PayOsVerifiedWebhook> VerifyWebhookAsync(
+        PayOsWebhookEnvelope webhook, CancellationToken cancellationToken);
+}
+
+public sealed record PayOsCheckoutResult(
+    Guid PaymentId,
+    Guid OrderId,
+    long OrderCode,
+    decimal Amount,
+    string PaymentLinkId,
+    string CheckoutUrl,
+    string QrCode,
+    string Status,
+    long? ExpiredAt,
+    int PaymentVersion);
+
+public sealed record PayOsWebhookResult(bool Processed, string Message, Guid? PaymentId);
+
 public sealed record PaymentResult(
     Guid Id,
     Guid OrderId,
@@ -36,6 +105,13 @@ public sealed record PaymentResult(
     int DaysOverdue,
     DateOnly? PaidDate,
     string? CollectionMethod,
+    long? PayOsOrderCode,
+    string? PayOsPaymentLinkId,
+    string? PayOsCheckoutUrl,
+    string? PayOsQrCode,
+    string? PayOsLinkStatus,
+    long? PayOsExpiredAt,
+    string? PayOsReference,
     Guid? ConfirmedByUserId,
     DateTimeOffset? ConfirmedAt,
     string? Note,
