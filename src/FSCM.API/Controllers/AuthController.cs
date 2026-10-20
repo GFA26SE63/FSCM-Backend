@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using FSCM.API.Contracts.Identity;
 using FSCM.Application.Features.Identity;
+using FSCM.API.Security;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -21,6 +22,26 @@ public sealed class AuthController(IdentityService identityService, IWebHostEnvi
             request.Password,
             GetRemoteIpAddress(),
             cancellationToken);
+
+    [Authorize(Policy = AuthorizationPolicies.EntraExchange)]
+    [HttpPost("entra/exchange")]
+    [ProducesResponseType<AuthenticationResult>(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    public Task<AuthenticationResult> ExchangeEntra(CancellationToken cancellationToken)
+    {
+        var objectId = User.FindFirstValue("oid");
+        var email = User.FindFirstValue("preferred_username")
+            ?? User.FindFirstValue("email")
+            ?? User.FindFirstValue(ClaimTypes.Email);
+        if (string.IsNullOrWhiteSpace(objectId) || string.IsNullOrWhiteSpace(email))
+            throw IdentityOperationException.InvalidToken();
+
+        return identityService.ExchangeEntraAsync(
+            new EntraIdentity(objectId, email),
+            GetRemoteIpAddress(),
+            cancellationToken);
+    }
 
     [AllowAnonymous]
     [HttpPost("refresh")]

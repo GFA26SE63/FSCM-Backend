@@ -12,6 +12,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<UserAccount> UserAccountRecords => Set<UserAccount>();
     public DbSet<Warehouse> WarehouseRecords => Set<Warehouse>();
     public DbSet<UserWarehouseAssignment> UserWarehouseAssignmentRecords => Set<UserWarehouseAssignment>();
+    public DbSet<UserRegionAssignment> UserRegionAssignmentRecords => Set<UserRegionAssignment>();
     public DbSet<Region> RegionRecords => Set<Region>();
     public DbSet<SalesGroup> SalesGroupRecords => Set<SalesGroup>();
     public DbSet<SalesGroupMember> SalesGroupMemberRecords => Set<SalesGroupMember>();

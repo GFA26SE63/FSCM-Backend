@@ -33,6 +33,19 @@ public sealed class SystemQuery
         CancellationToken cancellationToken) => service.GetCurrentUserAsync(id, cancellationToken);
 
     [Authorize(Roles = [SystemRoles.Admin])]
+    public Task<PagedUserResult> Users(
+        string? search,
+        string? role,
+        bool? isActive,
+        [DefaultValue(1)] int page,
+        [DefaultValue(20)] int pageSize,
+        [Service] IdentityService service,
+        CancellationToken cancellationToken) =>
+        service.ListUsersAsync(
+            new UserListQuery(search, role, isActive, page, pageSize),
+            cancellationToken);
+
+    [Authorize(Roles = [SystemRoles.Admin])]
     public Task<AuthenticatedUser> UserScope(Guid userId, [Service] IdentityService service,
         CancellationToken cancellationToken) => service.GetCurrentUserAsync(userId, cancellationToken);
 
