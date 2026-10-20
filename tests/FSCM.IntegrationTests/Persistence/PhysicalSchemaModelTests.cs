@@ -60,6 +60,7 @@ public sealed class PhysicalSchemaModelTests
         "SYSTEM_CONFIGURATION",
         "TRANSIT_TIME_RULE",
         "USER_ACCOUNT",
+        "USER_REGION_ASSIGNMENT",
         "USER_WAREHOUSE_ASSIGNMENT",
         "VEHICLE",
         "WAREHOUSE",
@@ -86,9 +87,9 @@ public sealed class PhysicalSchemaModelTests
             .ToArray();
 
         Assert.Equal(ExpectedTables, tableNames);
-        Assert.Equal(62, entityTypes.Length);
-        Assert.Equal(633, entityTypes.Sum(entityType => entityType.GetProperties().Count()));
-        Assert.Equal(136, entityTypes.Sum(entityType => entityType.GetForeignKeys().Count()));
+        Assert.Equal(63, entityTypes.Length);
+        Assert.Equal(640, entityTypes.Sum(entityType => entityType.GetProperties().Count()));
+        Assert.Equal(138, entityTypes.Sum(entityType => entityType.GetForeignKeys().Count()));
         Assert.All(
             entityTypes.SelectMany(entityType => entityType.GetForeignKeys()),
             foreignKey => Assert.Equal(DeleteBehavior.Restrict, foreignKey.DeleteBehavior));
@@ -207,6 +208,16 @@ public sealed class PhysicalSchemaModelTests
         var order = context.Model.FindEntityType(typeof(SalesOrder))!;
         Assert.False(order.FindProperty(nameof(SalesOrder.CreatedByUserId))!.IsNullable);
         Assert.False(order.FindProperty(nameof(SalesOrder.SalesGroupId))!.IsNullable);
+
+        var userRegion = context.Model.FindEntityType(typeof(UserRegionAssignment))!;
+        var regionUserId = userRegion.FindProperty(nameof(UserRegionAssignment.UserAccountId))!;
+        var assignedRegionId = userRegion.FindProperty(nameof(UserRegionAssignment.RegionId))!;
+        Assert.True(userRegion.GetIndexes().Single(index =>
+            index.Properties.SequenceEqual([regionUserId, assignedRegionId])).IsUnique);
+
+        var userAccount = context.Model.FindEntityType(typeof(UserAccount))!;
+        Assert.True(userAccount.FindProperty(nameof(UserAccount.EntraObjectId))!.IsNullable);
+        Assert.False(userAccount.FindProperty(nameof(UserAccount.IdentityProvider))!.IsNullable);
     }
 
     [Fact]

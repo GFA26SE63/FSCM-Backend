@@ -2878,7 +2878,6 @@ namespace FSCM.Persistence.Migrations
                         .HasColumnType("character varying(150)");
 
                     b.Property<string>("EntraObjectId")
-                        .IsRequired()
                         .HasMaxLength(150)
                         .HasColumnType("character varying(150)");
 
@@ -2886,6 +2885,11 @@ namespace FSCM.Persistence.Migrations
                         .IsRequired()
                         .HasMaxLength(150)
                         .HasColumnType("character varying(150)");
+
+                    b.Property<string>("IdentityProvider")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
 
                     b.Property<bool>("IsActive")
                         .HasColumnType("boolean");
@@ -2904,7 +2908,8 @@ namespace FSCM.Persistence.Migrations
                         .IsUnique();
 
                     b.HasIndex("EntraObjectId")
-                        .IsUnique();
+                        .IsUnique()
+                        .HasFilter("\"EntraObjectId\" IS NOT NULL");
 
                     b.ToTable("USER_ACCOUNT", (string)null);
                 });
@@ -2947,6 +2952,37 @@ namespace FSCM.Persistence.Migrations
                         .IsUnique();
 
                     b.ToTable("USER_CREDENTIAL", (string)null);
+                });
+
+            modelBuilder.Entity("FSCM.Domain.Entities.UserRegionAssignment", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("AssignedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean");
+
+                    b.Property<Guid>("RegionId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset?>("UnassignedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("UserAccountId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("RegionId", "IsActive");
+
+                    b.HasIndex("UserAccountId", "RegionId")
+                        .IsUnique();
+
+                    b.ToTable("USER_REGION_ASSIGNMENT", (string)null);
                 });
 
             modelBuilder.Entity("FSCM.Domain.Entities.UserWarehouseAssignment", b =>
@@ -4230,6 +4266,21 @@ namespace FSCM.Persistence.Migrations
                         .WithOne()
                         .HasForeignKey("FSCM.Domain.Entities.UserCredential", "UserAccountId")
                         .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("FSCM.Domain.Entities.UserRegionAssignment", b =>
+                {
+                    b.HasOne("FSCM.Domain.Entities.Region", null)
+                        .WithMany()
+                        .HasForeignKey("RegionId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("FSCM.Domain.Entities.UserAccount", null)
+                        .WithMany()
+                        .HasForeignKey("UserAccountId")
+                        .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
                 });
 

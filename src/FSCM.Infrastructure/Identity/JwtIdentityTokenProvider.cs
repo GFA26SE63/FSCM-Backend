@@ -63,6 +63,7 @@ public sealed class JwtIdentityTokenProvider : IIdentityTokenProvider
             new(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())
         };
         claims.AddRange(scope.WarehouseIds.Select(id => new Claim(ScopeClaimTypes.Warehouse, id.ToString())));
+        claims.AddRange(scope.RegionIds.Select(id => new Claim(ScopeClaimTypes.Region, id.ToString())));
         claims.AddRange(scope.SalesGroupIds.Select(id => new Claim(ScopeClaimTypes.SalesGroup, id.ToString())));
         claims.AddRange(scope.RetailerIds.Select(id => new Claim(ScopeClaimTypes.Retailer, id.ToString())));
 

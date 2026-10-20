@@ -1,7 +1,11 @@
 using System.Text;
+using System.Security.Cryptography;
 using FSCM.API.Errors;
 using FSCM.API.GraphQL;
 using FSCM.API.Options;
+using FSCM.API.Security;
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
 
@@ -17,6 +21,7 @@ public static class ServiceCollectionExtensions
     {
         services.Configure<CorsOptions>(configuration.GetSection(CorsOptions.SectionName));
         services.Configure<JwtOptions>(configuration.GetSection(JwtOptions.SectionName));
+        services.Configure<EntraOptions>(configuration.GetSection(EntraOptions.SectionName));
         services.Configure<OpenAiOptions>(configuration.GetSection(OpenAiOptions.SectionName));
 
         services.AddControllers();
@@ -64,7 +69,18 @@ public static class ServiceCollectionExtensions
         });
 
         services.AddAuthenticationServices(configuration);
-        services.AddAuthorization();
+        services.AddScoped<IClaimsTransformation, ActiveAccountClaimsTransformation>();
+        services.AddAuthorization(options =>
+        {
+            options.DefaultPolicy = new AuthorizationPolicyBuilder(JwtBearerDefaults.AuthenticationScheme)
+                .RequireAuthenticatedUser()
+                .Build();
+            options.AddPolicy(AuthorizationPolicies.EntraExchange, policy =>
+            {
+                policy.AddAuthenticationSchemes(AuthenticationSchemes.Entra);
+                policy.RequireAuthenticatedUser();
+            });
+        });
         services.AddHttpContextAccessor();
         services.AddFscmGraphQlDataLoaders();
 
@@ -103,14 +119,12 @@ public static class ServiceCollectionExtensions
         var jwtOptions = configuration
             .GetSection(JwtOptions.SectionName)
             .Get<JwtOptions>() ?? new JwtOptions();
-
-        if (string.IsNullOrWhiteSpace(jwtOptions.Secret))
-        {
-            services.AddAuthentication();
-            return services;
-        }
-
-        var signingKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtOptions.Secret));
+        var entraOptions = configuration
+            .GetSection(EntraOptions.SectionName)
+            .Get<EntraOptions>() ?? new EntraOptions();
+        var localKeyBytes = Encoding.UTF8.GetBytes(jwtOptions.Secret);
+        var signingKey = new SymmetricSecurityKey(
+            localKeyBytes.Length >= 32 ? localKeyBytes : RandomNumberGenerator.GetBytes(32));
 
         services
             .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
@@ -127,6 +141,31 @@ public static class ServiceCollectionExtensions
                     ValidateIssuerSigningKey = true,
                     IssuerSigningKey = signingKey,
                     ValidateLifetime = true,
+                    ClockSkew = TimeSpan.FromMinutes(1)
+                };
+            })
+            .AddJwtBearer(AuthenticationSchemes.Entra, options =>
+            {
+                var configured = !string.IsNullOrWhiteSpace(entraOptions.TenantId) &&
+                    !string.IsNullOrWhiteSpace(entraOptions.ClientId);
+                if (configured)
+                {
+                    options.Authority = $"https://login.microsoftonline.com/{entraOptions.TenantId}/v2.0";
+                    options.Audience = entraOptions.ClientId;
+                }
+                options.RequireHttpsMetadata = true;
+                options.MapInboundClaims = false;
+                options.TokenValidationParameters = new TokenValidationParameters
+                {
+                    ValidateIssuer = true,
+                    ValidIssuer = configured
+                        ? $"https://login.microsoftonline.com/{entraOptions.TenantId}/v2.0"
+                        : "__entra_not_configured__",
+                    ValidateAudience = true,
+                    ValidAudience = configured ? entraOptions.ClientId : "__entra_not_configured__",
+                    ValidateIssuerSigningKey = true,
+                    ValidateLifetime = true,
+                    NameClaimType = "name",
                     ClockSkew = TimeSpan.FromMinutes(1)
                 };
             });

@@ -114,7 +114,19 @@ The development profile exposes Swagger at `/swagger`, GraphQL at `/graphql`, an
 
 ### Identity, catalog, warehouse configuration, and development data
 
-BE-01 provides JWT login and refresh-token rotation, account activation, password reset, six-role authorization, and warehouse/sales-group/retailer scopes under `/api/v1/auth` and `/api/v1/users`.
+BE-01 uses Entra ID only to authenticate Portal sign-in. The Portal sends its Entra bearer token to `POST /api/v1/auth/entra/exchange`; the API validates tenant, audience, signature and lifetime, matches a pre-provisioned FSCM account by `oid`/email, and returns the same FSCM JWT/refresh-token contract used by the rest of the system. Protected REST and GraphQL operations accept only the internal FSCM JWT. Mobile continues to use `POST /api/v1/auth/login`; Google sign-in is not enabled.
+
+Configure `Entra:TenantId`, `Entra:ClientId`, `Jwt:Issuer`, `Jwt:Audience`, and a JWT secret of at least 32 UTF-8 bytes through environment variables, user secrets, or the deployment secret store. No credential is committed in `appsettings.json`. `/api/v1/auth/me` returns the current role plus warehouse, region, Sales-group, and Retailer scopes. Every request revalidates that the FSCM account is active and that the token role still matches the database, so status/role changes take effect without waiting for token expiry.
+
+Admin user management is available under `/api/v1/users`: filtered deterministic paging, detail/profile updates, role/status commands, and warehouse/region/Sales-group/Retailer scope assignment. `GET` reads have equivalent `users`, `user`, `userScope`, and `me` GraphQL fields. User creation accepts `identityProvider` as `Local` or `Entra`; Entra accounts are pre-provisioned and bind their immutable `oid` on first exchange, while Local accounts use the activation flow. Admin creation and promotion remain blocked in the public API.
+
+Create the first deployment Admin exactly once from the deployment secret store:
+
+```powershell
+dotnet run --project src/FSCM.API/FSCM.API.csproj -- --bootstrap-admin
+```
+
+Supply `AdminBootstrap:Email`, `AdminBootstrap:FullName`, `AdminBootstrap:IdentityProvider`, and either `AdminBootstrap:EntraObjectId` or `AdminBootstrap:Password`. The command applies pending migrations, exits without changing an existing Admin, and never logs the password.
 
 Create the development-only identity dataset after applying migrations:
 

@@ -664,7 +664,7 @@ public sealed class DevelopmentDataSeeder(
                 user = new UserAccount
                 {
                     Id = userId,
-                    EntraObjectId = $"local:{userId:N}",
+                    IdentityProvider = IdentityProviders.Local,
                     Email = definition.Email,
                     CreatedAt = now
                 };
@@ -673,6 +673,7 @@ public sealed class DevelopmentDataSeeder(
 
             user.FullName = definition.FullName;
             user.Role = definition.Role;
+            user.IdentityProvider = IdentityProviders.Local;
             user.IsActive = true;
             user.UpdatedAt = now;
             usersByRole.Add(definition.Role, user);

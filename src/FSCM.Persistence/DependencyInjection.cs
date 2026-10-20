@@ -68,6 +68,7 @@ public static class DependencyInjection
         services.AddScoped<ITerritoryStore, TerritoryStore>();
         services.AddScoped<IWarehouseConfigurationStore, WarehouseConfigurationStore>();
         services.AddScoped<DevelopmentDataSeeder>();
+        services.AddScoped<AdminBootstrapper>();
 
         return services;
     }
