@@ -87,11 +87,59 @@ public sealed class PhysicalSchemaModelTests
 
         Assert.Equal(ExpectedTables, tableNames);
         Assert.Equal(62, entityTypes.Length);
-        Assert.Equal(578, entityTypes.Sum(entityType => entityType.GetProperties().Count()));
-        Assert.Equal(132, entityTypes.Sum(entityType => entityType.GetForeignKeys().Count()));
+        Assert.Equal(633, entityTypes.Sum(entityType => entityType.GetProperties().Count()));
+        Assert.Equal(136, entityTypes.Sum(entityType => entityType.GetForeignKeys().Count()));
         Assert.All(
             entityTypes.SelectMany(entityType => entityType.GetForeignKeys()),
             foreignKey => Assert.Equal(DeleteBehavior.Restrict, foreignKey.DeleteBehavior));
+    }
+
+    [Fact]
+    public void Model_enforces_delivery_and_receipt_idempotency()
+    {
+        using var context = CreateContext();
+
+        var delivery = context.Model.FindEntityType(typeof(Delivery))!;
+        Assert.True(delivery.FindProperty(nameof(Delivery.Version))!.IsConcurrencyToken);
+        Assert.True(delivery.GetIndexes().Single(index => index.Properties
+            .Single().Name == nameof(Delivery.SalesOrderId)).IsUnique);
+        Assert.True(delivery.GetIndexes().Single(index => index.Properties
+            .Single().Name == nameof(Delivery.OperationKey)).IsUnique);
+
+        var receipt = context.Model.FindEntityType(typeof(ReceiptConfirmation))!;
+        Assert.True(receipt.GetIndexes().Single(index => index.Properties
+            .Single().Name == nameof(ReceiptConfirmation.OperationKey)).IsUnique);
+
+        var driver = context.Model.FindEntityType(typeof(Driver))!;
+        Assert.True(driver.GetIndexes().Single(index => index.Properties
+            .Single().Name == nameof(Driver.Code)).IsUnique);
+    }
+
+    [Fact]
+    public void Model_enforces_single_idempotent_payment_per_order()
+    {
+        using var context = CreateContext();
+
+        var payment = context.Model.FindEntityType(typeof(Payment))!;
+        Assert.True(payment.FindProperty(nameof(Payment.Version))!.IsConcurrencyToken);
+        Assert.True(payment.GetIndexes().Single(index => index.Properties.Count == 1 && index.Properties[0].Name ==
+            nameof(Payment.SalesOrderId)).IsUnique);
+        var operationIndex = payment.GetIndexes().Single(index => index.Properties.Count == 1 &&
+            index.Properties[0].Name == nameof(Payment.OperationKey));
+        Assert.True(operationIndex.IsUnique);
+        Assert.Equal("\"OperationKey\" IS NOT NULL", operationIndex.GetFilter());
+        foreach (var propertyName in new[]
+                 {
+                     nameof(Payment.PayOsOrderCode),
+                     nameof(Payment.PayOsPaymentLinkId),
+                     nameof(Payment.PayOsReference)
+                 })
+        {
+            var index = payment.GetIndexes().Single(candidate => candidate.Properties.Count == 1 &&
+                candidate.Properties[0].Name == propertyName);
+            Assert.True(index.IsUnique);
+            Assert.Equal($"\"{propertyName}\" IS NOT NULL", index.GetFilter());
+        }
     }
 
     [Fact]
@@ -232,6 +280,55 @@ public sealed class PhysicalSchemaModelTests
         Assert.Contains(retailerLink.GetIndexes(), index => index.IsUnique && index.Properties.Count == 2);
         Assert.Contains(batchLink.GetIndexes(), index => index.IsUnique && index.Properties.Count == 2);
         Assert.Contains(context.Model.GetSequences(), sequence => sequence.Name == "PromotionCodeSequence");
+    }
+
+    [Fact]
+    public void Model_preserves_assisted_order_snapshots_trace_and_concurrency()
+    {
+        using var context = CreateContext();
+        var order = context.Model.FindEntityType(typeof(SalesOrder))!;
+        var line = context.Model.FindEntityType(typeof(SalesOrderLine))!;
+        var allocation = context.Model.FindEntityType(typeof(Allocation))!;
+        var retailer = context.Model.FindEntityType(typeof(Retailer))!;
+
+        Assert.Equal("jsonb", order.FindProperty(nameof(SalesOrder.AllocationTraceJson))!.GetColumnType());
+        Assert.True(order.FindProperty(nameof(SalesOrder.Version))!.IsConcurrencyToken);
+        Assert.False(order.FindProperty(nameof(SalesOrder.RetailerCodeSnapshot))!.IsNullable);
+        Assert.False(order.FindProperty(nameof(SalesOrder.RetailerNameSnapshot))!.IsNullable);
+
+        var orderId = line.FindProperty(nameof(SalesOrderLine.SalesOrderId))!;
+        var lineNumber = line.FindProperty(nameof(SalesOrderLine.LineNumber))!;
+        Assert.True(line.GetIndexes().Single(index =>
+            index.Properties.SequenceEqual([orderId, lineNumber])).IsUnique);
+
+        var salesOrderLineId = allocation.FindProperty(nameof(Allocation.SalesOrderLineId))!;
+        var allocationSequence = allocation.FindProperty(nameof(Allocation.AllocationSequence))!;
+        Assert.True(allocation.GetIndexes().Single(index =>
+            index.Properties.SequenceEqual([salesOrderLineId, allocationSequence])).IsUnique);
+        Assert.NotNull(allocation.FindProperty(nameof(Allocation.PromotionId)));
+
+        var retailerUserId = retailer.FindProperty(nameof(Retailer.UserAccountId))!;
+        Assert.True(retailer.GetIndexes().Single(index =>
+            index.Properties.SequenceEqual([retailerUserId])).IsUnique);
+        Assert.Contains(context.Model.GetSequences(), sequence => sequence.Name == "SalesOrderCodeSequence");
+    }
+
+    [Fact]
+    public void Model_enforces_one_versioned_picking_list_per_order_warehouse_and_allocation()
+    {
+        using var context = CreateContext();
+        var list = context.Model.FindEntityType(typeof(PickingList))!;
+        var item = context.Model.FindEntityType(typeof(PickingItem))!;
+
+        Assert.True(list.FindProperty(nameof(PickingList.Version))!.IsConcurrencyToken);
+        var orderId = list.FindProperty(nameof(PickingList.SalesOrderId))!;
+        var warehouseId = list.FindProperty(nameof(PickingList.WarehouseId))!;
+        Assert.True(list.GetIndexes().Single(index =>
+            index.Properties.SequenceEqual([orderId, warehouseId])).IsUnique);
+
+        var allocationId = item.FindProperty(nameof(PickingItem.AllocationId))!;
+        Assert.True(item.GetIndexes().Single(index =>
+            index.Properties.SequenceEqual([allocationId])).IsUnique);
     }
 
     private static AppDbContext CreateContext()

@@ -8,41 +8,74 @@ using Microsoft.AspNetCore.Mvc;
 namespace FSCM.API.Controllers;
 
 [ApiController]
-[Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator},{SystemRoles.Sales}")]
+[Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator},{SystemRoles.SalesManager},{SystemRoles.Sales},{SystemRoles.Retailer}")]
 [Route("api/v1/payments")]
+[Route("api/v1/receivables")]
 public sealed class PaymentsController(PaymentService service) : ControllerBase
 {
-    [HttpGet("{paymentId:guid}")]
-    public Task<PaymentResult> Get(Guid paymentId, CancellationToken cancellationToken) =>
-        service.GetAsync(paymentId, GetActorUserId(), GetActorRole(), cancellationToken);
-
     [HttpGet]
-    public Task<IReadOnlyCollection<PaymentResult>> ListByOrder(
-        [FromQuery] Guid salesOrderId, CancellationToken cancellationToken) =>
-        service.ListByOrderAsync(salesOrderId, GetActorUserId(), GetActorRole(), cancellationToken);
+    public Task<IReadOnlyCollection<PaymentResult>> List(
+        [FromQuery] string? status,
+        CancellationToken cancellationToken) =>
+        service.ListAsync(GetActorUserId(), GetActorRole(), status, cancellationToken);
 
-    [HttpPost]
-    public async Task<IActionResult> Record(RecordPaymentRequest request, CancellationToken cancellationToken)
-    {
-        var result = await service.RecordAsync(GetActorUserId(), GetActorRole(),
-            new RecordPaymentData(request.SalesOrderId, request.Method, request.Amount, request.MarkPaid, request.Note),
-            cancellationToken);
-        return CreatedAtAction(nameof(Get), new { paymentId = result.Id }, result);
-    }
+    [HttpGet("orders/{orderId:guid}")]
+    public Task<PaymentResult> GetByOrder(Guid orderId, CancellationToken cancellationToken) =>
+        service.GetByOrderAsync(orderId, GetActorUserId(), GetActorRole(), cancellationToken);
 
-    [HttpPost("{paymentId:guid}/confirm")]
-    public Task<PaymentResult> Confirm(
-        Guid paymentId, ConfirmPaymentRequest request, CancellationToken cancellationToken) =>
-        service.ConfirmAsync(paymentId, GetActorUserId(), GetActorRole(), request.Note, cancellationToken);
+    [Authorize(Roles = $"{SystemRoles.Operator},{SystemRoles.Sales}")]
+    [HttpPost("orders/{orderId:guid}/collect")]
+    public Task<PaymentResult> Collect(
+        Guid orderId,
+        CollectPaymentRequest request,
+        [FromHeader(Name = "Idempotency-Key")] string operationKey,
+        CancellationToken cancellationToken) =>
+        service.CollectAsync(orderId,
+            new(request.CollectionMethod, request.ExpectedVersion, request.Note),
+            operationKey, GetActorUserId(), GetActorRole(), cancellationToken);
 
-    [HttpPost("{paymentId:guid}/cancel")]
-    public Task<PaymentResult> Cancel(
-        Guid paymentId, CancelPaymentRequest request, CancellationToken cancellationToken) =>
-        service.CancelAsync(paymentId, GetActorUserId(), GetActorRole(), request.Reason, cancellationToken);
+    [HttpPost("orders/{orderId:guid}/payos-checkout")]
+    public Task<PayOsCheckoutResult> CreatePayOsCheckout(
+        Guid orderId,
+        CreatePayOsCheckoutRequest request,
+        CancellationToken cancellationToken) =>
+        service.CreatePayOsCheckoutAsync(orderId, new(request.ExpectedVersion),
+            GetActorUserId(), GetActorRole(), cancellationToken);
 
-    private Guid GetActorUserId() => Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var userId)
-        ? userId : throw PaymentOperationException.Validation("Authenticated user identifier is invalid.");
+    [AllowAnonymous]
+    [HttpPost("payos/webhook")]
+    public Task<PayOsWebhookResult> PayOsWebhook(
+        PayOsWebhookRequest request,
+        CancellationToken cancellationToken) =>
+        service.HandlePayOsWebhookAsync(new(
+            request.Code,
+            request.Desc,
+            request.Success,
+            new(
+                request.Data.OrderCode,
+                request.Data.Amount,
+                request.Data.Description,
+                request.Data.AccountNumber,
+                request.Data.Reference,
+                request.Data.TransactionDateTime,
+                request.Data.Currency,
+                request.Data.PaymentLinkId,
+                request.Data.Code,
+                request.Data.Desc,
+                request.Data.CounterAccountBankId,
+                request.Data.CounterAccountBankName,
+                request.Data.CounterAccountName,
+                request.Data.CounterAccountNumber,
+                request.Data.VirtualAccountName,
+                request.Data.VirtualAccountNumber),
+            request.Signature), cancellationToken);
 
-    private string GetActorRole() => User.FindFirstValue(ClaimTypes.Role)
+    private Guid GetActorUserId() =>
+        Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var userId)
+            ? userId
+            : throw PaymentOperationException.Validation("Authenticated user identifier is invalid.");
+
+    private string GetActorRole() =>
+        User.FindFirstValue(ClaimTypes.Role)
         ?? throw PaymentOperationException.Validation("Authenticated user role is invalid.");
 }

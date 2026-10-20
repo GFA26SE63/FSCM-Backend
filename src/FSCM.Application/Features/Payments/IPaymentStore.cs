@@ -2,19 +2,30 @@ using FSCM.Domain.Entities;
 
 namespace FSCM.Application.Features.Payments;
 
-public sealed record PaymentView(Payment Payment, string OrderCode);
+public sealed record PaymentView(Payment Payment, SalesOrder Order, Retailer Retailer);
+
+public interface IPaymentPlanService
+{
+    Task CreateForDeliveredOrderAsync(
+        SalesOrder order,
+        Guid receiptActorUserId,
+        DateTimeOffset deliveredAt,
+        CancellationToken cancellationToken);
+}
 
 public interface IPaymentStore
 {
-    Task<SalesOrder?> FindOrderAsync(Guid salesOrderId, CancellationToken cancellationToken);
-    Task<Payment?> FindPaymentForUpdateAsync(Guid paymentId, CancellationToken cancellationToken);
-    Task<PaymentView?> FindPaymentAsync(Guid paymentId, CancellationToken cancellationToken);
-    Task<IReadOnlyCollection<PaymentView>> ListByOrderAsync(Guid salesOrderId, CancellationToken cancellationToken);
-    Task<decimal> SumConfirmedAmountAsync(Guid salesOrderId, CancellationToken cancellationToken);
-
-    /// <summary>True when the actor may view/record payments for the given order under its role scope.</summary>
-    Task<bool> CanAccessOrderAsync(Guid userId, string role, SalesOrder order, CancellationToken cancellationToken);
-
-    void AddPayment(Payment payment);
+    Task<PaymentView?> FindByOrderAsync(Guid orderId, bool forUpdate, CancellationToken cancellationToken);
+    Task<PaymentView?> FindByOperationKeyAsync(string operationKey, CancellationToken cancellationToken);
+    Task<PaymentView?> FindByPayOsOrderCodeAsync(
+        long payOsOrderCode, bool forUpdate, CancellationToken cancellationToken);
+    Task<IReadOnlyCollection<PaymentView>> ListAsync(
+        Guid actorUserId, string actorRole, CancellationToken cancellationToken);
+    Task<bool> CanViewAsync(
+        PaymentView view, Guid actorUserId, string actorRole, CancellationToken cancellationToken);
+    void Add(Payment payment);
+    void AddAuditLog(AuditLog auditLog);
     Task SaveChangesAsync(CancellationToken cancellationToken);
+    Task ExecuteInTransactionAsync(Func<CancellationToken, Task> operation, CancellationToken cancellationToken);
+    void ClearTracking();
 }

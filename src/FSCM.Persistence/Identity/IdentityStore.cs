@@ -55,7 +55,12 @@ public sealed class IdentityStore(AppDbContext dbContext) : IIdentityStore
             .Distinct()
             .ToArrayAsync(cancellationToken);
 
-        return new IdentityScope(warehouseIds, salesGroupIds, retailerIds);
+        var ownedRetailerIds = await dbContext.RetailerRecords
+            .Where(retailer => retailer.UserAccountId == userId)
+            .Select(retailer => retailer.Id)
+            .ToArrayAsync(cancellationToken);
+
+        return new IdentityScope(warehouseIds, salesGroupIds, retailerIds.Concat(ownedRetailerIds).Distinct().ToArray());
     }
 
     public Task<bool> WarehouseExistsAsync(Guid warehouseId, CancellationToken cancellationToken) =>

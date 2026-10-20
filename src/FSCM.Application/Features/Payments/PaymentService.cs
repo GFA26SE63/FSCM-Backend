@@ -1,155 +1,431 @@
+using System.Globalization;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
+using FSCM.Application.Features.Orders;
 using FSCM.Domain.Authorization;
 using FSCM.Domain.Entities;
 
 namespace FSCM.Application.Features.Payments;
 
-/// <summary>
-/// Records and confirms payments against sales orders. Payment method and status are tracked
-/// independently of the order lifecycle, supporting prepaid transfer, prepaid cash and
-/// cash-on-delivery (COD) flows (BE Sprint 1 - "Thanh toán COD / trả trước").
-/// </summary>
-public sealed class PaymentService(IPaymentStore store, TimeProvider timeProvider)
+public sealed class PaymentService(
+    IPaymentStore store,
+    IPayOsGateway payOsGateway,
+    TimeProvider timeProvider)
 {
-    public async Task<PaymentResult> RecordAsync(
-        Guid actorUserId, string actorRole, RecordPaymentData data, CancellationToken cancellationToken)
+    private static readonly TimeSpan VietnamOffset = TimeSpan.FromHours(7);
+
+    public async Task<IReadOnlyCollection<PaymentResult>> ListAsync(
+        Guid actorUserId,
+        string actorRole,
+        string? status,
+        CancellationToken cancellationToken)
     {
-        if (data.SalesOrderId == Guid.Empty)
-            throw PaymentOperationException.Validation("Sales order identifier is required.");
-        var method = NormalizeMethod(data.Method);
-        if (data.Amount <= 0 || decimal.Round(data.Amount, 2) != data.Amount)
-            throw PaymentOperationException.Validation("Payment amount must be a positive value with at most two decimals.");
-        var note = CleanNote(data.Note);
-
-        var order = await store.FindOrderAsync(data.SalesOrderId, cancellationToken)
-            ?? throw PaymentOperationException.NotFound("Sales order was not found.");
-        if (!await store.CanAccessOrderAsync(actorUserId, actorRole, order, cancellationToken))
-            throw PaymentOperationException.Forbidden("You cannot record payments for this order.");
-
-        // Prevent over-collection: confirmed payments must not exceed the order final amount.
-        var alreadyConfirmed = await store.SumConfirmedAmountAsync(order.Id, cancellationToken);
-        var willConfirm = data.MarkPaid ? data.Amount : 0m;
-        if (order.FinalAmount > 0 && alreadyConfirmed + willConfirm > order.FinalAmount)
-            throw PaymentOperationException.Conflict(
-                "Confirmed payments would exceed the order total amount.");
-
-        var now = timeProvider.GetUtcNow();
-        var payment = new Payment
-        {
-            Id = Guid.NewGuid(),
-            SalesOrderId = order.Id,
-            Method = method,
-            Status = data.MarkPaid ? PaymentStatuses.Paid : PaymentStatuses.Pending,
-            Amount = data.Amount,
-            ConfirmedByUserId = data.MarkPaid ? actorUserId : null,
-            ConfirmedAt = data.MarkPaid ? now : null,
-            Note = note,
-            CreatedAt = now,
-            UpdatedAt = now
-        };
-        store.AddPayment(payment);
-        await store.SaveChangesAsync(cancellationToken);
-        return ToResult((await store.FindPaymentAsync(payment.Id, cancellationToken))!);
+        ValidateReadRole(actorRole);
+        status = NormalizeStatus(status);
+        var today = Today();
+        return (await store.ListAsync(actorUserId, actorRole, cancellationToken))
+            .Select(item => ToResult(item, today))
+            .Where(item => status is null || item.Status == status)
+            .OrderBy(item => item.DueDate)
+            .ThenBy(item => item.OrderCode, StringComparer.Ordinal)
+            .ToArray();
     }
 
-    public async Task<PaymentResult> ConfirmAsync(
-        Guid paymentId, Guid actorUserId, string actorRole, string? note, CancellationToken cancellationToken)
+    public async Task<PaymentResult> GetByOrderAsync(
+        Guid orderId,
+        Guid actorUserId,
+        string actorRole,
+        CancellationToken cancellationToken)
     {
-        var payment = await store.FindPaymentForUpdateAsync(paymentId, cancellationToken)
+        ValidateReadRole(actorRole);
+        var view = await store.FindByOrderAsync(orderId, false, cancellationToken)
             ?? throw PaymentOperationException.NotFound("Payment was not found.");
-        var order = await store.FindOrderAsync(payment.SalesOrderId, cancellationToken)
-            ?? throw PaymentOperationException.NotFound("Sales order was not found.");
-        if (!await store.CanAccessOrderAsync(actorUserId, actorRole, order, cancellationToken))
-            throw PaymentOperationException.Forbidden("You cannot confirm payments for this order.");
-
-        if (payment.Status == PaymentStatuses.Paid)
-            return ToResult((await store.FindPaymentAsync(payment.Id, cancellationToken))!);
-        if (payment.Status != PaymentStatuses.Pending)
-            throw PaymentOperationException.Conflict("Only a pending payment can be confirmed.");
-
-        var alreadyConfirmed = await store.SumConfirmedAmountAsync(order.Id, cancellationToken);
-        if (order.FinalAmount > 0 && alreadyConfirmed + payment.Amount > order.FinalAmount)
-            throw PaymentOperationException.Conflict("Confirmed payments would exceed the order total amount.");
-
-        var now = timeProvider.GetUtcNow();
-        payment.Status = PaymentStatuses.Paid;
-        payment.ConfirmedByUserId = actorUserId;
-        payment.ConfirmedAt = now;
-        if (!string.IsNullOrWhiteSpace(note)) payment.Note = CleanNote(note);
-        payment.UpdatedAt = now;
-        await store.SaveChangesAsync(cancellationToken);
-        return ToResult((await store.FindPaymentAsync(payment.Id, cancellationToken))!);
-    }
-
-    public async Task<PaymentResult> CancelAsync(
-        Guid paymentId, Guid actorUserId, string actorRole, string? reason, CancellationToken cancellationToken)
-    {
-        var payment = await store.FindPaymentForUpdateAsync(paymentId, cancellationToken)
-            ?? throw PaymentOperationException.NotFound("Payment was not found.");
-        var order = await store.FindOrderAsync(payment.SalesOrderId, cancellationToken)
-            ?? throw PaymentOperationException.NotFound("Sales order was not found.");
-        if (!await store.CanAccessOrderAsync(actorUserId, actorRole, order, cancellationToken))
-            throw PaymentOperationException.Forbidden("You cannot cancel payments for this order.");
-
-        if (payment.Status == PaymentStatuses.Cancelled)
-            return ToResult((await store.FindPaymentAsync(payment.Id, cancellationToken))!);
-        if (payment.Status != PaymentStatuses.Pending)
-            throw PaymentOperationException.Conflict("Only a pending payment can be cancelled.");
-
-        var now = timeProvider.GetUtcNow();
-        payment.Status = PaymentStatuses.Cancelled;
-        payment.Note = CleanNote(reason);
-        payment.UpdatedAt = now;
-        await store.SaveChangesAsync(cancellationToken);
-        return ToResult((await store.FindPaymentAsync(payment.Id, cancellationToken))!);
-    }
-
-    public async Task<IReadOnlyCollection<PaymentResult>> ListByOrderAsync(
-        Guid salesOrderId, Guid actorUserId, string actorRole, CancellationToken cancellationToken)
-    {
-        var order = await store.FindOrderAsync(salesOrderId, cancellationToken)
-            ?? throw PaymentOperationException.NotFound("Sales order was not found.");
-        if (!await store.CanAccessOrderAsync(actorUserId, actorRole, order, cancellationToken))
-            throw PaymentOperationException.Forbidden("You cannot view payments for this order.");
-        return (await store.ListByOrderAsync(salesOrderId, cancellationToken)).Select(ToResult).ToArray();
-    }
-
-    public async Task<PaymentResult> GetAsync(
-        Guid paymentId, Guid actorUserId, string actorRole, CancellationToken cancellationToken)
-    {
-        var view = await store.FindPaymentAsync(paymentId, cancellationToken)
-            ?? throw PaymentOperationException.NotFound("Payment was not found.");
-        var order = await store.FindOrderAsync(view.Payment.SalesOrderId, cancellationToken)
-            ?? throw PaymentOperationException.NotFound("Sales order was not found.");
-        if (!await store.CanAccessOrderAsync(actorUserId, actorRole, order, cancellationToken))
+        if (!await store.CanViewAsync(view, actorUserId, actorRole, cancellationToken))
             throw PaymentOperationException.Forbidden("You cannot view this payment.");
-        return ToResult(view);
+        return ToResult(view, Today());
     }
 
-    private static string NormalizeMethod(string method)
+    public async Task<PaymentResult> CollectAsync(
+        Guid orderId,
+        CollectPaymentData data,
+        string operationKey,
+        Guid actorUserId,
+        string actorRole,
+        CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(method))
-            throw PaymentOperationException.Validation("Payment method is required.");
-        var value = method.Trim();
-        return value.ToLowerInvariant() switch
+        operationKey = NormalizeOperationKey(operationKey);
+        var collectionMethod = NormalizeCollectionMethod(data.CollectionMethod);
+        ValidateCollectionAuthority(actorRole, collectionMethod);
+        ValidateNote(data.Note);
+        var requestHash = Hash(orderId, collectionMethod, NormalizeNote(data.Note));
+
+        var prior = await store.FindByOperationKeyAsync(operationKey, cancellationToken);
+        if (prior is not null)
         {
-            "cod" or "cashondelivery" => PaymentMethods.CashOnDelivery,
-            "prepaidtransfer" or "transfer" => PaymentMethods.PrepaidTransfer,
-            "prepaidcash" or "cash" => PaymentMethods.PrepaidCash,
-            _ when PaymentMethods.All.Contains(value) => value,
-            _ => throw PaymentOperationException.Validation(
-                "Payment method must be COD, PrepaidTransfer, or PrepaidCash.")
-        };
+            if (prior.Order.Id != orderId || prior.Payment.RequestHash != requestHash)
+                throw PaymentOperationException.Conflict(
+                    "Operation key was already used for a different payment request.");
+            if (!await store.CanViewAsync(prior, actorUserId, actorRole, cancellationToken))
+                throw PaymentOperationException.Forbidden("You cannot collect this payment.");
+            return ToResult(prior, Today());
+        }
+
+        await store.ExecuteInTransactionAsync(async transactionCancellationToken =>
+        {
+            var view = await store.FindByOrderAsync(orderId, true, transactionCancellationToken)
+                ?? throw PaymentOperationException.NotFound("Payment was not found.");
+            if (view.Payment.Method != OrderPaymentMethods.Credit)
+                throw PaymentOperationException.Conflict("Only a credit receivable can be collected manually.");
+            if (view.Payment.Status == PaymentStatuses.Paid)
+                throw PaymentOperationException.Conflict("Payment was already collected in full.");
+            if (view.Payment.PayOsPaymentLinkId is not null)
+                throw PaymentOperationException.Conflict(
+                    "Payment has an active payOS checkout and cannot be collected manually.");
+            if (view.Payment.Version != data.ExpectedVersion)
+                throw PaymentOperationException.Conflict(
+                    $"Payment version is {view.Payment.Version}; refresh and retry.");
+            if (actorRole == SystemRoles.Sales && view.Order.CreatedByUserId != actorUserId)
+                throw PaymentOperationException.Forbidden(
+                    "Sales can only record cash collection for their own order.");
+
+            var now = timeProvider.GetUtcNow();
+            var oldValues = new
+            {
+                view.Payment.Status,
+                view.Payment.PaidDate,
+                view.Payment.CollectionMethod,
+                view.Payment.ConfirmedByUserId,
+                view.Payment.ConfirmedAt,
+                view.Payment.Version
+            };
+            view.Payment.Status = PaymentStatuses.Paid;
+            view.Payment.PaidDate = DateOnly.FromDateTime(now.ToOffset(VietnamOffset).DateTime);
+            view.Payment.CollectionMethod = collectionMethod;
+            view.Payment.OperationKey = operationKey;
+            view.Payment.RequestHash = requestHash;
+            view.Payment.ConfirmedByUserId = actorUserId;
+            view.Payment.ConfirmedAt = now;
+            view.Payment.Note = NormalizeNote(data.Note);
+            view.Payment.Version++;
+            view.Payment.UpdatedAt = now;
+            store.AddAuditLog(new AuditLog
+            {
+                Id = Guid.NewGuid(),
+                UserAccountId = actorUserId,
+                EntityName = nameof(Payment),
+                EntityId = view.Payment.Id,
+                Action = "Collected",
+                OldValues = JsonSerializer.Serialize(oldValues),
+                NewValues = JsonSerializer.Serialize(new
+                {
+                    view.Payment.Status,
+                    view.Payment.PaidDate,
+                    view.Payment.CollectionMethod,
+                    view.Payment.ConfirmedByUserId,
+                    view.Payment.ConfirmedAt,
+                    view.Payment.Version
+                }),
+                Reason = view.Payment.Note,
+                CreatedAt = now
+            });
+            await store.SaveChangesAsync(transactionCancellationToken);
+        }, cancellationToken);
+
+        store.ClearTracking();
+        return ToResult(await store.FindByOrderAsync(orderId, false, cancellationToken)
+            ?? throw PaymentOperationException.Conflict(
+                "Payment was committed but could not be reloaded."), Today());
     }
 
-    private static string? CleanNote(string? value)
+    public async Task<PayOsCheckoutResult> CreatePayOsCheckoutAsync(
+        Guid orderId,
+        CreatePayOsCheckoutData data,
+        Guid actorUserId,
+        string actorRole,
+        CancellationToken cancellationToken)
     {
-        value = string.IsNullOrWhiteSpace(value) ? null : value.Trim();
-        if (value?.Length > 500) throw PaymentOperationException.Validation("Note cannot exceed 500 characters.");
+        ValidateReadRole(actorRole);
+        var view = await store.FindByOrderAsync(orderId, false, cancellationToken)
+            ?? throw PaymentOperationException.NotFound("Payment was not found.");
+        if (!await store.CanViewAsync(view, actorUserId, actorRole, cancellationToken))
+            throw PaymentOperationException.Forbidden("You cannot create a checkout for this payment.");
+        if (view.Payment.Method != OrderPaymentMethods.Credit)
+            throw PaymentOperationException.Conflict("Only a credit receivable can use payOS checkout.");
+        if (view.Payment.Status == PaymentStatuses.Paid)
+            throw PaymentOperationException.Conflict("Payment was already collected in full.");
+        if (view.Payment.PayOsPaymentLinkId is not null) return ToCheckoutResult(view.Payment);
+        ValidatePayOsEligible(view, data.ExpectedVersion);
+
+        var orderCode = CreatePayOsOrderCode(view.Payment.Id);
+        var link = await payOsGateway.CreatePaymentLinkAsync(new(
+            orderCode,
+            ToPayOsAmount(view.Payment.Amount),
+            $"FSCM {view.Order.OrderCode}",
+            view.Order.RetailerNameSnapshot), cancellationToken);
+        if (link.OrderCode != orderCode || link.Amount != ToPayOsAmount(view.Payment.Amount) ||
+            string.IsNullOrWhiteSpace(link.PaymentLinkId) || string.IsNullOrWhiteSpace(link.CheckoutUrl))
+            throw PaymentOperationException.Gateway("payOS returned an inconsistent payment link.");
+
+        await store.ExecuteInTransactionAsync(async transactionCancellationToken =>
+        {
+            var current = await store.FindByOrderAsync(orderId, true, transactionCancellationToken)
+                ?? throw PaymentOperationException.NotFound("Payment was not found.");
+            if (current.Payment.PayOsPaymentLinkId is not null) return;
+            ValidatePayOsEligible(current, data.ExpectedVersion);
+
+            var now = timeProvider.GetUtcNow();
+            current.Payment.PayOsOrderCode = link.OrderCode;
+            current.Payment.PayOsPaymentLinkId = link.PaymentLinkId;
+            current.Payment.PayOsCheckoutUrl = link.CheckoutUrl;
+            current.Payment.PayOsQrCode = link.QrCode;
+            current.Payment.PayOsLinkStatus = link.Status;
+            current.Payment.PayOsExpiredAt = link.ExpiredAt;
+            current.Payment.Version++;
+            current.Payment.UpdatedAt = now;
+            store.AddAuditLog(new AuditLog
+            {
+                Id = Guid.NewGuid(),
+                UserAccountId = actorUserId,
+                EntityName = nameof(Payment),
+                EntityId = current.Payment.Id,
+                Action = "PayOsCheckoutCreated",
+                NewValues = JsonSerializer.Serialize(new
+                {
+                    current.Payment.PayOsOrderCode,
+                    current.Payment.PayOsPaymentLinkId,
+                    current.Payment.PayOsLinkStatus,
+                    current.Payment.Version
+                }),
+                Reason = "Tạo link thanh toán payOS cho công nợ",
+                CreatedAt = now
+            });
+            await store.SaveChangesAsync(transactionCancellationToken);
+        }, cancellationToken);
+
+        store.ClearTracking();
+        return ToCheckoutResult((await store.FindByOrderAsync(orderId, false, cancellationToken)
+            ?? throw PaymentOperationException.Conflict(
+                "payOS checkout was committed but could not be reloaded.")).Payment);
+    }
+
+    public async Task<PayOsWebhookResult> HandlePayOsWebhookAsync(
+        PayOsWebhookEnvelope webhook,
+        CancellationToken cancellationToken)
+    {
+        var verified = await payOsGateway.VerifyWebhookAsync(webhook, cancellationToken);
+        if (!verified.Success || verified.Code != "00" || verified.Data.Code != "00")
+            return new(false, "Webhook was verified but does not represent a successful payment.", null);
+
+        var existing = await store.FindByPayOsOrderCodeAsync(
+            verified.Data.OrderCode, false, cancellationToken);
+        if (existing is null)
+            return new(false, "Webhook was verified but does not match an FSCM payment.", null);
+
+        PayOsWebhookResult? result = null;
+        await store.ExecuteInTransactionAsync(async transactionCancellationToken =>
+        {
+            var current = await store.FindByPayOsOrderCodeAsync(
+                verified.Data.OrderCode, true, transactionCancellationToken)
+                ?? throw PaymentOperationException.NotFound("Payment was not found.");
+            ValidatePayOsWebhook(current.Payment, verified.Data);
+            if (current.Payment.Status == PaymentStatuses.Paid)
+            {
+                if (current.Payment.CollectionMethod == PaymentCollectionMethods.BankTransfer &&
+                    current.Payment.PayOsPaymentLinkId is not null &&
+                    current.Payment.PayOsReference == verified.Data.Reference)
+                {
+                    result = new(true, "Payment webhook was already processed.", current.Payment.Id);
+                    return;
+                }
+                throw PaymentOperationException.Conflict("Payment was already collected by another method.");
+            }
+
+            var now = timeProvider.GetUtcNow();
+            var paidAt = ParsePayOsTransactionTime(verified.Data.TransactionDateTime, now);
+            var oldValues = new
+            {
+                current.Payment.Status,
+                current.Payment.CollectionMethod,
+                current.Payment.Version
+            };
+            current.Payment.Status = PaymentStatuses.Paid;
+            current.Payment.PaidDate = DateOnly.FromDateTime(paidAt.ToOffset(VietnamOffset).DateTime);
+            current.Payment.CollectionMethod = PaymentCollectionMethods.BankTransfer;
+            current.Payment.OperationKey = $"payos:{verified.Data.Reference}";
+            current.Payment.RequestHash = HashPayOsWebhook(verified.Data);
+            current.Payment.PayOsLinkStatus = "PAID";
+            current.Payment.PayOsReference = verified.Data.Reference;
+            current.Payment.ConfirmedByUserId = null;
+            current.Payment.ConfirmedAt = paidAt;
+            current.Payment.Note = "payOS xác nhận đã nhận đủ tiền";
+            current.Payment.Version++;
+            current.Payment.UpdatedAt = now;
+            store.AddAuditLog(new AuditLog
+            {
+                Id = Guid.NewGuid(),
+                EntityName = nameof(Payment),
+                EntityId = current.Payment.Id,
+                Action = "PayOsPaymentConfirmed",
+                OldValues = JsonSerializer.Serialize(oldValues),
+                NewValues = JsonSerializer.Serialize(new
+                {
+                    current.Payment.Status,
+                    current.Payment.CollectionMethod,
+                    current.Payment.PayOsOrderCode,
+                    current.Payment.PayOsPaymentLinkId,
+                    current.Payment.PayOsReference,
+                    current.Payment.PaidDate,
+                    current.Payment.ConfirmedAt,
+                    current.Payment.Version
+                }),
+                Reason = current.Payment.Note,
+                CreatedAt = now
+            });
+            await store.SaveChangesAsync(transactionCancellationToken);
+            result = new(true, "Payment was confirmed by payOS.", current.Payment.Id);
+        }, cancellationToken);
+        return result ?? throw PaymentOperationException.Conflict("Payment webhook could not be processed.");
+    }
+
+    private DateOnly Today() =>
+        DateOnly.FromDateTime(timeProvider.GetUtcNow().ToOffset(VietnamOffset).DateTime);
+
+    private static PaymentResult ToResult(PaymentView view, DateOnly today)
+    {
+        var overdue = view.Payment.Status != PaymentStatuses.Paid &&
+                      view.Payment.DueDate.HasValue && today > view.Payment.DueDate.Value;
+        var effectiveStatus = overdue ? PaymentStatuses.Overdue : view.Payment.Status;
+        var daysOverdue = overdue ? today.DayNumber - view.Payment.DueDate!.Value.DayNumber : 0;
+        return new(
+            view.Payment.Id, view.Order.Id, view.Order.OrderCode, view.Retailer.Id,
+            view.Order.RetailerCodeSnapshot, view.Order.RetailerNameSnapshot,
+            view.Order.CreatedByUserId, view.Payment.Method, effectiveStatus,
+            view.Payment.Amount, view.Order.CreditTermDays, view.Payment.DeliveredDate,
+            view.Payment.DueDate, daysOverdue, view.Payment.PaidDate,
+            view.Payment.CollectionMethod, view.Payment.PayOsOrderCode,
+            view.Payment.PayOsPaymentLinkId, view.Payment.PayOsCheckoutUrl,
+            view.Payment.PayOsQrCode, view.Payment.PayOsLinkStatus, view.Payment.PayOsExpiredAt,
+            view.Payment.PayOsReference,
+            view.Payment.ConfirmedByUserId,
+            view.Payment.ConfirmedAt, view.Payment.Note, view.Payment.Version,
+            view.Payment.CreatedAt, view.Payment.UpdatedAt);
+    }
+
+    private static void ValidateReadRole(string role)
+    {
+        if (role is not (SystemRoles.Admin or SystemRoles.Operator or SystemRoles.SalesManager or
+            SystemRoles.Sales or SystemRoles.Retailer))
+            throw PaymentOperationException.Forbidden("Role cannot view payments.");
+    }
+
+    private static void ValidateCollectionAuthority(string role, string collectionMethod)
+    {
+        if (role == SystemRoles.Sales && collectionMethod == PaymentCollectionMethods.Cash) return;
+        if (role == SystemRoles.Operator && collectionMethod == PaymentCollectionMethods.BankTransfer) return;
+        throw PaymentOperationException.Forbidden(
+            "Sales records cash collection; Operator records bank transfer collection.");
+    }
+
+    private static string? NormalizeStatus(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        value = value.Trim();
+        if (value is PaymentStatuses.Unpaid or PaymentStatuses.Paid or PaymentStatuses.Overdue) return value;
+        throw PaymentOperationException.Validation("Payment status filter is invalid.");
+    }
+
+    private static string NormalizeCollectionMethod(string value) => value?.Trim() switch
+    {
+        PaymentCollectionMethods.Cash => PaymentCollectionMethods.Cash,
+        PaymentCollectionMethods.BankTransfer => PaymentCollectionMethods.BankTransfer,
+        _ => throw PaymentOperationException.Validation(
+            "Collection method must be Cash or BankTransfer.")
+    };
+
+    private static string NormalizeOperationKey(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            throw PaymentOperationException.Validation("Idempotency-Key header is required.");
+        value = value.Trim();
+        if (value.Length > 80)
+            throw PaymentOperationException.Validation("Idempotency-Key cannot exceed 80 characters.");
         return value;
     }
 
-    private static PaymentResult ToResult(PaymentView view) => new(
-        view.Payment.Id, view.Payment.SalesOrderId, view.OrderCode, view.Payment.Method,
-        view.Payment.Status, view.Payment.Amount, view.Payment.ConfirmedByUserId,
-        view.Payment.ConfirmedAt, view.Payment.Note, view.Payment.CreatedAt, view.Payment.UpdatedAt);
+    private static void ValidateNote(string? note)
+    {
+        if (note?.Trim().Length > 500)
+            throw PaymentOperationException.Validation("Note cannot exceed 500 characters.");
+    }
+
+    private static string? NormalizeNote(string? note) =>
+        string.IsNullOrWhiteSpace(note) ? null : note.Trim();
+
+    private static string Hash(Guid orderId, string method, string? note)
+    {
+        var canonical = $"{orderId:N}|{method}|{note}";
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(canonical))).ToLowerInvariant();
+    }
+
+    private static void ValidatePayOsEligible(PaymentView view, int expectedVersion)
+    {
+        if (view.Payment.Method != OrderPaymentMethods.Credit)
+            throw PaymentOperationException.Conflict("Only a credit receivable can use payOS checkout.");
+        if (view.Payment.Status == PaymentStatuses.Paid)
+            throw PaymentOperationException.Conflict("Payment was already collected in full.");
+        if (view.Payment.Version != expectedVersion)
+            throw PaymentOperationException.Conflict(
+                $"Payment version is {view.Payment.Version}; refresh and retry.");
+    }
+
+    private static PayOsCheckoutResult ToCheckoutResult(Payment payment)
+    {
+        if (payment.PayOsOrderCode is null || payment.PayOsPaymentLinkId is null ||
+            payment.PayOsCheckoutUrl is null || payment.PayOsQrCode is null ||
+            payment.PayOsLinkStatus is null)
+            throw PaymentOperationException.Conflict("Payment does not have a complete payOS checkout.");
+        return new(payment.Id, payment.SalesOrderId, payment.PayOsOrderCode.Value,
+            payment.Amount, payment.PayOsPaymentLinkId, payment.PayOsCheckoutUrl,
+            payment.PayOsQrCode, payment.PayOsLinkStatus, payment.PayOsExpiredAt, payment.Version);
+    }
+
+    private static long CreatePayOsOrderCode(Guid paymentId)
+    {
+        var value = Convert.ToInt64(paymentId.ToString("N")[..13], 16);
+        return value == 0 ? 1 : value;
+    }
+
+    private static long ToPayOsAmount(decimal amount)
+    {
+        if (amount <= 0 || amount != decimal.Truncate(amount) || amount > long.MaxValue)
+            throw PaymentOperationException.Validation("payOS requires a positive whole-number VND amount.");
+        return decimal.ToInt64(amount);
+    }
+
+    private static void ValidatePayOsWebhook(Payment payment, PayOsWebhookPayload data)
+    {
+        if (payment.PayOsPaymentLinkId != data.PaymentLinkId)
+            throw PaymentOperationException.Conflict("payOS payment-link identifier does not match.");
+        if (ToPayOsAmount(payment.Amount) != data.Amount)
+            throw PaymentOperationException.Conflict("payOS payment amount does not match.");
+        if (!string.Equals(data.Currency, "VND", StringComparison.OrdinalIgnoreCase))
+            throw PaymentOperationException.Conflict("payOS payment currency must be VND.");
+        if (string.IsNullOrWhiteSpace(data.Reference) || data.Reference.Length > 74)
+            throw PaymentOperationException.Validation("payOS transaction reference is invalid.");
+    }
+
+    private static DateTimeOffset ParsePayOsTransactionTime(string value, DateTimeOffset fallback)
+    {
+        if (DateTime.TryParseExact(value, "yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture,
+                DateTimeStyles.None, out var local))
+            return new DateTimeOffset(DateTime.SpecifyKind(local, DateTimeKind.Unspecified), VietnamOffset);
+        return fallback;
+    }
+
+    private static string HashPayOsWebhook(PayOsWebhookPayload data)
+    {
+        var canonical = $"{data.OrderCode}|{data.Amount}|{data.PaymentLinkId}|{data.Reference}";
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(canonical))).ToLowerInvariant();
+    }
 }

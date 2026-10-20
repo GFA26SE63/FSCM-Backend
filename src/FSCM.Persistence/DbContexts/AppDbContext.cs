@@ -47,6 +47,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<ReceiptDiscrepancy> ReceiptDiscrepancyRecords => Set<ReceiptDiscrepancy>();
     public DbSet<ReceiptDiscrepancyItem> ReceiptDiscrepancyItemRecords => Set<ReceiptDiscrepancyItem>();
     public DbSet<Payment> PaymentRecords => Set<Payment>();
+    public DbSet<ManualPayment> ManualPaymentRecords => Set<ManualPayment>();
     public DbSet<OrderStatusHistory> OrderStatusHistoryRecords => Set<OrderStatusHistory>();
     public DbSet<Notification> NotificationRecords => Set<Notification>();
     public DbSet<AuditLog> AuditLogRecords => Set<AuditLog>();
@@ -79,6 +80,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
         modelBuilder.HasSequence<long>("RetailerBusinessCodeSequence").StartsAt(10005000);
         modelBuilder.HasSequence<long>("QrLabelCodeSequence").StartsAt(1000);
         modelBuilder.HasSequence<long>("PromotionCodeSequence").StartsAt(4);
+        modelBuilder.HasSequence<long>("SalesOrderCodeSequence").StartsAt(1030);
         modelBuilder.ApplyConfigurationsFromAssembly(typeof(AppDbContext).Assembly);
     }
 }

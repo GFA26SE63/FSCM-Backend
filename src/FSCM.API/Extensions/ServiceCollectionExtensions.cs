@@ -26,9 +26,13 @@ public static class ServiceCollectionExtensions
         services.AddHealthChecks();
         services.AddProblemDetails();
         services.AddExceptionHandler<CatalogExceptionHandler>();
+        services.AddExceptionHandler<DeliveryExceptionHandler>();
         services.AddExceptionHandler<InventoryExceptionHandler>();
         services.AddExceptionHandler<InternalTransferExceptionHandler>();
+        services.AddExceptionHandler<ManualPaymentExceptionHandler>();
+        services.AddExceptionHandler<OrderExceptionHandler>();
         services.AddExceptionHandler<PaymentExceptionHandler>();
+        services.AddExceptionHandler<PickingExceptionHandler>();
         services.AddExceptionHandler<QrLabelExceptionHandler>();
         services.AddExceptionHandler<PromotionExceptionHandler>();
         services.AddExceptionHandler<RetailerExceptionHandler>();
@@ -108,16 +112,11 @@ public static class ServiceCollectionExtensions
 
         var signingKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtOptions.Secret));
 
-        // Allow bearer tokens over plain HTTP only in Development so the local `http` launch
-        // profile (http://localhost:5246) can be used from tools like Postman/Swagger.
-        var environmentName = configuration["ASPNETCORE_ENVIRONMENT"];
-        var isDevelopment = string.Equals(environmentName, "Development", StringComparison.OrdinalIgnoreCase);
-
         services
             .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             .AddJwtBearer(options =>
             {
-                options.RequireHttpsMetadata = !isDevelopment;
+                options.RequireHttpsMetadata = true;
                 options.SaveToken = true;
                 options.TokenValidationParameters = new TokenValidationParameters
                 {
