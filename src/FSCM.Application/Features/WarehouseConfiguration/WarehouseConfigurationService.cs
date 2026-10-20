@@ -63,6 +63,9 @@ public sealed partial class WarehouseConfigurationService(
             location.Longitude = normalized.Longitude;
             location.FormattedAddress = normalized.Address;
             location.ProviderPlaceId = normalized.ProviderPlaceId;
+            location.Provider = "Manual";
+            location.Version++;
+            location.NormalizedAt = null;
             location.UpdatedAt = now;
         }
 
@@ -102,14 +105,26 @@ public sealed partial class WarehouseConfigurationService(
         await RequireWarehouseAsync(warehouseId, cancellationToken);
         ValidateTransitRules(definitions);
         var now = timeProvider.GetUtcNow();
-        var existing = await store.ListTransitRulesAsync(warehouseId, false, cancellationToken);
+        var history = await store.ListTransitRulesAsync(warehouseId, true, cancellationToken);
+        var existing = history.Where(item => item.IsActive).ToArray();
+        var orderedDefinitions = definitions.OrderBy(item => item.MinDistanceMeters).ToArray();
+        var orderedExisting = existing.OrderBy(item => item.MinDistanceMeters).ToArray();
+        if (orderedExisting.Length == orderedDefinitions.Length && orderedExisting.Zip(orderedDefinitions)
+            .All(pair => pair.First.MinDistanceMeters == pair.Second.MinDistanceMeters &&
+                pair.First.MaxDistanceMeters == pair.Second.MaxDistanceMeters &&
+                pair.First.HandlingMinutes == pair.Second.HandlingMinutes &&
+                pair.First.TransitMinutes == pair.Second.TransitMinutes &&
+                pair.First.MaxServingDistanceMeters == pair.Second.MaxServingDistanceMeters))
+            return orderedExisting.Select(ToTransitResult).ToArray();
+        var version = history.Count == 0 ? 1 : history.Max(item => item.Version) + 1;
         foreach (var rule in existing)
         {
             rule.IsActive = false;
+            rule.EffectiveTo = now;
             rule.UpdatedAt = now;
         }
 
-        var rules = definitions.OrderBy(item => item.MinDistanceMeters).Select(item => new TransitTimeRule
+        var rules = orderedDefinitions.Select(item => new TransitTimeRule
         {
             Id = Guid.NewGuid(),
             WarehouseId = warehouseId,
@@ -118,6 +133,8 @@ public sealed partial class WarehouseConfigurationService(
             HandlingMinutes = item.HandlingMinutes,
             TransitMinutes = item.TransitMinutes,
             MaxServingDistanceMeters = item.MaxServingDistanceMeters,
+            Version = version,
+            EffectiveFrom = now,
             IsActive = true,
             CreatedAt = now,
             UpdatedAt = now
@@ -135,9 +152,9 @@ public sealed partial class WarehouseConfigurationService(
         Guid retailerId, Guid productId, decimal minimumLifeRatio, int? minimumLifeHours,
         CancellationToken cancellationToken)
     {
-        if (minimumLifeRatio <= 0 || minimumLifeRatio > 1)
+        if (minimumLifeRatio <= 0 || minimumLifeRatio >= 1)
         {
-            throw WarehouseConfigurationOperationException.Validation("Minimum life ratio must be greater than 0 and at most 1.");
+            throw WarehouseConfigurationOperationException.Validation("Minimum life ratio must be greater than 0 and less than 1.");
         }
 
         var retailer = await store.FindRetailerAsync(retailerId, cancellationToken)
@@ -289,13 +306,9 @@ public sealed partial class WarehouseConfigurationService(
                 if (!value.TryGetInt32(out var radius) || radius <= 0)
                     throw WarehouseConfigurationOperationException.Validation("Service radius must be a positive integer in meters.");
                 break;
-            case BusinessConfigurationKeys.RegionalMinimumStockCartons:
-                if (!value.TryGetInt32(out var threshold) || threshold < 0)
-                    throw WarehouseConfigurationOperationException.Validation("Regional minimum stock must be a non-negative integer.");
-                break;
             case BusinessConfigurationKeys.DefaultMlorRatio:
-                if (!value.TryGetDecimal(out var ratio) || ratio <= 0 || ratio > 1)
-                    throw WarehouseConfigurationOperationException.Validation("Default MLOR ratio must be greater than 0 and at most 1.");
+                if (!value.TryGetDecimal(out var ratio) || ratio <= 0 || ratio >= 1)
+                    throw WarehouseConfigurationOperationException.Validation("Default MLOR ratio must be greater than 0 and less than 1.");
                 break;
         }
 
@@ -323,6 +336,8 @@ public sealed partial class WarehouseConfigurationService(
         Longitude = data.Longitude,
         FormattedAddress = data.Address,
         ProviderPlaceId = data.ProviderPlaceId,
+        Provider = "Manual",
+        Version = 1,
         CreatedAt = now,
         UpdatedAt = now
     };
@@ -335,6 +350,7 @@ public sealed partial class WarehouseConfigurationService(
     private static TransitTimeRuleResult ToTransitResult(TransitTimeRule rule) => new(
         rule.Id, rule.WarehouseId, rule.MinDistanceMeters, rule.MaxDistanceMeters,
         rule.HandlingMinutes, rule.TransitMinutes, rule.MaxServingDistanceMeters,
+        rule.Version, rule.EffectiveFrom, rule.EffectiveTo,
         rule.IsActive, rule.CreatedAt, rule.UpdatedAt);
 
     private static MlorResult ToMlorResult(MlorView view) => new(

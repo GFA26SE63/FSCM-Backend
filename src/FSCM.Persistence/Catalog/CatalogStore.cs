@@ -106,6 +106,11 @@ public sealed class CatalogStore(AppDbContext dbContext) : ICatalogStore
 
     public void AddProduct(Product product) => dbContext.ProductRecords.Add(product);
 
+    public async Task<bool> ProductHasTransactionHistoryAsync(Guid productId, CancellationToken cancellationToken) =>
+        await dbContext.BatchRecords.AsNoTracking().AnyAsync(item => item.ProductId == productId, cancellationToken) ||
+        await dbContext.SalesOrderLineRecords.AsNoTracking().AnyAsync(item => item.ProductId == productId, cancellationToken) ||
+        await dbContext.GoodsReceiptLineRecords.AsNoTracking().AnyAsync(item => item.ProductId == productId, cancellationToken);
+
     public void RemoveProduct(Product product) => dbContext.ProductRecords.Remove(product);
 
     public async Task<IReadOnlyCollection<ProductPrice>> ListPricesAsync(

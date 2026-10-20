@@ -24,6 +24,7 @@ public sealed class PhysicalSchemaModelTests
         "LOYALTY_PROGRAM",
         "LOYALTY_REWARD",
         "LOYALTY_TRANSACTION",
+        "MAP_DISTANCE_CACHE",
         "MAP_LOCATION",
         "NOTIFICATION",
         "ORDER_PROMOTION",
@@ -87,9 +88,9 @@ public sealed class PhysicalSchemaModelTests
             .ToArray();
 
         Assert.Equal(ExpectedTables, tableNames);
-        Assert.Equal(63, entityTypes.Length);
-        Assert.Equal(640, entityTypes.Sum(entityType => entityType.GetProperties().Count()));
-        Assert.Equal(138, entityTypes.Sum(entityType => entityType.GetForeignKeys().Count()));
+        Assert.Equal(64, entityTypes.Length);
+        Assert.Equal(662, entityTypes.Sum(entityType => entityType.GetProperties().Count()));
+        Assert.Equal(142, entityTypes.Sum(entityType => entityType.GetForeignKeys().Count()));
         Assert.All(
             entityTypes.SelectMany(entityType => entityType.GetForeignKeys()),
             foreignKey => Assert.Equal(DeleteBehavior.Restrict, foreignKey.DeleteBehavior));
@@ -230,6 +231,25 @@ public sealed class PhysicalSchemaModelTests
         Assert.False(retailer.FindProperty(nameof(Retailer.StoreSizeCategory))!.IsNullable);
         Assert.False(retailer.FindProperty(nameof(Retailer.PurchaseFrequencyPerMonth))!.IsNullable);
         Assert.False(retailer.FindProperty(nameof(Retailer.CreditTermDays))!.IsNullable);
+        Assert.True(retailer.FindProperty(nameof(Retailer.RequestedCreditTermDays))!.IsNullable);
+    }
+
+    [Fact]
+    public void Model_versions_map_distance_and_transit_inputs()
+    {
+        using var context = CreateContext();
+        var distance = context.Model.FindEntityType(typeof(MapDistanceCache))!;
+        var warehouseId = distance.FindProperty(nameof(MapDistanceCache.WarehouseId))!;
+        var retailerId = distance.FindProperty(nameof(MapDistanceCache.RetailerId))!;
+        Assert.True(distance.GetIndexes().Single(index =>
+            index.Properties.SequenceEqual([warehouseId, retailerId]) &&
+            index.GetFilter() == "\"IsActive\" = TRUE").IsUnique);
+
+        var location = context.Model.FindEntityType(typeof(MapLocation))!;
+        Assert.False(location.FindProperty(nameof(MapLocation.Version))!.IsNullable);
+        var transit = context.Model.FindEntityType(typeof(TransitTimeRule))!;
+        Assert.False(transit.FindProperty(nameof(TransitTimeRule.Version))!.IsNullable);
+        Assert.False(transit.FindProperty(nameof(TransitTimeRule.EffectiveFrom))!.IsNullable);
     }
 
     [Fact]

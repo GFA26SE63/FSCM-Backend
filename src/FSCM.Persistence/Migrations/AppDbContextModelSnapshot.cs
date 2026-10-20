@@ -1050,6 +1050,81 @@ namespace FSCM.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("FSCM.Domain.Entities.MapDistanceCache", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("CalculatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("DestinationLocationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("DestinationLocationVersion")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("DistanceMeters")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("DurationSeconds")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTimeOffset>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean");
+
+                    b.Property<Guid>("OriginLocationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("OriginLocationVersion")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Provider")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<string>("ProviderStatus")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<Guid>("RetailerId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Version")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid>("WarehouseId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("DestinationLocationId");
+
+                    b.HasIndex("OriginLocationId");
+
+                    b.HasIndex("RetailerId");
+
+                    b.HasIndex("WarehouseId", "RetailerId")
+                        .IsUnique()
+                        .HasFilter("\"IsActive\" = TRUE");
+
+                    b.HasIndex("WarehouseId", "RetailerId", "Version")
+                        .IsUnique();
+
+                    b.ToTable("MAP_DISTANCE_CACHE", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_MAP_DISTANCE_CACHE_Distance", "\"DistanceMeters\" > 0");
+
+                            t.HasCheckConstraint("CK_MAP_DISTANCE_CACHE_Duration", "\"DurationSeconds\" > 0");
+                        });
+                });
+
             modelBuilder.Entity("FSCM.Domain.Entities.MapLocation", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1071,6 +1146,14 @@ namespace FSCM.Persistence.Migrations
                         .HasPrecision(10, 7)
                         .HasColumnType("numeric(10,7)");
 
+                    b.Property<DateTimeOffset?>("NormalizedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Provider")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
                     b.Property<string>("ProviderPlaceId")
                         .HasMaxLength(200)
                         .HasColumnType("character varying(200)");
@@ -1080,6 +1163,9 @@ namespace FSCM.Persistence.Migrations
 
                     b.Property<DateTimeOffset>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("Version")
+                        .HasColumnType("integer");
 
                     b.Property<Guid?>("WarehouseId")
                         .HasColumnType("uuid");
@@ -1092,7 +1178,10 @@ namespace FSCM.Persistence.Migrations
                     b.HasIndex("WarehouseId")
                         .IsUnique();
 
-                    b.ToTable("MAP_LOCATION", (string)null);
+                    b.ToTable("MAP_LOCATION", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_MAP_LOCATION_Entity", "(\"WarehouseId\" IS NOT NULL) <> (\"RetailerId\" IS NOT NULL)");
+                        });
                 });
 
             modelBuilder.Entity("FSCM.Domain.Entities.Notification", b =>
@@ -2188,6 +2277,9 @@ namespace FSCM.Persistence.Migrations
                     b.Property<Guid>("RegionId")
                         .HasColumnType("uuid");
 
+                    b.Property<int?>("RequestedCreditTermDays")
+                        .HasColumnType("integer");
+
                     b.Property<string>("RetailerType")
                         .IsRequired()
                         .HasMaxLength(30)
@@ -2243,6 +2335,8 @@ namespace FSCM.Persistence.Migrations
                             t.HasCheckConstraint("CK_RETAILER_CreditTermDays", "\"CreditTermDays\" IN (0, 7, 14, 30)");
 
                             t.HasCheckConstraint("CK_RETAILER_PurchaseFrequencyPerMonth", "\"PurchaseFrequencyPerMonth\" > 0");
+
+                            t.HasCheckConstraint("CK_RETAILER_RequestedCreditTermDays", "\"RequestedCreditTermDays\" IS NULL OR \"RequestedCreditTermDays\" IN (0, 7, 14, 30)");
 
                             t.HasCheckConstraint("CK_RETAILER_StoreSizeCategory", "\"StoreSizeCategory\" IN ('S', 'M', 'L')");
                         });
@@ -2316,7 +2410,10 @@ namespace FSCM.Persistence.Migrations
                         .IsUnique()
                         .HasFilter("\"IsActive\" = TRUE");
 
-                    b.ToTable("RETAILER_PRODUCT_MLOR", (string)null);
+                    b.ToTable("RETAILER_PRODUCT_MLOR", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_RETAILER_PRODUCT_MLOR_Ratio", "\"MinimumLifeRatio\" > 0 AND \"MinimumLifeRatio\" < 1");
+                        });
                 });
 
             modelBuilder.Entity("FSCM.Domain.Entities.RetailerSalesAssignment", b =>
@@ -2832,6 +2929,12 @@ namespace FSCM.Persistence.Migrations
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<DateTimeOffset>("EffectiveFrom")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset?>("EffectiveTo")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<int>("HandlingMinutes")
                         .HasColumnType("integer");
 
@@ -2853,10 +2956,15 @@ namespace FSCM.Persistence.Migrations
                     b.Property<DateTimeOffset>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<int>("Version")
+                        .HasColumnType("integer");
+
                     b.Property<Guid>("WarehouseId")
                         .HasColumnType("uuid");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("WarehouseId", "Version");
 
                     b.HasIndex("WarehouseId", "MinDistanceMeters", "MaxDistanceMeters", "IsActive");
 
@@ -3711,6 +3819,33 @@ namespace FSCM.Persistence.Migrations
                     b.HasOne("FSCM.Domain.Entities.SalesOrder", null)
                         .WithMany()
                         .HasForeignKey("SalesOrderId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("FSCM.Domain.Entities.MapDistanceCache", b =>
+                {
+                    b.HasOne("FSCM.Domain.Entities.MapLocation", null)
+                        .WithMany()
+                        .HasForeignKey("DestinationLocationId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("FSCM.Domain.Entities.MapLocation", null)
+                        .WithMany()
+                        .HasForeignKey("OriginLocationId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("FSCM.Domain.Entities.Retailer", null)
+                        .WithMany()
+                        .HasForeignKey("RetailerId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("FSCM.Domain.Entities.Warehouse", null)
+                        .WithMany()
+                        .HasForeignKey("WarehouseId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
                 });

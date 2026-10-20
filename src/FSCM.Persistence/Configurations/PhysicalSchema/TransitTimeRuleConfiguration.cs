@@ -17,6 +17,9 @@ public sealed class TransitTimeRuleConfiguration : IEntityTypeConfiguration<Tran
         builder.Property(entity => entity.HandlingMinutes).IsRequired();
         builder.Property(entity => entity.TransitMinutes).IsRequired();
         builder.Property(entity => entity.MaxServingDistanceMeters).IsRequired();
+        builder.Property(entity => entity.Version).IsRequired();
+        builder.Property(entity => entity.EffectiveFrom).HasColumnType("timestamp with time zone").IsRequired();
+        builder.Property(entity => entity.EffectiveTo).HasColumnType("timestamp with time zone").IsRequired(false);
         builder.Property(entity => entity.IsActive).IsRequired();
         builder.Property(entity => entity.CreatedAt).HasColumnType("timestamp with time zone").IsRequired();
         builder.Property(entity => entity.UpdatedAt).HasColumnType("timestamp with time zone").IsRequired();
@@ -27,6 +30,7 @@ public sealed class TransitTimeRuleConfiguration : IEntityTypeConfiguration<Tran
             entity.MaxDistanceMeters,
             entity.IsActive
         });
+        builder.HasIndex(entity => new { entity.WarehouseId, entity.Version });
         builder.HasOne<Warehouse>()
             .WithMany()
             .HasForeignKey(entity => entity.WarehouseId)

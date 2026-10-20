@@ -4,6 +4,7 @@ using FSCM.Application.Features.Deliveries;
 using FSCM.Application.Features.Identity;
 using FSCM.Application.Features.InternalTransfers;
 using FSCM.Application.Features.Inventory;
+using FSCM.Application.Features.Maps;
 using FSCM.Application.Features.Orders;
 using FSCM.Application.Features.Payments;
 using FSCM.Application.Features.Picking;
@@ -85,6 +86,16 @@ public sealed class SystemQuery
     [Authorize]
     public Task<WarehouseResult> Warehouse(Guid id, [Service] WarehouseConfigurationService service,
         CancellationToken cancellationToken) => service.GetWarehouseAsync(id, cancellationToken);
+
+    [Authorize(Roles = [SystemRoles.Admin])]
+    public Task<MapLocationResult> MapLocation(string entityType, Guid entityId,
+        [Service] MapService service, CancellationToken cancellationToken) =>
+        service.GetLocationAsync(entityType, entityId, cancellationToken);
+
+    [Authorize(Roles = [SystemRoles.Admin]), UsePaging(DefaultPageSize = 20, MaxPageSize = 100, IncludeTotalCount = true, RequirePagingBoundaries = true), UseFiltering, UseSorting]
+    public async Task<IEnumerable<MapDistanceResult>> MapDistances(Guid? warehouseId, Guid? retailerId,
+        [Service] MapService service, CancellationToken cancellationToken) =>
+        await service.ListDistancesAsync(warehouseId, retailerId, cancellationToken);
 
     [Authorize, UsePaging(DefaultPageSize = 20, MaxPageSize = 100, IncludeTotalCount = true, RequirePagingBoundaries = true), UseFiltering, UseSorting]
     public async Task<IEnumerable<TransitTimeRuleResult>> TransitTimeRules(Guid warehouseId,

@@ -16,7 +16,9 @@ public sealed class RetailerStore(AppDbContext dbContext) : IRetailerStore
             from retailer in retailers
             join assignment in dbContext.RetailerSalesAssignmentRecords.AsNoTracking().Where(item => item.IsActive) on retailer.Id equals assignment.RetailerId
             join salesGroup in dbContext.SalesGroupRecords.AsNoTracking() on assignment.SalesGroupId equals salesGroup.Id
-            select new { Retailer = retailer, SalesGroupId = salesGroup.Id, SalesGroupCode = salesGroup.Code };
+            join location in dbContext.MapLocationRecords.AsNoTracking() on retailer.Id equals location.RetailerId into locations
+            from location in locations.DefaultIfEmpty()
+            select new { Retailer = retailer, SalesGroupId = salesGroup.Id, SalesGroupCode = salesGroup.Code, Location = location };
         if (actorRole is SystemRoles.Sales or SystemRoles.SalesManager)
         {
             query = actorRole == SystemRoles.Sales
@@ -25,7 +27,7 @@ public sealed class RetailerStore(AppDbContext dbContext) : IRetailerStore
                 : query.Where(item => dbContext.SalesGroupMemberRecords.Any(member => member.UserAccountId == actorUserId && member.SalesGroupId == item.SalesGroupId && member.IsActive));
         }
         return (await query.ToArrayAsync(cancellationToken))
-            .Select(item => new RetailerView(item.Retailer, item.SalesGroupId, item.SalesGroupCode))
+            .Select(item => new RetailerView(item.Retailer, item.SalesGroupId, item.SalesGroupCode, item.Location))
             .OrderBy(item => item.Retailer.Code, StringComparer.Ordinal)
             .ToArray();
     }
@@ -34,11 +36,16 @@ public sealed class RetailerStore(AppDbContext dbContext) : IRetailerStore
         (from retailer in dbContext.RetailerRecords.AsNoTracking()
          join assignment in dbContext.RetailerSalesAssignmentRecords.AsNoTracking().Where(item => item.IsActive) on retailer.Id equals assignment.RetailerId
          join salesGroup in dbContext.SalesGroupRecords.AsNoTracking() on assignment.SalesGroupId equals salesGroup.Id
+         join location in dbContext.MapLocationRecords.AsNoTracking() on retailer.Id equals location.RetailerId into locations
+         from location in locations.DefaultIfEmpty()
          where retailer.Id == retailerId
-         select new RetailerView(retailer, salesGroup.Id, salesGroup.Code)).SingleOrDefaultAsync(cancellationToken);
+         select new RetailerView(retailer, salesGroup.Id, salesGroup.Code, location)).SingleOrDefaultAsync(cancellationToken);
 
     public Task<Retailer?> FindForUpdateAsync(Guid retailerId, CancellationToken cancellationToken) =>
         dbContext.RetailerRecords.SingleOrDefaultAsync(item => item.Id == retailerId, cancellationToken);
+
+    public Task<MapLocation?> FindLocationForUpdateAsync(Guid retailerId, CancellationToken cancellationToken) =>
+        dbContext.MapLocationRecords.SingleOrDefaultAsync(item => item.RetailerId == retailerId, cancellationToken);
 
     public Task<bool> CanDeclareForGroupAsync(Guid userId, Guid regionId, Guid salesGroupId, CancellationToken cancellationToken) =>
         (from member in dbContext.SalesGroupMemberRecords.AsNoTracking()
@@ -76,6 +83,7 @@ public sealed class RetailerStore(AppDbContext dbContext) : IRetailerStore
 
     public void Add(Retailer retailer) => dbContext.RetailerRecords.Add(retailer);
     public void AddAssignment(RetailerSalesAssignment assignment) => dbContext.RetailerSalesAssignmentRecords.Add(assignment);
+    public void AddLocation(MapLocation location) => dbContext.MapLocationRecords.Add(location);
     public Task SaveChangesAsync(CancellationToken cancellationToken) => dbContext.SaveChangesAsync(cancellationToken);
 
 }
