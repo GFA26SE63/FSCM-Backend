@@ -22,6 +22,23 @@ public sealed class QrLabelsController(QrLabelService service) : ControllerBase
     public Task<QrLabelDetailResult> Get(string qrCode, CancellationToken cancellationToken) =>
         service.GetAsync(qrCode, GetActorUserId(), GetActorRole(), cancellationToken);
 
+    [HttpGet("{qrCode}/print")]
+    public async Task<IActionResult> Print(string qrCode, CancellationToken cancellationToken)
+    {
+        var document = await service.RenderPrintableAsync(qrCode, GetActorUserId(), GetActorRole(), cancellationToken);
+        return PrintFile(document);
+    }
+
+    [HttpGet("batches/{batchId:guid}/print")]
+    public async Task<IActionResult> PrintBatch(Guid batchId, CancellationToken cancellationToken)
+    {
+        var document = await service.RenderBatchPrintableAsync(batchId, GetActorUserId(), GetActorRole(), cancellationToken);
+        return PrintFile(document);
+    }
+
+    private FileContentResult PrintFile(QrLabelPrintDocument document) =>
+        File(System.Text.Encoding.UTF8.GetBytes(document.Html), document.ContentType, document.FileName);
+
     [Authorize(Roles = SystemRoles.WarehouseKeeper)]
     [HttpPost]
     public async Task<IActionResult> Generate(

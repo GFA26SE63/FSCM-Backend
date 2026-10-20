@@ -3,8 +3,82 @@ using FSCM.Domain.Entities;
 
 namespace FSCM.Application.Features.QrLabels;
 
-public sealed class QrLabelService(IQrLabelStore store, TimeProvider timeProvider)
+public sealed class QrLabelService(IQrLabelStore store, IQrCodeRenderer qrCodeRenderer, TimeProvider timeProvider)
 {
+    /// <summary>
+    /// Builds a printable TEM label document for a single QR label. The document embeds a
+    /// scannable QR code (encoding the TEM code) plus batch, product, warehouse and expiry
+    /// details, ready to send to a label printer (BE Sprint 1 - "In tem TEM + QR").
+    /// </summary>
+    public async Task<QrLabelPrintDocument> RenderPrintableAsync(
+        string qrCode, Guid userId, string role, CancellationToken cancellationToken)
+    {
+        var view = await FindAccessibleAsync(qrCode, userId, role, cancellationToken);
+        var label = BuildPrintLabel(view);
+        var html = BuildPrintHtml([label]);
+        return new QrLabelPrintDocument("text/html", $"TEM-{view.Label.QrCode}.html", html, [label]);
+    }
+
+    /// <summary>
+    /// Builds a printable TEM label sheet for every active label of a batch (one per carton),
+    /// so a warehouse keeper can print an entire receipt in a single pass.
+    /// </summary>
+    public async Task<QrLabelPrintDocument> RenderBatchPrintableAsync(
+        Guid batchId, Guid userId, string role, CancellationToken cancellationToken)
+    {
+        var batch = await store.FindBatchAsync(batchId, cancellationToken)
+            ?? throw QrLabelOperationException.NotFound("Batch was not found.");
+        await EnsureWarehouseAccessAsync(userId, role, batch.WarehouseId, cancellationToken);
+        var views = await store.ListAsync(userId, role, null, batchId, cancellationToken);
+        if (views.Count == 0)
+            throw QrLabelOperationException.NotFound("The batch has no QR labels to print.");
+        var labels = views
+            .Where(item => item.Label.Status != QrLabelStatuses.Invalidated)
+            .Select(BuildPrintLabel)
+            .ToArray();
+        if (labels.Length == 0)
+            throw QrLabelOperationException.NotFound("The batch has no printable QR labels.");
+        var html = BuildPrintHtml(labels);
+        return new QrLabelPrintDocument("text/html", $"TEM-{batch.BatchCode}.html", html, labels);
+    }
+
+    private QrLabelPrintResult BuildPrintLabel(QrLabelView view) => new(
+        view.Label.QrCode, view.Batch.BatchCode, view.Product.Sku, view.Product.Name,
+        view.Warehouse.Code, view.Warehouse.Name, view.Label.Quantity,
+        view.Batch.ExpirationDate, qrCodeRenderer.RenderSvg(view.Label.QrCode));
+
+    private static string BuildPrintHtml(IReadOnlyCollection<QrLabelPrintResult> labels)
+    {
+        var builder = new System.Text.StringBuilder();
+        builder.Append("<!DOCTYPE html><html lang=\"vi\"><head><meta charset=\"utf-8\">");
+        builder.Append("<title>Tem TEM + QR</title><style>");
+        builder.Append("@page{size:70mm 50mm;margin:2mm}");
+        builder.Append("body{font-family:Arial,Helvetica,sans-serif;margin:0}");
+        builder.Append(".label{width:66mm;height:46mm;padding:2mm;box-sizing:border-box;page-break-after:always;");
+        builder.Append("display:flex;gap:3mm;align-items:center;border:1px solid #000}");
+        builder.Append(".qr{width:30mm;height:30mm;flex:0 0 auto}.qr svg{width:100%;height:100%}");
+        builder.Append(".info{font-size:9pt;line-height:1.3}.code{font-size:12pt;font-weight:bold}");
+        builder.Append(".exp{color:#b00}</style></head><body>");
+        foreach (var label in labels)
+        {
+            builder.Append("<div class=\"label\"><div class=\"qr\">")
+                .Append(label.QrSvg)
+                .Append("</div><div class=\"info\">")
+                .Append("<div class=\"code\">").Append(Encode(label.QrCode)).Append("</div>")
+                .Append("<div>SKU: ").Append(Encode(label.Sku)).Append("</div>")
+                .Append("<div>").Append(Encode(label.ProductName)).Append("</div>")
+                .Append("<div>Lô: ").Append(Encode(label.BatchCode)).Append("</div>")
+                .Append("<div>Kho: ").Append(Encode(label.WarehouseCode)).Append("</div>")
+                .Append("<div>SL: ").Append(label.Quantity.ToString("0.###")).Append(" thùng</div>")
+                .Append("<div class=\"exp\">HSD: ").Append(label.ExpirationDate.ToString("dd/MM/yyyy")).Append("</div>")
+                .Append("</div></div>");
+        }
+        builder.Append("</body></html>");
+        return builder.ToString();
+    }
+
+    private static string Encode(string value) => System.Net.WebUtility.HtmlEncode(value);
+
     public async Task<IReadOnlyCollection<QrLabelResult>> ListAsync(
         Guid userId, string role, Guid? warehouseId, Guid? batchId, CancellationToken cancellationToken) =>
         (await store.ListAsync(userId, role, warehouseId, batchId, cancellationToken)).Select(ToResult).ToArray();

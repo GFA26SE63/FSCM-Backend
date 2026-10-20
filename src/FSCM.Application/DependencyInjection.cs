@@ -3,6 +3,7 @@ using FSCM.Application.Features.Catalog;
 using FSCM.Application.Features.Identity;
 using FSCM.Application.Features.Inventory;
 using FSCM.Application.Features.InternalTransfers;
+using FSCM.Application.Features.Payments;
 using FSCM.Application.Features.Retailers;
 using FSCM.Application.Features.QrLabels;
 using FSCM.Application.Features.Promotions;
@@ -23,7 +24,9 @@ public static class DependencyInjection
         services.AddScoped<IdentityService>();
         services.AddScoped<InventoryService>();
         services.AddScoped<InventoryLifecycleService>();
+        services.AddScoped<InventoryExpirySweepService>();
         services.AddScoped<InternalTransferService>();
+        services.AddScoped<PaymentService>();
         services.AddScoped<QrLabelService>();
         services.AddScoped<PromotionService>();
         services.AddScoped<RetailerService>();

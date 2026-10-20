@@ -21,3 +21,14 @@ public sealed record QrLabelEventResult(
 public sealed record QrLabelDetailResult(
     QrLabelResult Label, IReadOnlyCollection<QrLabelResult> Lineage,
     IReadOnlyCollection<QrLabelEventResult> Events);
+
+/// <summary>A printable TEM label artifact for a single carton/label.</summary>
+public sealed record QrLabelPrintResult(
+    string QrCode, string BatchCode, string Sku, string ProductName,
+    string WarehouseCode, string WarehouseName, decimal Quantity,
+    DateOnly ExpirationDate, string QrSvg);
+
+/// <summary>A printable document bundling one or more TEM labels ready for a label printer.</summary>
+public sealed record QrLabelPrintDocument(
+    string ContentType, string FileName, string Html,
+    IReadOnlyCollection<QrLabelPrintResult> Labels);

@@ -8,7 +8,7 @@ using Npgsql;
 
 namespace FSCM.Persistence.Inventory;
 
-public sealed class InventoryStore(AppDbContext dbContext) : IInventoryStore, IInventoryLifecycleStore
+public sealed class InventoryStore(AppDbContext dbContext) : IInventoryStore, IInventoryLifecycleStore, IBatchExpiryStore
 {
     public Task<bool> CanAccessWarehouseAsync(Guid userId, string role, Guid warehouseId, CancellationToken cancellationToken) =>
         role is SystemRoles.Admin or SystemRoles.Operator
@@ -148,6 +148,17 @@ public sealed class InventoryStore(AppDbContext dbContext) : IInventoryStore, II
             if (openedHere) await connection.CloseAsync();
         }
     }
+
+    public async Task<IReadOnlyCollection<BatchExpiryCandidate>> ListBatchesForExpirySweepAsync(
+        CancellationToken cancellationToken) =>
+        await (
+            from batch in dbContext.BatchRecords
+            join product in dbContext.ProductRecords.AsNoTracking() on batch.ProductId equals product.Id
+            where batch.ExpiryStatus != BatchExpiryStatuses.Expired
+            select new BatchExpiryCandidate(batch, product.NearDateThresholdHours))
+            .ToArrayAsync(cancellationToken);
+
+    public void AddOutboxMessage(OutboxMessage message) => dbContext.OutboxMessageRecords.Add(message);
 
     public void AddReceipt(GoodsReceipt receipt) => dbContext.GoodsReceiptRecords.Add(receipt);
     public void AddReceiptLine(GoodsReceiptLine line) => dbContext.GoodsReceiptLineRecords.Add(line);

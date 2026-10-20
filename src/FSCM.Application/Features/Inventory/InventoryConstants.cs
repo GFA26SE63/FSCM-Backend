@@ -28,3 +28,22 @@ public static class InventoryTransactionTypes
     public const string TransferDispatch = "TransferDispatch";
     public const string TransferReceipt = "TransferReceipt";
 }
+
+/// <summary>Domain integration events emitted to the transactional outbox.</summary>
+public static class InventoryOutboxEventTypes
+{
+    /// <summary>Raised by the nightly date tracker when a batch crosses its expiration date.</summary>
+    public const string BatchExpired = "BatchExpired";
+}
+
+public static class OutboxMessageStatuses
+{
+    public const string Pending = "Pending";
+    public const string Processed = "Processed";
+    public const string Failed = "Failed";
+}
+
+public static class OutboxAggregateTypes
+{
+    public const string Batch = "Batch";
+}
