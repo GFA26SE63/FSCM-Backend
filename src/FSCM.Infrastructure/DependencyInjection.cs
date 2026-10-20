@@ -1,5 +1,8 @@
 using System.Net.Http.Headers;
 using FSCM.Application.Features.Identity;
+using FSCM.Application.Features.QrLabels;
+using FSCM.Infrastructure.BackgroundJobs;
+using FSCM.Infrastructure.ExternalServices;
 using FSCM.Application.Features.Payments;
 using FSCM.Infrastructure.Identity;
 using FSCM.Infrastructure.Payments;
@@ -18,6 +21,10 @@ public static class DependencyInjection
         services.AddHttpClient();
         services.AddSingleton<IPasswordHasher, BcryptPasswordHasher>();
         services.AddSingleton<IIdentityTokenProvider, JwtIdentityTokenProvider>();
+        services.AddSingleton<IQrCodeRenderer, QrCoderQrCodeRenderer>();
+
+        services.Configure<DateTrackerOptions>(configuration.GetSection(DateTrackerOptions.SectionName));
+        services.AddHostedService<DateTrackerHostedService>();
         services.AddSingleton<IPayOsGateway>(_ => new PayOsGateway(configuration));
 
         services.AddHttpClient("OpenAI", client =>
