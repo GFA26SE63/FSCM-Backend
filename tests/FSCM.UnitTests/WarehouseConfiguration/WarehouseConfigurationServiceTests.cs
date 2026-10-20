@@ -42,6 +42,21 @@ public sealed class WarehouseConfigurationServiceTests
     }
 
     [Fact]
+    public async Task Transit_rule_replacement_versions_history_and_identical_retry_is_idempotent()
+    {
+        var fixture = new Fixture();
+        var warehouse = fixture.AddWarehouse();
+        var definitions = new[] { new TransitTimeRuleData(0, 20_000, 60, 120, 20_000) };
+
+        var first = await fixture.Service.ReplaceTransitRulesAsync(warehouse.Id, definitions, CancellationToken.None);
+        var retry = await fixture.Service.ReplaceTransitRulesAsync(warehouse.Id, definitions, CancellationToken.None);
+
+        Assert.Equal(1, first.Single().Version);
+        Assert.Equal(first.Single().Id, retry.Single().Id);
+        Assert.Single(fixture.Store.TransitRules);
+    }
+
+    [Fact]
     public async Task Setting_mlor_closes_previous_rule_and_keeps_history()
     {
         var fixture = new Fixture();
@@ -56,6 +71,15 @@ public sealed class WarehouseConfigurationServiceTests
         Assert.Equal(Now, previous.EffectiveTo);
         Assert.Equal(0.3m, result.MinimumLifeRatio);
         Assert.Equal(2, fixture.Store.Mlors.Count);
+    }
+
+    [Fact]
+    public async Task Mlor_ratio_must_be_strictly_less_than_one()
+    {
+        var fixture = new Fixture();
+        var exception = await Assert.ThrowsAsync<WarehouseConfigurationOperationException>(() =>
+            fixture.Service.SetMlorAsync(fixture.AddRetailer().Id, fixture.AddProduct().Id, 1m, null, CancellationToken.None));
+        Assert.Equal("validation_error", exception.Code);
     }
 
     [Fact]

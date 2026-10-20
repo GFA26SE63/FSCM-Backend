@@ -1,10 +1,12 @@
 using System.Net.Http.Headers;
 using FSCM.Application.Features.Identity;
+using FSCM.Application.Features.Maps;
 using FSCM.Application.Features.QrLabels;
 using FSCM.Infrastructure.BackgroundJobs;
 using FSCM.Infrastructure.ExternalServices;
 using FSCM.Application.Features.Payments;
 using FSCM.Infrastructure.Identity;
+using FSCM.Infrastructure.Maps;
 using FSCM.Infrastructure.Payments;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -19,6 +21,8 @@ public static class DependencyInjection
     {
         services.AddMemoryCache();
         services.AddHttpClient();
+        services.AddHttpClient("GoogleMaps", client => client.Timeout = TimeSpan.FromSeconds(10));
+        services.AddSingleton<IMapProvider, GoogleMapsProvider>();
         services.AddSingleton<IPasswordHasher, BcryptPasswordHasher>();
         services.AddSingleton<IIdentityTokenProvider, JwtIdentityTokenProvider>();
         services.AddSingleton<IQrCodeRenderer, QrCoderQrCodeRenderer>();

@@ -39,6 +39,9 @@ public sealed record TransitTimeRuleResult(
     int HandlingMinutes,
     int TransitMinutes,
     int MaxServingDistanceMeters,
+    int Version,
+    DateTimeOffset EffectiveFrom,
+    DateTimeOffset? EffectiveTo,
     bool IsActive,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt);
@@ -84,7 +87,6 @@ public static class BusinessConfigurationKeys
         {
             [AllocationWeights] = new("object", "Trọng số chấm điểm phân bổ theo hạn sử dụng, khoảng cách và độ phủ"),
             [ServiceRadiusMeters] = new("integer", "Bán kính phục vụ tối đa mặc định, tính bằng mét"),
-            [RegionalMinimumStockCartons] = new("integer", "Ngưỡng tồn kho tối thiểu tại kho vùng, tính bằng thùng"),
             [DefaultMlorRatio] = new("decimal", "Tỷ lệ hạn sử dụng còn lại tối thiểu mặc định"),
             [OrderBufferStockCartons] = new("integer", "Số thùng tồn kho đệm không dùng để phân bổ đơn hàng"),
             [OrderStepCartons] = new("integer", "Bước số lượng thùng hợp lệ khi tạo đơn hàng")

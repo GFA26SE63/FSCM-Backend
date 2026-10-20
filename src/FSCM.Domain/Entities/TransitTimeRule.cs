@@ -11,6 +11,9 @@ public sealed class TransitTimeRule
     public int HandlingMinutes { get; set; }
     public int TransitMinutes { get; set; }
     public int MaxServingDistanceMeters { get; set; }
+    public int Version { get; set; }
+    public DateTimeOffset EffectiveFrom { get; set; }
+    public DateTimeOffset? EffectiveTo { get; set; }
     public bool IsActive { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }

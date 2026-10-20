@@ -84,6 +84,41 @@ Accept: application/json
 
 ###
 
+GET {{FSCM.API_HostAddress}}/api/v1/warehouses/{{warehouses.response.body.$.[0].id}}/transit-time-rules/history
+Authorization: Bearer {{login.response.body.$.accessToken}}
+Accept: application/json
+
+###
+
+POST {{FSCM.API_HostAddress}}/api/v1/map/distances/refresh
+Authorization: Bearer {{login.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "warehouseId": "{{warehouses.response.body.$.[0].id}}",
+  "retailerId": "{{salesLogin.response.body.$.user.scope.retailerIds[0]}}"
+}
+
+###
+
+GET {{FSCM.API_HostAddress}}/api/v1/map/distances?warehouseId={{warehouses.response.body.$.[0].id}}&retailerId={{salesLogin.response.body.$.user.scope.retailerIds[0]}}
+Authorization: Bearer {{login.response.body.$.accessToken}}
+Accept: application/json
+
+###
+
+POST {{FSCM.API_HostAddress}}/api/v1/eta/estimate
+Authorization: Bearer {{login.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "warehouseId": "{{warehouses.response.body.$.[0].id}}",
+  "retailerId": "{{salesLogin.response.body.$.user.scope.retailerIds[0]}}",
+  "bufferMinutes": 30
+}
+
+###
+
 GET {{FSCM.API_HostAddress}}/api/v1/configurations
 Authorization: Bearer {{login.response.body.$.accessToken}}
 Accept: application/json

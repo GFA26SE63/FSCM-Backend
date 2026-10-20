@@ -18,6 +18,9 @@ public sealed class RetailerServiceTests
         Assert.Equal("S", result.StoreSizeCategory);
         Assert.Equal("A", result.PotentialClass);
         Assert.Equal(RetailerStatuses.PendingApproval, result.Status);
+        Assert.Equal(0, result.CreditTermDays);
+        Assert.Equal(7, result.RequestedCreditTermDays);
+        Assert.Equal(10.776m, result.Latitude);
         Assert.Single(fixture.Store.Assignments);
     }
 
@@ -27,10 +30,11 @@ public sealed class RetailerServiceTests
         var fixture = new Fixture();
         var declared = await fixture.DeclareAsync(30_000_000, 20, 60);
 
-        var result = await fixture.Service.ReviewAsync(declared.Id, Guid.NewGuid(), true, "Hồ sơ hợp lệ", CancellationToken.None);
+        var result = await fixture.Service.ReviewAsync(declared.Id, Guid.NewGuid(), true, 14, "Hồ sơ hợp lệ", CancellationToken.None);
 
         Assert.Equal("10005000", result.Code);
         Assert.Equal(RetailerStatuses.Active, result.Status);
+        Assert.Equal(14, result.CreditTermDays);
         Assert.Equal("B", result.PotentialClass);
     }
 
@@ -41,7 +45,7 @@ public sealed class RetailerServiceTests
         var declared = await fixture.DeclareAsync(10_000_000, 20, 20);
 
         var exception = await Assert.ThrowsAsync<RetailerOperationException>(() =>
-            fixture.Service.ReviewAsync(declared.Id, Guid.NewGuid(), false, null, CancellationToken.None));
+            fixture.Service.ReviewAsync(declared.Id, Guid.NewGuid(), false, null, null, CancellationToken.None));
 
         Assert.Equal("validation_error", exception.Code);
     }
@@ -52,7 +56,7 @@ public sealed class RetailerServiceTests
         var fixture = new Fixture();
         var declared = await fixture.DeclareAsync(65_000_000, 8, 100);
         var pending = await fixture.Service.CheckOrderEligibilityAsync(fixture.SalesUserId, declared.Id, CancellationToken.None);
-        await fixture.Service.ReviewAsync(declared.Id, Guid.NewGuid(), true, "Hồ sơ hợp lệ", CancellationToken.None);
+        await fixture.Service.ReviewAsync(declared.Id, Guid.NewGuid(), true, 7, "Hồ sơ hợp lệ", CancellationToken.None);
         fixture.Store.HasTerritoryAccess = true;
 
         var active = await fixture.Service.CheckOrderEligibilityAsync(fixture.SalesUserId, declared.Id, CancellationToken.None);
@@ -77,13 +81,15 @@ public sealed class RetailerServiceTests
         public Task<RetailerDetails> DeclareAsync(decimal revenue, decimal size, decimal capacity) =>
             Service.DeclareAsync(SalesUserId, RegionId, GroupId, "Cửa hàng thử nghiệm", "Nguyễn Văn An",
                 "0909000000", null, "Thành phố Hồ Chí Minh", RetailerTypes.GroceryStore,
-                revenue, size, capacity, 4, 7, "Đánh giá thử nghiệm", CancellationToken.None);
+                revenue, size, capacity, 4, 7, "Đánh giá thử nghiệm",
+                10.776m, 106.700m, null, CancellationToken.None);
     }
 
     private sealed class FakeStore : IRetailerStore
     {
         public List<Retailer> Retailers { get; } = [];
         public List<RetailerSalesAssignment> Assignments { get; } = [];
+        public List<MapLocation> Locations { get; } = [];
         public bool HasTerritoryAccess { get; set; }
 
         public Task<IReadOnlyCollection<RetailerView>> ListAsync(Guid actorUserId, string actorRole, string? status, CancellationToken cancellationToken) =>
@@ -101,8 +107,12 @@ public sealed class RetailerServiceTests
         public void Add(Retailer retailer) => Retailers.Add(retailer);
         public void AddAssignment(RetailerSalesAssignment assignment) => Assignments.Add(assignment);
         public Task SaveChangesAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+        public Task<MapLocation?> FindLocationForUpdateAsync(Guid retailerId, CancellationToken cancellationToken) =>
+            Task.FromResult(Locations.SingleOrDefault(item => item.RetailerId == retailerId));
+        public void AddLocation(MapLocation location) => Locations.Add(location);
         private RetailerView ToView(Retailer retailer) => new(retailer,
-            Assignments.Single(item => item.RetailerId == retailer.Id).SalesGroupId, "HCM-A");
+            Assignments.Single(item => item.RetailerId == retailer.Id).SalesGroupId, "HCM-A",
+            Locations.SingleOrDefault(item => item.RetailerId == retailer.Id));
     }
 
     private sealed class FixedTimeProvider(DateTimeOffset now) : TimeProvider

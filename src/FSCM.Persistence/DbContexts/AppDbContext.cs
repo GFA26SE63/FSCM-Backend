@@ -56,6 +56,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<LoyaltyTransaction> LoyaltyTransactionRecords => Set<LoyaltyTransaction>();
     public DbSet<BatchPromotion> BatchPromotionRecords => Set<BatchPromotion>();
     public DbSet<MapLocation> MapLocationRecords => Set<MapLocation>();
+    public DbSet<MapDistanceCache> MapDistanceCacheRecords => Set<MapDistanceCache>();
     public DbSet<Driver> DriverRecords => Set<Driver>();
     public DbSet<Vehicle> VehicleRecords => Set<Vehicle>();
     public DbSet<Delivery> DeliveryRecords => Set<Delivery>();

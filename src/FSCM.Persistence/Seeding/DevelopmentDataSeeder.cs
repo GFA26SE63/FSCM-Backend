@@ -812,6 +812,9 @@ public sealed class DevelopmentDataSeeder(
             location.Longitude = definition.Longitude;
             location.FormattedAddress = definition.Address;
             location.ProviderPlaceId = $"du-lieu-mau-{definition.Code.ToLowerInvariant()}";
+            location.Provider = "Manual";
+            location.Version = Math.Max(1, location.Version);
+            location.NormalizedAt = null;
             location.UpdatedAt = now;
             warehouses.Add(warehouse);
         }
@@ -854,8 +857,6 @@ public sealed class DevelopmentDataSeeder(
                 "Trọng số phân bổ ưu tiên hạn sử dụng, khoảng cách và độ phủ"),
             new ConfigurationSeed(BusinessConfigurationKeys.ServiceRadiusMeters, "20000", "integer",
                 "Bán kính phục vụ tối đa mặc định là 20 kilômét"),
-            new ConfigurationSeed(BusinessConfigurationKeys.RegionalMinimumStockCartons, "35", "integer",
-                "Ngưỡng tồn kho tối thiểu tại kho vùng là 35 thùng"),
             new ConfigurationSeed(BusinessConfigurationKeys.DefaultMlorRatio, "0.25", "decimal",
                 "Tỷ lệ hạn sử dụng còn lại tối thiểu mặc định là 25 phần trăm"),
             new ConfigurationSeed(BusinessConfigurationKeys.OrderBufferStockCartons, "0", "integer",
@@ -900,6 +901,8 @@ public sealed class DevelopmentDataSeeder(
             HandlingMinutes = handlingMinutes,
             TransitMinutes = transitMinutes,
             MaxServingDistanceMeters = 20_000,
+            Version = 1,
+            EffectiveFrom = now,
             IsActive = true,
             CreatedAt = now,
             UpdatedAt = now
@@ -976,6 +979,7 @@ public sealed class DevelopmentDataSeeder(
         retailer.PurchasingCapacity = 135;
         retailer.PurchaseFrequencyPerMonth = 8;
         retailer.CreditTermDays = 14;
+        retailer.RequestedCreditTermDays = 14;
         retailer.PotentialStatus = "A";
         retailer.AssessmentNote = "Điểm bán có doanh thu ổn định và tần suất nhập hàng cao.";
         retailer.DeclaredByUserId = declaredByUserId;
@@ -1003,6 +1007,9 @@ public sealed class DevelopmentDataSeeder(
         retailerLocation.Longitude = 106.7430000m;
         retailerLocation.FormattedAddress = retailer.Address;
         retailerLocation.ProviderPlaceId = "du-lieu-mau-cua-hang-an-phu";
+        retailerLocation.Provider = "Manual";
+        retailerLocation.Version = Math.Max(1, retailerLocation.Version);
+        retailerLocation.NormalizedAt = null;
         retailerLocation.UpdatedAt = now;
         await dbContext.SaveChangesAsync(cancellationToken);
         return retailer;
@@ -1044,7 +1051,9 @@ public sealed class DevelopmentDataSeeder(
             retailer.StoreSizeCategory = definition.StoreSize < 30 ? "S" : definition.StoreSize <= 60 ? "M" : "L";
             retailer.PurchasingCapacity = definition.Capacity;
             retailer.PurchaseFrequencyPerMonth = definition.Frequency;
-            retailer.CreditTermDays = definition.CreditTermDays;
+            retailer.RequestedCreditTermDays = definition.CreditTermDays;
+            retailer.CreditTermDays = definition.Status is RetailerStatuses.Active or RetailerStatuses.Inactive
+                ? definition.CreditTermDays : 0;
             retailer.PotentialStatus = definition.PotentialClass;
             retailer.AssessmentNote = definition.Note;
             retailer.DeclaredByUserId = users[SystemRoles.Sales].Id;

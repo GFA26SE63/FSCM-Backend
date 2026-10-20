@@ -21,6 +21,7 @@ public sealed class Retailer
     public decimal? PurchasingCapacity { get; set; }
     public int PurchaseFrequencyPerMonth { get; set; }
     public int CreditTermDays { get; set; }
+    public int? RequestedCreditTermDays { get; set; }
     public string? PotentialStatus { get; set; }
     public decimal? PotentialScore { get; set; }
     public string? AssessmentNote { get; set; }

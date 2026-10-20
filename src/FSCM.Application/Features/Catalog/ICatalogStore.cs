@@ -32,6 +32,7 @@ public interface ICatalogStore
     Task<Product?> FindProductBySkuAsync(string sku, CancellationToken cancellationToken);
     Task<Product?> FindReplacementAsync(Guid replacedProductId, CancellationToken cancellationToken);
     Task<ProductView?> FindProductViewAsync(Guid productId, CancellationToken cancellationToken);
+    Task<bool> ProductHasTransactionHistoryAsync(Guid productId, CancellationToken cancellationToken);
     void AddProduct(Product product);
     void RemoveProduct(Product product);
 

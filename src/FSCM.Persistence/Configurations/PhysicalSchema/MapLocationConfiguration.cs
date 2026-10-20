@@ -17,6 +17,9 @@ public sealed class MapLocationConfiguration : IEntityTypeConfiguration<MapLocat
         builder.Property(entity => entity.Longitude).HasPrecision(10, 7).IsRequired();
         builder.Property(entity => entity.FormattedAddress).HasMaxLength(300).IsRequired(false);
         builder.Property(entity => entity.ProviderPlaceId).HasMaxLength(200).IsRequired(false);
+        builder.Property(entity => entity.Provider).HasMaxLength(50).IsRequired();
+        builder.Property(entity => entity.Version).IsRequired();
+        builder.Property(entity => entity.NormalizedAt).HasColumnType("timestamp with time zone").IsRequired(false);
         builder.Property(entity => entity.CreatedAt).HasColumnType("timestamp with time zone").IsRequired();
         builder.Property(entity => entity.UpdatedAt).HasColumnType("timestamp with time zone").IsRequired();
         builder.HasOne<Warehouse>()
@@ -27,5 +30,7 @@ public sealed class MapLocationConfiguration : IEntityTypeConfiguration<MapLocat
             .WithOne()
             .HasForeignKey<MapLocation>(entity => entity.RetailerId)
             .OnDelete(DeleteBehavior.Restrict);
+        builder.ToTable(table => table.HasCheckConstraint(
+            "CK_MAP_LOCATION_Entity", "(\"WarehouseId\" IS NOT NULL) <> (\"RetailerId\" IS NOT NULL)"));
     }
 }

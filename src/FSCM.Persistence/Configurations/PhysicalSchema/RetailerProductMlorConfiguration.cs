@@ -21,6 +21,8 @@ public sealed class RetailerProductMlorConfiguration : IEntityTypeConfiguration<
         builder.HasIndex(entity => new { entity.RetailerId, entity.ProductId })
             .IsUnique()
             .HasFilter("\"IsActive\" = TRUE");
+        builder.ToTable(table => table.HasCheckConstraint(
+            "CK_RETAILER_PRODUCT_MLOR_Ratio", "\"MinimumLifeRatio\" > 0 AND \"MinimumLifeRatio\" < 1"));
         builder.HasOne<Retailer>()
             .WithMany()
             .HasForeignKey(entity => entity.RetailerId)

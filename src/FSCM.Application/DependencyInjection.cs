@@ -5,6 +5,7 @@ using FSCM.Application.Features.Identity;
 using FSCM.Application.Features.Inventory;
 using FSCM.Application.Features.InternalTransfers;
 using FSCM.Application.Features.ManualPayments;
+using FSCM.Application.Features.Maps;
 using FSCM.Application.Features.Orders;
 using FSCM.Application.Features.Payments;
 using FSCM.Application.Features.Picking;
@@ -32,6 +33,7 @@ public static class DependencyInjection
         services.AddScoped<IInventoryLifecycleService>(provider => provider.GetRequiredService<InventoryLifecycleService>());
         services.AddScoped<InternalTransferService>();
         services.AddScoped<ManualPaymentService>();
+        services.AddScoped<MapService>();
         services.AddScoped<OrderService>();
         services.AddScoped<IOrderPricingService, OrderPricingService>();
         services.AddScoped<PaymentService>();
