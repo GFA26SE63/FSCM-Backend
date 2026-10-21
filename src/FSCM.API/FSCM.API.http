@@ -255,7 +255,7 @@ Accept: application/json
 
 ###
 
-GET {{FSCM.API_HostAddress}}/api/v1/pricing/snapshot?productId={{batchDiscounts.response.body.$.[0].productId}}&quantity=10&batchId={{batchDiscounts.response.body.$.[0].batchId}}
+GET {{FSCM.API_HostAddress}}/api/v1/pricing/snapshot?productId={{batchDiscounts.response.body.$.[0].productId}}&quantity=10
 Authorization: Bearer {{login.response.body.$.accessToken}}
 Accept: application/json
 
@@ -297,12 +297,18 @@ Accept: application/json
 
 ###
 
+GET {{FSCM.API_HostAddress}}/api/v1/orders/{{assistedOrder.response.body.$.id}}/timeline
+Authorization: Bearer {{salesLogin.response.body.$.accessToken}}
+Accept: application/json
+
+###
+
 POST {{FSCM.API_HostAddress}}/graphql
 Authorization: Bearer {{salesLogin.response.body.$.accessToken}}
 Content-Type: application/json
 
 {
-  "query": "{ orders(first: 20) { totalCount nodes { id orderCode status finalAmount version } } }"
+  "query": "{ orders(createdByMe: true, page: 1, pageSize: 20) { totalCount items { id orderCode status finalAmount finalPricePendingAllocation allocationState version } } }"
 }
 
 ###

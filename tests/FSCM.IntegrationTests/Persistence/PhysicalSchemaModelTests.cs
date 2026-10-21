@@ -89,7 +89,7 @@ public sealed class PhysicalSchemaModelTests
 
         Assert.Equal(ExpectedTables, tableNames);
         Assert.Equal(64, entityTypes.Length);
-        Assert.Equal(666, entityTypes.Sum(entityType => entityType.GetProperties().Count()));
+        Assert.Equal(668, entityTypes.Sum(entityType => entityType.GetProperties().Count()));
         Assert.Equal(143, entityTypes.Sum(entityType => entityType.GetForeignKeys().Count()));
         Assert.All(
             entityTypes.SelectMany(entityType => entityType.GetForeignKeys()),
@@ -352,6 +352,8 @@ public sealed class PhysicalSchemaModelTests
         Assert.True(order.FindProperty(nameof(SalesOrder.Version))!.IsConcurrencyToken);
         Assert.False(order.FindProperty(nameof(SalesOrder.RetailerCodeSnapshot))!.IsNullable);
         Assert.False(order.FindProperty(nameof(SalesOrder.RetailerNameSnapshot))!.IsNullable);
+        Assert.False(order.FindProperty(nameof(SalesOrder.FinalPricePendingAllocation))!.IsNullable);
+        Assert.False(line.FindProperty(nameof(SalesOrderLine.FinalPricePendingAllocation))!.IsNullable);
 
         var orderId = line.FindProperty(nameof(SalesOrderLine.SalesOrderId))!;
         var lineNumber = line.FindProperty(nameof(SalesOrderLine.LineNumber))!;

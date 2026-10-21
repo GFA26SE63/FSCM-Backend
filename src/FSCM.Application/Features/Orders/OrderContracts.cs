@@ -50,7 +50,13 @@ public sealed record OrderLineResult(
     string? DiscountSourceType,
     string? DiscountSourceCode,
     DateTimeOffset? EstimatedArrivalAt,
-    IReadOnlyCollection<OrderAllocationResult> Allocations);
+    bool FinalPricePendingAllocation,
+    IReadOnlyCollection<OrderAllocationResult> Allocations)
+{
+    public decimal BaseUnitPrice => UnitPrice;
+    public decimal OrdinaryPromotionDiscountAmount => DiscountAmount;
+    public decimal IndicativeNetAmount => NetAmount;
+}
 
 public sealed record OrderStatusHistoryResult(
     string? FromStatus,
@@ -70,11 +76,43 @@ public sealed record OrderSummaryResult(
     string Status,
     string PaymentMethod,
     decimal FinalAmount,
+    bool FinalPricePendingAllocation,
+    string AllocationState,
+    Guid? AllocationRunId,
+    string? AllocationProposalStatus,
+    string? AllocationResult,
+    int ShipmentCount,
     int TotalCartons,
     int LineCount,
     string Source,
     int Version,
-    DateTimeOffset CreatedAt);
+    DateTimeOffset CreatedAt)
+{
+    public decimal IndicativeAmount => FinalAmount;
+}
+
+public sealed record OrderListQuery(
+    string? Status,
+    Guid? RetailerId,
+    bool CreatedByMe,
+    string? Search,
+    int Page,
+    int PageSize);
+
+public sealed record PagedOrderResult(
+    IReadOnlyCollection<OrderSummaryResult> Items,
+    int Page,
+    int PageSize,
+    int TotalCount)
+{
+    public int TotalPages => TotalCount == 0 ? 0 : (int)Math.Ceiling(TotalCount / (double)PageSize);
+}
+
+public sealed record OrderShipmentLinkResult(
+    Guid Id,
+    string Status,
+    DateTimeOffset? DispatchedAt,
+    DateTimeOffset? DeliveredAt);
 
 public sealed record OrderDetailResult(
     Guid Id,
@@ -95,13 +133,33 @@ public sealed record OrderDetailResult(
     decimal SubtotalAmount,
     decimal DiscountAmount,
     decimal FinalAmount,
+    bool FinalPricePendingAllocation,
+    string AllocationState,
+    Guid? AllocationRunId,
+    string? AllocationProposalStatus,
+    string? AllocationResult,
     string? RejectionReason,
     int Version,
     DateTimeOffset ServerReceivedAt,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,
     IReadOnlyCollection<OrderLineResult> Lines,
-    IReadOnlyCollection<OrderStatusHistoryResult> History);
+    IReadOnlyCollection<OrderStatusHistoryResult> History,
+    IReadOnlyCollection<OrderShipmentLinkResult> Shipments)
+{
+    public decimal IndicativeAmount => FinalAmount;
+}
+
+public sealed record OrderTimelineResult(
+    Guid OrderId,
+    string OrderCode,
+    string CurrentStatus,
+    string AllocationState,
+    Guid? AllocationRunId,
+    string? AllocationProposalStatus,
+    string? AllocationResult,
+    IReadOnlyCollection<OrderStatusHistoryResult> Events,
+    IReadOnlyCollection<OrderShipmentLinkResult> Shipments);
 
 public sealed record OrderTraceResult(Guid OrderId, string OrderCode, string AllocationTraceJson);
 

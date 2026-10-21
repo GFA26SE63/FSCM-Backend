@@ -2699,6 +2699,9 @@ namespace FSCM.Persistence.Migrations
                         .HasPrecision(18, 2)
                         .HasColumnType("numeric(18,2)");
 
+                    b.Property<bool>("FinalPricePendingAllocation")
+                        .HasColumnType("boolean");
+
                     b.Property<bool>("HasOfflineDifference")
                         .HasColumnType("boolean");
 
@@ -2865,6 +2868,9 @@ namespace FSCM.Persistence.Migrations
 
                     b.Property<DateTimeOffset?>("EstimatedArrivalAt")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<bool>("FinalPricePendingAllocation")
+                        .HasColumnType("boolean");
 
                     b.Property<decimal>("GrossAmount")
                         .HasPrecision(18, 2)

@@ -19,6 +19,7 @@ public sealed record OrderView(
     SalesOrder Order,
     IReadOnlyCollection<OrderLineView> Lines,
     IReadOnlyCollection<OrderStatusHistory> History,
+    IReadOnlyCollection<Delivery> Deliveries,
     IReadOnlyDictionary<Guid, string> BatchCodes,
     IReadOnlyDictionary<Guid, string> WarehouseCodes,
     IReadOnlyDictionary<Guid, int> InventoryVersions);
@@ -36,13 +37,15 @@ public interface IOrderStore
     Task<string> NextOrderCodeAsync(CancellationToken cancellationToken);
     Task<OrderView?> FindAsync(Guid orderId, bool forUpdate, CancellationToken cancellationToken);
     Task<OrderView?> FindByCodeAsync(string orderCode, bool forUpdate, CancellationToken cancellationToken);
-    Task<IReadOnlyCollection<OrderView>> ListAsync(Guid actorUserId, string actorRole, string? status, Guid? retailerId, CancellationToken cancellationToken);
+    Task<(IReadOnlyCollection<OrderView> Items, int TotalCount)> ListAsync(
+        Guid actorUserId, string actorRole, OrderListQuery query, CancellationToken cancellationToken);
     Task<bool> CanViewAsync(OrderView order, Guid actorUserId, string actorRole, CancellationToken cancellationToken);
     void AddOrder(SalesOrder order);
     void AddLine(SalesOrderLine line);
     void AddAllocation(Allocation allocation);
     void AddPromotion(OrderPromotion promotion);
     void AddHistory(OrderStatusHistory history);
+    void AddAuditLog(AuditLog auditLog);
     Task SaveChangesAsync(CancellationToken cancellationToken);
     Task ExecuteInTransactionAsync(
         Func<CancellationToken, Task> operation,

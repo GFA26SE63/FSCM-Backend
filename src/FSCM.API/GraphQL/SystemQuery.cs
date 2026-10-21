@@ -296,24 +296,36 @@ public sealed class SystemQuery
     public Task<BatchDiscountResult> BatchDiscount(Guid id, [Service] PromotionService service,
         CancellationToken cancellationToken) => service.GetBatchDiscountAsync(id, cancellationToken);
 
-    [Authorize]
-    public Task<PriceSnapshotResult> PriceSnapshot(
-        Guid productId, decimal quantity, Guid? batchId, Guid? retailerId,
+    [Authorize(Roles = [SystemRoles.Admin, SystemRoles.Operator, SystemRoles.Sales])]
+    public async Task<PriceSnapshotResult> PriceSnapshot(
+        Guid productId, decimal quantity, Guid? retailerId,
         DateTimeOffset? at, [Service] PromotionService service,
-        CancellationToken cancellationToken) =>
-        service.CalculatePriceAsync(productId, quantity, batchId, retailerId, at, cancellationToken);
+        [Service] OrderService orderService,
+        [Service] IHttpContextAccessor accessor,
+        CancellationToken cancellationToken)
+    {
+        var user = CurrentUser.From(accessor);
+        await orderService.EnsurePricingScopeAsync(
+            retailerId, user.Id, user.Role, cancellationToken);
+        return await service.CalculateIndicativePriceAsync(
+            productId, quantity, retailerId, at, cancellationToken);
+    }
 
     [Authorize(Roles = [SystemRoles.Admin, SystemRoles.Operator, SystemRoles.SalesManager, SystemRoles.Sales, SystemRoles.WarehouseKeeper, SystemRoles.Retailer])]
-    [UsePaging(DefaultPageSize = 20, MaxPageSize = 100, IncludeTotalCount = true, RequirePagingBoundaries = true), UseFiltering, UseSorting]
-    public async Task<IEnumerable<OrderSummaryResult>> Orders(
+    public Task<PagedOrderResult> Orders(
         string? status,
         Guid? retailerId,
+        [DefaultValue(false)] bool createdByMe,
+        string? search,
+        [DefaultValue(1)] int page,
+        [DefaultValue(20)] int pageSize,
         [Service] OrderService service,
         [Service] IHttpContextAccessor accessor,
         CancellationToken cancellationToken)
     {
         var user = CurrentUser.From(accessor);
-        return await service.ListAsync(user.Id, user.Role, status, retailerId, cancellationToken);
+        return service.ListAsync(user.Id, user.Role,
+            new(status, retailerId, createdByMe, search, page, pageSize), cancellationToken);
     }
 
     [Authorize(Roles = [SystemRoles.Admin, SystemRoles.Operator, SystemRoles.SalesManager, SystemRoles.Sales, SystemRoles.WarehouseKeeper, SystemRoles.Retailer])]
@@ -336,6 +348,17 @@ public sealed class SystemQuery
     {
         var user = CurrentUser.From(accessor);
         return service.GetTraceAsync(id, user.Id, user.Role, cancellationToken);
+    }
+
+    [Authorize(Roles = [SystemRoles.Admin, SystemRoles.Operator, SystemRoles.SalesManager, SystemRoles.Sales, SystemRoles.WarehouseKeeper, SystemRoles.Retailer])]
+    public Task<OrderTimelineResult> OrderTimeline(
+        Guid id,
+        [Service] OrderService service,
+        [Service] IHttpContextAccessor accessor,
+        CancellationToken cancellationToken)
+    {
+        var user = CurrentUser.From(accessor);
+        return service.GetTimelineAsync(id, user.Id, user.Role, cancellationToken);
     }
 
     [Authorize(Roles = [SystemRoles.Admin, SystemRoles.Operator, SystemRoles.SalesManager, SystemRoles.Sales, SystemRoles.Retailer])]

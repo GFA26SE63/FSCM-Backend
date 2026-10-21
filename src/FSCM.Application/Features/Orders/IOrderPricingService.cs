@@ -17,7 +17,6 @@ public interface IOrderPricingService
     Task<OrderPriceSnapshot> CalculateAsync(
         Guid productId,
         int quantity,
-        Guid batchId,
         Guid retailerId,
         DateTimeOffset pricedAt,
         CancellationToken cancellationToken);
@@ -28,13 +27,12 @@ public sealed class OrderPricingService(PromotionService promotionService) : IOr
     public async Task<OrderPriceSnapshot> CalculateAsync(
         Guid productId,
         int quantity,
-        Guid batchId,
         Guid retailerId,
         DateTimeOffset pricedAt,
         CancellationToken cancellationToken)
     {
-        var result = await promotionService.CalculatePriceAsync(
-            productId, quantity, batchId, retailerId, pricedAt, cancellationToken);
+        var result = await promotionService.CalculateIndicativePriceAsync(
+            productId, quantity, retailerId, pricedAt, cancellationToken);
         return new(
             result.UnitPrice,
             result.GrossAmount,
