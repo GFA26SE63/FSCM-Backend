@@ -21,7 +21,7 @@ public sealed class GoodsReceiptsController(InventoryService service) : Controll
     public Task<GoodsReceiptResult> Get(Guid receiptId, CancellationToken cancellationToken) =>
         service.GetReceiptAsync(receiptId, GetActorUserId(), GetActorRole(), cancellationToken);
 
-    [Authorize(Roles = SystemRoles.WarehouseKeeper)]
+    [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.WarehouseKeeper}")]
     [HttpPost]
     public async Task<IActionResult> Receive(
         ReceiveGoodsRequest request,

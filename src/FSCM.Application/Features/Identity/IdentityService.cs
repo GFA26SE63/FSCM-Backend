@@ -28,8 +28,9 @@ public sealed class IdentityService(
             ? null
             : await store.FindCredentialAsync(user.Id, cancellationToken);
 
-        if (user is null || credential is null || !user.IsActive ||
-            user.IdentityProvider != IdentityProviders.Local)
+        // Authentication methods are capabilities, not mutually exclusive account types.
+        // A password credential enables local login even after the same account is linked to Entra.
+        if (user is null || credential is null || !user.IsActive)
         {
             throw IdentityOperationException.InvalidCredentials();
         }
@@ -75,9 +76,11 @@ public sealed class IdentityService(
         if (user is null)
         {
             user = await store.FindUserByEmailAsync(normalizedEmail, cancellationToken);
-            if (user is null || !user.IdentityProvider.Equals(IdentityProviders.Entra, StringComparison.OrdinalIgnoreCase))
+            if (user is null)
                 throw IdentityOperationException.Forbidden(
                     "The Entra identity has not been provisioned in FSCM.");
+            if (!user.IsActive)
+                throw IdentityOperationException.Forbidden("The FSCM account is inactive.");
             if (!string.IsNullOrWhiteSpace(user.EntraObjectId))
                 throw IdentityOperationException.Conflict(
                     "The FSCM account is already linked to another Entra identity.");
@@ -87,8 +90,8 @@ public sealed class IdentityService(
             AddAudit(user.Id, user.Id, "EntraIdentityLinked", null, new { EntraObjectId = objectId });
         }
 
-        if (!user.IsActive || !user.IdentityProvider.Equals(IdentityProviders.Entra, StringComparison.OrdinalIgnoreCase))
-            throw IdentityOperationException.Forbidden("The FSCM account is inactive or not enabled for Entra login.");
+        if (!user.IsActive)
+            throw IdentityOperationException.Forbidden("The FSCM account is inactive.");
 
         var now = timeProvider.GetUtcNow();
         var credential = await store.FindCredentialAsync(user.Id, cancellationToken);

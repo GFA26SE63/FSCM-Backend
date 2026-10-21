@@ -1,15 +1,17 @@
 using System.Security.Claims;
 using FSCM.Application.Features.Inventory;
 using FSCM.Domain.Authorization;
+using FSCM.Infrastructure.BackgroundJobs;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Options;
 
 namespace FSCM.API.Controllers;
 
 [ApiController]
 [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator},{SystemRoles.WarehouseKeeper}")]
 [Route("api/v1/inventory")]
-public sealed class InventoryController(InventoryService service) : ControllerBase
+public sealed class InventoryController(InventoryService service, IOptions<DateTrackerOptions> dateTrackerOptions) : ControllerBase
 {
     [HttpGet]
     public Task<IReadOnlyCollection<BatchInventoryResult>> List(
@@ -27,6 +29,15 @@ public sealed class InventoryController(InventoryService service) : ControllerBa
         [FromQuery] Guid? warehouseId, [FromQuery] Guid? batchId,
         CancellationToken cancellationToken) =>
         service.ListHistoryAsync(GetActorUserId(), GetActorRole(), warehouseId, batchId, cancellationToken);
+
+    [Authorize(Roles = SystemRoles.Admin)]
+    [HttpGet("expiry/health")]
+    public Task<InventoryExpiryHealthResult> ExpiryHealth(CancellationToken cancellationToken)
+    {
+        var options = dateTrackerOptions.Value;
+        return service.GetExpiryHealthAsync(
+            options.Enabled, options.TimeZone, options.RunAtLocalTime, cancellationToken);
+    }
 
     private Guid GetActorUserId() => Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var userId)
         ? userId : throw InventoryOperationException.Validation("Authenticated user identifier is invalid.");

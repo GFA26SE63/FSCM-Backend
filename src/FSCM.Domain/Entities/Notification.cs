@@ -6,6 +6,7 @@ public sealed class Notification
 {
     public Guid Id { get; set; }
     public Guid UserAccountId { get; set; }
+    public Guid? OutboxMessageId { get; set; }
     public Guid? SalesOrderId { get; set; }
     public string Type { get; set; } = string.Empty;
     public string Title { get; set; } = string.Empty;

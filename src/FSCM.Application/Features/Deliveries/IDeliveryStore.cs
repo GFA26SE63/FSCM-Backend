@@ -10,6 +10,8 @@ public sealed record DeliveryLabelView(
     string QrCode,
     string PickingCode);
 
+public sealed record DeliveryInventoryIssue(Guid AllocationId, Guid BatchId, int InventoryVersion);
+
 public sealed record ReceiptItemView(ReceiptConfirmationItem Item, string QrCode);
 
 public sealed record DeliveryView(
@@ -28,6 +30,8 @@ public interface IDeliveryStore
     Task<DeliveryOrderView?> FindOrderAsync(Guid orderId, bool forUpdate, CancellationToken cancellationToken);
     Task<IReadOnlyCollection<DeliveryLabelView>> ListOrderLabelsAsync(
         Guid orderId, bool forUpdate, CancellationToken cancellationToken);
+    Task<IReadOnlyCollection<DeliveryInventoryIssue>> ListOrderInventoryIssuesAsync(
+        Guid orderId, CancellationToken cancellationToken);
     Task<DeliveryView?> FindByOrderAsync(Guid orderId, bool forUpdate, CancellationToken cancellationToken);
     Task<DeliveryView?> FindByOperationKeyAsync(string operationKey, CancellationToken cancellationToken);
     Task<DeliveryView?> FindByReceiptOperationKeyAsync(string operationKey, CancellationToken cancellationToken);

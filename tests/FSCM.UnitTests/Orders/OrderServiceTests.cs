@@ -13,7 +13,7 @@ public sealed class OrderServiceTests
     private static readonly DateTimeOffset Now = new(2026, 10, 14, 3, 0, 0, TimeSpan.Zero);
 
     [Fact]
-    public async Task Sales_creates_priced_allocated_and_held_order_for_assigned_retailer()
+    public async Task Sales_creates_priced_tentative_order_without_changing_inventory()
     {
         var fixture = new Fixture();
 
@@ -24,14 +24,14 @@ public sealed class OrderServiceTests
         Assert.Equal(100m, result.DiscountAmount);
         Assert.Equal(900m, result.FinalAmount);
         Assert.Equal("KM-001", Assert.Single(result.Lines).DiscountSourceCode);
-        Assert.Equal("Held", Assert.Single(result.Lines.Single().Allocations).Status);
-        Assert.Equal(10m, fixture.Store.Balance.HeldQuantity);
-        Assert.Equal(40m, fixture.Store.Balance.AvailableQuantity);
+        Assert.Equal(AllocationInventoryStatuses.Tentative, Assert.Single(result.Lines.Single().Allocations).Status);
+        Assert.Equal(0m, fixture.Store.Balance.ReservedQuantity);
+        Assert.Equal(50m, fixture.Store.Balance.AvailableQuantity);
         Assert.Contains("filterTrace", fixture.Store.Orders.Single().AllocationTraceJson);
     }
 
     [Fact]
-    public async Task Repeated_client_order_key_returns_original_order_without_holding_twice()
+    public async Task Repeated_client_order_key_returns_original_order_without_inventory_side_effect()
     {
         var fixture = new Fixture();
         var request = fixture.Request(10);
@@ -41,8 +41,8 @@ public sealed class OrderServiceTests
 
         Assert.Equal(first.Id, second.Id);
         Assert.Single(fixture.Store.Orders);
-        Assert.Equal(10m, fixture.Store.Balance.HeldQuantity);
-        Assert.Equal(1, fixture.Inventory.HoldCalls);
+        Assert.Equal(0m, fixture.Store.Balance.ReservedQuantity);
+        Assert.Equal(50m, fixture.Store.Balance.AvailableQuantity);
     }
 
     [Fact]
@@ -57,7 +57,7 @@ public sealed class OrderServiceTests
     }
 
     [Fact]
-    public async Task Insufficient_stock_rejects_whole_order_without_hold()
+    public async Task Insufficient_stock_rejects_whole_order_without_inventory_mutation()
     {
         var fixture = new Fixture(physicalQuantity: 5);
 
@@ -65,7 +65,6 @@ public sealed class OrderServiceTests
 
         Assert.Equal("conflict", exception.Code);
         Assert.Empty(fixture.Store.Orders);
-        Assert.Equal(0, fixture.Inventory.HoldCalls);
         Assert.Equal(5m, fixture.Store.Balance.AvailableQuantity);
     }
 
@@ -91,8 +90,8 @@ public sealed class OrderServiceTests
             created.Id, created.Version, fixture.OperatorUserId, default);
 
         Assert.Equal(OrderStatuses.Approved, approved.Status);
-        Assert.Equal(0m, fixture.Store.Balance.HeldQuantity);
         Assert.Equal(10m, fixture.Store.Balance.ReservedQuantity);
+        Assert.Equal(40m, fixture.Store.Balance.AvailableQuantity);
         Assert.Equal(1, approved.Version);
         Assert.Equal(1, fixture.Inventory.ReserveCalls);
         Assert.Equal(1, fixture.PickingPlan.Calls);
@@ -113,7 +112,6 @@ public sealed class OrderServiceTests
                 "Không đáp ứng lịch giao", fixture.OperatorUserId, default);
 
         Assert.Equal(cancel ? OrderStatuses.Cancelled : OrderStatuses.Rejected, result.Status);
-        Assert.Equal(0m, fixture.Store.Balance.HeldQuantity);
         Assert.Equal(50m, fixture.Store.Balance.AvailableQuantity);
         Assert.Equal(1, fixture.Inventory.ReleaseCalls);
         Assert.Equal(cancel ? 1 : 0, fixture.PickingPlan.CancelCalls);
@@ -318,27 +316,15 @@ public sealed class OrderServiceTests
 
     private sealed class FakeInventoryLifecycle(FakeStore store) : IInventoryLifecycleService
     {
-        public int HoldCalls { get; private set; }
         public int ReserveCalls { get; private set; }
         public int ReleaseCalls { get; private set; }
-
-        public Task<InventoryLifecycleResult> HoldAsync(Guid allocationId, Guid actorUserId, int expectedVersion, CancellationToken cancellationToken)
-        {
-            HoldCalls++;
-            var allocation = store.Allocations.Single(item => item.Id == allocationId);
-            store.Balance.HeldQuantity += allocation.AllocatedQuantity;
-            store.Balance.AvailableQuantity -= allocation.AllocatedQuantity;
-            store.Balance.Version++;
-            allocation.Status = AllocationInventoryStatuses.Held;
-            return Task.FromResult(Result(allocation));
-        }
 
         public Task<InventoryLifecycleResult> ReserveAsync(Guid allocationId, Guid actorUserId, int expectedVersion, CancellationToken cancellationToken)
         {
             ReserveCalls++;
             var allocation = store.Allocations.Single(item => item.Id == allocationId);
-            store.Balance.HeldQuantity -= allocation.AllocatedQuantity;
             store.Balance.ReservedQuantity += allocation.AllocatedQuantity;
+            store.Balance.AvailableQuantity = store.Balance.PhysicalQuantity - store.Balance.ReservedQuantity;
             store.Balance.Version++;
             allocation.Status = AllocationInventoryStatuses.Reserved;
             return Task.FromResult(Result(allocation));
@@ -349,11 +335,11 @@ public sealed class OrderServiceTests
             ReleaseCalls++;
             var allocation = store.Allocations.Single(item => item.Id == allocationId);
             if (allocation.Status == AllocationInventoryStatuses.Reserved)
+            {
                 store.Balance.ReservedQuantity -= allocation.AllocatedQuantity;
-            else
-                store.Balance.HeldQuantity -= allocation.AllocatedQuantity;
-            store.Balance.AvailableQuantity += allocation.AllocatedQuantity;
-            store.Balance.Version++;
+                store.Balance.AvailableQuantity = store.Balance.PhysicalQuantity - store.Balance.ReservedQuantity;
+                store.Balance.Version++;
+            }
             allocation.Status = AllocationInventoryStatuses.Released;
             return Task.FromResult(Result(allocation));
         }
@@ -363,8 +349,8 @@ public sealed class OrderServiceTests
 
         private InventoryLifecycleResult Result(DomainAllocation allocation) => new(
             allocation.Id, allocation.BatchId, allocation.WarehouseId, allocation.AllocatedQuantity,
-            allocation.Status, store.Balance.PhysicalQuantity, store.Balance.HeldQuantity,
-            store.Balance.ReservedQuantity, store.Balance.AvailableQuantity, store.Balance.Version);
+            allocation.Status, store.Balance.PhysicalQuantity, store.Balance.ReservedQuantity,
+            store.Balance.AvailableQuantity, store.Balance.Version);
     }
 
     private sealed class FixedTimeProvider(DateTimeOffset now) : TimeProvider

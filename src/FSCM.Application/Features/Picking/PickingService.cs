@@ -1,4 +1,3 @@
-using FSCM.Application.Features.Inventory;
 using FSCM.Application.Features.Orders;
 using FSCM.Application.Features.QrLabels;
 using FSCM.Domain.Authorization;
@@ -8,7 +7,6 @@ namespace FSCM.Application.Features.Picking;
 
 public sealed class PickingService(
     IPickingStore store,
-    IInventoryLifecycleService inventoryLifecycleService,
     TimeProvider timeProvider)
 {
     public async Task<IReadOnlyCollection<PickingListResult>> ListAsync(
@@ -185,22 +183,13 @@ public sealed class PickingService(
 
             if (view.List.Status == PickingListStatuses.Completed)
             {
-                foreach (var pickingItem in view.Items.OrderBy(candidate => candidate.Item.Id))
-                {
-                    await inventoryLifecycleService.IssueAsync(
-                        pickingItem.Item.AllocationId,
-                        warehouseKeeperUserId,
-                        view.InventoryVersions[pickingItem.Item.SourceBatchId],
-                        transactionCancellationToken);
-                }
-
                 var orderLists = await store.ListByOrderAsync(view.Order.Id, transactionCancellationToken);
                 if (orderLists.All(candidate => candidate.Status == PickingListStatuses.Completed))
                 {
                     TransitionOrder(view.Order, OrderStatuses.Issued, now);
                     store.AddOrderHistory(NewOrderHistory(
                         view.Order.Id, OrderStatuses.Picking, OrderStatuses.Issued,
-                        warehouseKeeperUserId, "Hoàn tất soạn và xuất kho", now));
+                        warehouseKeeperUserId, "Hoàn tất soạn hàng; tồn kho chỉ xuất khi dispatch", now));
                 }
             }
 

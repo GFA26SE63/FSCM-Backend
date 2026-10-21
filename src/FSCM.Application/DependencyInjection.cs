@@ -30,6 +30,7 @@ public static class DependencyInjection
         services.AddScoped<IdentityService>();
         services.AddScoped<InventoryService>();
         services.AddScoped<InventoryLifecycleService>();
+        services.AddScoped<InventoryOutboxDispatcher>();
         services.AddScoped<IInventoryLifecycleService>(provider => provider.GetRequiredService<InventoryLifecycleService>());
         services.AddScoped<InternalTransferService>();
         services.AddScoped<ManualPaymentService>();
