@@ -143,18 +143,44 @@ public sealed class IdentityServiceTests
     }
 
     [Fact]
-    public async Task Entra_exchange_rejects_local_account_with_matching_email()
+    public async Task Entra_exchange_links_local_account_and_keeps_password_login_available()
     {
         var fixture = new IdentityFixture();
-        fixture.AddActiveUser(SystemRoles.Sales, "mobile@fscm.local", "Correct#Pass1");
+        var user = fixture.AddActiveUser(SystemRoles.Sales, "mobile@fscm.local", "Correct#Pass1");
+
+        var entraResult = await fixture.Service.ExchangeEntraAsync(
+            new EntraIdentity("entra-object-456", "MOBILE@FSCM.LOCAL"),
+            null,
+            CancellationToken.None);
+        var localResult = await fixture.Service.LoginAsync(
+            "mobile@fscm.local",
+            "Correct#Pass1",
+            null,
+            CancellationToken.None);
+
+        Assert.Equal(user.Id, entraResult.User.Id);
+        Assert.Equal(user.Id, localResult.User.Id);
+        Assert.Equal("entra-object-456", user.EntraObjectId);
+        Assert.Equal(IdentityProviders.Local, user.IdentityProvider);
+        Assert.Equal(2, fixture.Store.RefreshTokens.Count);
+        Assert.Contains(fixture.Store.AuditLogs, audit => audit.Action == "EntraIdentityLinked");
+    }
+
+    [Fact]
+    public async Task Entra_exchange_rejects_relinking_email_to_another_object_id()
+    {
+        var fixture = new IdentityFixture();
+        var user = fixture.AddActiveUser(SystemRoles.Sales, "mobile@fscm.local", "Correct#Pass1");
+        user.EntraObjectId = "entra-object-original";
 
         var exception = await Assert.ThrowsAsync<IdentityOperationException>(() =>
             fixture.Service.ExchangeEntraAsync(
-                new EntraIdentity("entra-object-456", "mobile@fscm.local"),
+                new EntraIdentity("entra-object-other", "mobile@fscm.local"),
                 null,
                 CancellationToken.None));
 
-        Assert.Equal("forbidden", exception.Code);
+        Assert.Equal("conflict", exception.Code);
+        Assert.Equal("entra-object-original", user.EntraObjectId);
         Assert.Empty(fixture.Store.RefreshTokens);
     }
 
