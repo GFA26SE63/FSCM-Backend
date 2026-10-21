@@ -14,6 +14,9 @@ public sealed class SalesOrderLineConfiguration : IEntityTypeConfiguration<Sales
         builder.Property(entity => entity.SalesOrderId).HasColumnType("uuid").IsRequired();
         builder.Property(entity => entity.ProductId).HasColumnType("uuid").IsRequired();
         builder.Property(entity => entity.LineNumber).IsRequired();
+        builder.Property(entity => entity.LineType).HasMaxLength(30).IsRequired();
+        builder.Property(entity => entity.NearExpiryOfferId).HasColumnType("uuid").IsRequired(false);
+        builder.Property(entity => entity.NearExpiryOfferVersion).IsRequired(false);
         builder.Property(entity => entity.SkuSnapshot).HasMaxLength(40).IsRequired();
         builder.Property(entity => entity.ProductNameSnapshot).HasMaxLength(200).IsRequired();
         builder.Property(entity => entity.OrderedQuantity).HasPrecision(18, 3).IsRequired();
@@ -24,6 +27,12 @@ public sealed class SalesOrderLineConfiguration : IEntityTypeConfiguration<Sales
         builder.Property(entity => entity.DiscountSourceType).HasMaxLength(30).IsRequired(false);
         builder.Property(entity => entity.DiscountSourceCode).HasMaxLength(40).IsRequired(false);
         builder.Property(entity => entity.NetAmount).HasPrecision(18, 2).IsRequired();
+        builder.Property(entity => entity.AcceptedNetUnitPrice).HasPrecision(18, 2).IsRequired(false);
+        builder.Property(entity => entity.EffectiveMlorRatio).HasPrecision(5, 4).IsRequired();
+        builder.Property(entity => entity.MlorSource).HasMaxLength(30).IsRequired();
+        builder.Property(entity => entity.DefaultMlorRatio).HasPrecision(5, 4).IsRequired(false);
+        builder.Property(entity => entity.AcceptedByUserId).HasColumnType("uuid").IsRequired(false);
+        builder.Property(entity => entity.AcceptedAt).HasColumnType("timestamp with time zone").IsRequired(false);
         builder.Property(entity => entity.EstimatedArrivalAt).HasColumnType("timestamp with time zone").IsRequired(false);
         builder.Property(entity => entity.CreatedAt).HasColumnType("timestamp with time zone").IsRequired();
         builder.HasOne<SalesOrder>()
@@ -35,5 +44,25 @@ public sealed class SalesOrderLineConfiguration : IEntityTypeConfiguration<Sales
             .HasForeignKey(entity => entity.ProductId)
             .OnDelete(DeleteBehavior.Restrict);
         builder.HasIndex(entity => new { entity.SalesOrderId, entity.LineNumber }).IsUnique();
+
+        // LineNumber only keeps lines distinctly numbered. These two guards keep them distinct by
+        // content: one standard line per SKU, and one line per accepted offer version, so a cart
+        // never merges a standard line with an offer line of the same SKU.
+        builder.HasIndex(entity => new { entity.SalesOrderId, entity.ProductId })
+            .IsUnique()
+            .HasFilter("\"LineType\" = 'Standard'");
+        builder.HasIndex(entity => new
+            {
+                entity.SalesOrderId,
+                entity.ProductId,
+                entity.NearExpiryOfferId,
+                entity.NearExpiryOfferVersion
+            })
+            .IsUnique()
+            .HasFilter("\"LineType\" = 'NearExpiryOffer'");
+        builder.HasOne<UserAccount>()
+            .WithMany()
+            .HasForeignKey(entity => entity.AcceptedByUserId)
+            .OnDelete(DeleteBehavior.Restrict);
     }
 }
