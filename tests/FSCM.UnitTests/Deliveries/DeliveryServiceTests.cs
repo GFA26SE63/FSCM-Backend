@@ -12,6 +12,18 @@ namespace FSCM.UnitTests.Deliveries;
 public sealed class DeliveryServiceTests
 {
     [Fact]
+    public async Task Prepaid_order_cannot_dispatch_until_canonical_ledger_is_fully_paid()
+    {
+        var fixture = new Fixture();
+        fixture.Order.PaymentMethod = OrderPaymentMethods.Prepaid;
+
+        var exception = await Assert.ThrowsAsync<DeliveryOperationException>(() => fixture.DispatchAsync());
+
+        Assert.Equal("conflict", exception.Code);
+        Assert.Equal(0, fixture.Inventory.IssueCalls);
+    }
+
+    [Fact]
     public async Task Dispatch_snapshots_assignment_and_moves_labels_to_transit()
     {
         var fixture = new Fixture();
@@ -172,6 +184,7 @@ public sealed class DeliveryServiceTests
         public InventoryBalance Balance { get; }
         public List<DeliveryLabelView> Labels { get; }
         public FakeDeliveryStore Store { get; }
+        public FakePaymentStore PaymentStore { get; }
         public FakeInventoryLifecycle Inventory { get; }
         public DeliveryService Service { get; }
 
@@ -233,8 +246,10 @@ public sealed class DeliveryServiceTests
             };
             Labels = [CreateLabel("TEM-001010", 5, batchId), CreateLabel("TEM-001011", 5, batchId)];
             Store = new FakeDeliveryStore(this);
+            PaymentStore = new FakePaymentStore(this);
             Inventory = new FakeInventoryLifecycle(this);
-            Service = new DeliveryService(Store, new FakePaymentPlan(), Inventory, new FixedTimeProvider(Now));
+            Service = new DeliveryService(
+                Store, new FakePaymentPlan(), PaymentStore, Inventory, new FixedTimeProvider(Now));
         }
 
         public Task<DeliveryResult> DispatchAsync(int expectedVersion = 3) =>
@@ -354,8 +369,44 @@ public sealed class DeliveryServiceTests
 
     private sealed class FakePaymentPlan : IPaymentPlanService
     {
+        public Task CreateForFinalApprovedOrderAsync(SalesOrder order, Guid approvalActorUserId,
+            DateTimeOffset approvedAt, string finalApprovalReference,
+            CancellationToken cancellationToken) => Task.CompletedTask;
+
         public Task CreateForDeliveredOrderAsync(SalesOrder order, Guid receiptActorUserId,
             DateTimeOffset deliveredAt, CancellationToken cancellationToken) => Task.CompletedTask;
+    }
+
+    private sealed class FakePaymentStore(Fixture fixture) : IPaymentStore
+    {
+        private readonly Payment ledger = new()
+        {
+            Id = Guid.NewGuid(),
+            Status = PaymentStatuses.Unpaid,
+            Amount = 100_000,
+            ConfirmedAmount = 0,
+            FinalApprovedAt = DateTimeOffset.UtcNow,
+            FinalApprovalReference = "RUN-TEST-01"
+        };
+
+        public Task<PaymentView?> FindByOrderAsync(Guid orderId, bool forUpdate,
+            CancellationToken cancellationToken) => Task.FromResult<PaymentView?>(
+            orderId == fixture.Order.Id ? new(ledger, fixture.Order, fixture.Retailer) : null);
+        public Task<PaymentView?> FindByOperationKeyAsync(string operationKey,
+            CancellationToken cancellationToken) => Task.FromResult<PaymentView?>(null);
+        public Task<PaymentView?> FindByPayOsOrderCodeAsync(long payOsOrderCode, bool forUpdate,
+            CancellationToken cancellationToken) => Task.FromResult<PaymentView?>(null);
+        public Task<IReadOnlyCollection<PaymentView>> ListAsync(Guid actorUserId, string actorRole,
+            CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyCollection<PaymentView>>([]);
+        public Task<bool> CanViewAsync(PaymentView view, Guid actorUserId, string actorRole,
+            CancellationToken cancellationToken) => Task.FromResult(false);
+        public void Add(Payment payment) => throw new NotSupportedException();
+        public void AddAuditLog(AuditLog auditLog) => throw new NotSupportedException();
+        public Task SaveChangesAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+        public Task ExecuteInTransactionAsync(Func<CancellationToken, Task> operation,
+            CancellationToken cancellationToken) => operation(cancellationToken);
+        public void ClearTracking() { }
     }
 
     private sealed class FakeInventoryLifecycle(Fixture fixture) : IInventoryLifecycleService

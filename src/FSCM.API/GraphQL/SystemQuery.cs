@@ -6,6 +6,7 @@ using FSCM.Application.Features.Inventory;
 using FSCM.Application.Features.Maps;
 using FSCM.Application.Features.Orders;
 using FSCM.Application.Features.Payments;
+using FSCM.Application.Features.ManualPayments;
 using FSCM.Application.Features.Picking;
 using FSCM.Application.Features.QrLabels;
 using FSCM.Application.Features.Promotions;
@@ -358,6 +359,29 @@ public sealed class SystemQuery
     {
         var user = CurrentUser.From(accessor);
         return service.GetByOrderAsync(orderId, user.Id, user.Role, cancellationToken);
+    }
+
+    [Authorize(Roles = [SystemRoles.Admin, SystemRoles.Operator, SystemRoles.SalesManager, SystemRoles.Sales, SystemRoles.Retailer])]
+    public Task<ManualPaymentResult> ManualPayment(
+        Guid id,
+        [Service] ManualPaymentService service,
+        [Service] IHttpContextAccessor accessor,
+        CancellationToken cancellationToken)
+    {
+        var user = CurrentUser.From(accessor);
+        return service.GetAsync(id, user.Id, user.Role, cancellationToken);
+    }
+
+    [Authorize(Roles = [SystemRoles.Admin, SystemRoles.Operator, SystemRoles.SalesManager, SystemRoles.Sales, SystemRoles.Retailer])]
+    [UsePaging(DefaultPageSize = 20, MaxPageSize = 100, IncludeTotalCount = true, RequirePagingBoundaries = true), UseFiltering, UseSorting]
+    public async Task<IEnumerable<ManualPaymentResult>> ManualPaymentsBySalesOrder(
+        Guid salesOrderId,
+        [Service] ManualPaymentService service,
+        [Service] IHttpContextAccessor accessor,
+        CancellationToken cancellationToken)
+    {
+        var user = CurrentUser.From(accessor);
+        return await service.ListByOrderAsync(salesOrderId, user.Id, user.Role, cancellationToken);
     }
 
     [Authorize(Roles = [SystemRoles.Admin, SystemRoles.Operator, SystemRoles.SalesManager, SystemRoles.Sales, SystemRoles.WarehouseKeeper, SystemRoles.Retailer])]

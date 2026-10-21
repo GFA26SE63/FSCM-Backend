@@ -18,22 +18,28 @@ public sealed class ManualPaymentStore(AppDbContext dbContext) : IManualPaymentS
     public Task<ManualPaymentView?> FindAsync(Guid paymentId, CancellationToken cancellationToken) =>
         (from payment in dbContext.ManualPaymentRecords.AsNoTracking()
          join order in dbContext.SalesOrderRecords.AsNoTracking() on payment.SalesOrderId equals order.Id
+         join ledger in dbContext.PaymentRecords.AsNoTracking() on payment.SalesOrderId equals ledger.SalesOrderId
          where payment.Id == paymentId
-         select new ManualPaymentView(payment, order.OrderCode))
+         select new ManualPaymentView(payment, order.OrderCode, ledger.Amount, ledger.ConfirmedAmount))
+        .SingleOrDefaultAsync(cancellationToken);
+
+    public Task<ManualPaymentView?> FindByOperationKeyAsync(
+        string operationKey, CancellationToken cancellationToken) =>
+        (from payment in dbContext.ManualPaymentRecords.AsNoTracking()
+         join order in dbContext.SalesOrderRecords.AsNoTracking() on payment.SalesOrderId equals order.Id
+         join ledger in dbContext.PaymentRecords.AsNoTracking() on payment.SalesOrderId equals ledger.SalesOrderId
+         where payment.OperationKey == operationKey
+         select new ManualPaymentView(payment, order.OrderCode, ledger.Amount, ledger.ConfirmedAmount))
         .SingleOrDefaultAsync(cancellationToken);
 
     public async Task<IReadOnlyCollection<ManualPaymentView>> ListByOrderAsync(Guid salesOrderId, CancellationToken cancellationToken) =>
         await (from payment in dbContext.ManualPaymentRecords.AsNoTracking()
                join order in dbContext.SalesOrderRecords.AsNoTracking() on payment.SalesOrderId equals order.Id
+               join ledger in dbContext.PaymentRecords.AsNoTracking() on payment.SalesOrderId equals ledger.SalesOrderId
                where payment.SalesOrderId == salesOrderId
-               orderby payment.CreatedAt
-               select new ManualPaymentView(payment, order.OrderCode))
+               orderby payment.CreatedAt, payment.Id
+               select new ManualPaymentView(payment, order.OrderCode, ledger.Amount, ledger.ConfirmedAmount))
             .ToArrayAsync(cancellationToken);
-
-    public async Task<decimal> SumConfirmedAmountAsync(Guid salesOrderId, CancellationToken cancellationToken) =>
-        await dbContext.ManualPaymentRecords.AsNoTracking()
-            .Where(item => item.SalesOrderId == salesOrderId && item.Status == ManualPaymentStatuses.Paid)
-            .SumAsync(item => (decimal?)item.Amount, cancellationToken) ?? 0m;
 
     public async Task<bool> CanAccessOrderAsync(
         Guid userId, string role, SalesOrder order, CancellationToken cancellationToken)
@@ -47,10 +53,21 @@ public sealed class ManualPaymentStore(AppDbContext dbContext) : IManualPaymentS
                 cancellationToken);
         }
 
+        if (role == SystemRoles.SalesManager)
+            return await dbContext.SalesGroupMemberRecords.AsNoTracking().AnyAsync(
+                item => item.UserAccountId == userId && item.SalesGroupId == order.SalesGroupId && item.IsActive,
+                cancellationToken);
+        if (role == SystemRoles.Retailer)
+            return await dbContext.RetailerRecords.AsNoTracking().AnyAsync(
+                item => item.Id == order.RetailerId && item.UserAccountId == userId,
+                cancellationToken);
+
         return false;
     }
 
     public void Add(ManualPayment payment) => dbContext.ManualPaymentRecords.Add(payment);
+
+    public void AddAuditLog(AuditLog auditLog) => dbContext.AuditLogRecords.Add(auditLog);
 
     public async Task SaveChangesAsync(CancellationToken cancellationToken)
     {

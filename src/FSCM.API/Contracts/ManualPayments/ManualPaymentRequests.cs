@@ -8,6 +8,6 @@ namespace FSCM.API.Contracts.ManualPayments;
 public sealed record RecordManualPaymentRequest(
     Guid SalesOrderId, string Method, decimal Amount, bool MarkPaid = false, string? Note = null);
 
-public sealed record ConfirmManualPaymentRequest(string? Note = null);
+public sealed record ConfirmManualPaymentRequest(int ExpectedVersion, string? Note = null);
 
-public sealed record CancelManualPaymentRequest(string? Reason = null);
+public sealed record CancelManualPaymentRequest(int ExpectedVersion, string? Reason = null);

@@ -15,7 +15,10 @@ public sealed class PaymentConfiguration : IEntityTypeConfiguration<Payment>
         builder.Property(entity => entity.Method).HasMaxLength(30).IsRequired();
         builder.Property(entity => entity.Status).HasMaxLength(30).IsRequired();
         builder.Property(entity => entity.Amount).HasPrecision(18, 2).IsRequired();
-        builder.Property(entity => entity.DeliveredDate).HasColumnType("date").IsRequired();
+        builder.Property(entity => entity.ConfirmedAmount).HasPrecision(18, 2).IsRequired();
+        builder.Property(entity => entity.FinalApprovedAt).HasColumnType("timestamp with time zone").IsRequired();
+        builder.Property(entity => entity.FinalApprovalReference).HasMaxLength(100).IsRequired();
+        builder.Property(entity => entity.DeliveredDate).HasColumnType("date").IsRequired(false);
         builder.Property(entity => entity.DueDate).HasColumnType("date").IsRequired(false);
         builder.Property(entity => entity.PaidDate).HasColumnType("date").IsRequired(false);
         builder.Property(entity => entity.CollectionMethod).HasMaxLength(30).IsRequired(false);
@@ -28,6 +31,7 @@ public sealed class PaymentConfiguration : IEntityTypeConfiguration<Payment>
         builder.Property(entity => entity.PayOsLinkStatus).HasMaxLength(30).IsRequired(false);
         builder.Property(entity => entity.PayOsExpiredAt).IsRequired(false);
         builder.Property(entity => entity.PayOsReference).HasMaxLength(100).IsRequired(false);
+        builder.Property(entity => entity.PayOsWebhookHash).HasMaxLength(64).IsRequired(false);
         builder.Property(entity => entity.ConfirmedByUserId).HasColumnType("uuid").IsRequired(false);
         builder.Property(entity => entity.ConfirmedAt).HasColumnType("timestamp with time zone").IsRequired(false);
         builder.Property(entity => entity.Note).HasColumnType("text").IsRequired(false);
@@ -43,7 +47,15 @@ public sealed class PaymentConfiguration : IEntityTypeConfiguration<Payment>
             .HasFilter("\"PayOsPaymentLinkId\" IS NOT NULL");
         builder.HasIndex(entity => entity.PayOsReference).IsUnique()
             .HasFilter("\"PayOsReference\" IS NOT NULL");
+        builder.HasIndex(entity => entity.PayOsWebhookHash).IsUnique()
+            .HasFilter("\"PayOsWebhookHash\" IS NOT NULL");
         builder.HasIndex(entity => new { entity.Status, entity.DueDate });
+        builder.ToTable(table =>
+        {
+            table.HasCheckConstraint("CK_PAYMENT_Amount", "\"Amount\" > 0");
+            table.HasCheckConstraint("CK_PAYMENT_ConfirmedAmount",
+                "\"ConfirmedAmount\" >= 0 AND \"ConfirmedAmount\" <= \"Amount\"");
+        });
         builder.HasOne<SalesOrder>()
             .WithMany()
             .HasForeignKey(entity => entity.SalesOrderId)
