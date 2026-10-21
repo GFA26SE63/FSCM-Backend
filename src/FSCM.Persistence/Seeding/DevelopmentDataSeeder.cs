@@ -773,7 +773,12 @@ public sealed class DevelopmentDataSeeder(
             new ConfigurationSeed(BusinessConfigurationKeys.OrderBufferStockCartons, "0", "integer",
                 "Tồn kho đệm mặc định dành cho giới hạn số lượng đặt hàng"),
             new ConfigurationSeed(BusinessConfigurationKeys.OrderStepCartons, "1", "integer",
-                "Bước số lượng đặt hàng mặc định là một thùng")
+                "Bước số lượng đặt hàng mặc định là một thùng"),
+            new ConfigurationSeed(BusinessConfigurationKeys.EtaSchedule,
+                "{\"timeZone\":\"Asia/Ho_Chi_Minh\",\"allocationRunLocalTime\":\"12:00\"," +
+                "\"planApprovalDeadlineLocalTime\":\"14:00\",\"preparationMinutes\":240," +
+                "\"bufferMinutes\":60,\"dispatchSlotsLocalTime\":[\"06:00\",\"14:00\"]}", "object",
+                "Lịch tính ETA: chạy đợt 12:00, hạn duyệt 14:00, soạn 4 giờ, đệm 1 giờ, xuất 06:00 và 14:00")
         };
         foreach (var definition in configurations)
         {

@@ -44,6 +44,7 @@ public static class ServiceCollectionExtensions
         services.AddExceptionHandler<RetailerExceptionHandler>();
         services.AddExceptionHandler<TerritoryExceptionHandler>();
         services.AddExceptionHandler<TransitTableExceptionHandler>();
+        services.AddExceptionHandler<DeliveryEtaExceptionHandler>();
         services.AddExceptionHandler<WarehouseConfigurationExceptionHandler>();
         services.AddExceptionHandler<IdentityExceptionHandler>();
 

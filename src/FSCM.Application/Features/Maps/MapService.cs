@@ -117,34 +117,6 @@ public sealed class MapService(IMapStore store, IMapProvider provider, TimeProvi
             .Select(item => ToDistanceResult(item, now)).ToArray();
     }
 
-    public async Task<EtaEstimateResult> EstimateEtaAsync(EtaEstimateInput input, CancellationToken cancellationToken)
-    {
-        if (input.BufferMinutes is < 0 or > 1440)
-            throw MapOperationException.Validation("Buffer minutes must be between 0 and 1440.");
-        var now = timeProvider.GetUtcNow();
-        var distance = await store.FindActiveDistanceAsync(input.WarehouseId, input.RetailerId, false, cancellationToken)
-            ?? throw MapOperationException.Conflict("No cached distance exists for this warehouse and Retailer.");
-        if (distance.ExpiresAt <= now)
-            throw MapOperationException.Conflict("The cached distance has expired and must be refreshed.");
-        var origin = await RequireLocationAsync("warehouse", input.WarehouseId, cancellationToken);
-        var destination = await RequireLocationAsync("retailer", input.RetailerId, cancellationToken);
-        if (distance.OriginLocationVersion != origin.Version || distance.DestinationLocationVersion != destination.Version)
-            throw MapOperationException.Conflict("The cached distance is stale because a location has changed.");
-        var rule = await store.FindTransitRuleAsync(input.WarehouseId, distance.DistanceMeters, cancellationToken)
-            ?? throw MapOperationException.Conflict("No active transit-time rule covers the cached distance.");
-        if (distance.DistanceMeters > rule.MaxServingDistanceMeters)
-            throw MapOperationException.Conflict("The Retailer is outside the warehouse serving distance.");
-
-        var departure = input.DepartureAt ?? now;
-        if (departure < now.AddMinutes(-5))
-            throw MapOperationException.Validation("Departure time cannot be in the past.");
-        var estimated = departure.AddMinutes(rule.HandlingMinutes + rule.TransitMinutes + input.BufferMinutes);
-        return new EtaEstimateResult(input.WarehouseId, input.RetailerId, departure, estimated,
-            distance.DistanceMeters, distance.DurationSeconds, rule.HandlingMinutes, rule.TransitMinutes,
-            input.BufferMinutes, distance.Version, rule.Version, true,
-            "ETA chỉ là thời gian ước tính, không phải cam kết thời điểm giao hàng.");
-    }
-
     private async Task<MapLocation> RequireLocationAsync(string entityType, Guid entityId, CancellationToken cancellationToken)
     {
         await RequireEntityAsync(entityType, entityId, cancellationToken);

@@ -1,4 +1,5 @@
 using FSCM.Application.Features.Catalog;
+using FSCM.Application.Features.DeliveryEta;
 using FSCM.Application.Features.Deliveries;
 using FSCM.Application.Features.Identity;
 using FSCM.Application.Features.Inventory;
@@ -15,6 +16,7 @@ using FSCM.Application.Features.Territory;
 using FSCM.Application.Features.TransitTables;
 using FSCM.Application.Features.WarehouseConfiguration;
 using FSCM.Persistence.Catalog;
+using FSCM.Persistence.DeliveryEta;
 using FSCM.Persistence.DbContexts;
 using FSCM.Persistence.Deliveries;
 using FSCM.Persistence.Identity;
@@ -73,6 +75,7 @@ public static class DependencyInjection
         services.AddScoped<IRetailerStore, RetailerStore>();
         services.AddScoped<ITerritoryStore, TerritoryStore>();
         services.AddScoped<ITransitTableStore, TransitTableStore>();
+        services.AddScoped<IDeliveryEtaStore, DeliveryEtaStore>();
         services.AddScoped<IWarehouseConfigurationStore, WarehouseConfigurationStore>();
         services.AddScoped<DevelopmentDataSeeder>();
         services.AddScoped<AdminBootstrapper>();

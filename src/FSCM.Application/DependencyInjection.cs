@@ -1,5 +1,6 @@
 using FluentValidation;
 using FSCM.Application.Features.Catalog;
+using FSCM.Application.Features.DeliveryEta;
 using FSCM.Application.Features.Deliveries;
 using FSCM.Application.Features.Identity;
 using FSCM.Application.Features.Inventory;
@@ -49,6 +50,7 @@ public static class DependencyInjection
         services.AddScoped<RetailerService>();
         services.AddScoped<TerritoryService>();
         services.AddScoped<TransitTableService>();
+        services.AddScoped<DeliveryEtaService>();
         services.AddScoped<WarehouseConfigurationService>();
 
         return services;
