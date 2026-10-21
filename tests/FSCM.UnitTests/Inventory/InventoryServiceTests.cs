@@ -59,6 +59,20 @@ public sealed class InventoryServiceTests
         Assert.Equal("conflict", exception.Code);
     }
 
+    [Fact]
+    public async Task Receipt_retry_revalidates_current_warehouse_scope()
+    {
+        var fixture = new Fixture();
+        await fixture.ReceiveAsync("receipt-key-0001", 25, new DateOnly(2027, 4, 30));
+        fixture.Store.CanAccessWarehouse = false;
+
+        var exception = await Assert.ThrowsAsync<InventoryOperationException>(() =>
+            fixture.ReceiveAsync("receipt-key-0001", 25, new DateOnly(2027, 4, 30)));
+
+        Assert.Equal("forbidden", exception.Code);
+        Assert.Single(fixture.Store.Receipts);
+    }
+
     [Theory]
     [InlineData("2.5", 2027, 4, 30)]
     [InlineData("2", 2026, 10, 13)]
@@ -101,8 +115,10 @@ public sealed class InventoryServiceTests
         public List<Batch> Batches { get; } = [];
         public List<InventoryBalance> Balances { get; } = [];
         public List<InventoryTransaction> Transactions { get; } = [];
+        public bool CanAccessWarehouse { get; set; } = true;
 
-        public Task<bool> CanAccessWarehouseAsync(Guid userId, string role, Guid warehouseId, CancellationToken cancellationToken) => Task.FromResult(true);
+        public Task<bool> CanAccessWarehouseAsync(Guid userId, string role, Guid warehouseId, CancellationToken cancellationToken) =>
+            Task.FromResult(CanAccessWarehouse);
         public Task<Warehouse?> FindWarehouseAsync(Guid warehouseId, CancellationToken cancellationToken) => Task.FromResult<Warehouse?>(Warehouse.Id == warehouseId ? Warehouse : null);
         public Task<Product?> FindProductAsync(Guid productId, CancellationToken cancellationToken) => Task.FromResult<Product?>(Product.Id == productId ? Product : null);
         public Task<GoodsReceiptView?> FindReceiptByIdempotencyKeyAsync(string key, CancellationToken cancellationToken) =>
@@ -120,6 +136,10 @@ public sealed class InventoryServiceTests
         public Task<BatchInventoryView?> FindBatchInventoryAsync(Guid batchId, CancellationToken cancellationToken) => Task.FromResult<BatchInventoryView?>(null);
         public Task<IReadOnlyCollection<InventoryHistoryView>> ListHistoryAsync(Guid actorUserId, string actorRole, Guid? warehouseId, Guid? batchId, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyCollection<InventoryHistoryView>>([]);
+        public Task<ExpirySweepRun?> FindLatestExpirySweepRunAsync(CancellationToken cancellationToken) =>
+            Task.FromResult<ExpirySweepRun?>(null);
+        public Task<int> CountOutboxMessagesAsync(string eventType, string status, CancellationToken cancellationToken) =>
+            Task.FromResult(0);
         public Task<string> NextReceiptCodeAsync(DateOnly businessDate, CancellationToken cancellationToken) =>
             Task.FromResult($"PN-{businessDate:yyMMdd}-{++receiptNumber:00}");
         public void AddReceipt(GoodsReceipt receipt) => Receipts.Add(receipt);
@@ -127,6 +147,7 @@ public sealed class InventoryServiceTests
         public void AddBatch(Batch batch) => Batches.Add(batch);
         public void AddBalance(InventoryBalance balance) => Balances.Add(balance);
         public void AddTransaction(InventoryTransaction transaction) => Transactions.Add(transaction);
+        public void ClearTracking() { }
         public Task SaveChangesAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 
         private GoodsReceiptView? ToReceiptView(GoodsReceipt? receipt)

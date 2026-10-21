@@ -22,31 +22,56 @@ public sealed class InventoryExpirySweepService(IBatchExpiryStore store, TimePro
     {
         var now = timeProvider.GetUtcNow();
         var businessDate = DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(now, VietnamTimeZone).DateTime);
-        var candidates = await store.ListBatchesForExpirySweepAsync(cancellationToken);
-
-        var updated = 0;
-        var expired = 0;
-        foreach (var candidate in candidates)
+        var run = new ExpirySweepRun
         {
-            var batch = candidate.Batch;
-            var newStatus = CalculateExpiryStatus(batch.ExpirationDate, candidate.NearDateThresholdHours, businessDate);
-            if (newStatus == batch.ExpiryStatus) continue;
+            Id = Guid.NewGuid(),
+            BusinessDate = businessDate,
+            Status = ExpirySweepStatuses.Running,
+            StartedAt = now
+        };
+        store.AddSweepRun(run);
+        await store.SaveChangesAsync(cancellationToken);
 
-            var wasExpired = batch.ExpiryStatus == BatchExpiryStatuses.Expired;
-            batch.ExpiryStatus = newStatus;
-            batch.Version++;
-            batch.UpdatedAt = now;
-            updated++;
-
-            if (newStatus == BatchExpiryStatuses.Expired && !wasExpired)
+        try
+        {
+            var candidates = await store.ListBatchesForExpirySweepAsync(cancellationToken);
+            var updated = 0;
+            var expired = 0;
+            foreach (var candidate in candidates)
             {
-                expired++;
-                store.AddOutboxMessage(BuildBatchExpiredMessage(batch, now));
-            }
-        }
+                var batch = candidate.Batch;
+                var newStatus = CalculateExpiryStatus(batch.ExpirationDate, candidate.NearDateThresholdHours, businessDate);
+                if (newStatus == batch.ExpiryStatus) continue;
 
-        if (updated > 0) await store.SaveChangesAsync(cancellationToken);
-        return new ExpirySweepResult(candidates.Count, updated, expired);
+                var wasExpired = batch.ExpiryStatus == BatchExpiryStatuses.Expired;
+                batch.ExpiryStatus = newStatus;
+                batch.Version++;
+                batch.UpdatedAt = now;
+                updated++;
+
+                if (newStatus == BatchExpiryStatuses.Expired && !wasExpired)
+                {
+                    expired++;
+                    store.AddOutboxMessage(BuildBatchExpiredMessage(batch, now));
+                }
+            }
+
+            run.Status = ExpirySweepStatuses.Completed;
+            run.BatchesScanned = candidates.Count;
+            run.StatusesUpdated = updated;
+            run.BatchesExpired = expired;
+            run.CompletedAt = timeProvider.GetUtcNow();
+            await store.SaveChangesAsync(cancellationToken);
+            return new ExpirySweepResult(candidates.Count, updated, expired);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            run.Status = ExpirySweepStatuses.Failed;
+            run.Error = exception.Message.Length <= 2_000 ? exception.Message : exception.Message[..2_000];
+            run.CompletedAt = timeProvider.GetUtcNow();
+            await store.SaveChangesAsync(cancellationToken);
+            throw;
+        }
     }
 
     private static OutboxMessage BuildBatchExpiredMessage(Batch batch, DateTimeOffset now)
@@ -56,7 +81,9 @@ public sealed class InventoryExpirySweepService(IBatchExpiryStore store, TimePro
             batch.ExpirationDate, batch.Quantity, now);
         return new OutboxMessage
         {
-            Id = Guid.NewGuid(),
+            // A batch can cross the expiration boundary only once. Reusing the aggregate ID as the
+            // message ID gives the outbox a database-enforced idempotency key across job replicas.
+            Id = batch.Id,
             EventType = InventoryOutboxEventTypes.BatchExpired,
             AggregateType = OutboxAggregateTypes.Batch,
             AggregateId = batch.Id,

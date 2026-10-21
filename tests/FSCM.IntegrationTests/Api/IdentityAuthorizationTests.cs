@@ -43,7 +43,7 @@ public sealed class IdentityAuthorizationTests : IClassFixture<IdentityAuthoriza
         var response = await client.GetAsync("/api/v1/users?page=1&pageSize=20");
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
-        Assert.Equal(3, json.RootElement.GetProperty("totalCount").GetInt32());
+        Assert.Equal(4, json.RootElement.GetProperty("totalCount").GetInt32());
     }
 
     [Fact]
@@ -60,8 +60,28 @@ public sealed class IdentityAuthorizationTests : IClassFixture<IdentityAuthoriza
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
         Assert.False(json.RootElement.TryGetProperty("errors", out _));
-        Assert.Equal(3, json.RootElement.GetProperty("data").GetProperty("users")
+        Assert.Equal(4, json.RootElement.GetProperty("data").GetProperty("users")
             .GetProperty("totalCount").GetInt32());
+    }
+
+    [Fact]
+    public async Task Internal_transfer_public_contracts_are_disabled_for_the_registered_mvp()
+    {
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization = Bearer(factory.CreateToken(factory.Admin));
+
+        Assert.Equal(HttpStatusCode.NotFound,
+            (await client.GetAsync("/api/v1/internal-transfers")).StatusCode);
+
+        using var content = JsonContent.Create(new
+        {
+            query = "query { internalTransfers(first: 20) { totalCount } }"
+        });
+        var response = await client.PostAsync("/graphql", content);
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.True(json.RootElement.TryGetProperty("errors", out var errors));
+        Assert.NotEmpty(errors.EnumerateArray());
     }
 
     private static AuthenticationHeaderValue Bearer(string token) => new("Bearer", token);
@@ -77,11 +97,13 @@ public sealed class IdentityAuthorizationTests : IClassFixture<IdentityAuthoriza
         {
             Admin = AddUser("admin@test.local", SystemRoles.Admin, true);
             Sales = AddUser("sales@test.local", SystemRoles.Sales, true);
+            WarehouseKeeper = AddUser("warehouse.keeper@test.local", SystemRoles.WarehouseKeeper, true);
             InactiveAdmin = AddUser("inactive.admin@test.local", SystemRoles.Admin, false);
         }
 
         public UserAccount Admin { get; }
         public UserAccount Sales { get; }
+        public UserAccount WarehouseKeeper { get; }
         public UserAccount InactiveAdmin { get; }
 
         public string CreateToken(UserAccount user)
@@ -115,6 +137,7 @@ public sealed class IdentityAuthorizationTests : IClassFixture<IdentityAuthoriza
             builder.UseSetting("Jwt:AccessTokenExpiryMinutes", "10");
             builder.UseSetting("Jwt:RefreshTokenExpiryDays", "1");
             builder.UseSetting("BackgroundJobs:DateTracker:Enabled", "false");
+            builder.UseSetting("BackgroundJobs:InventoryOutbox:Enabled", "false");
             builder.ConfigureTestServices(services =>
             {
                 services.RemoveAll<IIdentityStore>();

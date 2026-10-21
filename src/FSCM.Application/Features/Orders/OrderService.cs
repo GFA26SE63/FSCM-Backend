@@ -71,14 +71,6 @@ public sealed class OrderService(
                 {
                     Persist(plan);
                     await store.SaveChangesAsync(transactionCancellationToken);
-                    foreach (var allocation in plan.Allocations.OrderBy(item => item.AllocationSequence))
-                    {
-                        await inventoryLifecycleService.HoldAsync(
-                            allocation.Id,
-                            salesUserId,
-                            plan.InventoryVersions[allocation.BatchId],
-                            transactionCancellationToken);
-                    }
                 }, cancellationToken);
 
                 store.ClearTracking();
@@ -451,7 +443,7 @@ public sealed class OrderService(
                     PromotionId = price.PromotionId,
                     DiscountSourceType = price.DiscountSourceType,
                     DiscountSourceCode = price.DiscountSourceCode,
-                    Status = "Allocated",
+                    Status = AllocationInventoryStatuses.Tentative,
                     CreatedAt = now
                 };
                 allocations.Add(allocation);

@@ -37,6 +37,24 @@ public sealed class QrLabelServiceTests
     }
 
     [Fact]
+    public async Task Generate_counts_picked_stock_but_excludes_already_issued_labels()
+    {
+        var fixture = new Fixture();
+        var picked = fixture.CreateLabel("TEM-000204", 80m);
+        picked.Status = QrLabelStatuses.Picked;
+        var delivered = fixture.CreateLabel("TEM-000205", 100m);
+        delivered.Status = QrLabelStatuses.Delivered;
+        fixture.Store.Labels.AddRange([picked, delivered]);
+
+        var result = await fixture.Service.GenerateAsync(
+            new(fixture.SourceBatch.Id, 20m, null), "sinh-tem-ton-moi", fixture.UserId,
+            SystemRoles.WarehouseKeeper, default);
+
+        Assert.Equal(20m, result.Quantity);
+        Assert.Equal(200m, fixture.Store.Labels.Sum(item => item.Quantity));
+    }
+
+    [Fact]
     public async Task Split_reduces_parent_and_links_child_to_root()
     {
         var fixture = new Fixture();
@@ -54,58 +72,55 @@ public sealed class QrLabelServiceTests
     }
 
     [Fact]
-    public async Task Duplicate_issue_scan_returns_same_state_without_second_event()
+    public async Task Duplicate_inspection_scan_returns_same_state_without_second_event()
     {
         var fixture = new Fixture();
         var label = fixture.CreateLabel("TEM-000204", 80m);
         fixture.Store.Labels.Add(label);
-        var request = new ScanQrLabelData("Issue", fixture.SourceWarehouse.Id, null, "DC-0001", "Xuất kho", 1);
+        var request = new ScanQrLabelData("Inspect", fixture.SourceWarehouse.Id, null, null, "Kiểm tra tem", 1);
 
         var first = await fixture.Service.ScanAsync(label.QrCode, request, "quet-xuat-01",
             fixture.UserId, SystemRoles.WarehouseKeeper, default);
         var repeated = await fixture.Service.ScanAsync(label.QrCode, request, "quet-xuat-01",
             fixture.UserId, SystemRoles.WarehouseKeeper, default);
 
-        Assert.Equal(QrLabelStatuses.InTransit, first.Status);
+        Assert.Equal(QrLabelStatuses.Available, first.Status);
         Assert.Equal(first.Version, repeated.Version);
         Assert.Single(fixture.Store.Events);
     }
 
     [Fact]
-    public async Task Receive_preserves_code_and_rebinds_label_to_destination_batch()
+    public async Task Generic_issue_scan_is_rejected_without_changing_label()
     {
         var fixture = new Fixture();
         var label = fixture.CreateLabel("TEM-000204", 80m);
-        label.Status = QrLabelStatuses.InTransit;
         fixture.Store.Labels.Add(label);
-        fixture.Store.Events.Add(fixture.CreateEvent(label, QrLabelEventTypes.Issued, "quet-xuat-01", "DC-0001"));
-
-        var result = await fixture.Service.ScanAsync(label.QrCode,
-            new("Receive", fixture.DestinationWarehouse.Id, fixture.DestinationBatch.Id,
-                "DC-0001", "Nhận kho đích", 1), "quet-nhan-01", fixture.UserId,
-            SystemRoles.WarehouseKeeper, default);
-
-        Assert.Equal("TEM-000204", result.QrCode);
-        Assert.Equal(fixture.DestinationBatch.Id, result.BatchId);
-        Assert.Equal(fixture.DestinationWarehouse.Id, result.WarehouseId);
-        Assert.Equal(QrLabelStatuses.Available, result.Status);
-    }
-
-    [Fact]
-    public async Task Receive_rejects_reference_that_does_not_match_latest_issue()
-    {
-        var fixture = new Fixture();
-        var label = fixture.CreateLabel("TEM-000204", 80m);
-        label.Status = QrLabelStatuses.InTransit;
-        fixture.Store.Labels.Add(label);
-        fixture.Store.Events.Add(fixture.CreateEvent(label, QrLabelEventTypes.Issued, "quet-xuat-01", "DC-0001"));
 
         var exception = await Assert.ThrowsAsync<QrLabelOperationException>(() => fixture.Service.ScanAsync(
-            label.QrCode, new("Receive", fixture.DestinationWarehouse.Id, fixture.DestinationBatch.Id,
-                "DC-KHAC", null, 1), "quet-nhan-sai", fixture.UserId,
+            label.QrCode, new("Issue", fixture.SourceWarehouse.Id, null,
+                "DC-0001", "Xuất kho", 1), "quet-xuat-01", fixture.UserId,
             SystemRoles.WarehouseKeeper, default));
 
         Assert.Equal("conflict", exception.Code);
+        Assert.Equal(QrLabelStatuses.Available, label.Status);
+        Assert.Empty(fixture.Store.Events);
+    }
+
+    [Fact]
+    public async Task Generic_receive_scan_is_rejected_without_rebinding_label()
+    {
+        var fixture = new Fixture();
+        var label = fixture.CreateLabel("TEM-000204", 80m);
+        fixture.Store.Labels.Add(label);
+
+        var exception = await Assert.ThrowsAsync<QrLabelOperationException>(() => fixture.Service.ScanAsync(
+            label.QrCode, new("Receive", fixture.DestinationWarehouse.Id, fixture.DestinationBatch.Id,
+                "DC-0001", null, 1), "quet-nhan", fixture.UserId,
+            SystemRoles.WarehouseKeeper, default));
+
+        Assert.Equal("conflict", exception.Code);
+        Assert.Equal(fixture.SourceBatch.Id, label.BatchId);
+        Assert.Equal(fixture.SourceWarehouse.Id, label.CurrentWarehouseId);
     }
 
     private sealed class Fixture
@@ -202,7 +217,9 @@ public sealed class QrLabelServiceTests
             Task.FromResult(Events.Where(item => item.BatchQrLabelId == labelId).OrderByDescending(item => item.OccurredAt).FirstOrDefault());
         public Task<Batch?> FindBatchAsync(Guid batchId, CancellationToken cancellationToken) => Task.FromResult(_batches.SingleOrDefault(item => item.Id == batchId));
         public Task<InventoryBalance?> FindBalanceAsync(Guid batchId, CancellationToken cancellationToken) => Task.FromResult<InventoryBalance?>(new() { BatchId = batchId, PhysicalQuantity = 100m });
-        public Task<decimal> SumActiveQuantityAsync(Guid batchId, CancellationToken cancellationToken) => Task.FromResult(Labels.Where(item => item.BatchId == batchId && item.Status != QrLabelStatuses.Invalidated).Sum(item => item.Quantity));
+        public Task<decimal> SumActiveQuantityAsync(Guid batchId, CancellationToken cancellationToken) =>
+            Task.FromResult(Labels.Where(item => item.BatchId == batchId &&
+                item.Status is QrLabelStatuses.Available or QrLabelStatuses.Picked).Sum(item => item.Quantity));
         public Task<string> NextQrCodeAsync(CancellationToken cancellationToken) => Task.FromResult($"TEM-{_nextCode++:000000}");
         public void AddLabel(BatchQrLabel label) => Labels.Add(label);
         public void AddEvent(QrLabelEvent labelEvent) => Events.Add(labelEvent);

@@ -26,11 +26,14 @@ public interface IInventoryStore
     Task<IReadOnlyCollection<BatchInventoryView>> ListInventoryAsync(Guid actorUserId, string actorRole, Guid? warehouseId, Guid? productId, CancellationToken cancellationToken);
     Task<BatchInventoryView?> FindBatchInventoryAsync(Guid batchId, CancellationToken cancellationToken);
     Task<IReadOnlyCollection<InventoryHistoryView>> ListHistoryAsync(Guid actorUserId, string actorRole, Guid? warehouseId, Guid? batchId, CancellationToken cancellationToken);
+    Task<ExpirySweepRun?> FindLatestExpirySweepRunAsync(CancellationToken cancellationToken);
+    Task<int> CountOutboxMessagesAsync(string eventType, string status, CancellationToken cancellationToken);
     Task<string> NextReceiptCodeAsync(DateOnly businessDate, CancellationToken cancellationToken);
     void AddReceipt(GoodsReceipt receipt);
     void AddReceiptLine(GoodsReceiptLine line);
     void AddBatch(Batch batch);
     void AddBalance(InventoryBalance balance);
     void AddTransaction(InventoryTransaction transaction);
+    void ClearTracking();
     Task SaveChangesAsync(CancellationToken cancellationToken);
 }

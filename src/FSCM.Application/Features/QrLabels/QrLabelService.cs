@@ -94,7 +94,8 @@ public sealed class QrLabelService(IQrLabelStore store, IQrCodeRenderer qrCodeRe
         GenerateQrLabelData data, string operationKey, Guid userId, string role, CancellationToken cancellationToken)
     {
         ValidateOperationKey(operationKey);
-        if (data.Quantity <= 0) throw QrLabelOperationException.Validation("Label quantity must be greater than zero.");
+        if (data.Quantity <= 0 || decimal.Truncate(data.Quantity) != data.Quantity)
+            throw QrLabelOperationException.Validation("Label quantity must be a positive whole number of cartons.");
         if (data.BlobUrl?.Length > 2000) throw QrLabelOperationException.Validation("Label blob URL is too long.");
         var existing = await FindIdempotentAsync(operationKey, QrLabelEventTypes.Generated, cancellationToken);
         if (existing is not null)
@@ -156,7 +157,8 @@ public sealed class QrLabelService(IQrLabelStore store, IQrCodeRenderer qrCodeRe
             await EnsureWarehouseAccessAsync(userId, role, view.Label.CurrentWarehouseId, cancellationToken);
             return ToResult(view);
         }
-        if (data.Quantity <= 0) throw QrLabelOperationException.Validation("Split quantity must be greater than zero.");
+        if (data.Quantity <= 0 || decimal.Truncate(data.Quantity) != data.Quantity)
+            throw QrLabelOperationException.Validation("Split quantity must be a positive whole number of cartons.");
         var parent = await store.FindForUpdateAsync(NormalizeCode(qrCode), cancellationToken)
             ?? throw QrLabelOperationException.NotFound("QR label was not found.");
         await EnsureWarehouseAccessAsync(userId, role, parent.CurrentWarehouseId, cancellationToken);
@@ -220,43 +222,12 @@ public sealed class QrLabelService(IQrLabelStore store, IQrCodeRenderer qrCodeRe
         if (label.Version != data.ExpectedVersion)
             throw QrLabelOperationException.Conflict("QR label was changed by another operation. Refresh and retry.");
         if (label.Status == QrLabelStatuses.Invalidated)
-            throw QrLabelOperationException.Conflict("Invalidated labels cannot be scanned for movement.");
+            throw QrLabelOperationException.Conflict("Invalidated labels cannot be inspected.");
 
         var fromStatus = label.Status;
         var now = timeProvider.GetUtcNow();
-        switch (eventType)
-        {
-            case QrLabelEventTypes.Inspected:
-                if (data.WarehouseId != label.CurrentWarehouseId)
-                    throw QrLabelOperationException.Conflict("QR label is not currently located at this warehouse.");
-                break;
-            case QrLabelEventTypes.Issued:
-                RequireReference(data.ReferenceCode);
-                if (label.Status != QrLabelStatuses.Available || data.WarehouseId != label.CurrentWarehouseId)
-                    throw QrLabelOperationException.Conflict("Only an available label at its current warehouse can be issued.");
-                label.Status = QrLabelStatuses.InTransit;
-                break;
-            case QrLabelEventTypes.Received:
-                RequireReference(data.ReferenceCode);
-                if (label.Status != QrLabelStatuses.InTransit)
-                    throw QrLabelOperationException.Conflict("Only an in-transit label can be received.");
-                var latest = await store.FindLatestEventAsync(label.Id, cancellationToken);
-                if (latest?.EventType != QrLabelEventTypes.Issued ||
-                    !string.Equals(latest.ReferenceCode, data.ReferenceCode?.Trim(), StringComparison.OrdinalIgnoreCase))
-                    throw QrLabelOperationException.Conflict("Receipt reference must match the latest issue reference.");
-                if (!data.DestinationBatchId.HasValue)
-                    throw QrLabelOperationException.Validation("Destination batch is required when receiving a label.");
-                var sourceBatch = await store.FindBatchAsync(label.BatchId, cancellationToken)
-                    ?? throw QrLabelOperationException.Conflict("Source batch was not found.");
-                var destinationBatch = await store.FindBatchAsync(data.DestinationBatchId.Value, cancellationToken)
-                    ?? throw QrLabelOperationException.NotFound("Destination batch was not found.");
-                if (destinationBatch.WarehouseId != data.WarehouseId || destinationBatch.ProductId != sourceBatch.ProductId)
-                    throw QrLabelOperationException.Conflict("Destination batch must belong to the receiving warehouse and the same product.");
-                label.BatchId = destinationBatch.Id;
-                label.CurrentWarehouseId = data.WarehouseId;
-                label.Status = QrLabelStatuses.Available;
-                break;
-        }
+        if (data.WarehouseId != label.CurrentWarehouseId)
+            throw QrLabelOperationException.Conflict("QR label is not currently located at this warehouse.");
         label.Version++;
         label.UpdatedAt = now;
         store.AddEvent(CreateEvent(label, data.WarehouseId, userId, operationKey, eventType,
@@ -325,13 +296,13 @@ public sealed class QrLabelService(IQrLabelStore store, IQrCodeRenderer qrCodeRe
     private static string NormalizeAction(string action)
     {
         if (string.IsNullOrWhiteSpace(action))
-            throw QrLabelOperationException.Validation("Action must be Inspect, Issue, or Receive.");
+            throw QrLabelOperationException.Validation("Action must be Inspect.");
         return action.Trim().ToLowerInvariant() switch
         {
             "inspect" => QrLabelEventTypes.Inspected,
-            "issue" => QrLabelEventTypes.Issued,
-            "receive" => QrLabelEventTypes.Received,
-            _ => throw QrLabelOperationException.Validation("Action must be Inspect, Issue, or Receive.")
+            "issue" or "receive" => throw QrLabelOperationException.Conflict(
+                "Generic QR movement is disabled. Use the picking and shipment workflows."),
+            _ => throw QrLabelOperationException.Validation("Action must be Inspect.")
         };
     }
 
@@ -341,10 +312,5 @@ public sealed class QrLabelService(IQrLabelStore store, IQrCodeRenderer qrCodeRe
     {
         if (string.IsNullOrWhiteSpace(key) || key.Trim().Length > 100)
             throw QrLabelOperationException.Validation("Idempotency-Key is required and must not exceed 100 characters.");
-    }
-    private static void RequireReference(string? reference)
-    {
-        if (string.IsNullOrWhiteSpace(reference) || reference.Trim().Length > 100)
-            throw QrLabelOperationException.Validation("A reference code of at most 100 characters is required.");
     }
 }

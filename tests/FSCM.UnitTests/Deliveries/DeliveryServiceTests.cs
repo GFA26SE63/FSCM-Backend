@@ -1,9 +1,11 @@
 using FSCM.Application.Features.Deliveries;
+using FSCM.Application.Features.Inventory;
 using FSCM.Application.Features.Orders;
 using FSCM.Application.Features.Payments;
 using FSCM.Application.Features.QrLabels;
 using FSCM.Domain.Authorization;
 using FSCM.Domain.Entities;
+using InventoryAllocation = FSCM.Domain.Entities.Allocation;
 
 namespace FSCM.UnitTests.Deliveries;
 
@@ -21,6 +23,9 @@ public sealed class DeliveryServiceTests
         Assert.Equal(fixture.Driver.Code, result.DriverCode);
         Assert.Equal(fixture.Vehicle.PlateNumber, result.PlateNumber);
         Assert.All(fixture.Labels, item => Assert.Equal(QrLabelStatuses.InTransit, item.Label.Status));
+        Assert.Equal(1, fixture.Inventory.IssueCalls);
+        Assert.Equal(0, fixture.Balance.PhysicalQuantity);
+        Assert.Equal(0, fixture.Balance.ReservedQuantity);
         Assert.Contains(fixture.Store.History, item => item.ToStatus == OrderStatuses.Delivering);
     }
 
@@ -163,8 +168,11 @@ public sealed class DeliveryServiceTests
         public SalesOrder Order { get; }
         public Driver Driver { get; }
         public Vehicle Vehicle { get; }
+        public InventoryAllocation Allocation { get; }
+        public InventoryBalance Balance { get; }
         public List<DeliveryLabelView> Labels { get; }
         public FakeDeliveryStore Store { get; }
+        public FakeInventoryLifecycle Inventory { get; }
         public DeliveryService Service { get; }
 
         public Fixture()
@@ -205,9 +213,28 @@ public sealed class DeliveryServiceTests
                 Capacity = 20,
                 IsActive = true
             };
-            Labels = [CreateLabel("TEM-001010", 5), CreateLabel("TEM-001011", 5)];
+            var batchId = Guid.NewGuid();
+            Allocation = new InventoryAllocation
+            {
+                Id = Guid.NewGuid(),
+                BatchId = batchId,
+                WarehouseId = Warehouse.Id,
+                AllocatedQuantity = 10,
+                Status = AllocationInventoryStatuses.Reserved
+            };
+            Balance = new InventoryBalance
+            {
+                Id = Guid.NewGuid(),
+                BatchId = batchId,
+                PhysicalQuantity = 10,
+                ReservedQuantity = 10,
+                AvailableQuantity = 0,
+                Version = 0
+            };
+            Labels = [CreateLabel("TEM-001010", 5, batchId), CreateLabel("TEM-001011", 5, batchId)];
             Store = new FakeDeliveryStore(this);
-            Service = new DeliveryService(Store, new FakePaymentPlan(), new FixedTimeProvider(Now));
+            Inventory = new FakeInventoryLifecycle(this);
+            Service = new DeliveryService(Store, new FakePaymentPlan(), Inventory, new FixedTimeProvider(Now));
         }
 
         public Task<DeliveryResult> DispatchAsync(int expectedVersion = 3) =>
@@ -220,12 +247,12 @@ public sealed class DeliveryServiceTests
                 new(codes, expectedVersion ?? Order.Version, "Đã nhận đủ hàng"),
                 "receipt-test-001", RetailerUserId, SystemRoles.Retailer, default);
 
-        private DeliveryLabelView CreateLabel(string code, decimal quantity)
+        private DeliveryLabelView CreateLabel(string code, decimal quantity, Guid batchId)
         {
             var label = new BatchQrLabel
             {
                 Id = Guid.NewGuid(),
-                BatchId = Guid.NewGuid(),
+                BatchId = batchId,
                 CurrentWarehouseId = Warehouse.Id,
                 QrCode = code,
                 Quantity = quantity,
@@ -265,6 +292,12 @@ public sealed class DeliveryServiceTests
         public Task<IReadOnlyCollection<DeliveryLabelView>> ListOrderLabelsAsync(Guid orderId, bool forUpdate,
             CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyCollection<DeliveryLabelView>>(fixture.Labels);
+
+        public Task<IReadOnlyCollection<DeliveryInventoryIssue>> ListOrderInventoryIssuesAsync(
+            Guid orderId, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyCollection<DeliveryInventoryIssue>>([
+                new(fixture.Allocation.Id, fixture.Allocation.BatchId, fixture.Balance.Version)
+            ]);
 
         public Task<DeliveryView?> FindByOrderAsync(Guid orderId, bool forUpdate,
             CancellationToken cancellationToken) => Task.FromResult(
@@ -323,5 +356,30 @@ public sealed class DeliveryServiceTests
     {
         public Task CreateForDeliveredOrderAsync(SalesOrder order, Guid receiptActorUserId,
             DateTimeOffset deliveredAt, CancellationToken cancellationToken) => Task.CompletedTask;
+    }
+
+    private sealed class FakeInventoryLifecycle(Fixture fixture) : IInventoryLifecycleService
+    {
+        public int IssueCalls { get; private set; }
+
+        public Task<InventoryLifecycleResult> ReserveAsync(Guid allocationId, Guid actorUserId,
+            int expectedVersion, CancellationToken cancellationToken) => throw new NotSupportedException();
+        public Task<InventoryLifecycleResult> ReleaseAsync(Guid allocationId, Guid actorUserId,
+            int expectedVersion, CancellationToken cancellationToken) => throw new NotSupportedException();
+        public Task<InventoryLifecycleResult> IssueAsync(Guid allocationId, Guid actorUserId,
+            int expectedVersion, CancellationToken cancellationToken)
+        {
+            IssueCalls++;
+            fixture.Balance.PhysicalQuantity -= fixture.Allocation.AllocatedQuantity;
+            fixture.Balance.ReservedQuantity -= fixture.Allocation.AllocatedQuantity;
+            fixture.Balance.AvailableQuantity = fixture.Balance.PhysicalQuantity - fixture.Balance.ReservedQuantity;
+            fixture.Balance.Version++;
+            fixture.Allocation.Status = AllocationInventoryStatuses.Issued;
+            return Task.FromResult(new InventoryLifecycleResult(
+                fixture.Allocation.Id, fixture.Allocation.BatchId, fixture.Warehouse.Id,
+                fixture.Allocation.AllocatedQuantity, fixture.Allocation.Status,
+                fixture.Balance.PhysicalQuantity, fixture.Balance.ReservedQuantity,
+                fixture.Balance.AvailableQuantity, fixture.Balance.Version));
+        }
     }
 }

@@ -66,7 +66,7 @@ public sealed class PickingServiceTests
     }
 
     [Fact]
-    public async Task Full_label_scan_completes_list_issues_inventory_and_marks_order_issued()
+    public async Task Full_label_scan_completes_list_without_issuing_inventory()
     {
         var fixture = new Fixture(labelQuantity: 10);
 
@@ -74,9 +74,8 @@ public sealed class PickingServiceTests
 
         Assert.Equal(PickingListStatuses.Completed, result.Status);
         Assert.Equal(OrderStatuses.Issued, fixture.Order.Status);
-        Assert.Equal(AllocationInventoryStatuses.Issued, fixture.Allocation.Status);
+        Assert.Equal(AllocationInventoryStatuses.Reserved, fixture.Allocation.Status);
         Assert.Equal(QrLabelStatuses.Picked, fixture.Label.Status);
-        Assert.Equal(1, fixture.Inventory.IssueCalls);
         Assert.Contains(fixture.Store.History, item => item.ToStatus == OrderStatuses.Picking);
         Assert.Contains(fixture.Store.History, item => item.ToStatus == OrderStatuses.Issued);
     }
@@ -95,7 +94,6 @@ public sealed class PickingServiceTests
         Assert.Equal(fixture.Label.Id, child.ParentLabelId);
         Assert.Equal(fixture.Label.RootLabelId, child.RootLabelId);
         Assert.Equal(QrLabelStatuses.Picked, child.Status);
-        Assert.Equal(0, fixture.Inventory.IssueCalls);
     }
 
     [Fact]
@@ -107,7 +105,6 @@ public sealed class PickingServiceTests
         var repeated = await fixture.ScanAsync(quantity: null);
 
         Assert.Equal(PickingListStatuses.Completed, repeated.Status);
-        Assert.Equal(1, fixture.Inventory.IssueCalls);
         Assert.Single(fixture.Store.Events, item => item.EventType == QrLabelEventTypes.Picked);
     }
 
@@ -120,7 +117,6 @@ public sealed class PickingServiceTests
         var exception = await Assert.ThrowsAsync<PickingOperationException>(() => fixture.ScanAsync(null));
 
         Assert.Equal("conflict", exception.Code);
-        Assert.Equal(0, fixture.Inventory.IssueCalls);
     }
 
     [Fact]
@@ -138,7 +134,6 @@ public sealed class PickingServiceTests
                 default));
 
         Assert.Equal("conflict", exception.Code);
-        Assert.Equal(0, fixture.Inventory.IssueCalls);
     }
 
     [Fact]
@@ -165,7 +160,6 @@ public sealed class PickingServiceTests
         public PickingItem Item { get; }
         public BatchQrLabel Label { get; }
         public FakePickingStore Store { get; }
-        public FakeInventoryLifecycle Inventory { get; }
         public PickingService Service { get; }
         public bool HasWarehouseAccess { set => Store.HasWarehouseAccess = value; }
 
@@ -243,8 +237,7 @@ public sealed class PickingServiceTests
             };
             Label.RootLabelId = Label.Id;
             Store = new FakePickingStore(this);
-            Inventory = new FakeInventoryLifecycle(this);
-            Service = new PickingService(Store, Inventory, new FixedTimeProvider(Now));
+            Service = new PickingService(Store, new FixedTimeProvider(Now));
         }
 
         public Task<PickingListResult> ScanAsync(decimal? quantity) =>
@@ -326,29 +319,6 @@ public sealed class PickingServiceTests
             return new PickingView(
                 list, fixture.Order, fixture.Warehouse, itemViews, scans,
                 new Dictionary<Guid, int> { [fixture.Batch.Id] = 3 });
-        }
-    }
-
-    private sealed class FakeInventoryLifecycle(Fixture fixture) : IInventoryLifecycleService
-    {
-        public int IssueCalls { get; private set; }
-        public Task<InventoryLifecycleResult> HoldAsync(Guid allocationId, Guid actorUserId,
-            int expectedVersion, CancellationToken cancellationToken) => throw new NotSupportedException();
-        public Task<InventoryLifecycleResult> ReserveAsync(Guid allocationId, Guid actorUserId,
-            int expectedVersion, CancellationToken cancellationToken) => throw new NotSupportedException();
-        public Task<InventoryLifecycleResult> ReleaseAsync(Guid allocationId, Guid actorUserId,
-            int expectedVersion, CancellationToken cancellationToken) => throw new NotSupportedException();
-
-        public Task<InventoryLifecycleResult> IssueAsync(Guid allocationId, Guid actorUserId,
-            int expectedVersion, CancellationToken cancellationToken)
-        {
-            IssueCalls++;
-            fixture.Allocation.Status = AllocationInventoryStatuses.Issued;
-            fixture.Batch.Quantity -= fixture.Allocation.AllocatedQuantity;
-            return Task.FromResult(new InventoryLifecycleResult(
-                fixture.Allocation.Id, fixture.Batch.Id, fixture.Warehouse.Id,
-                fixture.Allocation.AllocatedQuantity, fixture.Allocation.Status,
-                fixture.Batch.Quantity, 0, 0, fixture.Batch.Quantity, expectedVersion + 1));
         }
     }
 
