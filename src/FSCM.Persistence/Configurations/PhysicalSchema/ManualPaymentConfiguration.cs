@@ -15,12 +15,16 @@ public sealed class ManualPaymentConfiguration : IEntityTypeConfiguration<Manual
         builder.Property(entity => entity.Method).HasMaxLength(30).IsRequired();
         builder.Property(entity => entity.Status).HasMaxLength(30).IsRequired();
         builder.Property(entity => entity.Amount).HasPrecision(18, 2).IsRequired();
+        builder.Property(entity => entity.OperationKey).HasMaxLength(80).IsRequired();
+        builder.Property(entity => entity.RequestHash).HasMaxLength(64).IsRequired();
         builder.Property(entity => entity.ConfirmedByUserId).HasColumnType("uuid").IsRequired(false);
         builder.Property(entity => entity.ConfirmedAt).HasColumnType("timestamp with time zone").IsRequired(false);
         builder.Property(entity => entity.Note).HasColumnType("text").IsRequired(false);
+        builder.Property(entity => entity.Version).IsRequired().IsConcurrencyToken();
         builder.Property(entity => entity.CreatedAt).HasColumnType("timestamp with time zone").IsRequired();
         builder.Property(entity => entity.UpdatedAt).HasColumnType("timestamp with time zone").IsRequired();
         builder.HasIndex(entity => entity.SalesOrderId);
+        builder.HasIndex(entity => entity.OperationKey).IsUnique();
         builder.HasIndex(entity => new { entity.SalesOrderId, entity.Status });
         builder.ToTable(table => table.HasCheckConstraint(
             "CK_MANUAL_PAYMENT_Amount", "\"Amount\" > 0"));

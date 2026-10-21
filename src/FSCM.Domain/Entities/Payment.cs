@@ -9,7 +9,10 @@ public sealed class Payment
     public string Method { get; set; } = string.Empty;
     public string Status { get; set; } = string.Empty;
     public decimal Amount { get; set; }
-    public DateOnly DeliveredDate { get; set; }
+    public decimal ConfirmedAmount { get; set; }
+    public DateTimeOffset FinalApprovedAt { get; set; }
+    public string FinalApprovalReference { get; set; } = string.Empty;
+    public DateOnly? DeliveredDate { get; set; }
     public DateOnly? DueDate { get; set; }
     public DateOnly? PaidDate { get; set; }
     public string? CollectionMethod { get; set; }
@@ -22,6 +25,7 @@ public sealed class Payment
     public string? PayOsLinkStatus { get; set; }
     public long? PayOsExpiredAt { get; set; }
     public string? PayOsReference { get; set; }
+    public string? PayOsWebhookHash { get; set; }
     public Guid? ConfirmedByUserId { get; set; }
     public DateTimeOffset? ConfirmedAt { get; set; }
     public string? Note { get; set; }

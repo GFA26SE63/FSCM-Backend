@@ -103,16 +103,23 @@ public sealed class OrderStore(AppDbContext dbContext) : IOrderStore
         string orderCode, bool forUpdate, CancellationToken cancellationToken) =>
         LoadAsync(dbContext.SalesOrderRecords.Where(item => item.OrderCode == orderCode), forUpdate, cancellationToken);
 
-    public async Task<IReadOnlyCollection<OrderView>> ListAsync(
+    public async Task<(IReadOnlyCollection<OrderView> Items, int TotalCount)> ListAsync(
         Guid actorUserId,
         string actorRole,
-        string? status,
-        Guid? retailerId,
+        OrderListQuery filter,
         CancellationToken cancellationToken)
     {
         var query = dbContext.SalesOrderRecords.AsNoTracking().AsQueryable();
-        if (!string.IsNullOrWhiteSpace(status)) query = query.Where(item => item.Status == status);
-        if (retailerId.HasValue) query = query.Where(item => item.RetailerId == retailerId);
+        if (!string.IsNullOrWhiteSpace(filter.Status)) query = query.Where(item => item.Status == filter.Status);
+        if (filter.RetailerId.HasValue) query = query.Where(item => item.RetailerId == filter.RetailerId);
+        if (!string.IsNullOrWhiteSpace(filter.Search))
+        {
+            var search = filter.Search.Trim().ToUpper();
+            query = query.Where(item => item.OrderCode.ToUpper().Contains(search) ||
+                item.RetailerCodeSnapshot.ToUpper().Contains(search) ||
+                item.RetailerNameSnapshot.ToUpper().Contains(search));
+        }
+        if (filter.CreatedByMe) query = query.Where(item => item.CreatedByUserId == actorUserId);
         query = actorRole switch
         {
             SystemRoles.Admin or SystemRoles.Operator => query,
@@ -132,7 +139,11 @@ public sealed class OrderStore(AppDbContext dbContext) : IOrderStore
                     retailer.UserAccountId == actorUserId)),
             _ => query.Where(_ => false)
         };
+        var totalCount = await query.CountAsync(cancellationToken);
         var ids = await query.OrderByDescending(item => item.ServerReceivedAt)
+            .ThenBy(item => item.OrderCode)
+            .Skip((filter.Page - 1) * filter.PageSize)
+            .Take(filter.PageSize)
             .Select(item => item.Id).ToArrayAsync(cancellationToken);
         var results = new List<OrderView>(ids.Length);
         foreach (var id in ids)
@@ -141,7 +152,7 @@ public sealed class OrderStore(AppDbContext dbContext) : IOrderStore
             if (view is not null) results.Add(view);
         }
 
-        return results;
+        return (results, totalCount);
     }
 
     public Task<bool> CanViewAsync(
@@ -167,6 +178,7 @@ public sealed class OrderStore(AppDbContext dbContext) : IOrderStore
     public void AddAllocation(Allocation allocation) => dbContext.AllocationRecords.Add(allocation);
     public void AddPromotion(OrderPromotion promotion) => dbContext.OrderPromotionRecords.Add(promotion);
     public void AddHistory(OrderStatusHistory history) => dbContext.OrderStatusHistoryRecords.Add(history);
+    public void AddAuditLog(AuditLog auditLog) => dbContext.AuditLogRecords.Add(auditLog);
 
     public async Task SaveChangesAsync(CancellationToken cancellationToken)
     {
@@ -238,9 +250,13 @@ public sealed class OrderStore(AppDbContext dbContext) : IOrderStore
             .Where(item => item.SalesOrderId == order.Id)
             .OrderBy(item => item.ChangedAt)
             .ToArrayAsync(cancellationToken);
+        var deliveries = await dbContext.DeliveryRecords.AsNoTracking()
+            .Where(item => item.SalesOrderId == order.Id)
+            .OrderBy(item => item.CreatedAt)
+            .ToArrayAsync(cancellationToken);
         var lineViews = lines.Select(line => new OrderLineView(
             line, allocations.Where(item => item.SalesOrderLineId == line.Id).ToArray())).ToArray();
-        return new OrderView(order, lineViews, history, batchCodes, warehouseCodes, inventoryVersions);
+        return new OrderView(order, lineViews, history, deliveries, batchCodes, warehouseCodes, inventoryVersions);
     }
 
 }

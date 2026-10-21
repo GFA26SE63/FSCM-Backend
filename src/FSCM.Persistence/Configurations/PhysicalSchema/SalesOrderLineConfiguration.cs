@@ -24,6 +24,7 @@ public sealed class SalesOrderLineConfiguration : IEntityTypeConfiguration<Sales
         builder.Property(entity => entity.DiscountSourceType).HasMaxLength(30).IsRequired(false);
         builder.Property(entity => entity.DiscountSourceCode).HasMaxLength(40).IsRequired(false);
         builder.Property(entity => entity.NetAmount).HasPrecision(18, 2).IsRequired();
+        builder.Property(entity => entity.FinalPricePendingAllocation).IsRequired();
         builder.Property(entity => entity.EstimatedArrivalAt).HasColumnType("timestamp with time zone").IsRequired(false);
         builder.Property(entity => entity.CreatedAt).HasColumnType("timestamp with time zone").IsRequired();
         builder.HasOne<SalesOrder>()

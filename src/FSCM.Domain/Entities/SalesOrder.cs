@@ -24,6 +24,7 @@ public sealed class SalesOrder
     public decimal SubtotalAmount { get; set; }
     public decimal DiscountAmount { get; set; }
     public decimal FinalAmount { get; set; }
+    public bool FinalPricePendingAllocation { get; set; }
     public decimal? OfflineEstimatedAmount { get; set; }
     public bool HasOfflineDifference { get; set; }
     public DateTimeOffset ServerReceivedAt { get; set; }

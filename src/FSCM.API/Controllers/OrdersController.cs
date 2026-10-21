@@ -16,11 +16,17 @@ public sealed class OrdersController(OrderService service, DeliveryService deliv
 {
     [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator},{SystemRoles.SalesManager},{SystemRoles.Sales},{SystemRoles.WarehouseKeeper},{SystemRoles.Retailer}")]
     [HttpGet]
-    public Task<IReadOnlyCollection<OrderSummaryResult>> List(
+    public Task<PagedOrderResult> List(
         [FromQuery] string? status,
         [FromQuery] Guid? retailerId,
-        CancellationToken cancellationToken) =>
-        service.ListAsync(GetActorUserId(), GetActorRole(), status, retailerId, cancellationToken);
+        [FromQuery] bool createdByMe = false,
+        [FromQuery] string? search = null,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 20,
+        CancellationToken cancellationToken = default,
+        [FromQuery] int? size = null) =>
+        service.ListAsync(GetActorUserId(), GetActorRole(),
+            new(status, retailerId, createdByMe, search, page, size ?? pageSize), cancellationToken);
 
     [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator},{SystemRoles.SalesManager},{SystemRoles.Sales},{SystemRoles.WarehouseKeeper},{SystemRoles.Retailer}")]
     [HttpGet("{id:guid}")]
@@ -31,6 +37,11 @@ public sealed class OrdersController(OrderService service, DeliveryService deliv
     [HttpGet("{id:guid}/allocation-trace")]
     public Task<OrderTraceResult> Trace(Guid id, CancellationToken cancellationToken) =>
         service.GetTraceAsync(id, GetActorUserId(), GetActorRole(), cancellationToken);
+
+    [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator},{SystemRoles.SalesManager},{SystemRoles.Sales},{SystemRoles.WarehouseKeeper},{SystemRoles.Retailer}")]
+    [HttpGet("{id:guid}/timeline")]
+    public Task<OrderTimelineResult> Timeline(Guid id, CancellationToken cancellationToken) =>
+        service.GetTimelineAsync(id, GetActorUserId(), GetActorRole(), cancellationToken);
 
     [Authorize(Roles = SystemRoles.Sales)]
     [HttpPost]

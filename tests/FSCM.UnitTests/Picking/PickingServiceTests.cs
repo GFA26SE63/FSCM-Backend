@@ -40,6 +40,7 @@ public sealed class PickingServiceTests
             fixture.Order,
             [new OrderLineView(fixture.Line, [fixture.Allocation, secondAllocation])],
             [],
+            [],
             new Dictionary<Guid, string>
             {
                 [fixture.Batch.Id] = fixture.Batch.BatchCode,

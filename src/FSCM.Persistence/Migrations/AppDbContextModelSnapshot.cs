@@ -1060,6 +1060,16 @@ namespace FSCM.Persistence.Migrations
                     b.Property<string>("Note")
                         .HasColumnType("text");
 
+                    b.Property<string>("OperationKey")
+                        .IsRequired()
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)");
+
+                    b.Property<string>("RequestHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
                     b.Property<Guid>("SalesOrderId")
                         .HasColumnType("uuid");
 
@@ -1071,9 +1081,16 @@ namespace FSCM.Persistence.Migrations
                     b.Property<DateTimeOffset>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<int>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("integer");
+
                     b.HasKey("Id");
 
                     b.HasIndex("ConfirmedByUserId");
+
+                    b.HasIndex("OperationKey")
+                        .IsUnique();
 
                     b.HasIndex("SalesOrderId");
 
@@ -1400,6 +1417,10 @@ namespace FSCM.Persistence.Migrations
                         .HasMaxLength(30)
                         .HasColumnType("character varying(30)");
 
+                    b.Property<decimal>("ConfirmedAmount")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
                     b.Property<DateTimeOffset?>("ConfirmedAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -1409,11 +1430,19 @@ namespace FSCM.Persistence.Migrations
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
-                    b.Property<DateOnly>("DeliveredDate")
+                    b.Property<DateOnly?>("DeliveredDate")
                         .HasColumnType("date");
 
                     b.Property<DateOnly?>("DueDate")
                         .HasColumnType("date");
+
+                    b.Property<string>("FinalApprovalReference")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<DateTimeOffset>("FinalApprovedAt")
+                        .HasColumnType("timestamp with time zone");
 
                     b.Property<string>("Method")
                         .IsRequired()
@@ -1454,6 +1483,10 @@ namespace FSCM.Persistence.Migrations
                         .HasMaxLength(100)
                         .HasColumnType("character varying(100)");
 
+                    b.Property<string>("PayOsWebhookHash")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
                     b.Property<string>("RequestHash")
                         .HasMaxLength(64)
                         .HasColumnType("character varying(64)");
@@ -1493,12 +1526,21 @@ namespace FSCM.Persistence.Migrations
                         .IsUnique()
                         .HasFilter("\"PayOsReference\" IS NOT NULL");
 
+                    b.HasIndex("PayOsWebhookHash")
+                        .IsUnique()
+                        .HasFilter("\"PayOsWebhookHash\" IS NOT NULL");
+
                     b.HasIndex("SalesOrderId")
                         .IsUnique();
 
                     b.HasIndex("Status", "DueDate");
 
-                    b.ToTable("PAYMENT", (string)null);
+                    b.ToTable("PAYMENT", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_PAYMENT_Amount", "\"Amount\" > 0");
+
+                            t.HasCheckConstraint("CK_PAYMENT_ConfirmedAmount", "\"ConfirmedAmount\" >= 0 AND \"ConfirmedAmount\" <= \"Amount\"");
+                        });
                 });
 
             modelBuilder.Entity("FSCM.Domain.Entities.PickingItem", b =>
@@ -2657,6 +2699,9 @@ namespace FSCM.Persistence.Migrations
                         .HasPrecision(18, 2)
                         .HasColumnType("numeric(18,2)");
 
+                    b.Property<bool>("FinalPricePendingAllocation")
+                        .HasColumnType("boolean");
+
                     b.Property<bool>("HasOfflineDifference")
                         .HasColumnType("boolean");
 
@@ -2823,6 +2868,9 @@ namespace FSCM.Persistence.Migrations
 
                     b.Property<DateTimeOffset?>("EstimatedArrivalAt")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<bool>("FinalPricePendingAllocation")
+                        .HasColumnType("boolean");
 
                     b.Property<decimal>("GrossAmount")
                         .HasPrecision(18, 2)

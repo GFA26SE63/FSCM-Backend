@@ -18,6 +18,7 @@ public sealed class SalesOrderLine
     public string? DiscountSourceType { get; set; }
     public string? DiscountSourceCode { get; set; }
     public decimal NetAmount { get; set; }
+    public bool FinalPricePendingAllocation { get; set; }
     public DateTimeOffset? EstimatedArrivalAt { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
 }

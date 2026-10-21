@@ -97,6 +97,24 @@ public sealed class PromotionServiceTests
             fixture.Store.Batch.Id, fixture.Store.Retailer.Id, Now, CancellationToken.None);
 
         Assert.Equal(PromotionTypes.BatchDiscount, result.AppliedPromotion!.PromotionType);
+        Assert.False(result.FinalPricePendingAllocation);
+    }
+
+    [Fact]
+    public async Task Indicative_quote_uses_only_ordinary_campaign_and_marks_final_price_pending()
+    {
+        var fixture = new Fixture();
+        fixture.Store.AddCampaign(8m, Now.AddDays(-1), Now.AddDays(5));
+        fixture.Store.AddDiscount(15m, Now.AddDays(-1), Now.AddDays(5));
+
+        var result = await fixture.Service.CalculateIndicativePriceAsync(fixture.Store.Product.Id, 10,
+            fixture.Store.Retailer.Id, Now, CancellationToken.None);
+
+        Assert.Null(result.BatchId);
+        Assert.True(result.FinalPricePendingAllocation);
+        Assert.Equal(8m, result.DiscountPercent);
+        Assert.Equal(PromotionTypes.Campaign, result.AppliedPromotion!.PromotionType);
+        Assert.Single(result.EligiblePromotions);
     }
 
     [Theory]

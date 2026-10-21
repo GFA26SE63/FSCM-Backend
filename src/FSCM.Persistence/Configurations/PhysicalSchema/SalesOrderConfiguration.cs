@@ -30,6 +30,7 @@ public sealed class SalesOrderConfiguration : IEntityTypeConfiguration<SalesOrde
         builder.Property(entity => entity.SubtotalAmount).HasPrecision(18, 2).IsRequired();
         builder.Property(entity => entity.DiscountAmount).HasPrecision(18, 2).IsRequired();
         builder.Property(entity => entity.FinalAmount).HasPrecision(18, 2).IsRequired();
+        builder.Property(entity => entity.FinalPricePendingAllocation).IsRequired();
         builder.Property(entity => entity.OfflineEstimatedAmount).HasPrecision(18, 2).IsRequired(false);
         builder.Property(entity => entity.HasOfflineDifference).IsRequired();
         builder.Property(entity => entity.ServerReceivedAt).HasColumnType("timestamp with time zone").IsRequired();
