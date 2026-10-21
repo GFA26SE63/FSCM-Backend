@@ -6,6 +6,13 @@ public sealed record PaymentView(Payment Payment, SalesOrder Order, Retailer Ret
 
 public interface IPaymentPlanService
 {
+    Task CreateForFinalApprovedOrderAsync(
+        SalesOrder order,
+        Guid approvalActorUserId,
+        DateTimeOffset approvedAt,
+        string finalApprovalReference,
+        CancellationToken cancellationToken);
+
     Task CreateForDeliveredOrderAsync(
         SalesOrder order,
         Guid receiptActorUserId,

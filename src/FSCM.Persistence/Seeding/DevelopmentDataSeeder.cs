@@ -1,6 +1,7 @@
 using FSCM.Application.Features.Identity;
 using FSCM.Application.Features.Inventory;
 using FSCM.Application.Features.Orders;
+using FSCM.Application.Features.Payments;
 using FSCM.Application.Features.Retailers;
 using FSCM.Application.Features.QrLabels;
 using FSCM.Application.Features.Promotions;
@@ -20,6 +21,7 @@ public sealed class DevelopmentDataSeeder(
     IConfiguration configuration,
     TimeProvider timeProvider,
     OrderService orderService,
+    IPaymentPlanService paymentPlanService,
     ILogger<DevelopmentDataSeeder> logger)
 {
     private const string DemoWarehouseCode = "WH-HCM-01";
@@ -83,14 +85,40 @@ public sealed class DevelopmentDataSeeder(
                 [new CreateOrderLineData(products["SKU001"].Id, 12)]),
             users[SystemRoles.Sales].Id,
             cancellationToken);
-        if (demoOrder.Status is OrderStatuses.PendingApproval or OrderStatuses.Approved)
+        var paymentSeedReference = "CHỜ-PHÂN-BỔ";
+        if (!demoOrder.FinalPricePendingAllocation)
         {
-            demoOrder = await orderService.ApproveAsync(
-                demoOrder.Id, demoOrder.Version, users[SystemRoles.Operator].Id, cancellationToken);
+            if (demoOrder.Status is OrderStatuses.PendingApproval or OrderStatuses.Approved)
+            {
+                demoOrder = await orderService.ApproveAsync(
+                    demoOrder.Id, demoOrder.Version, users[SystemRoles.Operator].Id, cancellationToken);
+            }
+            paymentSeedReference = $"SEED-S1E-{demoOrder.OrderCode}";
+            var existingPayment = await dbContext.PaymentRecords.SingleOrDefaultAsync(
+                item => item.SalesOrderId == demoOrder.Id, cancellationToken);
+            if (existingPayment is null)
+            {
+                await paymentPlanService.CreateForFinalApprovedOrderAsync(
+                    await dbContext.SalesOrderRecords.SingleAsync(
+                        item => item.Id == demoOrder.Id, cancellationToken),
+                    users[SystemRoles.Admin].Id,
+                    now,
+                    paymentSeedReference,
+                    cancellationToken);
+            }
+            else
+            {
+                if (existingPayment.Method != demoOrder.PaymentMethod ||
+                    existingPayment.Amount != demoOrder.FinalAmount)
+                    throw new InvalidOperationException(
+                        "Sổ thanh toán mẫu không khớp phương thức hoặc giá trị cuối của đơn hàng mẫu.");
+                paymentSeedReference = existingPayment.FinalApprovalReference;
+            }
         }
+        await dbContext.SaveChangesAsync(cancellationToken);
 
         logger.LogInformation(
-            "Development data seeded: {UserCount} users, {CategoryCount} categories, {ProductCount} products, {WarehouseCount} warehouses, {RegionCount} regions, {SalesGroupCount} sales groups, retailer {RetailerCode}, assisted order {OrderCode}.",
+            "Development data seeded: {UserCount} users, {CategoryCount} categories, {ProductCount} products, {WarehouseCount} warehouses, {RegionCount} regions, {SalesGroupCount} sales groups, retailer {RetailerCode}, assisted order {OrderCode}, payment state {PaymentReference}.",
             users.Count,
             categories.Count,
             products.Count,
@@ -98,7 +126,8 @@ public sealed class DevelopmentDataSeeder(
             regions.Count,
             salesGroups.Count,
             DemoRetailerCode,
-            demoOrder.OrderCode);
+            demoOrder.OrderCode,
+            paymentSeedReference);
     }
 
     private async Task SeedDeliveryMasterDataAsync(

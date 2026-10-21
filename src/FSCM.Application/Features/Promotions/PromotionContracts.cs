@@ -46,4 +46,11 @@ public sealed record PriceSnapshotResult(
     decimal DiscountPercent, decimal DiscountAmount, decimal NetUnitPrice,
     decimal NetAmount, AppliedPromotionSnapshot? AppliedPromotion,
     IReadOnlyCollection<AppliedPromotionSnapshot> EligiblePromotions,
-    DateTimeOffset PricedAt);
+    DateTimeOffset PricedAt,
+    bool FinalPricePendingAllocation)
+{
+    public decimal BaseUnitPrice => UnitPrice;
+    public decimal OrdinaryPromotionDiscountAmount => DiscountAmount;
+    public decimal IndicativeNetUnitPrice => NetUnitPrice;
+    public decimal IndicativeNetAmount => NetAmount;
+}

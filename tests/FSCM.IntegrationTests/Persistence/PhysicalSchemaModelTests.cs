@@ -91,7 +91,7 @@ public sealed class PhysicalSchemaModelTests
 
         Assert.Equal(ExpectedTables, tableNames);
         Assert.Equal(66, entityTypes.Length);
-        Assert.Equal(680, entityTypes.Sum(entityType => entityType.GetProperties().Count()));
+        Assert.Equal(686, entityTypes.Sum(entityType => entityType.GetProperties().Count()));
         Assert.Equal(145, entityTypes.Sum(entityType => entityType.GetForeignKeys().Count()));
         Assert.All(
             entityTypes.SelectMany(entityType => entityType.GetForeignKeys()),
@@ -136,7 +136,8 @@ public sealed class PhysicalSchemaModelTests
                  {
                      nameof(Payment.PayOsOrderCode),
                      nameof(Payment.PayOsPaymentLinkId),
-                     nameof(Payment.PayOsReference)
+                     nameof(Payment.PayOsReference),
+                     nameof(Payment.PayOsWebhookHash)
                  })
         {
             var index = payment.GetIndexes().Single(candidate => candidate.Properties.Count == 1 &&
@@ -144,6 +145,16 @@ public sealed class PhysicalSchemaModelTests
             Assert.True(index.IsUnique);
             Assert.Equal($"\"{propertyName}\" IS NOT NULL", index.GetFilter());
         }
+
+        Assert.False(payment.FindProperty(nameof(Payment.ConfirmedAmount))!.IsNullable);
+        Assert.False(payment.FindProperty(nameof(Payment.FinalApprovedAt))!.IsNullable);
+        Assert.False(payment.FindProperty(nameof(Payment.FinalApprovalReference))!.IsNullable);
+        Assert.True(payment.FindProperty(nameof(Payment.DeliveredDate))!.IsNullable);
+
+        var manualPayment = context.Model.FindEntityType(typeof(ManualPayment))!;
+        Assert.True(manualPayment.FindProperty(nameof(ManualPayment.Version))!.IsConcurrencyToken);
+        Assert.True(manualPayment.GetIndexes().Single(index => index.Properties.Count == 1 &&
+            index.Properties[0].Name == nameof(ManualPayment.OperationKey)).IsUnique);
     }
 
     [Fact]
@@ -343,6 +354,8 @@ public sealed class PhysicalSchemaModelTests
         Assert.True(order.FindProperty(nameof(SalesOrder.Version))!.IsConcurrencyToken);
         Assert.False(order.FindProperty(nameof(SalesOrder.RetailerCodeSnapshot))!.IsNullable);
         Assert.False(order.FindProperty(nameof(SalesOrder.RetailerNameSnapshot))!.IsNullable);
+        Assert.False(order.FindProperty(nameof(SalesOrder.FinalPricePendingAllocation))!.IsNullable);
+        Assert.False(line.FindProperty(nameof(SalesOrderLine.FinalPricePendingAllocation))!.IsNullable);
 
         var orderId = line.FindProperty(nameof(SalesOrderLine.SalesOrderId))!;
         var lineNumber = line.FindProperty(nameof(SalesOrderLine.LineNumber))!;

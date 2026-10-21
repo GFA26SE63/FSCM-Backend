@@ -12,6 +12,7 @@ namespace FSCM.Application.Features.Deliveries;
 public sealed class DeliveryService(
     IDeliveryStore store,
     IPaymentPlanService paymentPlanService,
+    IPaymentStore paymentStore,
     IInventoryLifecycleService inventoryLifecycleService,
     TimeProvider timeProvider)
 {
@@ -85,6 +86,19 @@ public sealed class DeliveryService(
             if (order.Order.Status != OrderStatuses.Issued)
                 throw DeliveryOperationException.Conflict("Only an issued order can be dispatched.");
             EnsureVersion(order.Order.Version, data.ExpectedOrderVersion, "Order");
+            if (order.Order.PaymentMethod == OrderPaymentMethods.Prepaid)
+            {
+                var payment = await paymentStore.FindByOrderAsync(
+                        orderId, true, transactionCancellationToken)
+                    ?? throw DeliveryOperationException.Conflict(
+                        "Prepaid order does not have a final-approved payment ledger.");
+                if (payment.Payment.Status != PaymentStatuses.Paid ||
+                    payment.Payment.ConfirmedAmount != payment.Payment.Amount)
+                {
+                    throw DeliveryOperationException.Conflict(
+                        "Prepaid order must be confirmed as fully paid before dispatch.");
+                }
+            }
             if (await store.FindByOrderAsync(orderId, true, transactionCancellationToken) is not null)
                 throw DeliveryOperationException.Conflict("Order already has a delivery.");
 
