@@ -90,7 +90,7 @@ public sealed class PhysicalSchemaModelTests
         Assert.Equal(ExpectedTables, tableNames);
         Assert.Equal(64, entityTypes.Length);
         Assert.Equal(671, entityTypes.Sum(entityType => entityType.GetProperties().Count()));
-        Assert.Equal(143, entityTypes.Sum(entityType => entityType.GetForeignKeys().Count()));
+        Assert.Equal(144, entityTypes.Sum(entityType => entityType.GetForeignKeys().Count()));
         Assert.All(
             entityTypes.SelectMany(entityType => entityType.GetForeignKeys()),
             foreignKey => Assert.Equal(DeleteBehavior.Restrict, foreignKey.DeleteBehavior));
@@ -264,6 +264,21 @@ public sealed class PhysicalSchemaModelTests
         Assert.Equal("date", receiptLine.FindProperty(nameof(GoodsReceiptLine.ExpirationDate))!.GetColumnType());
         Assert.True(batch.FindProperty(nameof(Batch.Version))!.IsConcurrencyToken);
         Assert.True(balance.FindProperty(nameof(InventoryBalance.Version))!.IsConcurrencyToken);
+        Assert.Null(balance.FindProperty("HeldQuantity"));
+        var transaction = context.Model.FindEntityType(typeof(InventoryTransaction))!;
+        Assert.Null(transaction.FindProperty("HeldQuantityDelta"));
+        Assert.Null(transaction.FindProperty("HeldQuantityAfter"));
+        Assert.False(transaction.FindProperty(nameof(InventoryTransaction.SourceType))!.IsNullable);
+        Assert.False(transaction.FindProperty(nameof(InventoryTransaction.SourceId))!.IsNullable);
+
+        var expiryRun = context.Model.FindEntityType(typeof(ExpirySweepRun))!;
+        Assert.Equal("date", expiryRun.FindProperty(nameof(ExpirySweepRun.BusinessDate))!.GetColumnType());
+
+        var notification = context.Model.FindEntityType(typeof(Notification))!;
+        var userId = notification.FindProperty(nameof(Notification.UserAccountId))!;
+        var outboxId = notification.FindProperty(nameof(Notification.OutboxMessageId))!;
+        Assert.True(notification.GetIndexes().Single(index =>
+            index.Properties.SequenceEqual([userId, outboxId])).IsUnique);
     }
 
     [Fact]

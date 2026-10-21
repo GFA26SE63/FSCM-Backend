@@ -90,6 +90,61 @@ Accept: application/json
 
 ###
 
+# Admin and Warehouse Keeper can receive stock. Reusing the same key and payload returns the same receipt.
+# @name goodsReceipt
+POST {{FSCM.API_HostAddress}}/api/v1/goods-receipts
+Authorization: Bearer {{login.response.body.$.accessToken}}
+Idempotency-Key: {{$guid}}
+Content-Type: application/json
+
+{
+  "warehouseId": "{{warehouses.response.body.$.[0].id}}",
+  "lines": [
+    {
+      "productId": "{{products.response.body.$.items[0].id}}",
+      "sourceLotCode": "LOT-S1D-DEMO",
+      "quantity": 10,
+      "expirationDate": "2027-12-31"
+    }
+  ]
+}
+
+###
+
+GET {{FSCM.API_HostAddress}}/api/v1/goods-receipts/{{goodsReceipt.response.body.$.id}}
+Authorization: Bearer {{login.response.body.$.accessToken}}
+Accept: application/json
+
+###
+
+GET {{FSCM.API_HostAddress}}/api/v1/inventory?warehouseId={{warehouses.response.body.$.[0].id}}
+Authorization: Bearer {{login.response.body.$.accessToken}}
+Accept: application/json
+
+###
+
+GET {{FSCM.API_HostAddress}}/api/v1/inventory/expiry/health
+Authorization: Bearer {{login.response.body.$.accessToken}}
+Accept: application/json
+
+###
+
+GET {{FSCM.API_HostAddress}}/api/v1/qr-labels/TEM-000208/print
+Authorization: Bearer {{login.response.body.$.accessToken}}
+Accept: text/html
+
+###
+
+POST {{FSCM.API_HostAddress}}/graphql
+Authorization: Bearer {{login.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "query": "{ goodsReceipt(id: \"{{goodsReceipt.response.body.$.id}}\") { receiptCode status warehouse { code } lines { sku batchCode quantity expirationDate } } inventory(warehouseId: \"{{warehouses.response.body.$.[0].id}}\", first: 20) { totalCount nodes { sku batchCode physicalQuantity reservedQuantity availableQuantity } } inventoryExpiryHealth { schedulerEnabled timeZone runAtLocalTime latestRun { status batchesScanned statusesUpdated batchesExpired } } }"
+}
+
+###
+
 POST {{FSCM.API_HostAddress}}/api/v1/map/distances/refresh
 Authorization: Bearer {{login.response.body.$.accessToken}}
 Content-Type: application/json
@@ -295,6 +350,23 @@ Accept: application/json
 GET {{FSCM.API_HostAddress}}/api/v1/qr-labels/TEM-000208
 Authorization: Bearer {{warehouseKeeperLogin.response.body.$.accessToken}}
 Accept: application/json
+
+###
+
+# Generic QR scans are inspection-only. Receipt, picking, transfer, and dispatch own stock movement.
+POST {{FSCM.API_HostAddress}}/api/v1/qr-labels/TEM-000208/scans
+Authorization: Bearer {{warehouseKeeperLogin.response.body.$.accessToken}}
+Idempotency-Key: {{$guid}}
+Content-Type: application/json
+
+{
+  "action": "Inspect",
+  "warehouseId": "{{pickingLabel.response.body.$.label.warehouseId}}",
+  "destinationBatchId": null,
+  "referenceCode": "S1D-DEMO",
+  "note": "Kiểm tra tem tại kho",
+  "expectedVersion": {{pickingLabel.response.body.$.label.version}}
+}
 
 ###
 

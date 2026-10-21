@@ -59,6 +59,7 @@ public static class DependencyInjection
         services.AddScoped<IIdentityStore, IdentityStore>();
         services.AddScoped<IInventoryStore, InventoryStore>();
         services.AddScoped<IInventoryLifecycleStore, InventoryStore>();
+        services.AddScoped<IInventoryOutboxStore, InventoryOutboxStore>();
         services.AddScoped<IInternalTransferStore, InternalTransferStore>();
         services.AddScoped<IManualPaymentStore, ManualPaymentStore>();
         services.AddScoped<IMapStore, MapStore>();

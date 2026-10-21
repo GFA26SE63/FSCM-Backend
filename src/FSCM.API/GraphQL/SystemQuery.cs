@@ -2,7 +2,6 @@ using System.Security.Claims;
 using FSCM.Application.Features.Catalog;
 using FSCM.Application.Features.Deliveries;
 using FSCM.Application.Features.Identity;
-using FSCM.Application.Features.InternalTransfers;
 using FSCM.Application.Features.Inventory;
 using FSCM.Application.Features.Maps;
 using FSCM.Application.Features.Orders;
@@ -14,9 +13,11 @@ using FSCM.Application.Features.Retailers;
 using FSCM.Application.Features.Territory;
 using FSCM.Application.Features.WarehouseConfiguration;
 using FSCM.Domain.Authorization;
+using FSCM.Infrastructure.BackgroundJobs;
 using HotChocolate.Authorization;
 using HotChocolate.Data;
 using HotChocolate.Types;
+using Microsoft.Extensions.Options;
 
 namespace FSCM.API.GraphQL;
 
@@ -238,6 +239,17 @@ public sealed class SystemQuery
         return await service.ListHistoryAsync(user.Id, user.Role, warehouseId, batchId, cancellationToken);
     }
 
+    [Authorize(Roles = [SystemRoles.Admin])]
+    public Task<InventoryExpiryHealthResult> InventoryExpiryHealth(
+        [Service] InventoryService service,
+        [Service] IOptions<DateTrackerOptions> dateTrackerOptions,
+        CancellationToken cancellationToken)
+    {
+        var options = dateTrackerOptions.Value;
+        return service.GetExpiryHealthAsync(
+            options.Enabled, options.TimeZone, options.RunAtLocalTime, cancellationToken);
+    }
+
     [Authorize(Roles = [SystemRoles.Admin, SystemRoles.Operator, SystemRoles.WarehouseKeeper])]
     [UsePaging(DefaultPageSize = 20, MaxPageSize = 100, IncludeTotalCount = true, RequirePagingBoundaries = true), UseFiltering, UseSorting]
     public async Task<IEnumerable<QrLabelResult>> QrLabels(Guid? warehouseId, Guid? batchId,
@@ -254,31 +266,6 @@ public sealed class SystemQuery
     {
         var user = CurrentUser.From(accessor);
         return service.GetAsync(code, user.Id, user.Role, cancellationToken);
-    }
-
-    [Authorize(Roles = [SystemRoles.Admin, SystemRoles.Operator])]
-    [UsePaging(DefaultPageSize = 20, MaxPageSize = 100, IncludeTotalCount = true, RequirePagingBoundaries = true), UseFiltering, UseSorting]
-    public async Task<IEnumerable<InternalTransferSuggestionResult>> InternalTransferSuggestions(
-        Guid? destinationWarehouseId, Guid? productId, [Service] InternalTransferService service,
-        CancellationToken cancellationToken) =>
-        await service.GetSuggestionsAsync(destinationWarehouseId, productId, cancellationToken);
-
-    [Authorize(Roles = [SystemRoles.Admin, SystemRoles.Operator, SystemRoles.WarehouseKeeper])]
-    [UsePaging(DefaultPageSize = 20, MaxPageSize = 100, IncludeTotalCount = true, RequirePagingBoundaries = true), UseFiltering, UseSorting]
-    public async Task<IEnumerable<InternalTransferResult>> InternalTransfers(Guid? warehouseId, string? status,
-        [Service] InternalTransferService service, [Service] IHttpContextAccessor accessor,
-        CancellationToken cancellationToken)
-    {
-        var user = CurrentUser.From(accessor);
-        return await service.ListAsync(user.Id, user.Role, warehouseId, status, cancellationToken);
-    }
-
-    [Authorize(Roles = [SystemRoles.Admin, SystemRoles.Operator, SystemRoles.WarehouseKeeper])]
-    public Task<InternalTransferResult> InternalTransfer(Guid id, [Service] InternalTransferService service,
-        [Service] IHttpContextAccessor accessor, CancellationToken cancellationToken)
-    {
-        var user = CurrentUser.From(accessor);
-        return service.GetAsync(id, user.Id, user.Role, cancellationToken);
     }
 
     [Authorize, UsePaging(DefaultPageSize = 20, MaxPageSize = 100, IncludeTotalCount = true, RequirePagingBoundaries = true), UseFiltering, UseSorting]

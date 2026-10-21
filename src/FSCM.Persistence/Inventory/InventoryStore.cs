@@ -81,11 +81,9 @@ public sealed class InventoryStore(AppDbContext dbContext) : IInventoryStore, II
         var balance = await dbContext.InventoryBalanceRecords
             .SingleOrDefaultAsync(item => item.BatchId == batch.Id, cancellationToken);
         if (balance is null) return null;
-        var hold = await dbContext.StockHoldRecords
-            .SingleOrDefaultAsync(item => item.AllocationId == allocationId, cancellationToken);
         var reservation = await dbContext.ReservationRecords
             .SingleOrDefaultAsync(item => item.AllocationId == allocationId, cancellationToken);
-        return new InventoryLifecycleView(allocation, batch, balance, hold, reservation);
+        return new InventoryLifecycleView(allocation, batch, balance, reservation);
     }
 
     public async Task<IReadOnlyCollection<BatchInventoryView>> ListInventoryAsync(
@@ -158,15 +156,26 @@ public sealed class InventoryStore(AppDbContext dbContext) : IInventoryStore, II
             select new BatchExpiryCandidate(batch, product.NearDateThresholdHours))
             .ToArrayAsync(cancellationToken);
 
+    public void AddSweepRun(ExpirySweepRun run) => dbContext.ExpirySweepRunRecords.Add(run);
+
     public void AddOutboxMessage(OutboxMessage message) => dbContext.OutboxMessageRecords.Add(message);
+
+    public Task<ExpirySweepRun?> FindLatestExpirySweepRunAsync(CancellationToken cancellationToken) =>
+        dbContext.ExpirySweepRunRecords.AsNoTracking()
+            .OrderByDescending(item => item.StartedAt)
+            .FirstOrDefaultAsync(cancellationToken);
+
+    public Task<int> CountOutboxMessagesAsync(string eventType, string status, CancellationToken cancellationToken) =>
+        dbContext.OutboxMessageRecords.AsNoTracking()
+            .CountAsync(item => item.EventType == eventType && item.Status == status, cancellationToken);
 
     public void AddReceipt(GoodsReceipt receipt) => dbContext.GoodsReceiptRecords.Add(receipt);
     public void AddReceiptLine(GoodsReceiptLine line) => dbContext.GoodsReceiptLineRecords.Add(line);
     public void AddBatch(Batch batch) => dbContext.BatchRecords.Add(batch);
     public void AddBalance(InventoryBalance balance) => dbContext.InventoryBalanceRecords.Add(balance);
     public void AddTransaction(InventoryTransaction transaction) => dbContext.InventoryTransactionRecords.Add(transaction);
-    public void AddHold(StockHold hold) => dbContext.StockHoldRecords.Add(hold);
     public void AddReservation(Reservation reservation) => dbContext.ReservationRecords.Add(reservation);
+    public void ClearTracking() => dbContext.ChangeTracker.Clear();
 
     public async Task SaveChangesAsync(CancellationToken cancellationToken)
     {

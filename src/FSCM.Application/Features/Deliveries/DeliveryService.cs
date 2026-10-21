@@ -3,6 +3,7 @@ using System.Text;
 using FSCM.Application.Features.Orders;
 using FSCM.Application.Features.Payments;
 using FSCM.Application.Features.QrLabels;
+using FSCM.Application.Features.Inventory;
 using FSCM.Domain.Authorization;
 using FSCM.Domain.Entities;
 
@@ -11,6 +12,7 @@ namespace FSCM.Application.Features.Deliveries;
 public sealed class DeliveryService(
     IDeliveryStore store,
     IPaymentPlanService paymentPlanService,
+    IInventoryLifecycleService inventoryLifecycleService,
     TimeProvider timeProvider)
 {
     public async Task<IReadOnlyCollection<DriverResult>> ListDriversAsync(
@@ -106,6 +108,20 @@ public sealed class DeliveryService(
             if (vehicle.Capacity < totalQuantity)
                 throw DeliveryOperationException.Conflict(
                     $"Vehicle capacity is {vehicle.Capacity:0.###} cartons but the order requires {totalQuantity:0.###}.");
+
+            var inventoryIssues = await store.ListOrderInventoryIssuesAsync(orderId, transactionCancellationToken);
+            if (inventoryIssues.Count == 0)
+                throw DeliveryOperationException.Conflict("Order has no reserved allocations to issue.");
+            foreach (var batchGroup in inventoryIssues.GroupBy(item => item.BatchId))
+            {
+                var expectedVersion = batchGroup.First().InventoryVersion;
+                foreach (var issue in batchGroup)
+                {
+                    var issued = await inventoryLifecycleService.IssueAsync(
+                        issue.AllocationId, operatorUserId, expectedVersion, transactionCancellationToken);
+                    expectedVersion = issued.Version;
+                }
+            }
 
             var now = timeProvider.GetUtcNow();
             var delivery = new Delivery

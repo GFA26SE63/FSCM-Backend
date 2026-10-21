@@ -106,9 +106,7 @@ public static class ServiceCollectionExtensions
             .AddTypeExtension<InventoryGraphQlExtensions>()
             .AddTypeExtension<GoodsReceiptGraphQlExtensions>()
             .AddTypeExtension<GoodsReceiptLineGraphQlExtensions>()
-            .AddTypeExtension<QrLabelGraphQlExtensions>()
-            .AddTypeExtension<InternalTransferGraphQlExtensions>()
-            .AddTypeExtension<InternalTransferItemGraphQlExtensions>();
+            .AddTypeExtension<QrLabelGraphQlExtensions>();
 
         return services;
     }

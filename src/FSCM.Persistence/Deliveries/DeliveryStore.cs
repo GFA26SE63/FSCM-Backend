@@ -64,6 +64,18 @@ public sealed class DeliveryStore(AppDbContext dbContext) : IDeliveryStore
             label, label.BatchId, label.QrCode, pickingCodes[label.Id])).ToArray();
     }
 
+    public async Task<IReadOnlyCollection<DeliveryInventoryIssue>> ListOrderInventoryIssuesAsync(
+        Guid orderId, CancellationToken cancellationToken) =>
+        await (
+            from list in dbContext.PickingListRecords.AsNoTracking()
+            join item in dbContext.PickingItemRecords.AsNoTracking() on list.Id equals item.PickingListId
+            join allocation in dbContext.AllocationRecords.AsNoTracking() on item.AllocationId equals allocation.Id
+            join balance in dbContext.InventoryBalanceRecords.AsNoTracking() on allocation.BatchId equals balance.BatchId
+            where list.SalesOrderId == orderId
+            orderby allocation.BatchId, allocation.AllocationSequence, allocation.Id
+            select new DeliveryInventoryIssue(allocation.Id, allocation.BatchId, balance.Version))
+            .ToArrayAsync(cancellationToken);
+
     public async Task<DeliveryView?> FindByOrderAsync(
         Guid orderId, bool forUpdate, CancellationToken cancellationToken)
     {

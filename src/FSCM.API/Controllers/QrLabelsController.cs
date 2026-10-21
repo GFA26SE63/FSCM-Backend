@@ -65,6 +65,7 @@ public sealed class QrLabelsController(QrLabelService service) : ControllerBase
 
     [Authorize(Roles = SystemRoles.WarehouseKeeper)]
     [HttpPost("{qrCode}/scans")]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
     public Task<QrLabelResult> Scan(
         string qrCode, ScanQrLabelRequest request,
         [FromHeader(Name = "Idempotency-Key")] string operationKey,
