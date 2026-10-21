@@ -2802,8 +2802,22 @@ namespace FSCM.Persistence.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
+                    b.Property<DateTimeOffset?>("AcceptedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("AcceptedByUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<decimal?>("AcceptedNetUnitPrice")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<decimal?>("DefaultMlorRatio")
+                        .HasPrecision(5, 4)
+                        .HasColumnType("numeric(5,4)");
 
                     b.Property<decimal>("DiscountAmount")
                         .HasPrecision(18, 2)
@@ -2821,6 +2835,10 @@ namespace FSCM.Persistence.Migrations
                         .HasMaxLength(30)
                         .HasColumnType("character varying(30)");
 
+                    b.Property<decimal>("EffectiveMlorRatio")
+                        .HasPrecision(5, 4)
+                        .HasColumnType("numeric(5,4)");
+
                     b.Property<DateTimeOffset?>("EstimatedArrivalAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -2829,6 +2847,22 @@ namespace FSCM.Persistence.Migrations
                         .HasColumnType("numeric(18,2)");
 
                     b.Property<int>("LineNumber")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("LineType")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)");
+
+                    b.Property<string>("MlorSource")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)");
+
+                    b.Property<Guid?>("NearExpiryOfferId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int?>("NearExpiryOfferVersion")
                         .HasColumnType("integer");
 
                     b.Property<decimal>("NetAmount")
@@ -2861,10 +2895,20 @@ namespace FSCM.Persistence.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("AcceptedByUserId");
+
                     b.HasIndex("ProductId");
 
                     b.HasIndex("SalesOrderId", "LineNumber")
                         .IsUnique();
+
+                    b.HasIndex("SalesOrderId", "ProductId")
+                        .IsUnique()
+                        .HasFilter("\"LineType\" = 'Standard'");
+
+                    b.HasIndex("SalesOrderId", "ProductId", "NearExpiryOfferId", "NearExpiryOfferVersion")
+                        .IsUnique()
+                        .HasFilter("\"LineType\" = 'NearExpiryOffer'");
 
                     b.ToTable("SALES_ORDER_LINE", (string)null);
                 });
@@ -4397,6 +4441,11 @@ namespace FSCM.Persistence.Migrations
 
             modelBuilder.Entity("FSCM.Domain.Entities.SalesOrderLine", b =>
                 {
+                    b.HasOne("FSCM.Domain.Entities.UserAccount", null)
+                        .WithMany()
+                        .HasForeignKey("AcceptedByUserId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
                     b.HasOne("FSCM.Domain.Entities.Product", null)
                         .WithMany()
                         .HasForeignKey("ProductId")
