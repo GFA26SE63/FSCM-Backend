@@ -52,6 +52,11 @@ public sealed class WarehousesController(WarehouseConfigurationService service) 
         Guid warehouseId, [FromQuery] bool includeInactive = false, CancellationToken cancellationToken = default) =>
         service.ListTransitRulesAsync(warehouseId, includeInactive, cancellationToken);
 
+    [HttpGet("{warehouseId:guid}/transit-time-rules/history")]
+    public Task<IReadOnlyCollection<TransitTimeRuleResult>> ListTransitTimeRuleHistory(
+        Guid warehouseId, CancellationToken cancellationToken) =>
+        service.ListTransitRulesAsync(warehouseId, true, cancellationToken);
+
     [Authorize(Roles = SystemRoles.Admin)]
     [HttpPut("{warehouseId:guid}/transit-time-rules")]
     public Task<IReadOnlyCollection<TransitTimeRuleResult>> ReplaceTransitTimeRules(

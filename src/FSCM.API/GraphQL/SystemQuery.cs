@@ -1,8 +1,13 @@
 using System.Security.Claims;
 using FSCM.Application.Features.Catalog;
+using FSCM.Application.Features.Deliveries;
 using FSCM.Application.Features.Identity;
 using FSCM.Application.Features.InternalTransfers;
 using FSCM.Application.Features.Inventory;
+using FSCM.Application.Features.Maps;
+using FSCM.Application.Features.Orders;
+using FSCM.Application.Features.Payments;
+using FSCM.Application.Features.Picking;
 using FSCM.Application.Features.QrLabels;
 using FSCM.Application.Features.Promotions;
 using FSCM.Application.Features.Retailers;
@@ -27,6 +32,19 @@ public sealed class SystemQuery
     [Authorize(Roles = [SystemRoles.Admin])]
     public Task<AuthenticatedUser> User(Guid id, [Service] IdentityService service,
         CancellationToken cancellationToken) => service.GetCurrentUserAsync(id, cancellationToken);
+
+    [Authorize(Roles = [SystemRoles.Admin])]
+    public Task<PagedUserResult> Users(
+        string? search,
+        string? role,
+        bool? isActive,
+        [DefaultValue(1)] int page,
+        [DefaultValue(20)] int pageSize,
+        [Service] IdentityService service,
+        CancellationToken cancellationToken) =>
+        service.ListUsersAsync(
+            new UserListQuery(search, role, isActive, page, pageSize),
+            cancellationToken);
 
     [Authorize(Roles = [SystemRoles.Admin])]
     public Task<AuthenticatedUser> UserScope(Guid userId, [Service] IdentityService service,
@@ -68,6 +86,16 @@ public sealed class SystemQuery
     [Authorize]
     public Task<WarehouseResult> Warehouse(Guid id, [Service] WarehouseConfigurationService service,
         CancellationToken cancellationToken) => service.GetWarehouseAsync(id, cancellationToken);
+
+    [Authorize(Roles = [SystemRoles.Admin])]
+    public Task<MapLocationResult> MapLocation(string entityType, Guid entityId,
+        [Service] MapService service, CancellationToken cancellationToken) =>
+        service.GetLocationAsync(entityType, entityId, cancellationToken);
+
+    [Authorize(Roles = [SystemRoles.Admin]), UsePaging(DefaultPageSize = 20, MaxPageSize = 100, IncludeTotalCount = true, RequirePagingBoundaries = true), UseFiltering, UseSorting]
+    public async Task<IEnumerable<MapDistanceResult>> MapDistances(Guid? warehouseId, Guid? retailerId,
+        [Service] MapService service, CancellationToken cancellationToken) =>
+        await service.ListDistancesAsync(warehouseId, retailerId, cancellationToken);
 
     [Authorize, UsePaging(DefaultPageSize = 20, MaxPageSize = 100, IncludeTotalCount = true, RequirePagingBoundaries = true), UseFiltering, UseSorting]
     public async Task<IEnumerable<TransitTimeRuleResult>> TransitTimeRules(Guid warehouseId,
@@ -286,6 +314,129 @@ public sealed class SystemQuery
         DateTimeOffset? at, [Service] PromotionService service,
         CancellationToken cancellationToken) =>
         service.CalculatePriceAsync(productId, quantity, batchId, retailerId, at, cancellationToken);
+
+    [Authorize(Roles = [SystemRoles.Admin, SystemRoles.Operator, SystemRoles.SalesManager, SystemRoles.Sales, SystemRoles.WarehouseKeeper, SystemRoles.Retailer])]
+    [UsePaging(DefaultPageSize = 20, MaxPageSize = 100, IncludeTotalCount = true, RequirePagingBoundaries = true), UseFiltering, UseSorting]
+    public async Task<IEnumerable<OrderSummaryResult>> Orders(
+        string? status,
+        Guid? retailerId,
+        [Service] OrderService service,
+        [Service] IHttpContextAccessor accessor,
+        CancellationToken cancellationToken)
+    {
+        var user = CurrentUser.From(accessor);
+        return await service.ListAsync(user.Id, user.Role, status, retailerId, cancellationToken);
+    }
+
+    [Authorize(Roles = [SystemRoles.Admin, SystemRoles.Operator, SystemRoles.SalesManager, SystemRoles.Sales, SystemRoles.WarehouseKeeper, SystemRoles.Retailer])]
+    public Task<OrderDetailResult> Order(
+        Guid id,
+        [Service] OrderService service,
+        [Service] IHttpContextAccessor accessor,
+        CancellationToken cancellationToken)
+    {
+        var user = CurrentUser.From(accessor);
+        return service.GetAsync(id, user.Id, user.Role, cancellationToken);
+    }
+
+    [Authorize(Roles = [SystemRoles.Admin, SystemRoles.Operator, SystemRoles.SalesManager, SystemRoles.Sales, SystemRoles.WarehouseKeeper, SystemRoles.Retailer])]
+    public Task<OrderTraceResult> OrderAllocationTrace(
+        Guid id,
+        [Service] OrderService service,
+        [Service] IHttpContextAccessor accessor,
+        CancellationToken cancellationToken)
+    {
+        var user = CurrentUser.From(accessor);
+        return service.GetTraceAsync(id, user.Id, user.Role, cancellationToken);
+    }
+
+    [Authorize(Roles = [SystemRoles.Admin, SystemRoles.Operator, SystemRoles.SalesManager, SystemRoles.Sales, SystemRoles.Retailer])]
+    [UsePaging(DefaultPageSize = 20, MaxPageSize = 100, IncludeTotalCount = true, RequirePagingBoundaries = true), UseFiltering, UseSorting]
+    public async Task<IEnumerable<PaymentResult>> Payments(
+        string? status,
+        [Service] PaymentService service,
+        [Service] IHttpContextAccessor accessor,
+        CancellationToken cancellationToken)
+    {
+        var user = CurrentUser.From(accessor);
+        return await service.ListAsync(user.Id, user.Role, status, cancellationToken);
+    }
+
+    [Authorize(Roles = [SystemRoles.Admin, SystemRoles.Operator, SystemRoles.SalesManager, SystemRoles.Sales, SystemRoles.Retailer])]
+    public Task<PaymentResult> PaymentByOrder(
+        Guid orderId,
+        [Service] PaymentService service,
+        [Service] IHttpContextAccessor accessor,
+        CancellationToken cancellationToken)
+    {
+        var user = CurrentUser.From(accessor);
+        return service.GetByOrderAsync(orderId, user.Id, user.Role, cancellationToken);
+    }
+
+    [Authorize(Roles = [SystemRoles.Admin, SystemRoles.Operator, SystemRoles.SalesManager, SystemRoles.Sales, SystemRoles.WarehouseKeeper, SystemRoles.Retailer])]
+    [UsePaging(DefaultPageSize = 20, MaxPageSize = 100, IncludeTotalCount = true, RequirePagingBoundaries = true), UseFiltering, UseSorting]
+    public async Task<IEnumerable<DeliveryResult>> Deliveries(
+        string? status,
+        [Service] DeliveryService service,
+        [Service] IHttpContextAccessor accessor,
+        CancellationToken cancellationToken)
+    {
+        var user = CurrentUser.From(accessor);
+        return await service.ListAsync(user.Id, user.Role, status, cancellationToken);
+    }
+
+    [Authorize(Roles = [SystemRoles.Admin, SystemRoles.Operator, SystemRoles.SalesManager, SystemRoles.Sales, SystemRoles.WarehouseKeeper, SystemRoles.Retailer])]
+    public Task<DeliveryResult> DeliveryByOrder(
+        Guid orderId,
+        [Service] DeliveryService service,
+        [Service] IHttpContextAccessor accessor,
+        CancellationToken cancellationToken)
+    {
+        var user = CurrentUser.From(accessor);
+        return service.GetByOrderAsync(orderId, user.Id, user.Role, cancellationToken);
+    }
+
+    [Authorize(Roles = [SystemRoles.Admin, SystemRoles.Operator])]
+    [UseFiltering, UseSorting]
+    public async Task<IEnumerable<DriverResult>> DeliveryDrivers(
+        [DefaultValue(false)] bool includeInactive,
+        [Service] DeliveryService service,
+        [Service] IHttpContextAccessor accessor,
+        CancellationToken cancellationToken) =>
+        await service.ListDriversAsync(CurrentUser.From(accessor).Role, includeInactive, cancellationToken);
+
+    [Authorize(Roles = [SystemRoles.Admin, SystemRoles.Operator])]
+    [UseFiltering, UseSorting]
+    public async Task<IEnumerable<VehicleResult>> DeliveryVehicles(
+        [DefaultValue(false)] bool includeInactive,
+        [Service] DeliveryService service,
+        [Service] IHttpContextAccessor accessor,
+        CancellationToken cancellationToken) =>
+        await service.ListVehiclesAsync(CurrentUser.From(accessor).Role, includeInactive, cancellationToken);
+
+    [Authorize(Roles = [SystemRoles.Admin, SystemRoles.Operator, SystemRoles.WarehouseKeeper])]
+    [UsePaging(DefaultPageSize = 20, MaxPageSize = 100, IncludeTotalCount = true, RequirePagingBoundaries = true), UseFiltering, UseSorting]
+    public async Task<IEnumerable<PickingListResult>> PickingLists(
+        Guid? warehouseId,
+        string? status,
+        [Service] PickingService service,
+        [Service] IHttpContextAccessor accessor,
+        CancellationToken cancellationToken)
+    {
+        var user = CurrentUser.From(accessor);
+        return await service.ListAsync(user.Id, user.Role, warehouseId, status, cancellationToken);
+    }
+
+    [Authorize(Roles = [SystemRoles.Admin, SystemRoles.Operator, SystemRoles.WarehouseKeeper])]
+    public Task<PickingListResult> PickingList(
+        string pickingCode,
+        [Service] PickingService service,
+        [Service] IHttpContextAccessor accessor,
+        CancellationToken cancellationToken)
+    {
+        var user = CurrentUser.From(accessor);
+        return service.GetAsync(pickingCode, user.Id, user.Role, cancellationToken);
+    }
 }
 
 internal static class CurrentUser

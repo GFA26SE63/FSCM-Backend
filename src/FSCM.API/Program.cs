@@ -25,6 +25,14 @@ builder.Services.AddInfrastructureServices(builder.Configuration);
 
 var app = builder.Build();
 
+if (args.Contains("--bootstrap-admin", StringComparer.OrdinalIgnoreCase))
+{
+    await using var scope = app.Services.CreateAsyncScope();
+    var bootstrapper = scope.ServiceProvider.GetRequiredService<AdminBootstrapper>();
+    await bootstrapper.BootstrapAsync();
+    return;
+}
+
 if (args.Contains("--seed", StringComparer.OrdinalIgnoreCase))
 {
     if (!app.Environment.IsDevelopment())

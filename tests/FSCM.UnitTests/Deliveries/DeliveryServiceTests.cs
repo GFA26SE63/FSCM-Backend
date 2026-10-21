@@ -1,0 +1,327 @@
+using FSCM.Application.Features.Deliveries;
+using FSCM.Application.Features.Orders;
+using FSCM.Application.Features.Payments;
+using FSCM.Application.Features.QrLabels;
+using FSCM.Domain.Authorization;
+using FSCM.Domain.Entities;
+
+namespace FSCM.UnitTests.Deliveries;
+
+public sealed class DeliveryServiceTests
+{
+    [Fact]
+    public async Task Dispatch_snapshots_assignment_and_moves_labels_to_transit()
+    {
+        var fixture = new Fixture();
+
+        var result = await fixture.DispatchAsync();
+
+        Assert.Equal(DeliveryStatuses.Delivering, result.Status);
+        Assert.Equal(OrderStatuses.Delivering, fixture.Order.Status);
+        Assert.Equal(fixture.Driver.Code, result.DriverCode);
+        Assert.Equal(fixture.Vehicle.PlateNumber, result.PlateNumber);
+        Assert.All(fixture.Labels, item => Assert.Equal(QrLabelStatuses.InTransit, item.Label.Status));
+        Assert.Contains(fixture.Store.History, item => item.ToStatus == OrderStatuses.Delivering);
+    }
+
+    [Fact]
+    public async Task Retailer_scans_every_label_and_completes_receipt()
+    {
+        var fixture = new Fixture();
+        await fixture.DispatchAsync();
+
+        var result = await fixture.ReceiveAsync(fixture.Labels.Select(item => item.QrCode).ToArray());
+
+        Assert.Equal(DeliveryStatuses.Delivered, result.Status);
+        Assert.Equal(OrderStatuses.Delivered, fixture.Order.Status);
+        Assert.NotNull(result.Receipt);
+        Assert.Equal(2, result.Receipt.Items.Count);
+        Assert.All(fixture.Labels, item => Assert.Equal(QrLabelStatuses.Delivered, item.Label.Status));
+    }
+
+    [Fact]
+    public async Task Receipt_rejects_missing_label()
+    {
+        var fixture = new Fixture();
+        await fixture.DispatchAsync();
+
+        var exception = await Assert.ThrowsAsync<DeliveryOperationException>(() =>
+            fixture.ReceiveAsync([fixture.Labels[0].QrCode]));
+
+        Assert.Equal("conflict", exception.Code);
+        Assert.Equal(OrderStatuses.Delivering, fixture.Order.Status);
+    }
+
+    [Fact]
+    public async Task Receipt_rejects_another_retailer()
+    {
+        var fixture = new Fixture();
+        await fixture.DispatchAsync();
+
+        var exception = await Assert.ThrowsAsync<DeliveryOperationException>(() =>
+            fixture.Service.ConfirmReceiptAsync(
+                fixture.Order.Id,
+                new(fixture.Labels.Select(item => item.QrCode).ToArray(), fixture.Order.Version, null),
+                "receipt-other-retailer",
+                Guid.NewGuid(),
+                SystemRoles.Retailer,
+                default));
+
+        Assert.Equal("forbidden", exception.Code);
+    }
+
+    [Fact]
+    public async Task Dispatch_and_receipt_operation_keys_are_idempotent()
+    {
+        var fixture = new Fixture();
+        var firstDispatch = await fixture.DispatchAsync();
+        var repeatedDispatch = await fixture.DispatchAsync(expectedVersion: 3);
+        Assert.Equal(firstDispatch.Id, repeatedDispatch.Id);
+
+        var codes = fixture.Labels.Select(item => item.QrCode).ToArray();
+        var firstReceipt = await fixture.ReceiveAsync(codes);
+        var repeatedReceipt = await fixture.ReceiveAsync(codes, expectedVersion: 4);
+
+        Assert.Equal(firstReceipt.Receipt?.Id, repeatedReceipt.Receipt?.Id);
+        Assert.Single(fixture.Store.Receipts);
+        Assert.Equal(4, fixture.Store.Events.Count);
+    }
+
+    [Fact]
+    public async Task Dispatch_rejects_vehicle_with_insufficient_capacity()
+    {
+        var fixture = new Fixture();
+        fixture.Vehicle.Capacity = 9;
+
+        var exception = await Assert.ThrowsAsync<DeliveryOperationException>(() => fixture.DispatchAsync());
+
+        Assert.Equal("conflict", exception.Code);
+        Assert.Empty(fixture.Store.Deliveries);
+    }
+
+    [Fact]
+    public async Task Dispatch_rejects_stale_order_version()
+    {
+        var fixture = new Fixture();
+
+        var exception = await Assert.ThrowsAsync<DeliveryOperationException>(() =>
+            fixture.DispatchAsync(expectedVersion: 2));
+
+        Assert.Equal("conflict", exception.Code);
+        Assert.Empty(fixture.Store.Deliveries);
+    }
+
+    [Fact]
+    public async Task Dispatch_rejects_driver_and_vehicle_from_different_warehouses()
+    {
+        var fixture = new Fixture();
+        fixture.Vehicle.WarehouseId = Guid.NewGuid();
+
+        var exception = await Assert.ThrowsAsync<DeliveryOperationException>(() => fixture.DispatchAsync());
+
+        Assert.Equal("conflict", exception.Code);
+    }
+
+    [Fact]
+    public async Task Receipt_rejects_repeated_qr_code()
+    {
+        var fixture = new Fixture();
+        await fixture.DispatchAsync();
+
+        var exception = await Assert.ThrowsAsync<DeliveryOperationException>(() => fixture.ReceiveAsync(
+            [fixture.Labels[0].QrCode, fixture.Labels[0].QrCode]));
+
+        Assert.Equal("validation_error", exception.Code);
+    }
+
+    [Fact]
+    public async Task Receipt_operation_key_rejects_different_payload()
+    {
+        var fixture = new Fixture();
+        await fixture.DispatchAsync();
+        var codes = fixture.Labels.Select(item => item.QrCode).ToArray();
+        await fixture.ReceiveAsync(codes);
+
+        var exception = await Assert.ThrowsAsync<DeliveryOperationException>(() =>
+            fixture.Service.ConfirmReceiptAsync(
+                fixture.Order.Id,
+                new(codes, fixture.Order.Version, "Nội dung khác"),
+                "receipt-test-001",
+                fixture.RetailerUserId,
+                SystemRoles.Retailer,
+                default));
+
+        Assert.Equal("conflict", exception.Code);
+    }
+
+    private sealed class Fixture
+    {
+        private static readonly DateTimeOffset Now = new(2026, 10, 15, 4, 0, 0, TimeSpan.Zero);
+        public Guid RetailerUserId { get; } = Guid.NewGuid();
+        public Warehouse Warehouse { get; } = new() { Id = Guid.NewGuid(), Code = "WH-TD", Name = "Kho Thủ Đức" };
+        public Retailer Retailer { get; }
+        public SalesOrder Order { get; }
+        public Driver Driver { get; }
+        public Vehicle Vehicle { get; }
+        public List<DeliveryLabelView> Labels { get; }
+        public FakeDeliveryStore Store { get; }
+        public DeliveryService Service { get; }
+
+        public Fixture()
+        {
+            Retailer = new Retailer
+            {
+                Id = Guid.NewGuid(),
+                UserAccountId = RetailerUserId,
+                Code = "10004127",
+                Name = "Cửa hàng An Phú"
+            };
+            Order = new SalesOrder
+            {
+                Id = Guid.NewGuid(),
+                OrderCode = "DH-001040",
+                RetailerId = Retailer.Id,
+                RetailerCodeSnapshot = Retailer.Code,
+                RetailerNameSnapshot = Retailer.Name,
+                Status = OrderStatuses.Issued,
+                Version = 3
+            };
+            Driver = new Driver
+            {
+                Id = Guid.NewGuid(),
+                WarehouseId = Warehouse.Id,
+                Code = "NG-011",
+                FullName = "Trần Quốc Bảo",
+                Phone = "0901000011",
+                LicenseNumber = "GPLX-C-011",
+                IsActive = true
+            };
+            Vehicle = new Vehicle
+            {
+                Id = Guid.NewGuid(),
+                WarehouseId = Warehouse.Id,
+                PlateNumber = "51D-318.26",
+                VehicleType = "Xe tải 1.5 tấn",
+                Capacity = 20,
+                IsActive = true
+            };
+            Labels = [CreateLabel("TEM-001010", 5), CreateLabel("TEM-001011", 5)];
+            Store = new FakeDeliveryStore(this);
+            Service = new DeliveryService(Store, new FakePaymentPlan(), new FixedTimeProvider(Now));
+        }
+
+        public Task<DeliveryResult> DispatchAsync(int expectedVersion = 3) =>
+            Service.DispatchAsync(Order.Id,
+                new(Driver.Id, Vehicle.Id, expectedVersion, "Giao ca sáng"),
+                "dispatch-test-001", Guid.NewGuid(), SystemRoles.Operator, default);
+
+        public Task<DeliveryResult> ReceiveAsync(IReadOnlyCollection<string> codes, int? expectedVersion = null) =>
+            Service.ConfirmReceiptAsync(Order.Id,
+                new(codes, expectedVersion ?? Order.Version, "Đã nhận đủ hàng"),
+                "receipt-test-001", RetailerUserId, SystemRoles.Retailer, default);
+
+        private DeliveryLabelView CreateLabel(string code, decimal quantity)
+        {
+            var label = new BatchQrLabel
+            {
+                Id = Guid.NewGuid(),
+                BatchId = Guid.NewGuid(),
+                CurrentWarehouseId = Warehouse.Id,
+                QrCode = code,
+                Quantity = quantity,
+                Status = QrLabelStatuses.Picked,
+                Version = 2
+            };
+            return new(label, label.BatchId, code, "DH-001040A");
+        }
+    }
+
+    private sealed class FakeDeliveryStore(Fixture fixture) : IDeliveryStore
+    {
+        public List<Delivery> Deliveries { get; } = [];
+        public List<ReceiptConfirmation> Receipts { get; } = [];
+        public List<ReceiptConfirmationItem> ReceiptItems { get; } = [];
+        public List<QrLabelEvent> Events { get; } = [];
+        public List<OrderStatusHistory> History { get; } = [];
+
+        public Task<IReadOnlyCollection<Driver>> ListDriversAsync(bool includeInactive,
+            CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyCollection<Driver>>([fixture.Driver]);
+
+        public Task<IReadOnlyCollection<Vehicle>> ListVehiclesAsync(bool includeInactive,
+            CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyCollection<Vehicle>>([fixture.Vehicle]);
+
+        public Task<Driver?> FindDriverAsync(Guid id, CancellationToken cancellationToken) =>
+            Task.FromResult<Driver?>(id == fixture.Driver.Id ? fixture.Driver : null);
+
+        public Task<Vehicle?> FindVehicleAsync(Guid id, CancellationToken cancellationToken) =>
+            Task.FromResult<Vehicle?>(id == fixture.Vehicle.Id ? fixture.Vehicle : null);
+
+        public Task<DeliveryOrderView?> FindOrderAsync(Guid orderId, bool forUpdate,
+            CancellationToken cancellationToken) => Task.FromResult<DeliveryOrderView?>(
+            orderId == fixture.Order.Id ? new(fixture.Order, fixture.Retailer) : null);
+
+        public Task<IReadOnlyCollection<DeliveryLabelView>> ListOrderLabelsAsync(Guid orderId, bool forUpdate,
+            CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyCollection<DeliveryLabelView>>(fixture.Labels);
+
+        public Task<DeliveryView?> FindByOrderAsync(Guid orderId, bool forUpdate,
+            CancellationToken cancellationToken) => Task.FromResult(
+            Deliveries.SingleOrDefault(item => item.SalesOrderId == orderId) is { } delivery
+                ? ToView(delivery)
+                : null);
+
+        public Task<DeliveryView?> FindByOperationKeyAsync(string operationKey,
+            CancellationToken cancellationToken) => Task.FromResult(
+            Deliveries.SingleOrDefault(item => item.OperationKey == operationKey) is { } delivery
+                ? ToView(delivery)
+                : null);
+
+        public Task<DeliveryView?> FindByReceiptOperationKeyAsync(string operationKey,
+            CancellationToken cancellationToken) => Task.FromResult(
+            Receipts.SingleOrDefault(item => item.OperationKey == operationKey) is { } receipt
+                ? ToView(Deliveries.Single(item => item.SalesOrderId == receipt.SalesOrderId))
+                : null);
+
+        public Task<IReadOnlyCollection<DeliveryView>> ListAsync(Guid actorUserId, string actorRole,
+            string? status, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyCollection<DeliveryView>>(Deliveries.Select(ToView).ToArray());
+
+        public Task<bool> CanViewAsync(DeliveryView delivery, Guid actorUserId, string actorRole,
+            CancellationToken cancellationToken) => Task.FromResult(
+            actorRole != SystemRoles.Retailer || actorUserId == fixture.RetailerUserId);
+
+        public void AddDelivery(Delivery delivery) => Deliveries.Add(delivery);
+        public void AddReceipt(ReceiptConfirmation receipt) => Receipts.Add(receipt);
+        public void AddReceiptItem(ReceiptConfirmationItem item) => ReceiptItems.Add(item);
+        public void AddLabelEvent(QrLabelEvent labelEvent) => Events.Add(labelEvent);
+        public void AddOrderHistory(OrderStatusHistory history) => History.Add(history);
+        public Task SaveChangesAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+        public Task ExecuteInTransactionAsync(Func<CancellationToken, Task> operation,
+            CancellationToken cancellationToken) => operation(cancellationToken);
+        public void ClearTracking() { }
+
+        private DeliveryView ToView(Delivery delivery)
+        {
+            var receipt = Receipts.SingleOrDefault(item => item.SalesOrderId == delivery.SalesOrderId);
+            var items = receipt is null
+                ? []
+                : ReceiptItems.Where(item => item.ReceiptConfirmationId == receipt.Id)
+                    .Select(item => new ReceiptItemView(item,
+                        fixture.Labels.Single(label => label.Label.Id == item.BatchQrLabelId).QrCode)).ToArray();
+            return new(delivery, fixture.Order, fixture.Retailer, receipt, items);
+        }
+    }
+
+    private sealed class FixedTimeProvider(DateTimeOffset now) : TimeProvider
+    {
+        public override DateTimeOffset GetUtcNow() => now;
+    }
+
+    private sealed class FakePaymentPlan : IPaymentPlanService
+    {
+        public Task CreateForDeliveredOrderAsync(SalesOrder order, Guid receiptActorUserId,
+            DateTimeOffset deliveredAt, CancellationToken cancellationToken) => Task.CompletedTask;
+    }
+}

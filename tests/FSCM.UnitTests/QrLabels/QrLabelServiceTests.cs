@@ -124,7 +124,7 @@ public sealed class QrLabelServiceTests
             SourceBatch = new Batch { Id = Guid.NewGuid(), WarehouseId = SourceWarehouse.Id, ProductId = Product.Id, BatchCode = "WH-HCM-01-SKU001-30042027" };
             DestinationBatch = new Batch { Id = Guid.NewGuid(), WarehouseId = DestinationWarehouse.Id, ProductId = Product.Id, BatchCode = "WH-TD-SKU001-30042027" };
             Store = new FakeStore(UserId, SourceWarehouse, DestinationWarehouse, Product, SourceBatch, DestinationBatch);
-            Service = new QrLabelService(Store, new FixedTimeProvider(Now));
+            Service = new QrLabelService(Store, new FakeQrCodeRenderer(), new FixedTimeProvider(Now));
         }
 
         public BatchQrLabel CreateLabel(string code, decimal quantity)
@@ -164,6 +164,12 @@ public sealed class QrLabelServiceTests
     private sealed class FixedTimeProvider(DateTimeOffset now) : TimeProvider
     {
         public override DateTimeOffset GetUtcNow() => now;
+    }
+
+    private sealed class FakeQrCodeRenderer : IQrCodeRenderer
+    {
+        public string RenderSvg(string payload) => $"<svg data-payload=\"{payload}\"></svg>";
+        public byte[] RenderPng(string payload, int pixelsPerModule = 10) => System.Text.Encoding.UTF8.GetBytes(payload);
     }
 
     private sealed class FakeStore(

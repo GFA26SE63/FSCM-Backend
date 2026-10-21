@@ -13,10 +13,16 @@ public sealed class SalesOrderLineConfiguration : IEntityTypeConfiguration<Sales
         builder.Property(entity => entity.Id).HasColumnType("uuid").IsRequired();
         builder.Property(entity => entity.SalesOrderId).HasColumnType("uuid").IsRequired();
         builder.Property(entity => entity.ProductId).HasColumnType("uuid").IsRequired();
+        builder.Property(entity => entity.LineNumber).IsRequired();
+        builder.Property(entity => entity.SkuSnapshot).HasMaxLength(40).IsRequired();
+        builder.Property(entity => entity.ProductNameSnapshot).HasMaxLength(200).IsRequired();
         builder.Property(entity => entity.OrderedQuantity).HasPrecision(18, 3).IsRequired();
         builder.Property(entity => entity.UnitPrice).HasPrecision(18, 2).IsRequired();
         builder.Property(entity => entity.GrossAmount).HasPrecision(18, 2).IsRequired();
         builder.Property(entity => entity.DiscountAmount).HasPrecision(18, 2).IsRequired();
+        builder.Property(entity => entity.DiscountPercent).HasPrecision(5, 2).IsRequired();
+        builder.Property(entity => entity.DiscountSourceType).HasMaxLength(30).IsRequired(false);
+        builder.Property(entity => entity.DiscountSourceCode).HasMaxLength(40).IsRequired(false);
         builder.Property(entity => entity.NetAmount).HasPrecision(18, 2).IsRequired();
         builder.Property(entity => entity.EstimatedArrivalAt).HasColumnType("timestamp with time zone").IsRequired(false);
         builder.Property(entity => entity.CreatedAt).HasColumnType("timestamp with time zone").IsRequired();
@@ -28,5 +34,6 @@ public sealed class SalesOrderLineConfiguration : IEntityTypeConfiguration<Sales
             .WithMany()
             .HasForeignKey(entity => entity.ProductId)
             .OnDelete(DeleteBehavior.Restrict);
+        builder.HasIndex(entity => new { entity.SalesOrderId, entity.LineNumber }).IsUnique();
     }
 }

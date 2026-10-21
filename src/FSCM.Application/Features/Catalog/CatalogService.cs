@@ -223,6 +223,8 @@ public sealed partial class CatalogService(ICatalogStore store, TimeProvider tim
     {
         var product = await RequireProductAsync(productId, cancellationToken);
         EnsureDraft(product, "Only Draft products can be deleted.");
+        if (await store.ProductHasTransactionHistoryAsync(productId, cancellationToken))
+            throw CatalogOperationException.Conflict("A product with transaction history cannot be deleted.");
 
         var prices = await store.ListPricesAsync(productId, cancellationToken);
         store.RemovePrices(prices);

@@ -6,6 +6,7 @@ public sealed class Retailer
 {
     public Guid Id { get; set; }
     public Guid RegionId { get; set; }
+    public Guid? UserAccountId { get; set; }
     public string Code { get; set; } = string.Empty;
     public string Name { get; set; } = string.Empty;
     public string? ContactName { get; set; }
@@ -20,6 +21,7 @@ public sealed class Retailer
     public decimal? PurchasingCapacity { get; set; }
     public int PurchaseFrequencyPerMonth { get; set; }
     public int CreditTermDays { get; set; }
+    public int? RequestedCreditTermDays { get; set; }
     public string? PotentialStatus { get; set; }
     public decimal? PotentialScore { get; set; }
     public string? AssessmentNote { get; set; }

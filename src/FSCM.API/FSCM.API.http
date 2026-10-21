@@ -2,6 +2,9 @@
 @email = admin@fscm.local
 @password = FscmDemo#2026
 @salesEmail = sales@fscm.local
+@operatorEmail = operator@fscm.local
+@warehouseKeeperEmail = warehouse.keeper@fscm.local
+@retailerEmail = retailer@fscm.local
 
 GET {{FSCM.API_HostAddress}}/health
 Accept: application/json
@@ -78,6 +81,41 @@ Accept: application/json
 GET {{FSCM.API_HostAddress}}/api/v1/warehouses/{{warehouses.response.body.$.[0].id}}/transit-time-rules
 Authorization: Bearer {{login.response.body.$.accessToken}}
 Accept: application/json
+
+###
+
+GET {{FSCM.API_HostAddress}}/api/v1/warehouses/{{warehouses.response.body.$.[0].id}}/transit-time-rules/history
+Authorization: Bearer {{login.response.body.$.accessToken}}
+Accept: application/json
+
+###
+
+POST {{FSCM.API_HostAddress}}/api/v1/map/distances/refresh
+Authorization: Bearer {{login.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "warehouseId": "{{warehouses.response.body.$.[0].id}}",
+  "retailerId": "{{salesLogin.response.body.$.user.scope.retailerIds[0]}}"
+}
+
+###
+
+GET {{FSCM.API_HostAddress}}/api/v1/map/distances?warehouseId={{warehouses.response.body.$.[0].id}}&retailerId={{salesLogin.response.body.$.user.scope.retailerIds[0]}}
+Authorization: Bearer {{login.response.body.$.accessToken}}
+Accept: application/json
+
+###
+
+POST {{FSCM.API_HostAddress}}/api/v1/eta/estimate
+Authorization: Bearer {{login.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "warehouseId": "{{warehouses.response.body.$.[0].id}}",
+  "retailerId": "{{salesLogin.response.body.$.user.scope.retailerIds[0]}}",
+  "bufferMinutes": 30
+}
 
 ###
 
@@ -174,4 +212,216 @@ Content-Type: application/json
 
 {
   "query": "{ promotions(first: 20) { totalCount nodes { code name discountPercent } } batchDiscounts(first: 20) { totalCount nodes { promotionCode batchCode discountPercent } } batchDiscountSuggestions(first: 20) { totalCount nodes { batchCode remainingShelfLifePercent suggestedDiscountPercent } } }"
+}
+
+###
+
+# @name assistedOrder
+POST {{FSCM.API_HostAddress}}/api/v1/orders
+Authorization: Bearer {{salesLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "clientOrderKey": "{{$guid}}",
+  "retailerId": "{{salesLogin.response.body.$.user.scope.retailerIds[0]}}",
+  "paymentMethod": "COD",
+  "note": "Đơn hỗ trợ tạo tại điểm bán",
+  "lines": [
+    {
+      "productId": "{{products.response.body.$.items[0].id}}",
+      "quantity": 10
+    }
+  ]
+}
+
+###
+
+GET {{FSCM.API_HostAddress}}/api/v1/orders/{{assistedOrder.response.body.$.id}}/allocation-trace
+Authorization: Bearer {{salesLogin.response.body.$.accessToken}}
+Accept: application/json
+
+###
+
+POST {{FSCM.API_HostAddress}}/graphql
+Authorization: Bearer {{salesLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "query": "{ orders(first: 20) { totalCount nodes { id orderCode status finalAmount version } } }"
+}
+
+###
+
+# @name operatorLogin
+POST {{FSCM.API_HostAddress}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "{{operatorEmail}}",
+  "password": "{{password}}"
+}
+
+###
+
+POST {{FSCM.API_HostAddress}}/api/v1/orders/{{assistedOrder.response.body.$.id}}/approve
+Authorization: Bearer {{operatorLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "expectedVersion": {{assistedOrder.response.body.$.version}}
+}
+
+###
+
+# @name warehouseKeeperLogin
+POST {{FSCM.API_HostAddress}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "{{warehouseKeeperEmail}}",
+  "password": "{{password}}"
+}
+
+###
+
+# @name pickingLists
+GET {{FSCM.API_HostAddress}}/api/v1/picking-lists?status=Open
+Authorization: Bearer {{warehouseKeeperLogin.response.body.$.accessToken}}
+Accept: application/json
+
+###
+
+# @name pickingLabel
+GET {{FSCM.API_HostAddress}}/api/v1/qr-labels/TEM-000208
+Authorization: Bearer {{warehouseKeeperLogin.response.body.$.accessToken}}
+Accept: application/json
+
+###
+
+POST {{FSCM.API_HostAddress}}/api/v1/picking-lists/{{pickingLists.response.body.$.[0].pickingCode}}/scans
+Authorization: Bearer {{warehouseKeeperLogin.response.body.$.accessToken}}
+Idempotency-Key: {{$guid}}
+Content-Type: application/json
+
+{
+  "qrCode": "TEM-000208",
+  "quantity": 5,
+  "expectedPickingVersion": {{pickingLists.response.body.$.[0].version}},
+  "expectedLabelVersion": {{pickingLabel.response.body.$.label.version}}
+}
+
+###
+
+POST {{FSCM.API_HostAddress}}/graphql
+Authorization: Bearer {{warehouseKeeperLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "query": "{ pickingLists(first: 20) { totalCount nodes { pickingCode orderCode warehouseCode status version items { sku batchCode requestedQuantity pickedQuantity remainingQuantity } } } }"
+}
+
+###
+
+# @name deliveryDrivers
+GET {{FSCM.API_HostAddress}}/api/v1/deliveries/drivers
+Authorization: Bearer {{operatorLogin.response.body.$.accessToken}}
+Accept: application/json
+
+###
+
+# @name deliveryVehicles
+GET {{FSCM.API_HostAddress}}/api/v1/deliveries/vehicles
+Authorization: Bearer {{operatorLogin.response.body.$.accessToken}}
+Accept: application/json
+
+###
+
+# Supply an Issued order ID/version and matching driver/vehicle warehouse from the responses above.
+POST {{FSCM.API_HostAddress}}/api/v1/orders/00000000-0000-0000-0000-000000000000/dispatch
+Authorization: Bearer {{operatorLogin.response.body.$.accessToken}}
+Idempotency-Key: {{$guid}}
+Content-Type: application/json
+
+{
+  "driverId": "{{deliveryDrivers.response.body.$.[0].id}}",
+  "vehicleId": "{{deliveryVehicles.response.body.$.[0].id}}",
+  "expectedOrderVersion": 3,
+  "note": "Bàn giao đơn cho xe giao hàng"
+}
+
+###
+
+# @name retailerLogin
+POST {{FSCM.API_HostAddress}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "{{retailerEmail}}",
+  "password": "{{password}}"
+}
+
+###
+
+# Supply the Delivering order ID/version and every QR code shown on its completed picking lists.
+POST {{FSCM.API_HostAddress}}/api/v1/orders/00000000-0000-0000-0000-000000000000/confirm-receipt
+Authorization: Bearer {{retailerLogin.response.body.$.accessToken}}
+Idempotency-Key: {{$guid}}
+Content-Type: application/json
+
+{
+  "qrCodes": ["TEM-000000"],
+  "expectedOrderVersion": 4,
+  "note": "Cửa hàng đã kiểm đếm và nhận đủ hàng"
+}
+
+###
+
+POST {{FSCM.API_HostAddress}}/graphql
+Authorization: Bearer {{retailerLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "query": "{ deliveries(first: 20) { totalCount nodes { orderCode status orderStatus plateNumber driverCode driverName receipt { status confirmedAt items { qrCode receivedQuantity } } } } }"
+}
+
+###
+
+GET {{FSCM.API_HostAddress}}/api/v1/payments?status=Unpaid
+Authorization: Bearer {{salesLogin.response.body.$.accessToken}}
+Accept: application/json
+
+###
+
+# Supply a Delivered Credit order ID and its current payment version.
+# The response includes checkoutUrl and VietQR qrCode. Configure PayOS secrets first.
+POST {{FSCM.API_HostAddress}}/api/v1/payments/orders/00000000-0000-0000-0000-000000000000/payos-checkout
+Authorization: Bearer {{retailerLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "expectedVersion": 0
+}
+
+###
+
+# Supply a Delivered Credit order ID and its current payment version.
+POST {{FSCM.API_HostAddress}}/api/v1/payments/orders/00000000-0000-0000-0000-000000000000/collect
+Authorization: Bearer {{salesLogin.response.body.$.accessToken}}
+Idempotency-Key: {{$guid}}
+Content-Type: application/json
+
+{
+  "collectionMethod": "Cash",
+  "expectedVersion": 0,
+  "note": "Sales đã thu đủ tiền mặt"
+}
+
+###
+
+POST {{FSCM.API_HostAddress}}/graphql
+Authorization: Bearer {{salesLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "query": "{ payments(first: 20) { totalCount nodes { orderCode orderPaymentMethod status amount creditTermDays deliveredDate dueDate daysOverdue paidDate collectionMethod payOsCheckoutUrl payOsQrCode payOsLinkStatus payOsReference version } } }"
 }
