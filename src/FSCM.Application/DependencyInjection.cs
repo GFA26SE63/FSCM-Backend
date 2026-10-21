@@ -13,6 +13,7 @@ using FSCM.Application.Features.Retailers;
 using FSCM.Application.Features.QrLabels;
 using FSCM.Application.Features.Promotions;
 using FSCM.Application.Features.Territory;
+using FSCM.Application.Features.TransitTables;
 using FSCM.Application.Features.WarehouseConfiguration;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -47,6 +48,7 @@ public static class DependencyInjection
         services.AddScoped<PromotionService>();
         services.AddScoped<RetailerService>();
         services.AddScoped<TerritoryService>();
+        services.AddScoped<TransitTableService>();
         services.AddScoped<WarehouseConfigurationService>();
 
         return services;
