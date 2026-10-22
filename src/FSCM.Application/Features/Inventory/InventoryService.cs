@@ -9,13 +9,16 @@ public sealed class InventoryService(IInventoryStore store, TimeProvider timePro
 {
     private static readonly TimeZoneInfo VietnamTimeZone = TimeZoneInfo.FindSystemTimeZoneById("Asia/Ho_Chi_Minh");
 
-    public async Task<GoodsReceiptResult> ReceiveAsync(
+    public async Task<GoodsReceiptResult> CreateReceiptAsync(
         Guid actorUserId, string actorRole, Guid warehouseId, string idempotencyKey,
         IReadOnlyCollection<ReceiveGoodsLineData> lines, CancellationToken cancellationToken)
     {
         idempotencyKey = ValidateIdempotencyKey(idempotencyKey);
         if (lines.Count is < 1 or > 100)
             throw InventoryOperationException.Validation("A goods receipt must contain between 1 and 100 lines.");
+
+        if (!await store.CanAccessWarehouseAsync(actorUserId, actorRole, warehouseId, cancellationToken))
+            throw InventoryOperationException.Forbidden("User cannot create a goods receipt for this warehouse.");
 
         var requestHash = ComputeRequestHash(actorUserId, warehouseId, lines);
         var existing = await store.FindReceiptByIdempotencyKeyAsync(idempotencyKey, cancellationToken);
@@ -26,8 +29,6 @@ public sealed class InventoryService(IInventoryStore store, TimeProvider timePro
             return ToReceiptResult(existing);
         }
 
-        if (!await store.CanAccessWarehouseAsync(actorUserId, actorRole, warehouseId, cancellationToken))
-            throw InventoryOperationException.Forbidden("Warehouse Keeper can only receive goods into an assigned warehouse.");
         var warehouse = await store.FindWarehouseAsync(warehouseId, cancellationToken)
             ?? throw InventoryOperationException.NotFound("Warehouse was not found.");
         if (!warehouse.IsActive) throw InventoryOperationException.Conflict("Warehouse is inactive.");
@@ -53,21 +54,79 @@ public sealed class InventoryService(IInventoryStore store, TimeProvider timePro
             RequestHash = requestHash,
             WarehouseId = warehouseId,
             CreatedByUserId = actorUserId,
-            Status = GoodsReceiptStatuses.Received,
-            ReceivedAt = now,
+            Status = GoodsReceiptStatuses.Pending,
+            Version = 0,
             CreatedAt = now,
             UpdatedAt = now
         };
         store.AddReceipt(receipt);
 
-        var batches = new Dictionary<(Guid ProductId, DateOnly ExpirationDate), (Batch Batch, InventoryBalance Balance)>();
         foreach (var item in validatedLines)
         {
             var input = item.Input;
-            var key = (input.ProductId, input.ExpirationDate);
+            var line = new GoodsReceiptLine
+            {
+                Id = Guid.NewGuid(),
+                GoodsReceiptId = receipt.Id,
+                ProductId = input.ProductId,
+                SourceLotCode = input.SourceLotCode,
+                ReceivedQuantity = input.Quantity,
+                ProductionDate = input.ProductionDate,
+                ExpirationDate = input.ExpirationDate,
+                CreatedAt = now
+            };
+            store.AddReceiptLine(line);
+        }
+
+        try
+        {
+            await store.SaveChangesAsync(cancellationToken);
+        }
+        catch (InventoryOperationException exception) when (exception.Code == "conflict")
+        {
+            store.ClearTracking();
+            var concurrentlyCreated = await store.FindReceiptByIdempotencyKeyAsync(
+                idempotencyKey, cancellationToken);
+            if (concurrentlyCreated is not null && concurrentlyCreated.Receipt.RequestHash == requestHash)
+                return ToReceiptResult(concurrentlyCreated);
+            throw;
+        }
+        return ToReceiptResult(await store.FindReceiptAsync(receipt.Id, cancellationToken)
+            ?? throw InventoryOperationException.Conflict("Created goods receipt could not be reloaded."));
+    }
+
+    public async Task<GoodsReceiptResult> ApproveReceiptAsync(
+        Guid receiptId, Guid actorUserId, string actorRole, CancellationToken cancellationToken)
+    {
+        var approval = await store.FindReceiptForApprovalAsync(receiptId, cancellationToken)
+            ?? throw InventoryOperationException.NotFound("Goods receipt was not found.");
+        if (!await store.CanAccessWarehouseAsync(
+                actorUserId, actorRole, approval.Receipt.WarehouseId, cancellationToken))
+            throw InventoryOperationException.Forbidden("User cannot approve this goods receipt.");
+        if (approval.Receipt.Status == GoodsReceiptStatuses.Received)
+            return ToReceiptResult(await store.FindReceiptAsync(receiptId, cancellationToken)
+                ?? throw InventoryOperationException.Conflict("Approved goods receipt could not be reloaded."));
+        if (approval.Receipt.Status != GoodsReceiptStatuses.Pending)
+            throw InventoryOperationException.Conflict("Only a pending goods receipt can be approved.");
+        if (!approval.Warehouse.IsActive)
+            throw InventoryOperationException.Conflict("Warehouse is inactive.");
+
+        var now = timeProvider.GetUtcNow();
+        var businessDate = GetVietnamDate(now);
+        var batches = new Dictionary<(Guid ProductId, DateOnly ExpirationDate), (Batch Batch, InventoryBalance Balance)>();
+        foreach (var item in approval.Lines)
+        {
+            var input = new ReceiveGoodsLineData(item.Line.ProductId, item.Line.SourceLotCode,
+                item.Line.ReceivedQuantity, item.Line.ProductionDate, item.Line.ExpirationDate);
+            ValidateLine(input, businessDate);
+            if (item.Product.Status != "Published")
+                throw InventoryOperationException.Conflict($"Product '{item.Product.Sku}' is not published.");
+
+            var key = (item.Line.ProductId, item.Line.ExpirationDate);
             if (!batches.TryGetValue(key, out var stock))
             {
-                var batch = await store.FindBatchForUpdateAsync(warehouseId, input.ProductId, input.ExpirationDate, cancellationToken);
+                var batch = await store.FindBatchForUpdateAsync(approval.Receipt.WarehouseId,
+                    item.Line.ProductId, item.Line.ExpirationDate, cancellationToken);
                 InventoryBalance balance;
                 if (batch is null)
                 {
@@ -76,12 +135,13 @@ public sealed class InventoryService(IInventoryStore store, TimeProvider timePro
                     {
                         Id = batchId,
                         RootBatchId = batchId,
-                        WarehouseId = warehouseId,
-                        ProductId = input.ProductId,
-                        BatchCode = BuildBatchCode(warehouse.Code, item.Product.Sku, input.ExpirationDate),
+                        WarehouseId = approval.Receipt.WarehouseId,
+                        ProductId = item.Line.ProductId,
+                        BatchCode = BuildBatchCode(approval.Warehouse.Code, item.Product.Sku, item.Line.ExpirationDate),
                         Quantity = 0,
-                        ExpirationDate = input.ExpirationDate,
-                        ExpiryStatus = CalculateExpiryStatus(input.ExpirationDate, item.Product.NearDateThresholdHours, businessDate),
+                        ExpirationDate = item.Line.ExpirationDate,
+                        ExpiryStatus = CalculateExpiryStatus(item.Line.ExpirationDate,
+                            item.Product.NearDateThresholdHours, businessDate),
                         StockStatus = BatchStockStatuses.InStock,
                         Version = 0,
                         CreatedAt = now,
@@ -106,25 +166,13 @@ public sealed class InventoryService(IInventoryStore store, TimeProvider timePro
                 batches.Add(key, stock);
             }
 
-            var line = new GoodsReceiptLine
-            {
-                Id = Guid.NewGuid(),
-                GoodsReceiptId = receipt.Id,
-                ProductId = input.ProductId,
-                SourceLotCode = input.SourceLotCode,
-                ReceivedQuantity = input.Quantity,
-                ExpirationDate = input.ExpirationDate,
-                CreatedAt = now
-            };
-            store.AddReceiptLine(line);
-            if (stock.Batch.GoodsReceiptLineId is null) stock.Batch.GoodsReceiptLineId = line.Id;
-
-            stock.Batch.Quantity += input.Quantity;
+            if (stock.Batch.GoodsReceiptLineId is null) stock.Batch.GoodsReceiptLineId = item.Line.Id;
+            stock.Batch.Quantity += item.Line.ReceivedQuantity;
             stock.Batch.StockStatus = BatchStockStatuses.InStock;
             stock.Batch.Version++;
             stock.Batch.UpdatedAt = now;
-            stock.Balance.PhysicalQuantity += input.Quantity;
-            stock.Balance.AvailableQuantity = stock.Balance.PhysicalQuantity - stock.Balance.HeldQuantity - stock.Balance.ReservedQuantity;
+            stock.Balance.PhysicalQuantity += item.Line.ReceivedQuantity;
+            stock.Balance.AvailableQuantity = stock.Balance.PhysicalQuantity - stock.Balance.ReservedQuantity;
             EnsureNonNegative(stock.Balance);
             stock.Balance.Version++;
             stock.Balance.UpdatedAt = now;
@@ -132,26 +180,45 @@ public sealed class InventoryService(IInventoryStore store, TimeProvider timePro
             {
                 Id = Guid.NewGuid(),
                 BatchId = stock.Batch.Id,
-                WarehouseId = warehouseId,
-                ProductId = input.ProductId,
-                GoodsReceiptId = receipt.Id,
-                GoodsReceiptLineId = line.Id,
+                WarehouseId = approval.Receipt.WarehouseId,
+                ProductId = item.Line.ProductId,
+                GoodsReceiptId = approval.Receipt.Id,
+                GoodsReceiptLineId = item.Line.Id,
                 CreatedByUserId = actorUserId,
                 TransactionType = InventoryTransactionTypes.GoodsReceipt,
-                ReferenceCode = receipt.ReceiptCode,
-                PhysicalQuantityDelta = input.Quantity,
+                SourceType = InventoryTransactionSourceTypes.GoodsReceipt,
+                SourceId = approval.Receipt.Id,
+                ReferenceCode = approval.Receipt.ReceiptCode,
+                PhysicalQuantityDelta = item.Line.ReceivedQuantity,
                 PhysicalQuantityAfter = stock.Balance.PhysicalQuantity,
-                HeldQuantityAfter = stock.Balance.HeldQuantity,
                 ReservedQuantityAfter = stock.Balance.ReservedQuantity,
                 AvailableQuantityAfter = stock.Balance.AvailableQuantity,
-                Note = "Nhập hàng vào kho",
+                Note = "Duyệt phiếu nhập kho",
                 OccurredAt = now
             });
         }
 
-        await store.SaveChangesAsync(cancellationToken);
-        return ToReceiptResult(await store.FindReceiptAsync(receipt.Id, cancellationToken)
-            ?? throw InventoryOperationException.Conflict("Created goods receipt could not be reloaded."));
+        approval.Receipt.Status = GoodsReceiptStatuses.Received;
+        approval.Receipt.ApprovedByUserId = actorUserId;
+        approval.Receipt.ApprovedAt = now;
+        approval.Receipt.ReceivedAt = now;
+        approval.Receipt.Version++;
+        approval.Receipt.UpdatedAt = now;
+        try
+        {
+            await store.SaveChangesAsync(cancellationToken);
+        }
+        catch (InventoryOperationException exception) when (exception.Code == "conflict")
+        {
+            store.ClearTracking();
+            var concurrentlyApproved = await store.FindReceiptAsync(receiptId, cancellationToken);
+            if (concurrentlyApproved?.Receipt.Status == GoodsReceiptStatuses.Received)
+                return ToReceiptResult(concurrentlyApproved);
+            throw;
+        }
+
+        return ToReceiptResult(await store.FindReceiptAsync(receiptId, cancellationToken)
+            ?? throw InventoryOperationException.Conflict("Approved goods receipt could not be reloaded."));
     }
 
     public async Task<IReadOnlyCollection<GoodsReceiptResult>> ListReceiptsAsync(
@@ -193,6 +260,20 @@ public sealed class InventoryService(IInventoryStore store, TimeProvider timePro
         (await store.ListHistoryAsync(actorUserId, actorRole, warehouseId, batchId, cancellationToken))
         .Select(ToHistoryResult).ToArray();
 
+    public async Task<InventoryExpiryHealthResult> GetExpiryHealthAsync(
+        bool schedulerEnabled, string scheduleTimeZone, string scheduleLocalTime,
+        CancellationToken cancellationToken)
+    {
+        var latest = await store.FindLatestExpirySweepRunAsync(cancellationToken);
+        var pending = await store.CountOutboxMessagesAsync(
+            InventoryOutboxEventTypes.BatchExpired, OutboxMessageStatuses.Pending, cancellationToken);
+        var failed = await store.CountOutboxMessagesAsync(
+            InventoryOutboxEventTypes.BatchExpired, OutboxMessageStatuses.Failed, cancellationToken);
+        return new InventoryExpiryHealthResult(
+            scheduleTimeZone, scheduleLocalTime, schedulerEnabled,
+            latest is null ? null : ToExpirySweepResult(latest), pending, failed);
+    }
+
     private async Task EnsureWarehouseAccessAsync(Guid userId, string role, Guid warehouseId, CancellationToken cancellationToken)
     {
         if (!await store.CanAccessWarehouseAsync(userId, role, warehouseId, cancellationToken))
@@ -204,6 +285,10 @@ public sealed class InventoryService(IInventoryStore store, TimeProvider timePro
         if (line.ProductId == Guid.Empty) throw InventoryOperationException.Validation("Product identifier is required.");
         if (line.Quantity <= 0 || decimal.Truncate(line.Quantity) != line.Quantity)
             throw InventoryOperationException.Validation("Received quantity must be a positive whole number of cartons.");
+        if (line.ProductionDate > businessDate)
+            throw InventoryOperationException.Validation("Production date cannot be in the future.");
+        if (line.ProductionDate >= line.ExpirationDate)
+            throw InventoryOperationException.Validation("Production date must be before expiration date.");
         if (line.ExpirationDate <= businessDate)
             throw InventoryOperationException.Validation("Expired goods or goods expiring today cannot be received.");
     }
@@ -225,7 +310,7 @@ public sealed class InventoryService(IInventoryStore store, TimeProvider timePro
 
     private static void EnsureNonNegative(InventoryBalance balance)
     {
-        if (balance.PhysicalQuantity < 0 || balance.HeldQuantity < 0 || balance.ReservedQuantity < 0 || balance.AvailableQuantity < 0)
+        if (balance.PhysicalQuantity < 0 || balance.ReservedQuantity < 0 || balance.AvailableQuantity < 0)
             throw InventoryOperationException.Conflict("Inventory quantities cannot become negative.");
     }
 
@@ -246,7 +331,9 @@ public sealed class InventoryService(IInventoryStore store, TimeProvider timePro
     {
         var canonicalLines = lines.OrderBy(item => item.ProductId).ThenBy(item => item.ExpirationDate)
             .ThenBy(item => item.SourceLotCode, StringComparer.Ordinal)
-            .Select(item => string.Join('|', item.ProductId, item.ExpirationDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+            .Select(item => string.Join('|', item.ProductId,
+                item.ProductionDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+                item.ExpirationDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
                 item.Quantity.ToString(CultureInfo.InvariantCulture), item.SourceLotCode?.Trim().ToUpperInvariant()));
         var canonical = $"{userId}|{warehouseId}|{string.Join(';', canonicalLines)}";
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(canonical)));
@@ -254,26 +341,31 @@ public sealed class InventoryService(IInventoryStore store, TimeProvider timePro
 
     private static GoodsReceiptResult ToReceiptResult(GoodsReceiptView view) => new(
         view.Receipt.Id, view.Receipt.ReceiptCode, view.Receipt.WarehouseId, view.WarehouseCode,
-        view.WarehouseName, view.Receipt.CreatedByUserId, view.Receipt.Status,
-        view.Receipt.ReceivedAt ?? view.Receipt.CreatedAt, view.Receipt.CreatedAt,
+        view.WarehouseName, view.Receipt.CreatedByUserId, view.Receipt.ApprovedByUserId,
+        view.Receipt.Status, view.Receipt.ReceivedAt, view.Receipt.ApprovedAt,
+        view.Receipt.Version, view.Receipt.CreatedAt,
         view.Lines.Select(item => new GoodsReceiptLineResult(item.Line.Id, item.Line.ProductId,
             item.Sku, item.ProductName, item.Line.SourceLotCode, item.Line.ReceivedQuantity,
-            item.Line.ExpirationDate, item.BatchId, item.BatchCode)).ToArray());
+            item.Line.ProductionDate, item.Line.ExpirationDate, item.BatchId, item.BatchCode)).ToArray());
 
     private static BatchInventoryResult ToInventoryResult(BatchInventoryView view, DateOnly today) => new(
         view.Batch.Id, view.Batch.BatchCode, view.Batch.WarehouseId, view.WarehouseCode, view.WarehouseName,
         view.Batch.ProductId, view.Sku, view.ProductName, view.Batch.ExpirationDate,
         CalculateExpiryStatus(view.Batch.ExpirationDate, view.NearDateThresholdHours, today),
         view.Balance.PhysicalQuantity == 0 ? BatchStockStatuses.Depleted : BatchStockStatuses.InStock,
-        view.Balance.PhysicalQuantity, view.Balance.HeldQuantity, view.Balance.ReservedQuantity,
+        view.Balance.PhysicalQuantity, view.Balance.ReservedQuantity,
         view.Balance.AvailableQuantity, view.Balance.Version, view.Balance.UpdatedAt);
 
     private static InventoryHistoryResult ToHistoryResult(InventoryHistoryView view) => new(
         view.Transaction.Id, view.Transaction.BatchId, view.BatchCode, view.WarehouseCode, view.Sku,
-        view.Transaction.TransactionType, view.Transaction.ReferenceCode,
-        view.Transaction.PhysicalQuantityDelta, view.Transaction.HeldQuantityDelta,
+        view.Transaction.TransactionType, view.Transaction.SourceType, view.Transaction.SourceId,
+        view.Transaction.ReferenceCode, view.Transaction.PhysicalQuantityDelta,
         view.Transaction.ReservedQuantityDelta, view.Transaction.PhysicalQuantityAfter,
-        view.Transaction.HeldQuantityAfter, view.Transaction.ReservedQuantityAfter,
+        view.Transaction.ReservedQuantityAfter,
         view.Transaction.AvailableQuantityAfter, view.Transaction.Note,
         view.Transaction.CreatedByUserId, view.Transaction.OccurredAt);
+
+    private static ExpirySweepRunResult ToExpirySweepResult(ExpirySweepRun run) => new(
+        run.Id, run.BusinessDate, run.Status, run.BatchesScanned, run.StatusesUpdated,
+        run.BatchesExpired, run.Error, run.StartedAt, run.CompletedAt);
 }
