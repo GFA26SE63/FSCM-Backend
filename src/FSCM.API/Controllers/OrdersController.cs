@@ -62,22 +62,22 @@ public sealed class OrdersController(OrderService service, DeliveryService deliv
         return CreatedAtAction(nameof(Get), new { id = result.Id }, result);
     }
 
-    [Authorize(Roles = SystemRoles.Operator)]
+    [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator}")]
     [HttpPost("{id:guid}/approve")]
     public Task<OrderDetailResult> Approve(
         Guid id,
         OrderDecisionRequest request,
         CancellationToken cancellationToken) =>
-        service.ApproveAsync(id, request.ExpectedVersion, GetActorUserId(), cancellationToken);
+        service.ApproveAsync(id, request.ExpectedVersion, GetActorUserId(), GetActorRole(), cancellationToken);
 
-    [Authorize(Roles = SystemRoles.Operator)]
+    [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator}")]
     [HttpPost("{id:guid}/reject")]
     public Task<OrderDetailResult> Reject(
         Guid id,
         RejectOrderRequest request,
         CancellationToken cancellationToken) =>
         service.RejectAsync(id, request.ExpectedVersion, request.Reason,
-            GetActorUserId(), cancellationToken);
+            GetActorUserId(), GetActorRole(), cancellationToken);
 
     [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator},{SystemRoles.Sales}")]
     [HttpPost("{id:guid}/cancel")]
