@@ -91,7 +91,7 @@ public sealed class PhysicalSchemaModelTests
 
         Assert.Equal(ExpectedTables, tableNames);
         Assert.Equal(66, entityTypes.Length);
-        Assert.Equal(708, entityTypes.Sum(entityType => entityType.GetProperties().Count()));
+        Assert.Equal(710, entityTypes.Sum(entityType => entityType.GetProperties().Count()));
         Assert.Equal(150, entityTypes.Sum(entityType => entityType.GetForeignKeys().Count()));
         Assert.All(
             entityTypes.SelectMany(entityType => entityType.GetForeignKeys()),
@@ -281,12 +281,15 @@ public sealed class PhysicalSchemaModelTests
         using var context = CreateContext();
         var batch = context.Model.FindEntityType(typeof(Batch))!;
         var balance = context.Model.FindEntityType(typeof(InventoryBalance))!;
+        var receipt = context.Model.FindEntityType(typeof(GoodsReceipt))!;
         var receiptLine = context.Model.FindEntityType(typeof(GoodsReceiptLine))!;
 
         Assert.Equal("date", batch.FindProperty(nameof(Batch.ExpirationDate))!.GetColumnType());
+        Assert.Equal("date", receiptLine.FindProperty(nameof(GoodsReceiptLine.ProductionDate))!.GetColumnType());
         Assert.Equal("date", receiptLine.FindProperty(nameof(GoodsReceiptLine.ExpirationDate))!.GetColumnType());
         Assert.True(batch.FindProperty(nameof(Batch.Version))!.IsConcurrencyToken);
         Assert.True(balance.FindProperty(nameof(InventoryBalance.Version))!.IsConcurrencyToken);
+        Assert.True(receipt.FindProperty(nameof(GoodsReceipt.Version))!.IsConcurrencyToken);
         Assert.Null(balance.FindProperty("HeldQuantity"));
         var transaction = context.Model.FindEntityType(typeof(InventoryTransaction))!;
         Assert.Null(transaction.FindProperty("HeldQuantityDelta"));
