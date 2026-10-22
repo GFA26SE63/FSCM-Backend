@@ -269,9 +269,6 @@ public sealed class OrderServiceTests
                 [new(Batch, Balance, Warehouse, 10.802m, 106.743m)]);
         public Task<MapLocation?> FindRetailerLocationAsync(Guid retailerId, CancellationToken cancellationToken) =>
             Task.FromResult<MapLocation?>(retailerId == Retailer.Id ? RetailerLocation : null);
-        public Task<IReadOnlyCollection<TransitTimeRule>> ListTransitRulesAsync(IReadOnlyCollection<Guid> warehouseIds, CancellationToken cancellationToken) =>
-            Task.FromResult<IReadOnlyCollection<TransitTimeRule>>(
-                [new() { Id = Guid.NewGuid(), WarehouseId = Warehouse.Id, MinDistanceMeters = 0, MaxDistanceMeters = 20_000, MaxServingDistanceMeters = 20_000, TransitMinutes = 1_440, IsActive = true }]);
         public Task<decimal?> FindMlorRatioAsync(Guid retailerId, Guid productId, CancellationToken cancellationToken) =>
             Task.FromResult<decimal?>(0.25m);
         public Task<string?> FindConfigurationAsync(string key, CancellationToken cancellationToken) =>

@@ -70,7 +70,8 @@ public sealed class DevelopmentDataSeeder(
         await SeedQrLabelDataAsync(users[SystemRoles.WarehouseKeeper].Id, now, cancellationToken);
         await SeedSalesGroupMembershipsAsync(users, salesGroups, now, cancellationToken);
         await SeedRetailerAssignmentsAsync(retailer.Id, salesGroups, now, cancellationToken);
-        await SeedAdditionalRetailersAsync(regions, salesGroups, users, now, cancellationToken);
+        await SeedAdditionalRetailersAsync(
+            regions, salesGroups, users, categories["CAT-01"].Id, now, cancellationToken);
         await SeedPromotionDataAsync(products, categories, retailer, users[SystemRoles.Admin].Id,
             now, cancellationToken);
         await dbContext.SaveChangesAsync(cancellationToken);
@@ -699,6 +700,7 @@ public sealed class DevelopmentDataSeeder(
         warehouse.Name = "Kho trung tâm Củ Chi";
         warehouse.Type = WarehouseTypes.Central;
         warehouse.Address = "Đường Nguyễn Thị Rành, huyện Củ Chi, Thành phố Hồ Chí Minh";
+        warehouse.MinimumStockThresholdCartons = 150;
         warehouse.IsActive = true;
         warehouse.UpdatedAt = now;
         await dbContext.SaveChangesAsync(cancellationToken);
@@ -716,11 +718,11 @@ public sealed class DevelopmentDataSeeder(
         var definitions = new[]
         {
             new WarehouseSeed(centralWarehouse.Code, "Kho trung tâm Củ Chi", WarehouseTypes.Central,
-                "Đường Nguyễn Thị Rành, huyện Củ Chi, Thành phố Hồ Chí Minh", 10.9747000m, 106.4931000m),
+                "Đường Nguyễn Thị Rành, huyện Củ Chi, Thành phố Hồ Chí Minh", 10.9747000m, 106.4931000m, 150),
             new WarehouseSeed("WH-TD", "Kho vùng Thủ Đức", WarehouseTypes.Regional,
-                "Đường Võ Chí Công, thành phố Thủ Đức, Thành phố Hồ Chí Minh", 10.8480000m, 106.7720000m),
+                "Đường Võ Chí Công, thành phố Thủ Đức, Thành phố Hồ Chí Minh", 10.8480000m, 106.7720000m, 100),
             new WarehouseSeed("WH-Q7", "Kho vùng Quận 7", WarehouseTypes.Regional,
-                "Đường Nguyễn Văn Linh, Quận 7, Thành phố Hồ Chí Minh", 10.7298000m, 106.7219000m)
+                "Đường Nguyễn Văn Linh, Quận 7, Thành phố Hồ Chí Minh", 10.7298000m, 106.7219000m, 80)
         };
         var warehouses = new List<Warehouse>();
         foreach (var definition in definitions)
@@ -736,6 +738,7 @@ public sealed class DevelopmentDataSeeder(
             warehouse.Name = definition.Name;
             warehouse.Type = definition.Type;
             warehouse.Address = definition.Address;
+            warehouse.MinimumStockThresholdCartons = definition.MinimumStockThresholdCartons;
             warehouse.IsActive = true;
             warehouse.UpdatedAt = now;
             await dbContext.SaveChangesAsync(cancellationToken);
@@ -762,12 +765,18 @@ public sealed class DevelopmentDataSeeder(
         await dbContext.SaveChangesAsync(cancellationToken);
         foreach (var warehouse in warehouses)
         {
-            if (!await dbContext.TransitTimeRuleRecords.AnyAsync(
-                    item => item.WarehouseId == warehouse.Id && item.IsActive, cancellationToken))
+            var activeTransitRules = await dbContext.TransitTimeRuleRecords.Where(
+                item => item.WarehouseId == warehouse.Id && item.IsActive).ToArrayAsync(cancellationToken);
+            if (activeTransitRules.Length == 0)
             {
                 dbContext.TransitTimeRuleRecords.AddRange(
-                    CreateTransitRule(warehouse.Id, 0, 10_000, 60, 1_440, now),
-                    CreateTransitRule(warehouse.Id, 10_001, 20_000, 60, 2_880, now));
+                    CreateTransitRule(warehouse.Id, 0, 10_000, 60, 1_440, 120_000m, now),
+                    CreateTransitRule(warehouse.Id, 10_001, 20_000, 60, 2_880, 220_000m, now));
+            }
+            else
+            {
+                foreach (var rule in activeTransitRules)
+                    rule.EstimatedTransportCost = rule.MaxDistanceMeters <= 10_000 ? 120_000m : 220_000m;
             }
         }
 
@@ -793,7 +802,25 @@ public sealed class DevelopmentDataSeeder(
                 CreateTransitBand(transitTable.Id, 10_000, 20_000, 60, 2_880, 120_000m, now));
         }
 
-        foreach (var definition in new[] { (Product: products["SKU001"], Ratio: 0.25m), (Product: products["SKU002"], Ratio: 0.30m) })
+        var categoryId = products["SKU001"].ProductCategoryId;
+        if (!await dbContext.RetailerProductMlorRecords.AnyAsync(
+                item => item.RetailerId == retailer.Id && item.ProductCategoryId == categoryId && item.IsActive,
+                cancellationToken))
+        {
+            dbContext.RetailerProductMlorRecords.Add(new RetailerProductMlor
+            {
+                Id = Guid.NewGuid(),
+                RetailerId = retailer.Id,
+                ProductCategoryId = categoryId,
+                MinimumLifeRatio = 0.25m,
+                Version = 1,
+                UpdatedByUserId = adminUserId,
+                EffectiveFrom = now,
+                IsActive = true
+            });
+        }
+
+        foreach (var definition in new[] { (Product: products["SKU002"], Ratio: 0.30m) })
         {
             if (!await dbContext.RetailerProductMlorRecords.AnyAsync(
                     item => item.RetailerId == retailer.Id && item.ProductId == definition.Product.Id && item.IsActive,
@@ -806,6 +833,8 @@ public sealed class DevelopmentDataSeeder(
                     ProductId = definition.Product.Id,
                     MinimumLifeRatio = definition.Ratio,
                     MinimumLifeHours = (int)Math.Ceiling(definition.Product.ShelfLifeHours * definition.Ratio),
+                    Version = 1,
+                    UpdatedByUserId = adminUserId,
                     EffectiveFrom = now,
                     IsActive = true
                 });
@@ -859,7 +888,7 @@ public sealed class DevelopmentDataSeeder(
 
     private static TransitTimeRule CreateTransitRule(
         Guid warehouseId, int minimumDistance, int maximumDistance,
-        int handlingMinutes, int transitMinutes, DateTimeOffset now) => new()
+        int handlingMinutes, int transitMinutes, decimal estimatedTransportCost, DateTimeOffset now) => new()
         {
             Id = Guid.NewGuid(),
             WarehouseId = warehouseId,
@@ -867,6 +896,7 @@ public sealed class DevelopmentDataSeeder(
             MaxDistanceMeters = maximumDistance,
             HandlingMinutes = handlingMinutes,
             TransitMinutes = transitMinutes,
+            EstimatedTransportCost = estimatedTransportCost,
             MaxServingDistanceMeters = 20_000,
             Version = 1,
             EffectiveFrom = now,
@@ -1000,6 +1030,7 @@ public sealed class DevelopmentDataSeeder(
         IReadOnlyDictionary<string, Region> regions,
         IReadOnlyDictionary<string, SalesGroup> salesGroups,
         IReadOnlyDictionary<string, UserAccount> users,
+        Guid defaultMlorCategoryId,
         DateTimeOffset now,
         CancellationToken cancellationToken)
     {
@@ -1063,6 +1094,22 @@ public sealed class DevelopmentDataSeeder(
                     RetailerId = retailer.Id,
                     SalesGroupId = groupId,
                     AssignedAt = now.AddDays(-20),
+                    IsActive = true
+                });
+            }
+
+            if (!await dbContext.RetailerProductMlorRecords.AnyAsync(
+                    item => item.RetailerId == retailer.Id && item.IsActive, cancellationToken))
+            {
+                dbContext.RetailerProductMlorRecords.Add(new RetailerProductMlor
+                {
+                    Id = Guid.NewGuid(),
+                    RetailerId = retailer.Id,
+                    ProductCategoryId = defaultMlorCategoryId,
+                    MinimumLifeRatio = 0.25m,
+                    Version = 1,
+                    UpdatedByUserId = users[SystemRoles.Sales].Id,
+                    EffectiveFrom = now.AddDays(-20),
                     IsActive = true
                 });
             }
@@ -1373,7 +1420,8 @@ public sealed class DevelopmentDataSeeder(
         string Type,
         string Address,
         decimal Latitude,
-        decimal Longitude);
+        decimal Longitude,
+        int MinimumStockThresholdCartons);
 
     private sealed record RegionSeed(
         string Code,

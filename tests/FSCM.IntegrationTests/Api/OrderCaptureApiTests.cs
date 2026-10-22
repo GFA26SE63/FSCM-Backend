@@ -277,8 +277,6 @@ public sealed class OrderCaptureApiTests
             CancellationToken cancellationToken) => throw new InvalidOperationException("Capture must not query stock.");
         public Task<MapLocation?> FindRetailerLocationAsync(Guid retailerId, CancellationToken cancellationToken) =>
             throw new InvalidOperationException("Capture must not query allocation distance.");
-        public Task<IReadOnlyCollection<TransitTimeRule>> ListTransitRulesAsync(IReadOnlyCollection<Guid> warehouseIds,
-            CancellationToken cancellationToken) => throw new InvalidOperationException("Capture must not query transit rules.");
         public Task<decimal?> FindMlorRatioAsync(Guid retailerId, Guid productId,
             CancellationToken cancellationToken) => throw new InvalidOperationException("Capture must not resolve allocation MLOR.");
         public Task<string?> FindConfigurationAsync(string key, CancellationToken cancellationToken) =>

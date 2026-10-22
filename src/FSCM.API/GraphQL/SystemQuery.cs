@@ -105,11 +105,12 @@ public sealed class SystemQuery
         [Service] WarehouseConfigurationService service, CancellationToken cancellationToken) =>
         await service.ListTransitRulesAsync(warehouseId, includeInactive, cancellationToken);
 
-    [Authorize, UsePaging(DefaultPageSize = 20, MaxPageSize = 100, IncludeTotalCount = true, RequirePagingBoundaries = true), UseFiltering, UseSorting]
-    public async Task<IEnumerable<MlorResult>> MlorConfigurations(Guid? retailerId, Guid? productId,
+    [Authorize(Roles = [SystemRoles.Admin]), UsePaging(DefaultPageSize = 20, MaxPageSize = 100, IncludeTotalCount = true, RequirePagingBoundaries = true), UseFiltering, UseSorting]
+    public async Task<IEnumerable<MlorResult>> MlorConfigurations(
+        Guid? retailerId, Guid? productCategoryId, Guid? productId,
         [DefaultValue(false)] bool includeInactive, [Service] WarehouseConfigurationService service,
         CancellationToken cancellationToken) =>
-        await service.ListMlorAsync(retailerId, productId, includeInactive, cancellationToken);
+        await service.ListMlorAsync(retailerId, productCategoryId, productId, includeInactive, cancellationToken);
 
     [Authorize, UsePaging(DefaultPageSize = 20, MaxPageSize = 100, IncludeTotalCount = true, RequirePagingBoundaries = true), UseFiltering, UseSorting]
     public async Task<IEnumerable<ConfigurationResult>> Configurations(
@@ -190,6 +191,15 @@ public sealed class SystemQuery
     {
         var user = CurrentUser.From(accessor);
         return service.GetAsync(id, user.Id, user.Role, cancellationToken);
+    }
+
+    [Authorize(Roles = [SystemRoles.Admin, SystemRoles.Operator, SystemRoles.SalesManager, SystemRoles.Sales])]
+    public Task<RetailerMlorResolutionResult> RetailerMlorResolution(
+        Guid retailerId, Guid productId, [Service] RetailerService service,
+        [Service] IHttpContextAccessor accessor, CancellationToken cancellationToken)
+    {
+        var user = CurrentUser.From(accessor);
+        return service.ResolveMlorAsync(retailerId, productId, user.Id, user.Role, cancellationToken);
     }
 
     [Authorize(Roles = [SystemRoles.Admin, SystemRoles.Operator, SystemRoles.WarehouseKeeper])]

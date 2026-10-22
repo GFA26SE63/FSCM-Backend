@@ -44,6 +44,48 @@ public sealed class RetailerStore(AppDbContext dbContext) : IRetailerStore
     public Task<Retailer?> FindForUpdateAsync(Guid retailerId, CancellationToken cancellationToken) =>
         dbContext.RetailerRecords.SingleOrDefaultAsync(item => item.Id == retailerId, cancellationToken);
 
+    public async Task<IReadOnlyCollection<RetailerMlorView>> ListMlorDeclarationsAsync(
+        IReadOnlyCollection<Guid> retailerIds, bool includeInactive, bool tracking,
+        CancellationToken cancellationToken)
+    {
+        var query = tracking
+            ? dbContext.RetailerProductMlorRecords.AsQueryable()
+            : dbContext.RetailerProductMlorRecords.AsNoTracking();
+        query = query.Where(item => retailerIds.Contains(item.RetailerId));
+        if (!includeInactive) query = query.Where(item => item.IsActive);
+        var mlors = await query.OrderBy(item => item.RetailerId)
+            .ThenByDescending(item => item.EffectiveFrom).ToArrayAsync(cancellationToken);
+        var categoryIds = mlors.Where(item => item.ProductCategoryId.HasValue)
+            .Select(item => item.ProductCategoryId!.Value).Distinct().ToArray();
+        var productIds = mlors.Where(item => item.ProductId.HasValue)
+            .Select(item => item.ProductId!.Value).Distinct().ToArray();
+        var categories = await dbContext.ProductCategoryRecords.AsNoTracking()
+            .Where(item => categoryIds.Contains(item.Id)).ToDictionaryAsync(item => item.Id, cancellationToken);
+        var products = await dbContext.ProductRecords.AsNoTracking()
+            .Where(item => productIds.Contains(item.Id)).ToDictionaryAsync(item => item.Id, cancellationToken);
+        return mlors.Select(item =>
+        {
+            categories.TryGetValue(item.ProductCategoryId ?? Guid.Empty, out var category);
+            products.TryGetValue(item.ProductId ?? Guid.Empty, out var product);
+            return new RetailerMlorView(item, category?.Code, category?.Name, product?.Sku, product?.Name);
+        }).ToArray();
+    }
+
+    public Task<ProductCategory?> FindCategoryAsync(Guid categoryId, CancellationToken cancellationToken) =>
+        dbContext.ProductCategoryRecords.AsNoTracking().SingleOrDefaultAsync(
+            item => item.Id == categoryId, cancellationToken);
+
+    public Task<Product?> FindProductAsync(Guid productId, CancellationToken cancellationToken) =>
+        dbContext.ProductRecords.AsNoTracking().SingleOrDefaultAsync(
+            item => item.Id == productId, cancellationToken);
+
+    public async Task<IReadOnlyCollection<ProductCategory>> ListCategoriesAsync(CancellationToken cancellationToken) =>
+        await dbContext.ProductCategoryRecords.AsNoTracking().ToArrayAsync(cancellationToken);
+
+    public Task<SystemConfiguration?> FindCurrentConfigurationAsync(string key, CancellationToken cancellationToken) =>
+        dbContext.SystemConfigurationRecords.AsNoTracking().SingleOrDefaultAsync(
+            item => item.ConfigKey == key && item.IsActive, cancellationToken);
+
     public Task<MapLocation?> FindLocationForUpdateAsync(Guid retailerId, CancellationToken cancellationToken) =>
         dbContext.MapLocationRecords.SingleOrDefaultAsync(item => item.RetailerId == retailerId, cancellationToken);
 
@@ -84,6 +126,8 @@ public sealed class RetailerStore(AppDbContext dbContext) : IRetailerStore
     public void Add(Retailer retailer) => dbContext.RetailerRecords.Add(retailer);
     public void AddAssignment(RetailerSalesAssignment assignment) => dbContext.RetailerSalesAssignmentRecords.Add(assignment);
     public void AddLocation(MapLocation location) => dbContext.MapLocationRecords.Add(location);
+    public void AddMlor(RetailerProductMlor mlor) => dbContext.RetailerProductMlorRecords.Add(mlor);
+    public void AddAuditLog(AuditLog auditLog) => dbContext.AuditLogRecords.Add(auditLog);
     public Task SaveChangesAsync(CancellationToken cancellationToken) => dbContext.SaveChangesAsync(cancellationToken);
 
 }

@@ -9,6 +9,7 @@ public sealed class Warehouse
     public string Name { get; set; } = string.Empty;
     public string Type { get; set; } = string.Empty;
     public string? Address { get; set; }
+    public int MinimumStockThresholdCartons { get; set; }
     public bool IsActive { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }

@@ -4,11 +4,13 @@ namespace FSCM.API.Contracts.WarehouseConfiguration;
 
 public sealed record CreateWarehouseRequest(
     string Code, string Name, string Type, string Address,
-    decimal Latitude, decimal Longitude, string? ProviderPlaceId);
+    decimal Latitude, decimal Longitude, string? ProviderPlaceId,
+    int MinimumStockThresholdCartons);
 
 public sealed record UpdateWarehouseRequest(
     string Name, string Type, string Address,
-    decimal Latitude, decimal Longitude, string? ProviderPlaceId);
+    decimal Latitude, decimal Longitude, string? ProviderPlaceId,
+    int MinimumStockThresholdCartons);
 
 public sealed record UpdateWarehouseStatusRequest(bool IsActive);
 
@@ -16,9 +18,10 @@ public sealed record ReplaceTransitTimeRulesRequest(IReadOnlyCollection<TransitT
 
 public sealed record TransitTimeRuleRequest(
     int MinDistanceMeters, int MaxDistanceMeters, int HandlingMinutes,
-    int TransitMinutes, int MaxServingDistanceMeters);
+    int TransitMinutes, decimal EstimatedTransportCost, int MaxServingDistanceMeters);
 
 public sealed record SetMlorRequest(
-    Guid RetailerId, Guid ProductId, decimal MinimumLifeRatio, int? MinimumLifeHours);
+    Guid RetailerId, Guid? ProductCategoryId, Guid? ProductId,
+    decimal MinimumLifeRatio, int? MinimumLifeHours);
 
 public sealed record UpdateBusinessConfigurationRequest(JsonElement Value);

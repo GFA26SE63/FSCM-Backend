@@ -11,6 +11,7 @@ public sealed record WarehouseResult(
     decimal Latitude,
     decimal Longitude,
     string? ProviderPlaceId,
+    int MinimumStockThresholdCartons,
     bool IsActive,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt);
@@ -22,13 +23,15 @@ public sealed record SaveWarehouseData(
     string Address,
     decimal Latitude,
     decimal Longitude,
-    string? ProviderPlaceId);
+    string? ProviderPlaceId,
+    int MinimumStockThresholdCartons);
 
 public sealed record TransitTimeRuleData(
     int MinDistanceMeters,
     int MaxDistanceMeters,
     int HandlingMinutes,
     int TransitMinutes,
+    decimal EstimatedTransportCost,
     int MaxServingDistanceMeters);
 
 public sealed record TransitTimeRuleResult(
@@ -38,6 +41,7 @@ public sealed record TransitTimeRuleResult(
     int MaxDistanceMeters,
     int HandlingMinutes,
     int TransitMinutes,
+    decimal EstimatedTransportCost,
     int MaxServingDistanceMeters,
     int Version,
     DateTimeOffset EffectiveFrom,
@@ -51,11 +55,16 @@ public sealed record MlorResult(
     Guid RetailerId,
     string RetailerCode,
     string RetailerName,
-    Guid ProductId,
-    string ProductSku,
-    string ProductName,
+    Guid? ProductCategoryId,
+    string? CategoryCode,
+    string? CategoryName,
+    Guid? ProductId,
+    string? ProductSku,
+    string? ProductName,
     decimal MinimumLifeRatio,
     int? MinimumLifeHours,
+    int Version,
+    Guid UpdatedByUserId,
     DateTimeOffset EffectiveFrom,
     DateTimeOffset? EffectiveTo,
     bool IsActive);

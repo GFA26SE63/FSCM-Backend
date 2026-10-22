@@ -58,7 +58,6 @@ public sealed class MapServiceTests
         private readonly Guid _retailerId;
         public List<MapLocation> Locations { get; } = [];
         public List<MapDistanceCache> Distances { get; } = [];
-        public List<TransitTimeRule> TransitRules { get; } = [];
 
         public FakeStore(Guid warehouseId, Guid retailerId)
         {
@@ -76,9 +75,6 @@ public sealed class MapServiceTests
             Task.FromResult(Distances.SingleOrDefault(item => item.WarehouseId == warehouseId && item.RetailerId == retailerId && item.IsActive));
         public Task<IReadOnlyCollection<MapDistanceCache>> ListDistancesAsync(Guid? warehouseId, Guid? retailerId, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyCollection<MapDistanceCache>>(Distances.Where(item => item.IsActive).ToArray());
-        public Task<TransitTimeRule?> FindTransitRuleAsync(Guid warehouseId, int distanceMeters, CancellationToken cancellationToken) =>
-            Task.FromResult(TransitRules.SingleOrDefault(item => item.WarehouseId == warehouseId && item.IsActive &&
-                item.MinDistanceMeters <= distanceMeters && distanceMeters <= item.MaxDistanceMeters));
         public void AddLocation(MapLocation location) => Locations.Add(location);
         public void AddDistance(MapDistanceCache distance) => Distances.Add(distance);
         public Task SaveChangesAsync(CancellationToken cancellationToken) => Task.CompletedTask;

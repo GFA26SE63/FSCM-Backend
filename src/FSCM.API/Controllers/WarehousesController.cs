@@ -26,7 +26,8 @@ public sealed class WarehousesController(WarehouseConfigurationService service) 
     {
         var result = await service.CreateWarehouseAsync(new SaveWarehouseData(
             request.Code, request.Name, request.Type, request.Address,
-            request.Latitude, request.Longitude, request.ProviderPlaceId), cancellationToken);
+            request.Latitude, request.Longitude, request.ProviderPlaceId,
+            request.MinimumStockThresholdCartons), cancellationToken);
         return CreatedAtAction(nameof(Get), new { warehouseId = result.Id }, result);
     }
 
@@ -36,7 +37,8 @@ public sealed class WarehousesController(WarehouseConfigurationService service) 
         Guid warehouseId, UpdateWarehouseRequest request, CancellationToken cancellationToken) =>
         service.UpdateWarehouseAsync(warehouseId, new SaveWarehouseData(
             string.Empty, request.Name, request.Type, request.Address,
-            request.Latitude, request.Longitude, request.ProviderPlaceId), cancellationToken);
+            request.Latitude, request.Longitude, request.ProviderPlaceId,
+            request.MinimumStockThresholdCartons), cancellationToken);
 
     [Authorize(Roles = SystemRoles.Admin)]
     [HttpPatch("{warehouseId:guid}/status")]
@@ -63,5 +65,6 @@ public sealed class WarehousesController(WarehouseConfigurationService service) 
         Guid warehouseId, ReplaceTransitTimeRulesRequest request, CancellationToken cancellationToken) =>
         service.ReplaceTransitRulesAsync(warehouseId, request.Rules.Select(item => new TransitTimeRuleData(
             item.MinDistanceMeters, item.MaxDistanceMeters, item.HandlingMinutes,
-            item.TransitMinutes, item.MaxServingDistanceMeters)).ToArray(), cancellationToken);
+            item.TransitMinutes, item.EstimatedTransportCost,
+            item.MaxServingDistanceMeters)).ToArray(), cancellationToken);
 }

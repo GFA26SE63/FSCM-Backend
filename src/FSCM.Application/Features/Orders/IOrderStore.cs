@@ -31,7 +31,6 @@ public interface IOrderStore
     Task<Product?> FindPublishedProductAsync(Guid productId, CancellationToken cancellationToken);
     Task<IReadOnlyCollection<OrderInventoryCandidate>> ListCandidatesAsync(Guid productId, CancellationToken cancellationToken);
     Task<MapLocation?> FindRetailerLocationAsync(Guid retailerId, CancellationToken cancellationToken);
-    Task<IReadOnlyCollection<TransitTimeRule>> ListTransitRulesAsync(IReadOnlyCollection<Guid> warehouseIds, CancellationToken cancellationToken);
     Task<decimal?> FindMlorRatioAsync(Guid retailerId, Guid productId, CancellationToken cancellationToken);
     Task<string?> FindConfigurationAsync(string key, CancellationToken cancellationToken);
     Task<string> NextOrderCodeAsync(CancellationToken cancellationToken);
