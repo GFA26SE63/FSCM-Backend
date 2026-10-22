@@ -13,7 +13,7 @@ public sealed class AllocationPlannerTests
     [Fact]
     public void An_earlier_order_takes_stock_away_from_a_later_one()
     {
-        var planner = new AllocationPlanner(new AllocationEngine());
+        var planner = NewPlanner();
         var batch = Batch("B-001", ProductA, quantity: 30m);
 
         var plan = planner.Plan(
@@ -29,7 +29,7 @@ public sealed class AllocationPlannerTests
     [Fact]
     public void A_short_line_hands_back_every_draw_the_order_already_made()
     {
-        var planner = new AllocationPlanner(new AllocationEngine());
+        var planner = NewPlanner();
         var plentiful = Batch("B-A", ProductA, quantity: 100m);
         var scarce = Batch("B-B", ProductB, quantity: 1m);
 
@@ -48,7 +48,7 @@ public sealed class AllocationPlannerTests
     [Fact]
     public void Stock_released_by_a_short_order_is_available_to_the_orders_behind_it()
     {
-        var planner = new AllocationPlanner(new AllocationEngine());
+        var planner = NewPlanner();
         var shared = Batch("B-A", ProductA, quantity: 10m);
         var scarce = Batch("B-B", ProductB, quantity: 0m);
 
@@ -68,7 +68,7 @@ public sealed class AllocationPlannerTests
     [Fact]
     public void An_order_may_draw_one_line_from_several_batches_and_warehouses()
     {
-        var planner = new AllocationPlanner(new AllocationEngine());
+        var planner = NewPlanner();
         var near = Batch("B-NEAR", ProductA, quantity: 6m, distanceMeters: 2_000m);
         var far = Batch("B-FAR", ProductA, quantity: 6m, distanceMeters: 15_000m);
 
@@ -83,7 +83,7 @@ public sealed class AllocationPlannerTests
     [Fact]
     public void A_shortage_is_explained_by_line_and_quantity()
     {
-        var planner = new AllocationPlanner(new AllocationEngine());
+        var planner = NewPlanner();
 
         var plan = planner.Plan(
             [Order("DH-000001", 1, Line(ProductA, "SKU-A", 40m))],
@@ -97,7 +97,7 @@ public sealed class AllocationPlannerTests
     [Fact]
     public void Line_results_are_kept_for_short_orders_so_a_trace_can_explain_them()
     {
-        var planner = new AllocationPlanner(new AllocationEngine());
+        var planner = NewPlanner();
 
         var plan = planner.Plan(
             [Order("DH-000001", 1, Line(ProductA, "SKU-A", 40m))],
@@ -111,7 +111,7 @@ public sealed class AllocationPlannerTests
     [Fact]
     public void Priority_rank_decides_the_order_not_the_sequence_passed_in()
     {
-        var planner = new AllocationPlanner(new AllocationEngine());
+        var planner = NewPlanner();
         var batch = Batch("B-001", ProductA, quantity: 10m);
 
         var plan = planner.Plan(
@@ -122,6 +122,12 @@ public sealed class AllocationPlannerTests
         Assert.Equal("DH-EARLY", plan.Orders[0].OrderCode);
         Assert.True(plan.Orders[0].IsFullyAllocated);
         Assert.False(plan.Orders[1].IsFullyAllocated);
+    }
+
+    private static AllocationPlanner NewPlanner()
+    {
+        var engine = new AllocationEngine();
+        return new AllocationPlanner(engine, new BatchSwapResolver(engine));
     }
 
     private static PlannerOrder Order(string code, int rank, params PlannerLine[] lines) =>
