@@ -1,3 +1,4 @@
+using FSCM.Application.Features.AllocationRuns;
 using FSCM.Application.Features.Catalog;
 using FSCM.Application.Features.DeliveryEta;
 using FSCM.Application.Features.Deliveries;
@@ -13,9 +14,11 @@ using FSCM.Application.Features.Retailers;
 using FSCM.Application.Features.Refunds;
 using FSCM.Application.Features.QrLabels;
 using FSCM.Application.Features.Promotions;
+using FSCM.Application.Features.ShelfLifeDiscounts;
 using FSCM.Application.Features.Territory;
 using FSCM.Application.Features.TransitTables;
 using FSCM.Application.Features.WarehouseConfiguration;
+using FSCM.Persistence.AllocationRuns;
 using FSCM.Persistence.Catalog;
 using FSCM.Persistence.DeliveryEta;
 using FSCM.Persistence.DbContexts;
@@ -33,6 +36,7 @@ using FSCM.Persistence.Refunds;
 using FSCM.Persistence.QrLabels;
 using FSCM.Persistence.Promotions;
 using FSCM.Persistence.Seeding;
+using FSCM.Persistence.ShelfLifeDiscounts;
 using FSCM.Persistence.Territory;
 using FSCM.Persistence.TransitTables;
 using FSCM.Persistence.WarehouseConfiguration;
@@ -60,6 +64,7 @@ public static class DependencyInjection
             });
         }
 
+        services.AddScoped<IAllocationRunStore, AllocationRunStore>();
         services.AddScoped<ICatalogStore, CatalogStore>();
         services.AddScoped<IDeliveryStore, DeliveryStore>();
         services.AddScoped<IIdentityStore, IdentityStore>();
@@ -77,6 +82,7 @@ public static class DependencyInjection
         services.AddScoped<IRetailerStore, RetailerStore>();
         services.AddScoped<IRefundStore, RefundStore>();
         services.AddScoped<ITerritoryStore, TerritoryStore>();
+        services.AddScoped<IShelfLifeDiscountStore, ShelfLifeDiscountStore>();
         services.AddScoped<ITransitTableStore, TransitTableStore>();
         services.AddScoped<IDeliveryEtaStore, DeliveryEtaStore>();
         services.AddScoped<IWarehouseConfigurationStore, WarehouseConfigurationStore>();
