@@ -3,7 +3,14 @@ using FSCM.Domain.Entities;
 namespace FSCM.Application.Features.WarehouseConfiguration;
 
 public sealed record WarehouseView(Warehouse Warehouse, MapLocation? Location);
-public sealed record MlorView(RetailerProductMlor Mlor, string RetailerCode, string RetailerName, string ProductSku, string ProductName);
+public sealed record MlorView(
+    RetailerProductMlor Mlor,
+    string RetailerCode,
+    string RetailerName,
+    string? CategoryCode,
+    string? CategoryName,
+    string? ProductSku,
+    string? ProductName);
 
 public interface IWarehouseConfigurationStore
 {
@@ -20,11 +27,16 @@ public interface IWarehouseConfigurationStore
         IReadOnlyCollection<Guid> warehouseIds, bool includeInactive, CancellationToken cancellationToken);
     void AddTransitRules(IEnumerable<TransitTimeRule> rules);
 
-    Task<IReadOnlyCollection<MlorView>> ListMlorAsync(Guid? retailerId, Guid? productId, bool includeInactive, CancellationToken cancellationToken);
-    Task<RetailerProductMlor?> FindActiveMlorAsync(Guid retailerId, Guid productId, CancellationToken cancellationToken);
+    Task<IReadOnlyCollection<MlorView>> ListMlorAsync(
+        Guid? retailerId, Guid? productCategoryId, Guid? productId,
+        bool includeInactive, CancellationToken cancellationToken);
+    Task<RetailerProductMlor?> FindActiveMlorAsync(
+        Guid retailerId, Guid? productCategoryId, Guid? productId, CancellationToken cancellationToken);
     Task<Retailer?> FindRetailerAsync(Guid retailerId, CancellationToken cancellationToken);
     Task<Product?> FindProductAsync(Guid productId, CancellationToken cancellationToken);
+    Task<ProductCategory?> FindCategoryAsync(Guid categoryId, CancellationToken cancellationToken);
     void AddMlor(RetailerProductMlor mlor);
+    void AddAuditLog(AuditLog auditLog);
 
     Task<IReadOnlyCollection<SystemConfiguration>> ListCurrentConfigurationsAsync(CancellationToken cancellationToken);
     Task<IReadOnlyCollection<SystemConfiguration>> ListConfigurationHistoryAsync(string key, CancellationToken cancellationToken);

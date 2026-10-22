@@ -119,8 +119,9 @@ public sealed class MapService(IMapStore store, IMapProvider provider, TimeProvi
 
     public async Task<EtaEstimateResult> EstimateEtaAsync(EtaEstimateInput input, CancellationToken cancellationToken)
     {
-        if (input.BufferMinutes is < 0 or > 1440)
-            throw MapOperationException.Validation("Buffer minutes must be between 0 and 1440.");
+        if (input.BufferMinutes is < 0 or > 1440 || input.ApprovalMinutes is < 0 or > 2880 ||
+            input.PreparationMinutes is < 0 or > 2880)
+            throw MapOperationException.Validation("ETA duration components are outside their accepted ranges.");
         var now = timeProvider.GetUtcNow();
         var distance = await store.FindActiveDistanceAsync(input.WarehouseId, input.RetailerId, false, cancellationToken)
             ?? throw MapOperationException.Conflict("No cached distance exists for this warehouse and Retailer.");
@@ -135,13 +136,26 @@ public sealed class MapService(IMapStore store, IMapProvider provider, TimeProvi
         if (distance.DistanceMeters > rule.MaxServingDistanceMeters)
             throw MapOperationException.Conflict("The Retailer is outside the warehouse serving distance.");
 
-        var departure = input.DepartureAt ?? now;
-        if (departure < now.AddMinutes(-5))
-            throw MapOperationException.Validation("Departure time cannot be in the past.");
-        var estimated = departure.AddMinutes(rule.HandlingMinutes + rule.TransitMinutes + input.BufferMinutes);
-        return new EtaEstimateResult(input.WarehouseId, input.RetailerId, departure, estimated,
-            distance.DistanceMeters, distance.DurationSeconds, rule.HandlingMinutes, rule.TransitMinutes,
-            input.BufferMinutes, distance.Version, rule.Version, true,
+        var requestedAt = input.RequestedAt ?? now;
+        if (requestedAt < now.AddMinutes(-5))
+            throw MapOperationException.Validation("Requested time cannot be in the past.");
+        var allocationRunAt = input.AllocationRunAt ?? requestedAt;
+        if (allocationRunAt < requestedAt)
+            throw MapOperationException.Validation("Allocation run time cannot be earlier than the requested time.");
+        var preparationCompletedAt = allocationRunAt.AddMinutes(
+            input.ApprovalMinutes + rule.HandlingMinutes + input.PreparationMinutes);
+        var nextDispatchAt = input.NextDispatchAt ?? preparationCompletedAt;
+        if (nextDispatchAt < preparationCompletedAt)
+            throw MapOperationException.Validation("Next dispatch time cannot be earlier than preparation completion.");
+        var estimated = nextDispatchAt.AddMinutes(rule.TransitMinutes + input.BufferMinutes);
+        var waitForRunMinutes = WholeMinutes(allocationRunAt - requestedAt);
+        var waitForDispatchMinutes = WholeMinutes(nextDispatchAt - preparationCompletedAt);
+        return new EtaEstimateResult(input.WarehouseId, input.RetailerId, requestedAt, allocationRunAt,
+            preparationCompletedAt, nextDispatchAt, estimated,
+            distance.DistanceMeters, distance.DurationSeconds, waitForRunMinutes,
+            input.ApprovalMinutes, rule.HandlingMinutes, input.PreparationMinutes,
+            waitForDispatchMinutes, rule.TransitMinutes, input.BufferMinutes,
+            rule.EstimatedTransportCost, distance.Version, rule.Version, true,
             "ETA chỉ là thời gian ước tính, không phải cam kết thời điểm giao hàng.");
     }
 
@@ -172,6 +186,8 @@ public sealed class MapService(IMapStore store, IMapProvider provider, TimeProvi
         if (latitude is < -90 or > 90 || longitude is < -180 or > 180)
             throw MapOperationException.Provider("Google Maps returned invalid coordinates.");
     }
+
+    private static int WholeMinutes(TimeSpan duration) => checked((int)Math.Round(duration.TotalMinutes));
 
     private static MapLocationResult ToLocationResult(MapLocation item) => new(
         item.Id, item.WarehouseId.HasValue ? "warehouse" : "retailer",

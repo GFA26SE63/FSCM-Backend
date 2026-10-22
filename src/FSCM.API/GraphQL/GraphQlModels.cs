@@ -38,6 +38,7 @@ public sealed class ProductGraphQlExtensions
         CancellationToken cancellationToken) =>
         await loader.LoadAsync(product.Id, cancellationToken) ?? [];
 
+    [Authorize(Roles = [SystemRoles.Admin])]
     public async Task<IReadOnlyList<MlorResult>> MlorConfigurations(
         [Parent] ProductResult product,
         IMlorByProductIdDataLoader loader,

@@ -14,12 +14,14 @@ public sealed class WarehouseConfigurationServiceTests
 
         var result = await fixture.Service.CreateWarehouseAsync(new SaveWarehouseData(
             "wh-td", "Kho vùng Thủ Đức", WarehouseTypes.Regional,
-            "Thành phố Thủ Đức, Thành phố Hồ Chí Minh", 10.848m, 106.772m, "dia-diem-thu-duc"),
+            "Thành phố Thủ Đức, Thành phố Hồ Chí Minh", 10.848m, 106.772m,
+            "dia-diem-thu-duc", 120),
             CancellationToken.None);
 
         Assert.Equal("WH-TD", result.Code);
         Assert.Equal(WarehouseTypes.Regional, result.Type);
         Assert.Equal(10.848m, result.Latitude);
+        Assert.Equal(120, result.MinimumStockThresholdCartons);
         Assert.Single(fixture.Store.Warehouses);
         Assert.Single(fixture.Store.Locations);
     }
@@ -33,8 +35,8 @@ public sealed class WarehouseConfigurationServiceTests
         var exception = await Assert.ThrowsAsync<WarehouseConfigurationOperationException>(() =>
             fixture.Service.ReplaceTransitRulesAsync(warehouse.Id,
             [
-                new TransitTimeRuleData(0, 10_000, 60, 1_440, 20_000),
-                new TransitTimeRuleData(10_000, 20_000, 60, 2_880, 20_000)
+                new TransitTimeRuleData(0, 10_000, 60, 1_440, 150_000m, 20_000),
+                new TransitTimeRuleData(10_000, 20_000, 60, 2_880, 250_000m, 20_000)
             ], CancellationToken.None));
 
         Assert.Equal("validation_error", exception.Code);
@@ -46,7 +48,7 @@ public sealed class WarehouseConfigurationServiceTests
     {
         var fixture = new Fixture();
         var warehouse = fixture.AddWarehouse();
-        var definitions = new[] { new TransitTimeRuleData(0, 20_000, 60, 120, 20_000) };
+        var definitions = new[] { new TransitTimeRuleData(0, 20_000, 60, 120, 180_000m, 20_000) };
 
         var first = await fixture.Service.ReplaceTransitRulesAsync(warehouse.Id, definitions, CancellationToken.None);
         var retry = await fixture.Service.ReplaceTransitRulesAsync(warehouse.Id, definitions, CancellationToken.None);
@@ -65,7 +67,7 @@ public sealed class WarehouseConfigurationServiceTests
         var previous = fixture.AddMlor(retailer.Id, product.Id, 0.2m);
 
         var result = await fixture.Service.SetMlorAsync(
-            retailer.Id, product.Id, 0.3m, 48, CancellationToken.None);
+            retailer.Id, null, product.Id, 0.3m, 48, Guid.NewGuid(), CancellationToken.None);
 
         Assert.False(previous.IsActive);
         Assert.Equal(Now, previous.EffectiveTo);
@@ -73,12 +75,15 @@ public sealed class WarehouseConfigurationServiceTests
         Assert.Equal(2, fixture.Store.Mlors.Count);
     }
 
-    [Fact]
-    public async Task Mlor_ratio_must_be_strictly_less_than_one()
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    public async Task Mlor_ratio_must_be_strictly_between_zero_and_one(decimal ratio)
     {
         var fixture = new Fixture();
         var exception = await Assert.ThrowsAsync<WarehouseConfigurationOperationException>(() =>
-            fixture.Service.SetMlorAsync(fixture.AddRetailer().Id, fixture.AddProduct().Id, 1m, null, CancellationToken.None));
+            fixture.Service.SetMlorAsync(fixture.AddRetailer().Id, null, fixture.AddProduct().Id,
+                ratio, null, Guid.NewGuid(), CancellationToken.None));
         Assert.Equal("validation_error", exception.Code);
     }
 
@@ -183,7 +188,9 @@ public sealed class WarehouseConfigurationServiceTests
         public List<RetailerProductMlor> Mlors { get; } = [];
         public List<Retailer> Retailers { get; } = [];
         public List<Product> Products { get; } = [];
+        public List<ProductCategory> Categories { get; } = [];
         public List<SystemConfiguration> Configurations { get; } = [];
+        public List<AuditLog> AuditLogs { get; } = [];
 
         public Task<IReadOnlyCollection<WarehouseView>> ListWarehousesAsync(bool includeInactive, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyCollection<WarehouseView>>(Warehouses.Where(item => includeInactive || item.IsActive)
@@ -203,17 +210,31 @@ public sealed class WarehouseConfigurationServiceTests
         public Task<IReadOnlyCollection<TransitTimeRule>> ListTransitRulesAsync(IReadOnlyCollection<Guid> ids, bool includeInactive, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyCollection<TransitTimeRule>>(TransitRules.Where(item => ids.Contains(item.WarehouseId) && (includeInactive || item.IsActive)).ToArray());
         public void AddTransitRules(IEnumerable<TransitTimeRule> items) => TransitRules.AddRange(items);
-        public Task<IReadOnlyCollection<MlorView>> ListMlorAsync(Guid? retailerId, Guid? productId, bool includeInactive, CancellationToken cancellationToken) =>
-            Task.FromResult<IReadOnlyCollection<MlorView>>(Mlors.Where(item => (!retailerId.HasValue || item.RetailerId == retailerId) && (!productId.HasValue || item.ProductId == productId) && (includeInactive || item.IsActive)).Select(item =>
+        public Task<IReadOnlyCollection<MlorView>> ListMlorAsync(
+            Guid? retailerId, Guid? productCategoryId, Guid? productId,
+            bool includeInactive, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyCollection<MlorView>>(Mlors.Where(item =>
+                (!retailerId.HasValue || item.RetailerId == retailerId) &&
+                (!productCategoryId.HasValue || item.ProductCategoryId == productCategoryId) &&
+                (!productId.HasValue || item.ProductId == productId) &&
+                (includeInactive || item.IsActive)).Select(item =>
             {
                 var retailer = Retailers.Single(value => value.Id == item.RetailerId);
-                var product = Products.Single(value => value.Id == item.ProductId);
-                return new MlorView(item, retailer.Code, retailer.Name, product.Sku, product.Name);
+                var category = Categories.SingleOrDefault(value => value.Id == item.ProductCategoryId);
+                var product = Products.SingleOrDefault(value => value.Id == item.ProductId);
+                return new MlorView(item, retailer.Code, retailer.Name,
+                    category?.Code, category?.Name, product?.Sku, product?.Name);
             }).ToArray());
-        public Task<RetailerProductMlor?> FindActiveMlorAsync(Guid retailerId, Guid productId, CancellationToken cancellationToken) => Task.FromResult(Mlors.SingleOrDefault(item => item.RetailerId == retailerId && item.ProductId == productId && item.IsActive));
+        public Task<RetailerProductMlor?> FindActiveMlorAsync(
+            Guid retailerId, Guid? productCategoryId, Guid? productId, CancellationToken cancellationToken) =>
+            Task.FromResult(Mlors.SingleOrDefault(item => item.RetailerId == retailerId &&
+                item.ProductCategoryId == productCategoryId && item.ProductId == productId && item.IsActive));
         public Task<Retailer?> FindRetailerAsync(Guid id, CancellationToken cancellationToken) => Task.FromResult(Retailers.SingleOrDefault(item => item.Id == id));
         public Task<Product?> FindProductAsync(Guid id, CancellationToken cancellationToken) => Task.FromResult(Products.SingleOrDefault(item => item.Id == id));
+        public Task<ProductCategory?> FindCategoryAsync(Guid id, CancellationToken cancellationToken) =>
+            Task.FromResult(Categories.SingleOrDefault(item => item.Id == id));
         public void AddMlor(RetailerProductMlor item) => Mlors.Add(item);
+        public void AddAuditLog(AuditLog item) => AuditLogs.Add(item);
         public Task<IReadOnlyCollection<SystemConfiguration>> ListCurrentConfigurationsAsync(CancellationToken cancellationToken) => Task.FromResult<IReadOnlyCollection<SystemConfiguration>>(Configurations.Where(item => item.IsActive).ToArray());
         public Task<IReadOnlyCollection<SystemConfiguration>> ListConfigurationHistoryAsync(string key, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyCollection<SystemConfiguration>>(Configurations.Where(item => item.ConfigKey == key).ToArray());
         public Task<SystemConfiguration?> FindCurrentConfigurationAsync(string key, CancellationToken cancellationToken) => Task.FromResult(Configurations.SingleOrDefault(item => item.ConfigKey == key && item.IsActive));

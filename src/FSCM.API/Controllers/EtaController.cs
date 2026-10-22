@@ -14,5 +14,7 @@ public sealed class EtaController(MapService service) : ControllerBase
     [HttpPost("estimate")]
     public Task<EtaEstimateResult> Estimate(EstimateEtaRequest request, CancellationToken cancellationToken) =>
         service.EstimateEtaAsync(new EtaEstimateInput(
-            request.WarehouseId, request.RetailerId, request.DepartureAt, request.BufferMinutes), cancellationToken);
+            request.WarehouseId, request.RetailerId, request.RequestedAt, request.AllocationRunAt,
+            request.ApprovalMinutes, request.PreparationMinutes, request.NextDispatchAt,
+            request.BufferMinutes), cancellationToken);
 }

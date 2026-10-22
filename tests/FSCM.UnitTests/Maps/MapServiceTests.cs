@@ -57,17 +57,23 @@ public sealed class MapServiceTests
             MaxServingDistanceMeters = 20_000,
             HandlingMinutes = 60,
             TransitMinutes = 120,
+            EstimatedTransportCost = 180_000m,
             Version = 4,
             IsActive = true
         });
 
         var result = await fixture.Service.EstimateEtaAsync(
-            new EtaEstimateInput(fixture.WarehouseId, fixture.RetailerId, Now, 30), CancellationToken.None);
+            new EtaEstimateInput(fixture.WarehouseId, fixture.RetailerId, Now,
+                Now.AddHours(4), 45, 30, Now.AddHours(7), 30), CancellationToken.None);
 
         Assert.True(result.IsEstimate);
         Assert.Equal(3, result.DistanceVersion);
         Assert.Equal(4, result.TransitRuleVersion);
-        Assert.Equal(Now.AddMinutes(210), result.EstimatedReceiptAt);
+        Assert.Equal(240, result.WaitForRunMinutes);
+        Assert.Equal(45, result.ApprovalMinutes);
+        Assert.Equal(45, result.WaitForDispatchMinutes);
+        Assert.Equal(180_000m, result.EstimatedTransportCost);
+        Assert.Equal(Now.AddHours(9.5), result.EstimatedReceiptAt);
         Assert.Contains("không phải cam kết", result.Disclaimer);
     }
 
@@ -90,7 +96,8 @@ public sealed class MapServiceTests
         fixture.Store.Locations[1].Version = 2;
 
         var exception = await Assert.ThrowsAsync<MapOperationException>(() => fixture.Service.EstimateEtaAsync(
-            new EtaEstimateInput(fixture.WarehouseId, fixture.RetailerId, Now, 0), CancellationToken.None));
+            new EtaEstimateInput(fixture.WarehouseId, fixture.RetailerId, Now,
+                Now, 0, 0, Now, 0), CancellationToken.None));
 
         Assert.Equal("conflict", exception.Code);
     }

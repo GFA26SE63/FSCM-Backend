@@ -31,7 +31,8 @@ public sealed class RetailersController(RetailerService service) : ControllerBas
             request.Name, request.ContactName, request.Phone, request.Email, request.Address,
             request.RetailerType, request.ForecastRevenue, request.StoreSizeSquareMeters,
             request.PurchasingCapacity, request.PurchaseFrequencyPerMonth, request.RequestedCreditTermDays,
-            request.AssessmentNote, request.Latitude, request.Longitude, request.ProviderPlaceId, cancellationToken);
+            request.AssessmentNote, request.Latitude, request.Longitude, request.ProviderPlaceId,
+            request.MlorDeclarations?.Select(ToMlorData).ToArray(), request.SubmitForReview, cancellationToken);
         return CreatedAtAction(nameof(Get), new { retailerId = result.Id }, result);
     }
 
@@ -43,7 +44,13 @@ public sealed class RetailersController(RetailerService service) : ControllerBas
             request.Phone, request.Email, request.Address, request.RetailerType, request.ForecastRevenue,
             request.StoreSizeSquareMeters, request.PurchasingCapacity, request.PurchaseFrequencyPerMonth,
             request.RequestedCreditTermDays, request.AssessmentNote,
-            request.Latitude, request.Longitude, request.ProviderPlaceId, cancellationToken);
+            request.Latitude, request.Longitude, request.ProviderPlaceId,
+            request.MlorDeclarations?.Select(ToMlorData).ToArray(), request.SubmitForReview, cancellationToken);
+
+    [Authorize(Roles = SystemRoles.Sales)]
+    [HttpPost("{retailerId:guid}/submit-review")]
+    public Task<RetailerDetails> SubmitForReview(Guid retailerId, CancellationToken cancellationToken) =>
+        service.SubmitForReviewAsync(retailerId, GetActorUserId(), cancellationToken);
 
     [Authorize(Roles = SystemRoles.Admin)]
     [HttpPost("{retailerId:guid}/review")]
@@ -56,13 +63,21 @@ public sealed class RetailersController(RetailerService service) : ControllerBas
     [HttpPatch("{retailerId:guid}/status")]
     public Task<RetailerDetails> UpdateStatus(
         Guid retailerId, UpdateRetailerStatusRequest request, CancellationToken cancellationToken) =>
-        service.SetActiveAsync(retailerId, request.IsActive, cancellationToken);
+        service.SetActiveAsync(retailerId, request.IsActive, GetActorUserId(), cancellationToken);
 
     [Authorize(Roles = SystemRoles.Sales)]
     [HttpGet("{retailerId:guid}/order-eligibility")]
     public Task<RetailerOrderEligibility> CheckOrderEligibility(
         Guid retailerId, CancellationToken cancellationToken) =>
         service.CheckOrderEligibilityAsync(GetActorUserId(), retailerId, cancellationToken);
+
+    [HttpGet("{retailerId:guid}/mlor-resolution")]
+    public Task<RetailerMlorResolutionResult> ResolveMlor(
+        Guid retailerId, [FromQuery] Guid productId, CancellationToken cancellationToken) =>
+        service.ResolveMlorAsync(retailerId, productId, GetActorUserId(), GetActorRole(), cancellationToken);
+
+    private static RetailerMlorData ToMlorData(RetailerMlorDeclarationRequest request) => new(
+        request.ProductCategoryId, request.ProductId, request.MinimumLifeRatio, request.MinimumLifeHours);
 
     private Guid GetActorUserId()
     {

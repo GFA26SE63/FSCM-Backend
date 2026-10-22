@@ -30,6 +30,7 @@ public sealed partial class WarehouseConfigurationService(
             Name = normalized.Name,
             Type = normalized.Type,
             Address = normalized.Address,
+            MinimumStockThresholdCartons = normalized.MinimumStockThresholdCartons,
             IsActive = true,
             CreatedAt = now,
             UpdatedAt = now
@@ -51,6 +52,7 @@ public sealed partial class WarehouseConfigurationService(
         warehouse.Name = normalized.Name;
         warehouse.Type = normalized.Type;
         warehouse.Address = normalized.Address;
+        warehouse.MinimumStockThresholdCartons = normalized.MinimumStockThresholdCartons;
         warehouse.UpdatedAt = now;
         if (location is null)
         {
@@ -114,6 +116,7 @@ public sealed partial class WarehouseConfigurationService(
                 pair.First.MaxDistanceMeters == pair.Second.MaxDistanceMeters &&
                 pair.First.HandlingMinutes == pair.Second.HandlingMinutes &&
                 pair.First.TransitMinutes == pair.Second.TransitMinutes &&
+                pair.First.EstimatedTransportCost == pair.Second.EstimatedTransportCost &&
                 pair.First.MaxServingDistanceMeters == pair.Second.MaxServingDistanceMeters))
             return orderedExisting.Select(ToTransitResult).ToArray();
         var version = history.Count == 0 ? 1 : history.Max(item => item.Version) + 1;
@@ -132,6 +135,7 @@ public sealed partial class WarehouseConfigurationService(
             MaxDistanceMeters = item.MaxDistanceMeters,
             HandlingMinutes = item.HandlingMinutes,
             TransitMinutes = item.TransitMinutes,
+            EstimatedTransportCost = item.EstimatedTransportCost,
             MaxServingDistanceMeters = item.MaxServingDistanceMeters,
             Version = version,
             EffectiveFrom = now,
@@ -145,13 +149,18 @@ public sealed partial class WarehouseConfigurationService(
     }
 
     public async Task<IReadOnlyCollection<MlorResult>> ListMlorAsync(
-        Guid? retailerId, Guid? productId, bool includeInactive, CancellationToken cancellationToken) =>
-        (await store.ListMlorAsync(retailerId, productId, includeInactive, cancellationToken)).Select(ToMlorResult).ToArray();
+        Guid? retailerId, Guid? productCategoryId, Guid? productId,
+        bool includeInactive, CancellationToken cancellationToken) =>
+        (await store.ListMlorAsync(retailerId, productCategoryId, productId, includeInactive, cancellationToken))
+            .Select(ToMlorResult).ToArray();
 
     public async Task<MlorResult> SetMlorAsync(
-        Guid retailerId, Guid productId, decimal minimumLifeRatio, int? minimumLifeHours,
+        Guid retailerId, Guid? productCategoryId, Guid? productId,
+        decimal minimumLifeRatio, int? minimumLifeHours, Guid updatedByUserId,
         CancellationToken cancellationToken)
     {
+        if (productCategoryId.HasValue == productId.HasValue)
+            throw WarehouseConfigurationOperationException.Validation("Exactly one Category or SKU MLOR scope is required.");
         if (minimumLifeRatio <= 0 || minimumLifeRatio >= 1)
         {
             throw WarehouseConfigurationOperationException.Validation("Minimum life ratio must be greater than 0 and less than 1.");
@@ -159,15 +168,26 @@ public sealed partial class WarehouseConfigurationService(
 
         var retailer = await store.FindRetailerAsync(retailerId, cancellationToken)
             ?? throw WarehouseConfigurationOperationException.NotFound("Retailer was not found.");
-        var product = await store.FindProductAsync(productId, cancellationToken)
-            ?? throw WarehouseConfigurationOperationException.NotFound("Product was not found.");
-        if (minimumLifeHours is < 0 || minimumLifeHours > product.ShelfLifeHours)
+        Product? product = null;
+        ProductCategory? category = null;
+        if (productId.HasValue)
         {
-            throw WarehouseConfigurationOperationException.Validation("Minimum life hours must be between 0 and the product shelf life.");
+            product = await store.FindProductAsync(productId.Value, cancellationToken)
+                ?? throw WarehouseConfigurationOperationException.NotFound("Product was not found.");
+            if (minimumLifeHours is < 0 || minimumLifeHours > product.ShelfLifeHours)
+                throw WarehouseConfigurationOperationException.Validation("Minimum life hours must be between 0 and the product shelf life.");
+        }
+        else
+        {
+            category = await store.FindCategoryAsync(productCategoryId!.Value, cancellationToken)
+                ?? throw WarehouseConfigurationOperationException.NotFound("Category was not found.");
+            if (minimumLifeHours.HasValue)
+                throw WarehouseConfigurationOperationException.Validation("Minimum life hours can only be set for an SKU scope.");
         }
 
         var now = timeProvider.GetUtcNow();
-        var current = await store.FindActiveMlorAsync(retailerId, productId, cancellationToken);
+        var history = await store.ListMlorAsync(retailerId, productCategoryId, productId, true, cancellationToken);
+        var current = await store.FindActiveMlorAsync(retailerId, productCategoryId, productId, cancellationToken);
         if (current is not null)
         {
             current.IsActive = false;
@@ -178,15 +198,44 @@ public sealed partial class WarehouseConfigurationService(
         {
             Id = Guid.NewGuid(),
             RetailerId = retailerId,
+            ProductCategoryId = productCategoryId,
             ProductId = productId,
             MinimumLifeRatio = minimumLifeRatio,
             MinimumLifeHours = minimumLifeHours,
+            Version = history.Count == 0 ? 1 : history.Max(item => item.Mlor.Version) + 1,
+            UpdatedByUserId = updatedByUserId,
             EffectiveFrom = now,
             IsActive = true
         };
         store.AddMlor(mlor);
+        store.AddAuditLog(new AuditLog
+        {
+            Id = Guid.NewGuid(),
+            UserAccountId = updatedByUserId,
+            EntityName = nameof(RetailerProductMlor),
+            EntityId = mlor.Id,
+            Action = "RetailerMlorRuleVersionCreated",
+            OldValues = current is null ? null : JsonSerializer.Serialize(new
+            {
+                current.Id,
+                current.MinimumLifeRatio,
+                current.MinimumLifeHours,
+                current.Version
+            }),
+            NewValues = JsonSerializer.Serialize(new
+            {
+                mlor.RetailerId,
+                mlor.ProductCategoryId,
+                mlor.ProductId,
+                mlor.MinimumLifeRatio,
+                mlor.MinimumLifeHours,
+                mlor.Version
+            }),
+            CreatedAt = now
+        });
         await store.SaveChangesAsync(cancellationToken);
-        return ToMlorResult(new MlorView(mlor, retailer.Code, retailer.Name, product.Sku, product.Name));
+        return ToMlorResult(new MlorView(mlor, retailer.Code, retailer.Name,
+            category?.Code, category?.Name, product?.Sku, product?.Name));
     }
 
     public async Task<IReadOnlyCollection<ConfigurationResult>> ListCurrentConfigurationsAsync(CancellationToken cancellationToken) =>
@@ -260,6 +309,8 @@ public sealed partial class WarehouseConfigurationService(
         if (data.Latitude is < -90 or > 90 || data.Longitude is < -180 or > 180)
             throw WarehouseConfigurationOperationException.Validation("Warehouse coordinates are outside the valid latitude or longitude range.");
         if (data.ProviderPlaceId?.Length > 200) throw WarehouseConfigurationOperationException.Validation("Provider place ID cannot exceed 200 characters.");
+        if (data.MinimumStockThresholdCartons < 0)
+            throw WarehouseConfigurationOperationException.Validation("Minimum stock threshold must be zero or a positive carton quantity.");
         return data with { Code = code, Name = name, Type = type, Address = address, ProviderPlaceId = data.ProviderPlaceId?.Trim() };
     }
 
@@ -271,7 +322,8 @@ public sealed partial class WarehouseConfigurationService(
         {
             var rule = ordered[index];
             if (rule.MinDistanceMeters < 0 || rule.MaxDistanceMeters <= rule.MinDistanceMeters ||
-                rule.HandlingMinutes < 0 || rule.TransitMinutes <= 0 || rule.MaxServingDistanceMeters < rule.MaxDistanceMeters)
+                rule.HandlingMinutes < 0 || rule.TransitMinutes <= 0 || rule.EstimatedTransportCost < 0 ||
+                rule.MaxServingDistanceMeters < rule.MaxDistanceMeters)
                 throw WarehouseConfigurationOperationException.Validation("Transit-time ranges, durations, and serving distance must be positive and internally consistent.");
             if (index > 0 && rule.MinDistanceMeters <= ordered[index - 1].MaxDistanceMeters)
                 throw WarehouseConfigurationOperationException.Validation("Active transit-time distance ranges cannot overlap.");
@@ -345,18 +397,22 @@ public sealed partial class WarehouseConfigurationService(
     private static WarehouseResult ToWarehouseResult(WarehouseView view) => new(
         view.Warehouse.Id, view.Warehouse.Code, view.Warehouse.Name, view.Warehouse.Type,
         view.Warehouse.Address, view.Location?.Latitude ?? 0, view.Location?.Longitude ?? 0,
-        view.Location?.ProviderPlaceId, view.Warehouse.IsActive, view.Warehouse.CreatedAt, view.Warehouse.UpdatedAt);
+        view.Location?.ProviderPlaceId, view.Warehouse.MinimumStockThresholdCartons,
+        view.Warehouse.IsActive, view.Warehouse.CreatedAt, view.Warehouse.UpdatedAt);
 
     private static TransitTimeRuleResult ToTransitResult(TransitTimeRule rule) => new(
         rule.Id, rule.WarehouseId, rule.MinDistanceMeters, rule.MaxDistanceMeters,
-        rule.HandlingMinutes, rule.TransitMinutes, rule.MaxServingDistanceMeters,
+        rule.HandlingMinutes, rule.TransitMinutes, rule.EstimatedTransportCost,
+        rule.MaxServingDistanceMeters,
         rule.Version, rule.EffectiveFrom, rule.EffectiveTo,
         rule.IsActive, rule.CreatedAt, rule.UpdatedAt);
 
     private static MlorResult ToMlorResult(MlorView view) => new(
         view.Mlor.Id, view.Mlor.RetailerId, view.RetailerCode, view.RetailerName,
+        view.Mlor.ProductCategoryId, view.CategoryCode, view.CategoryName,
         view.Mlor.ProductId, view.ProductSku, view.ProductName, view.Mlor.MinimumLifeRatio,
-        view.Mlor.MinimumLifeHours, view.Mlor.EffectiveFrom, view.Mlor.EffectiveTo, view.Mlor.IsActive);
+        view.Mlor.MinimumLifeHours, view.Mlor.Version, view.Mlor.UpdatedByUserId,
+        view.Mlor.EffectiveFrom, view.Mlor.EffectiveTo, view.Mlor.IsActive);
 
     private static ConfigurationResult ToConfigurationResult(SystemConfiguration item)
     {

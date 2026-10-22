@@ -2,6 +2,7 @@ namespace FSCM.Application.Features.Retailers;
 
 public static class RetailerStatuses
 {
+    public const string Draft = "Draft";
     public const string PendingApproval = "PendingApproval";
     public const string Active = "Active";
     public const string Rejected = "Rejected";

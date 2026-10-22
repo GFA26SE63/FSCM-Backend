@@ -2480,23 +2480,44 @@ namespace FSCM.Persistence.Migrations
                         .HasPrecision(5, 4)
                         .HasColumnType("numeric(5,4)");
 
-                    b.Property<Guid>("ProductId")
+                    b.Property<Guid?>("ProductCategoryId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("ProductId")
                         .HasColumnType("uuid");
 
                     b.Property<Guid>("RetailerId")
                         .HasColumnType("uuid");
 
+                    b.Property<Guid>("UpdatedByUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Version")
+                        .HasColumnType("integer");
+
                     b.HasKey("Id");
+
+                    b.HasIndex("ProductCategoryId");
 
                     b.HasIndex("ProductId");
 
+                    b.HasIndex("UpdatedByUserId");
+
+                    b.HasIndex("RetailerId", "ProductCategoryId")
+                        .IsUnique()
+                        .HasFilter("\"IsActive\" = TRUE AND \"ProductCategoryId\" IS NOT NULL");
+
                     b.HasIndex("RetailerId", "ProductId")
                         .IsUnique()
-                        .HasFilter("\"IsActive\" = TRUE");
+                        .HasFilter("\"IsActive\" = TRUE AND \"ProductId\" IS NOT NULL");
+
+                    b.HasIndex("RetailerId", "Version");
 
                     b.ToTable("RETAILER_PRODUCT_MLOR", null, t =>
                         {
                             t.HasCheckConstraint("CK_RETAILER_PRODUCT_MLOR_Ratio", "\"MinimumLifeRatio\" > 0 AND \"MinimumLifeRatio\" < 1");
+
+                            t.HasCheckConstraint("CK_RETAILER_PRODUCT_MLOR_Scope", "(\"ProductCategoryId\" IS NOT NULL) <> (\"ProductId\" IS NOT NULL)");
                         });
                 });
 
@@ -3025,6 +3046,10 @@ namespace FSCM.Persistence.Migrations
                     b.Property<DateTimeOffset?>("EffectiveTo")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<decimal>("EstimatedTransportCost")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
                     b.Property<int>("HandlingMinutes")
                         .HasColumnType("integer");
 
@@ -3058,7 +3083,10 @@ namespace FSCM.Persistence.Migrations
 
                     b.HasIndex("WarehouseId", "MinDistanceMeters", "MaxDistanceMeters", "IsActive");
 
-                    b.ToTable("TRANSIT_TIME_RULE", (string)null);
+                    b.ToTable("TRANSIT_TIME_RULE", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_TRANSIT_TIME_RULE_EstimatedTransportCost", "\"EstimatedTransportCost\" >= 0");
+                        });
                 });
 
             modelBuilder.Entity("FSCM.Domain.Entities.UserAccount", b =>
@@ -3272,6 +3300,9 @@ namespace FSCM.Persistence.Migrations
                     b.Property<bool>("IsActive")
                         .HasColumnType("boolean");
 
+                    b.Property<int>("MinimumStockThresholdCartons")
+                        .HasColumnType("integer");
+
                     b.Property<string>("Name")
                         .IsRequired()
                         .HasMaxLength(150)
@@ -3290,7 +3321,10 @@ namespace FSCM.Persistence.Migrations
                     b.HasIndex("Code")
                         .IsUnique();
 
-                    b.ToTable("WAREHOUSE", (string)null);
+                    b.ToTable("WAREHOUSE", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_WAREHOUSE_MinimumStockThresholdCartons", "\"MinimumStockThresholdCartons\" >= 0");
+                        });
                 });
 
             modelBuilder.Entity("FSCM.Domain.Entities.WarehouseTransfer", b =>
@@ -4319,15 +4353,25 @@ namespace FSCM.Persistence.Migrations
 
             modelBuilder.Entity("FSCM.Domain.Entities.RetailerProductMlor", b =>
                 {
+                    b.HasOne("FSCM.Domain.Entities.ProductCategory", null)
+                        .WithMany()
+                        .HasForeignKey("ProductCategoryId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
                     b.HasOne("FSCM.Domain.Entities.Product", null)
                         .WithMany()
                         .HasForeignKey("ProductId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
+                        .OnDelete(DeleteBehavior.Restrict);
 
                     b.HasOne("FSCM.Domain.Entities.Retailer", null)
                         .WithMany()
                         .HasForeignKey("RetailerId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("FSCM.Domain.Entities.UserAccount", null)
+                        .WithMany()
+                        .HasForeignKey("UpdatedByUserId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
                 });

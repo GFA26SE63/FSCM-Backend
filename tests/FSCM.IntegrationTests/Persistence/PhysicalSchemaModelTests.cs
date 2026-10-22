@@ -89,8 +89,8 @@ public sealed class PhysicalSchemaModelTests
 
         Assert.Equal(ExpectedTables, tableNames);
         Assert.Equal(64, entityTypes.Length);
-        Assert.Equal(668, entityTypes.Sum(entityType => entityType.GetProperties().Count()));
-        Assert.Equal(143, entityTypes.Sum(entityType => entityType.GetForeignKeys().Count()));
+        Assert.Equal(673, entityTypes.Sum(entityType => entityType.GetProperties().Count()));
+        Assert.Equal(145, entityTypes.Sum(entityType => entityType.GetForeignKeys().Count()));
         Assert.All(
             entityTypes.SelectMany(entityType => entityType.GetForeignKeys()),
             foreignKey => Assert.Equal(DeleteBehavior.Restrict, foreignKey.DeleteBehavior));
@@ -261,6 +261,16 @@ public sealed class PhysicalSchemaModelTests
         var transit = context.Model.FindEntityType(typeof(TransitTimeRule))!;
         Assert.False(transit.FindProperty(nameof(TransitTimeRule.Version))!.IsNullable);
         Assert.False(transit.FindProperty(nameof(TransitTimeRule.EffectiveFrom))!.IsNullable);
+        Assert.False(transit.FindProperty(nameof(TransitTimeRule.EstimatedTransportCost))!.IsNullable);
+
+        var warehouse = context.Model.FindEntityType(typeof(Warehouse))!;
+        Assert.False(warehouse.FindProperty(nameof(Warehouse.MinimumStockThresholdCartons))!.IsNullable);
+
+        var mlor = context.Model.FindEntityType(typeof(RetailerProductMlor))!;
+        Assert.True(mlor.FindProperty(nameof(RetailerProductMlor.ProductCategoryId))!.IsNullable);
+        Assert.True(mlor.FindProperty(nameof(RetailerProductMlor.ProductId))!.IsNullable);
+        Assert.False(mlor.FindProperty(nameof(RetailerProductMlor.Version))!.IsNullable);
+        Assert.False(mlor.FindProperty(nameof(RetailerProductMlor.UpdatedByUserId))!.IsNullable);
     }
 
     [Fact]

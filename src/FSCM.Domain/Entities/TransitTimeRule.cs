@@ -10,6 +10,7 @@ public sealed class TransitTimeRule
     public int MaxDistanceMeters { get; set; }
     public int HandlingMinutes { get; set; }
     public int TransitMinutes { get; set; }
+    public decimal EstimatedTransportCost { get; set; }
     public int MaxServingDistanceMeters { get; set; }
     public int Version { get; set; }
     public DateTimeOffset EffectiveFrom { get; set; }
