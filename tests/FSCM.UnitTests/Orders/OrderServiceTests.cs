@@ -86,20 +86,21 @@ public sealed class OrderServiceTests
     }
 
     [Fact]
-    public async Task Existing_review_endpoint_does_not_reserve_when_capture_has_no_allocation()
+    public async Task Reviewing_an_order_parks_it_for_the_run_and_commits_no_stock()
     {
         var fixture = new Fixture();
         var created = await fixture.CreateAsync(10);
 
         var approved = await fixture.Service.ApproveAsync(
-            created.Id, created.Version, fixture.OperatorUserId, default);
+            created.Id, created.Version, fixture.OperatorUserId, SystemRoles.Operator, default);
 
-        Assert.Equal(OrderStatuses.Approved, approved.Status);
+        Assert.Equal(OrderStatuses.PendingAllocation, approved.Status);
         Assert.Equal(0m, fixture.Store.Balance.ReservedQuantity);
         Assert.Equal(50m, fixture.Store.Balance.AvailableQuantity);
         Assert.Equal(1, approved.Version);
         Assert.Equal(0, fixture.Inventory.ReserveCalls);
-        Assert.Equal(1, fixture.PickingPlan.Calls);
+        // Picking lists come from the run (F43), not from reviewing one order.
+        Assert.Equal(0, fixture.PickingPlan.Calls);
     }
 
     [Theory]
@@ -114,12 +115,81 @@ public sealed class OrderServiceTests
             ? await fixture.Service.CancelAsync(created.Id, created.Version, fixture.SalesUserId,
                 SystemRoles.Sales, "Khách hàng đổi kế hoạch", default)
             : await fixture.Service.RejectAsync(created.Id, created.Version,
-                "Không đáp ứng lịch giao", fixture.OperatorUserId, default);
+                "Không đáp ứng lịch giao", fixture.OperatorUserId, SystemRoles.Operator, default);
 
         Assert.Equal(cancel ? OrderStatuses.Cancelled : OrderStatuses.Rejected, result.Status);
         Assert.Equal(50m, fixture.Store.Balance.AvailableQuantity);
         Assert.Equal(0, fixture.Inventory.ReleaseCalls);
         Assert.Equal(cancel ? 1 : 0, fixture.PickingPlan.CancelCalls);
+    }
+
+    [Fact]
+    public async Task Admin_can_review_an_order_not_only_Operator()
+    {
+        var fixture = new Fixture();
+        var created = await fixture.CreateAsync(10);
+
+        var approved = await fixture.Service.ApproveAsync(
+            created.Id, created.Version, fixture.OperatorUserId, SystemRoles.Admin, default);
+
+        Assert.Equal(OrderStatuses.PendingAllocation, approved.Status);
+    }
+
+    [Fact]
+    public async Task Warehouse_keeper_cannot_review_an_order()
+    {
+        var fixture = new Fixture();
+        var created = await fixture.CreateAsync(10);
+
+        var exception = await Assert.ThrowsAsync<OrderOperationException>(() =>
+            fixture.Service.ApproveAsync(created.Id, created.Version, fixture.OperatorUserId,
+                SystemRoles.WarehouseKeeper, default));
+
+        Assert.Equal("forbidden", exception.Code);
+    }
+
+    [Fact]
+    public async Task Reviewing_twice_is_a_no_op_rather_than_a_second_decision()
+    {
+        var fixture = new Fixture();
+        var created = await fixture.CreateAsync(10);
+        var approved = await fixture.Service.ApproveAsync(
+            created.Id, created.Version, fixture.OperatorUserId, SystemRoles.Operator, default);
+
+        var again = await fixture.Service.ApproveAsync(
+            approved.Id, approved.Version, fixture.OperatorUserId, SystemRoles.Operator, default);
+
+        Assert.Equal(approved.Version, again.Version);
+        Assert.Equal(0, fixture.Inventory.ReserveCalls);
+        Assert.Equal(0, fixture.PickingPlan.Calls);
+    }
+
+    [Fact]
+    public async Task An_order_waiting_for_the_run_can_still_be_cancelled()
+    {
+        var fixture = new Fixture();
+        var created = await fixture.CreateAsync(10);
+        var approved = await fixture.Service.ApproveAsync(
+            created.Id, created.Version, fixture.OperatorUserId, SystemRoles.Operator, default);
+
+        var cancelled = await fixture.Service.CancelAsync(approved.Id, approved.Version,
+            fixture.OperatorUserId, SystemRoles.Operator, "Retailer đóng cửa", default);
+
+        Assert.Equal(OrderStatuses.Cancelled, cancelled.Status);
+    }
+
+    [Fact]
+    public async Task Rejecting_without_a_reason_is_refused()
+    {
+        var fixture = new Fixture();
+        var created = await fixture.CreateAsync(10);
+
+        var exception = await Assert.ThrowsAsync<OrderOperationException>(() =>
+            fixture.Service.RejectAsync(created.Id, created.Version, "   ",
+                fixture.OperatorUserId, SystemRoles.Operator, default));
+
+        Assert.Equal("validation_error", exception.Code);
+        Assert.Equal(OrderStatuses.PendingApproval, fixture.Store.Orders.Single().Status);
     }
 
     [Fact]
@@ -129,7 +199,8 @@ public sealed class OrderServiceTests
         var created = await fixture.CreateAsync(10);
 
         var exception = await Assert.ThrowsAsync<OrderOperationException>(() =>
-            fixture.Service.ApproveAsync(created.Id, created.Version + 1, fixture.OperatorUserId, default));
+            fixture.Service.ApproveAsync(created.Id, created.Version + 1, fixture.OperatorUserId,
+                SystemRoles.Operator, default));
 
         Assert.Equal("conflict", exception.Code);
         Assert.Equal(OrderStatuses.PendingApproval, fixture.Store.Orders.Single().Status);
