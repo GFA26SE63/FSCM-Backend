@@ -16,7 +16,7 @@ namespace FSCM.IntegrationTests.Api;
 public sealed class S1BMasterDataApiTests
 {
     [Fact]
-    public async Task Warehouse_transit_and_eta_contracts_expose_threshold_cost_and_complete_schedule()
+    public async Task Warehouse_legacy_transit_api_is_removed_and_eta_uses_shared_table()
     {
         using var identityFactory = new IdentityAuthorizationTests.IdentityApiFactory();
         var warehouseStore = new TestWarehouseStore(identityFactory.Admin.Id);
@@ -42,26 +42,12 @@ public sealed class S1BMasterDataApiTests
             $"/api/v1/warehouses/{warehouseStore.Warehouse.Id}");
         Assert.Equal(120, warehouse.GetProperty("minimumStockThresholdCartons").GetInt32());
 
-        var rulesResponse = await client.PutAsJsonAsync(
-            $"/api/v1/warehouses/{warehouseStore.Warehouse.Id}/transit-time-rules",
-            new
-            {
-                rules = new[]
-                {
-                    new
-                    {
-                        minDistanceMeters = 0,
-                        maxDistanceMeters = 20_000,
-                        handlingMinutes = 60,
-                        transitMinutes = 120,
-                        estimatedTransportCost = 180_000m,
-                        maxServingDistanceMeters = 20_000
-                    }
-                }
-            });
-        rulesResponse.EnsureSuccessStatusCode();
-        var rules = JsonDocument.Parse(await rulesResponse.Content.ReadAsStringAsync()).RootElement;
-        Assert.Equal(180_000m, rules[0].GetProperty("estimatedTransportCost").GetDecimal());
+        var legacyRoute = $"/api/v1/warehouses/{warehouseStore.Warehouse.Id}/transit-time-rules";
+        Assert.Equal(System.Net.HttpStatusCode.NotFound, (await client.GetAsync(legacyRoute)).StatusCode);
+        Assert.Equal(System.Net.HttpStatusCode.NotFound,
+            (await client.GetAsync($"{legacyRoute}/history")).StatusCode);
+        Assert.Equal(System.Net.HttpStatusCode.NotFound,
+            (await client.PutAsJsonAsync(legacyRoute, new { rules = Array.Empty<object>() })).StatusCode);
 
         var etaResponse = await client.PostAsJsonAsync("/api/v1/eta/estimate", new
         {
@@ -78,13 +64,23 @@ public sealed class S1BMasterDataApiTests
 
         var graphQlResponse = await client.PostAsJsonAsync("/graphql", new
         {
-            query = "query($id: UUID!) { warehouse(id: $id) { minimumStockThresholdCartons transitTimeRules { estimatedTransportCost version } } }",
+            query = "query($id: UUID!) { warehouse(id: $id) { minimumStockThresholdCartons } }",
             variables = new { id = warehouseStore.Warehouse.Id }
         });
         var graphQl = JsonDocument.Parse(await graphQlResponse.Content.ReadAsStringAsync()).RootElement;
         Assert.False(graphQl.TryGetProperty("errors", out _), graphQl.ToString());
         Assert.Equal(120, graphQl.GetProperty("data").GetProperty("warehouse")
             .GetProperty("minimumStockThresholdCartons").GetInt32());
+
+        var removedGraphQlResponse = await client.PostAsJsonAsync("/graphql", new
+        {
+            query = "query($id: UUID!) { warehouse(id: $id) { transitTimeRules { version } } transitTimeRules(warehouseId: $id) { nodes { version } } }",
+            variables = new { id = warehouseStore.Warehouse.Id }
+        });
+        var removedGraphQl = JsonDocument.Parse(
+            await removedGraphQlResponse.Content.ReadAsStringAsync()).RootElement;
+        Assert.True(removedGraphQl.TryGetProperty("errors", out var errors));
+        Assert.NotEmpty(errors.EnumerateArray());
     }
 
     [Fact]

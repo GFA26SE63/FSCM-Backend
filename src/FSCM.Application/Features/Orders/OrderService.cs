@@ -344,6 +344,10 @@ public sealed class OrderService(
 
             var product = await store.FindPublishedProductAsync(requestedLine.ProductId, cancellationToken)
                 ?? throw OrderOperationException.NotFound("Published product was not found.");
+            var mlor = await store.ResolveMlorAsync(
+                data.RetailerId, product.Id, now, cancellationToken)
+                ?? throw OrderOperationException.Conflict(
+                    $"No effective MLOR configuration exists for SKU '{product.Sku}'.");
             var price = await pricingService.CalculateAsync(
                 product.Id, requestedLine.Quantity, data.RetailerId, now, cancellationToken);
 
@@ -357,6 +361,10 @@ public sealed class OrderService(
                 ProductNameSnapshot = product.Name,
                 OrderedQuantity = requestedLine.Quantity,
                 UnitPrice = price.UnitPrice,
+                ProductPriceId = price.ProductPriceId,
+                ProductPriceEffectiveFrom = price.ProductPriceEffectiveFrom,
+                ProductPriceEffectiveTo = price.ProductPriceEffectiveTo,
+                PricedAt = now,
                 GrossAmount = price.GrossAmount,
                 DiscountPercent = price.DiscountPercent,
                 DiscountAmount = price.DiscountAmount,
@@ -364,6 +372,13 @@ public sealed class OrderService(
                 DiscountSourceType = price.DiscountSourceType,
                 DiscountSourceCode = price.DiscountSourceCode,
                 FinalPricePendingAllocation = true,
+                MlorSourceScope = mlor.SourceScope,
+                MlorSourceRuleId = mlor.SourceRuleId,
+                MlorSourceVersion = mlor.SourceVersion,
+                MlorProductCategoryId = mlor.ProductCategoryId,
+                MlorMinimumLifeRatio = mlor.MinimumLifeRatio,
+                MlorMinimumLifeHours = mlor.MinimumLifeHours,
+                MlorResolvedAt = mlor.ResolvedAt,
                 CreatedAt = now
             };
             if (price.PromotionId.HasValue)
@@ -373,6 +388,12 @@ public sealed class OrderService(
                     Id = Guid.NewGuid(),
                     SalesOrderLineId = line.Id,
                     PromotionId = price.PromotionId.Value,
+                    PromotionCodeSnapshot = price.DiscountSourceCode!,
+                    PromotionNameSnapshot = price.PromotionName!,
+                    PromotionTypeSnapshot = price.DiscountSourceType!,
+                    MinimumQuantitySnapshot = price.PromotionMinimumQuantity!.Value,
+                    EffectiveFromSnapshot = price.PromotionEffectiveFrom!.Value,
+                    EffectiveToSnapshot = price.PromotionEffectiveTo!.Value,
                     DiscountPercent = price.DiscountPercent,
                     DiscountAmount = price.DiscountAmount,
                     IsServerFinal = false,
@@ -403,7 +424,17 @@ public sealed class OrderService(
                 order.SubtotalAmount,
                 order.DiscountAmount,
                 IndicativeAmount = order.FinalAmount,
-                order.FinalPricePendingAllocation
+                order.FinalPricePendingAllocation,
+                Lines = lines.Select(item => new
+                {
+                    item.ProductId,
+                    item.ProductPriceId,
+                    item.PricedAt,
+                    item.MlorSourceScope,
+                    item.MlorSourceRuleId,
+                    item.MlorSourceVersion,
+                    item.MlorMinimumLifeRatio
+                })
             }, TraceJsonOptions),
             Reason = "Sales tạo đơn trước phân bổ; chưa chọn lô hoặc thay đổi tồn kho.",
             CreatedAt = now
@@ -616,6 +647,29 @@ public sealed class OrderService(
             item.Line.NetAmount,
             item.Line.DiscountSourceType,
             item.Line.DiscountSourceCode,
+            item.Line.ProductPriceId,
+            item.Line.ProductPriceEffectiveFrom,
+            item.Line.ProductPriceEffectiveTo,
+            item.Line.PricedAt,
+            new OrderMlorSnapshotResult(
+                item.Line.MlorSourceScope,
+                item.Line.MlorSourceRuleId,
+                item.Line.MlorSourceVersion,
+                item.Line.MlorProductCategoryId,
+                item.Line.MlorMinimumLifeRatio,
+                item.Line.MlorMinimumLifeHours,
+                item.Line.MlorResolvedAt),
+            item.OrdinaryPromotion is null ? null : new OrderOrdinaryPromotionSnapshotResult(
+                item.OrdinaryPromotion.PromotionId,
+                item.OrdinaryPromotion.PromotionCodeSnapshot,
+                item.OrdinaryPromotion.PromotionNameSnapshot,
+                item.OrdinaryPromotion.PromotionTypeSnapshot,
+                item.OrdinaryPromotion.MinimumQuantitySnapshot,
+                item.OrdinaryPromotion.DiscountPercent,
+                item.OrdinaryPromotion.DiscountAmount,
+                item.OrdinaryPromotion.EffectiveFromSnapshot,
+                item.OrdinaryPromotion.EffectiveToSnapshot,
+                item.OrdinaryPromotion.AppliedAt),
             item.Line.EstimatedArrivalAt,
             item.Line.FinalPricePendingAllocation,
             item.Allocations.OrderBy(allocation => allocation.AllocationSequence).Select(allocation =>

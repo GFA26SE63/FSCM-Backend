@@ -56,11 +56,6 @@ public sealed class WarehouseGraphQlExtensions
         CancellationToken cancellationToken) =>
         await loader.LoadAsync(warehouse.Id, cancellationToken) ?? [];
 
-    public async Task<IReadOnlyList<TransitTimeRuleResult>> TransitTimeRules(
-        [Parent] WarehouseResult warehouse,
-        ITransitTimeRulesByWarehouseIdDataLoader loader,
-        CancellationToken cancellationToken) =>
-        await loader.LoadAsync(warehouse.Id, cancellationToken) ?? [];
 }
 
 [ExtendObjectType<RetailerDetails>]

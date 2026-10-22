@@ -78,18 +78,6 @@ Accept: application/json
 
 ###
 
-GET {{FSCM.API_HostAddress}}/api/v1/warehouses/{{warehouses.response.body.$.[0].id}}/transit-time-rules
-Authorization: Bearer {{login.response.body.$.accessToken}}
-Accept: application/json
-
-###
-
-GET {{FSCM.API_HostAddress}}/api/v1/warehouses/{{warehouses.response.body.$.[0].id}}/transit-time-rules/history
-Authorization: Bearer {{login.response.body.$.accessToken}}
-Accept: application/json
-
-###
-
 # Admin and Warehouse Keeper can receive stock. Reusing the same key and payload returns the same receipt.
 # @name goodsReceipt
 POST {{FSCM.API_HostAddress}}/api/v1/goods-receipts

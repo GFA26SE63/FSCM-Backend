@@ -91,8 +91,8 @@ public sealed class PhysicalSchemaModelTests
 
         Assert.Equal(ExpectedTables, tableNames);
         Assert.Equal(66, entityTypes.Length);
-        Assert.Equal(691, entityTypes.Sum(entityType => entityType.GetProperties().Count()));
-        Assert.Equal(147, entityTypes.Sum(entityType => entityType.GetForeignKeys().Count()));
+        Assert.Equal(708, entityTypes.Sum(entityType => entityType.GetProperties().Count()));
+        Assert.Equal(150, entityTypes.Sum(entityType => entityType.GetForeignKeys().Count()));
         Assert.All(
             entityTypes.SelectMany(entityType => entityType.GetForeignKeys()),
             foreignKey => Assert.Equal(DeleteBehavior.Restrict, foreignKey.DeleteBehavior));
@@ -357,6 +357,7 @@ public sealed class PhysicalSchemaModelTests
         using var context = CreateContext();
         var order = context.Model.FindEntityType(typeof(SalesOrder))!;
         var line = context.Model.FindEntityType(typeof(SalesOrderLine))!;
+        var orderPromotion = context.Model.FindEntityType(typeof(OrderPromotion))!;
         var allocation = context.Model.FindEntityType(typeof(Allocation))!;
         var retailer = context.Model.FindEntityType(typeof(Retailer))!;
 
@@ -366,6 +367,12 @@ public sealed class PhysicalSchemaModelTests
         Assert.False(order.FindProperty(nameof(SalesOrder.RetailerNameSnapshot))!.IsNullable);
         Assert.False(order.FindProperty(nameof(SalesOrder.FinalPricePendingAllocation))!.IsNullable);
         Assert.False(line.FindProperty(nameof(SalesOrderLine.FinalPricePendingAllocation))!.IsNullable);
+        Assert.False(line.FindProperty(nameof(SalesOrderLine.ProductPriceId))!.IsNullable);
+        Assert.False(line.FindProperty(nameof(SalesOrderLine.MlorSourceScope))!.IsNullable);
+        Assert.False(line.FindProperty(nameof(SalesOrderLine.MlorSourceVersion))!.IsNullable);
+        Assert.False(line.FindProperty(nameof(SalesOrderLine.MlorMinimumLifeRatio))!.IsNullable);
+        Assert.False(orderPromotion.FindProperty(nameof(OrderPromotion.PromotionCodeSnapshot))!.IsNullable);
+        Assert.False(orderPromotion.FindProperty(nameof(OrderPromotion.EffectiveFromSnapshot))!.IsNullable);
 
         var orderId = line.FindProperty(nameof(SalesOrderLine.SalesOrderId))!;
         var lineNumber = line.FindProperty(nameof(SalesOrderLine.LineNumber))!;

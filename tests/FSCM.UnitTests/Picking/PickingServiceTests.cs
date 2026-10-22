@@ -38,7 +38,7 @@ public sealed class PickingServiceTests
         };
         var view = new OrderView(
             fixture.Order,
-            [new OrderLineView(fixture.Line, [fixture.Allocation, secondAllocation])],
+            [new OrderLineView(fixture.Line, [fixture.Allocation, secondAllocation], null)],
             [],
             [],
             new Dictionary<Guid, string>

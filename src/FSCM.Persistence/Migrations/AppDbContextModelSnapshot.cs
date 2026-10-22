@@ -1304,11 +1304,36 @@ namespace FSCM.Persistence.Migrations
                         .HasPrecision(5, 2)
                         .HasColumnType("numeric(5,2)");
 
+                    b.Property<DateTimeOffset>("EffectiveFromSnapshot")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset>("EffectiveToSnapshot")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<bool>("IsServerFinal")
                         .HasColumnType("boolean");
 
+                    b.Property<decimal>("MinimumQuantitySnapshot")
+                        .HasPrecision(18, 3)
+                        .HasColumnType("numeric(18,3)");
+
+                    b.Property<string>("PromotionCodeSnapshot")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
+
                     b.Property<Guid>("PromotionId")
                         .HasColumnType("uuid");
+
+                    b.Property<string>("PromotionNameSnapshot")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("PromotionTypeSnapshot")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)");
 
                     b.Property<Guid>("SalesOrderLineId")
                         .HasColumnType("uuid");
@@ -2900,6 +2925,30 @@ namespace FSCM.Persistence.Migrations
                     b.Property<int>("LineNumber")
                         .HasColumnType("integer");
 
+                    b.Property<int?>("MlorMinimumLifeHours")
+                        .HasColumnType("integer");
+
+                    b.Property<decimal>("MlorMinimumLifeRatio")
+                        .HasPrecision(6, 5)
+                        .HasColumnType("numeric(6,5)");
+
+                    b.Property<Guid?>("MlorProductCategoryId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("MlorResolvedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("MlorSourceRuleId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("MlorSourceScope")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<int>("MlorSourceVersion")
+                        .HasColumnType("integer");
+
                     b.Property<decimal>("NetAmount")
                         .HasPrecision(18, 2)
                         .HasColumnType("numeric(18,2)");
@@ -2908,6 +2957,9 @@ namespace FSCM.Persistence.Migrations
                         .HasPrecision(18, 3)
                         .HasColumnType("numeric(18,3)");
 
+                    b.Property<DateTimeOffset>("PricedAt")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<Guid>("ProductId")
                         .HasColumnType("uuid");
 
@@ -2915,6 +2967,15 @@ namespace FSCM.Persistence.Migrations
                         .IsRequired()
                         .HasMaxLength(200)
                         .HasColumnType("character varying(200)");
+
+                    b.Property<DateTimeOffset>("ProductPriceEffectiveFrom")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset?>("ProductPriceEffectiveTo")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("ProductPriceId")
+                        .HasColumnType("uuid");
 
                     b.Property<Guid>("SalesOrderId")
                         .HasColumnType("uuid");
@@ -2930,12 +2991,21 @@ namespace FSCM.Persistence.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("MlorProductCategoryId");
+
+                    b.HasIndex("MlorSourceRuleId");
+
                     b.HasIndex("ProductId");
+
+                    b.HasIndex("ProductPriceId");
 
                     b.HasIndex("SalesOrderId", "LineNumber")
                         .IsUnique();
 
-                    b.ToTable("SALES_ORDER_LINE", (string)null);
+                    b.ToTable("SALES_ORDER_LINE", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_SALES_ORDER_LINE_MLOR_RATIO", "\"MlorMinimumLifeRatio\" > 0 AND \"MlorMinimumLifeRatio\" < 1");
+                        });
                 });
 
             modelBuilder.Entity("FSCM.Domain.Entities.StockHold", b =>
@@ -4573,9 +4643,25 @@ namespace FSCM.Persistence.Migrations
 
             modelBuilder.Entity("FSCM.Domain.Entities.SalesOrderLine", b =>
                 {
+                    b.HasOne("FSCM.Domain.Entities.ProductCategory", null)
+                        .WithMany()
+                        .HasForeignKey("MlorProductCategoryId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("FSCM.Domain.Entities.RetailerProductMlor", null)
+                        .WithMany()
+                        .HasForeignKey("MlorSourceRuleId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
                     b.HasOne("FSCM.Domain.Entities.Product", null)
                         .WithMany()
                         .HasForeignKey("ProductId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("FSCM.Domain.Entities.ProductPrice", null)
+                        .WithMany()
+                        .HasForeignKey("ProductPriceId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
