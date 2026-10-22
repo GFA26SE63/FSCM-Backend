@@ -1,5 +1,6 @@
 using FluentValidation;
 using FSCM.Application.Features.AllocationRuns;
+using FSCM.Domain.Allocation;
 using FSCM.Application.Features.Catalog;
 using FSCM.Application.Features.DeliveryEta;
 using FSCM.Application.Features.Deliveries;
@@ -28,6 +29,8 @@ public static class DependencyInjection
         services.AddAutoMapper(_ => { }, typeof(DependencyInjection).Assembly);
         services.AddValidatorsFromAssembly(typeof(DependencyInjection).Assembly);
         services.AddSingleton(TimeProvider.System);
+        services.AddSingleton<AllocationEngine>();
+        services.AddScoped<AllocationPlanner>();
         services.AddScoped<AllocationRunService>();
         services.AddScoped<CatalogService>();
         services.AddScoped<DeliveryService>();
