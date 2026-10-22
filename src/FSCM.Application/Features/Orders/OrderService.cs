@@ -152,24 +152,31 @@ public sealed class OrderService(
                 "Sales can only request retailer pricing inside the assigned territory.");
     }
 
+    /// <summary>
+    /// Reviewing an order parks it for the next 12:00 run. It holds no stock: the run picks the
+    /// batches and only run approval reserves them, so two approved orders can still compete for
+    /// the same batch and the earlier acceptance time wins.
+    /// </summary>
     public Task<OrderDetailResult> ApproveAsync(
         Guid orderId,
         int expectedVersion,
-        Guid operatorUserId,
+        Guid reviewerUserId,
+        string actorRole,
         CancellationToken cancellationToken) =>
-        TransitionAsync(orderId, expectedVersion, operatorUserId, SystemRoles.Operator,
-            OrderStatuses.Approved, null, cancellationToken);
+        TransitionAsync(orderId, expectedVersion, reviewerUserId, actorRole,
+            OrderStatuses.PendingAllocation, null, cancellationToken);
 
     public Task<OrderDetailResult> RejectAsync(
         Guid orderId,
         int expectedVersion,
         string reason,
-        Guid operatorUserId,
+        Guid reviewerUserId,
+        string actorRole,
         CancellationToken cancellationToken)
     {
         reason = CleanOptional(reason, 1_000)
             ?? throw OrderOperationException.Validation("Rejection reason is required.");
-        return TransitionAsync(orderId, expectedVersion, operatorUserId, SystemRoles.Operator,
+        return TransitionAsync(orderId, expectedVersion, reviewerUserId, actorRole,
             OrderStatuses.Rejected, reason, cancellationToken);
     }
 
@@ -198,9 +205,10 @@ public sealed class OrderService(
                 throw OrderOperationException.Forbidden("Sales can only cancel their own pending order.");
             }
 
-            if (view.Order.Status is not (OrderStatuses.PendingApproval or OrderStatuses.Approved))
+            if (view.Order.Status is not (OrderStatuses.PendingApproval or OrderStatuses.PendingAllocation))
             {
-                throw OrderOperationException.Conflict("Only pending or approved orders can be cancelled.");
+                throw OrderOperationException.Conflict(
+                    "Only an order that has not entered an allocation run can be cancelled here.");
             }
 
             EnsureOrderVersion(view.Order, expectedVersion);
@@ -228,25 +236,17 @@ public sealed class OrderService(
         string? reason,
         CancellationToken cancellationToken)
     {
-        if (actorRole != SystemRoles.Operator)
+        if (actorRole is not (SystemRoles.Operator or SystemRoles.Admin))
         {
-            throw OrderOperationException.Forbidden("Only Operator can approve or reject orders.");
+            throw OrderOperationException.Forbidden("Only Admin or Operator can approve or reject orders.");
         }
 
         await store.ExecuteInTransactionAsync(async transactionCancellationToken =>
         {
             var view = await store.FindAsync(orderId, true, transactionCancellationToken)
                 ?? throw OrderOperationException.NotFound("Order was not found.");
-            if (view.Order.Status == targetStatus)
-            {
-                if (targetStatus == OrderStatuses.Approved)
-                {
-                    await pickingPlanService.CreateForApprovedOrderAsync(
-                        view, timeProvider.GetUtcNow(), transactionCancellationToken);
-                    await store.SaveChangesAsync(transactionCancellationToken);
-                }
-                return;
-            }
+            // Re-sending the same decision is a no-op: nothing is reserved or issued here.
+            if (view.Order.Status == targetStatus) return;
             if (view.Order.Status != OrderStatuses.PendingApproval)
             {
                 throw OrderOperationException.Conflict("Only pending orders can be approved or rejected.");
@@ -258,24 +258,8 @@ public sealed class OrderService(
             {
                 await ReleaseInventoryAsync(view, actorUserId, transactionCancellationToken);
             }
-            else
-            {
-                foreach (var allocation in view.Lines.SelectMany(item => item.Allocations)
-                             .OrderBy(item => item.AllocationSequence))
-                {
-                    await inventoryLifecycleService.ReserveAsync(
-                        allocation.Id,
-                        actorUserId,
-                        view.InventoryVersions[allocation.BatchId],
-                        transactionCancellationToken);
-                }
-            }
 
             ApplyTransition(view.Order, targetStatus, actorUserId, reason, now);
-            if (targetStatus == OrderStatuses.Approved)
-            {
-                await pickingPlanService.CreateForApprovedOrderAsync(view, now, transactionCancellationToken);
-            }
             store.AddHistory(NewHistory(view.Order.Id, OrderStatuses.PendingApproval,
                 targetStatus, actorUserId, reason, now));
             await store.SaveChangesAsync(transactionCancellationToken);
@@ -570,7 +554,7 @@ public sealed class OrderService(
         DateTimeOffset now)
     {
         order.Status = targetStatus;
-        if (targetStatus is OrderStatuses.Approved or OrderStatuses.Rejected)
+        if (targetStatus is OrderStatuses.PendingAllocation or OrderStatuses.Rejected)
         {
             order.ReviewedByUserId = actorUserId;
             order.ReviewedAt = now;
@@ -758,6 +742,7 @@ public sealed class OrderService(
     private static readonly HashSet<string> OrderStatusSet =
     [
         OrderStatuses.PendingApproval,
+        OrderStatuses.PendingAllocation,
         OrderStatuses.Approved,
         OrderStatuses.Picking,
         OrderStatuses.Rejected,

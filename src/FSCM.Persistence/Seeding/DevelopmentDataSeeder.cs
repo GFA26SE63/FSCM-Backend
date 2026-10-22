@@ -89,10 +89,11 @@ public sealed class DevelopmentDataSeeder(
         var paymentSeedReference = "CHỜ-PHÂN-BỔ";
         if (!demoOrder.FinalPricePendingAllocation)
         {
-            if (demoOrder.Status is OrderStatuses.PendingApproval or OrderStatuses.Approved)
+            if (demoOrder.Status is OrderStatuses.PendingApproval)
             {
                 demoOrder = await orderService.ApproveAsync(
-                    demoOrder.Id, demoOrder.Version, users[SystemRoles.Operator].Id, cancellationToken);
+                    demoOrder.Id, demoOrder.Version, users[SystemRoles.Operator].Id,
+                    SystemRoles.Operator, cancellationToken);
             }
             paymentSeedReference = $"SEED-S1E-{demoOrder.OrderCode}";
             var existingPayment = await dbContext.PaymentRecords.SingleOrDefaultAsync(
