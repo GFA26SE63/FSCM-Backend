@@ -636,6 +636,10 @@ namespace FSCM.Persistence.Migrations
                     b.Property<DateTimeOffset>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<int>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("integer");
+
                     b.Property<Guid>("WarehouseId")
                         .HasColumnType("uuid");
 
@@ -654,7 +658,10 @@ namespace FSCM.Persistence.Migrations
 
                     b.HasIndex("WarehouseId");
 
-                    b.ToTable("GOODS_RECEIPT", (string)null);
+                    b.ToTable("GOODS_RECEIPT", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_GOODS_RECEIPT_Status", "\"Status\" IN ('Pending', 'Received')");
+                        });
                 });
 
             modelBuilder.Entity("FSCM.Domain.Entities.GoodsReceiptLine", b =>
@@ -675,6 +682,9 @@ namespace FSCM.Persistence.Migrations
                     b.Property<Guid>("ProductId")
                         .HasColumnType("uuid");
 
+                    b.Property<DateOnly>("ProductionDate")
+                        .HasColumnType("date");
+
                     b.Property<decimal>("ReceivedQuantity")
                         .HasPrecision(18, 3)
                         .HasColumnType("numeric(18,3)");
@@ -691,6 +701,8 @@ namespace FSCM.Persistence.Migrations
 
                     b.ToTable("GOODS_RECEIPT_LINE", null, t =>
                         {
+                            t.HasCheckConstraint("CK_GOODS_RECEIPT_LINE_Dates", "\"ProductionDate\" < \"ExpirationDate\"");
+
                             t.HasCheckConstraint("CK_GOODS_RECEIPT_LINE_ReceivedQuantity", "\"ReceivedQuantity\" > 0 AND TRUNC(\"ReceivedQuantity\") = \"ReceivedQuantity\"");
                         });
                 });

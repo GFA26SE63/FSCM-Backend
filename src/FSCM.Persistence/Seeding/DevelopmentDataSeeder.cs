@@ -1191,8 +1191,11 @@ public sealed class DevelopmentDataSeeder(
             receipt.RequestHash = new string('0', 64);
             receipt.WarehouseId = warehouse.Id;
             receipt.CreatedByUserId = warehouseKeeperId;
+            receipt.ApprovedByUserId = warehouseKeeperId;
             receipt.Status = GoodsReceiptStatuses.Received;
             receipt.ReceivedAt = receivedAt;
+            receipt.ApprovedAt = receivedAt;
+            receipt.Version = Math.Max(receipt.Version, 1);
             receipt.UpdatedAt = now;
             await dbContext.SaveChangesAsync(cancellationToken);
 
@@ -1206,6 +1209,8 @@ public sealed class DevelopmentDataSeeder(
             }
             line.SourceLotCode = definition.SourceLotCode;
             line.ReceivedQuantity = definition.OnHand;
+            line.ProductionDate = definition.ExpirationDate.AddDays(
+                -(int)Math.Ceiling(product.ShelfLifeHours / 24m));
             line.ExpirationDate = definition.ExpirationDate;
             await dbContext.SaveChangesAsync(cancellationToken);
 
