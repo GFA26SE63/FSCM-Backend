@@ -1,0 +1,225 @@
+using System.Text.Json;
+using FSCM.Application.Features.AllocationRuns;
+using FSCM.Application.Features.Inventory;
+using FSCM.Application.Features.Orders;
+using FSCM.Application.Features.WarehouseConfiguration;
+using FSCM.Domain.Entities;
+using FSCM.Persistence.DbContexts;
+using Microsoft.EntityFrameworkCore;
+
+namespace FSCM.Persistence.AllocationRuns;
+
+public sealed class AllocationRunStore(AppDbContext dbContext) : IAllocationRunStore
+{
+    public Task<AllocationRun?> FindByBusinessDateAsync(DateOnly businessDate, CancellationToken cancellationToken) =>
+        dbContext.AllocationRunRecords.SingleOrDefaultAsync(item => item.BusinessDate == businessDate, cancellationToken);
+
+    public Task<AllocationRunView?> FindViewAsync(Guid runId, CancellationToken cancellationToken) =>
+        BuildViewAsync(dbContext.AllocationRunRecords.AsNoTracking().Where(item => item.Id == runId), cancellationToken);
+
+    public Task<AllocationRunView?> FindViewByBusinessDateAsync(
+        DateOnly businessDate, CancellationToken cancellationToken) =>
+        BuildViewAsync(
+            dbContext.AllocationRunRecords.AsNoTracking().Where(item => item.BusinessDate == businessDate),
+            cancellationToken);
+
+    /// <summary>
+    /// Orders reviewed and accepted before the cutoff. An order reviewed after the cutoff waits for
+    /// the next run even when it was accepted in time, which is what S03 and D7 require.
+    /// </summary>
+    public async Task<IReadOnlyCollection<EligibleOrderView>> ListEligibleOrdersAsync(
+        DateTimeOffset cutoffAt, CancellationToken cancellationToken)
+    {
+        var orders = await dbContext.SalesOrderRecords.AsNoTracking()
+            .Where(item => item.Status == OrderStatuses.PendingAllocation
+                && item.ServerReceivedAt < cutoffAt
+                && item.ReviewedAt != null && item.ReviewedAt < cutoffAt)
+            .ToArrayAsync(cancellationToken);
+        if (orders.Length == 0) return [];
+
+        var orderIds = orders.Select(item => item.Id).ToArray();
+        var lines = await dbContext.SalesOrderLineRecords.AsNoTracking()
+            .Where(item => orderIds.Contains(item.SalesOrderId))
+            .Join(dbContext.ProductRecords.AsNoTracking(),
+                line => line.ProductId, product => product.Id,
+                (line, product) => new { line, product })
+            .ToArrayAsync(cancellationToken);
+
+        var linesByOrder = lines.GroupBy(item => item.line.SalesOrderId)
+            .ToDictionary(group => group.Key,
+                group => (IReadOnlyCollection<EligibleOrderLineView>)group
+                    .Select(item => new EligibleOrderLineView(item.line, item.product)).ToArray());
+
+        return orders
+            .Where(order => linesByOrder.ContainsKey(order.Id))
+            .Select(order => new EligibleOrderView(order, linesByOrder[order.Id]))
+            .ToArray();
+    }
+
+    /// <summary>
+    /// Available stock for the products in demand. Expired batches and batches with nothing
+    /// available are left out of the pool rather than filtered later.
+    /// </summary>
+    public async Task<IReadOnlyCollection<AvailableBatchView>> ListAvailableStockAsync(
+        IReadOnlyCollection<Guid> productIds, DateOnly businessDate, CancellationToken cancellationToken)
+    {
+        if (productIds.Count == 0) return [];
+        var ids = productIds.ToArray();
+        return await dbContext.BatchRecords.AsNoTracking()
+            .Where(batch => ids.Contains(batch.ProductId)
+                && batch.ExpiryStatus != BatchExpiryStatuses.Expired
+                && batch.ExpirationDate > businessDate)
+            .Join(dbContext.InventoryBalanceRecords.AsNoTracking(),
+                batch => batch.Id, balance => balance.BatchId,
+                (batch, balance) => new { batch, balance })
+            .Where(item => item.balance.AvailableQuantity > 0)
+            .Select(item => new AvailableBatchView(
+                item.batch, item.batch.WarehouseId, item.balance.AvailableQuantity, item.balance.Version))
+            .ToArrayAsync(cancellationToken);
+    }
+
+    /// <summary>
+    /// Effective MLOR per line: a retailer-SKU ratio wins, then a retailer-Category ratio, then the
+    /// configured default. An ordinary promotion never changes it.
+    /// </summary>
+    public async Task<IReadOnlyDictionary<(Guid RetailerId, Guid ProductId), (decimal Ratio, string Source)>>
+        ResolveMlorAsync(
+            IReadOnlyCollection<(Guid RetailerId, Guid ProductId)> pairs, CancellationToken cancellationToken)
+    {
+        var result = new Dictionary<(Guid, Guid), (decimal, string)>();
+        if (pairs.Count == 0) return result;
+
+        var retailerIds = pairs.Select(item => item.RetailerId).Distinct().ToArray();
+        var productIds = pairs.Select(item => item.ProductId).Distinct().ToArray();
+        var categoryByProduct = await dbContext.ProductRecords.AsNoTracking()
+            .Where(item => productIds.Contains(item.Id))
+            .ToDictionaryAsync(item => item.Id, item => item.ProductCategoryId, cancellationToken);
+
+        var configured = await dbContext.RetailerProductMlorRecords.AsNoTracking()
+            .Where(item => item.IsActive && retailerIds.Contains(item.RetailerId))
+            .ToArrayAsync(cancellationToken);
+
+        var fallback = await ReadDefaultMlorRatioAsync(cancellationToken);
+        foreach (var pair in pairs)
+        {
+            var bySku = configured.FirstOrDefault(
+                item => item.RetailerId == pair.RetailerId && item.ProductId == pair.ProductId);
+            if (bySku is not null)
+            {
+                result[pair] = (bySku.MinimumLifeRatio, MlorSources.RetailerProduct);
+                continue;
+            }
+
+            var categoryId = categoryByProduct.TryGetValue(pair.ProductId, out var category) ? category : Guid.Empty;
+            var byCategory = configured.FirstOrDefault(item => item.RetailerId == pair.RetailerId
+                && item.ProductId == null
+                && item.ProductCategoryId == categoryId);
+            result[pair] = byCategory is not null
+                ? (byCategory.MinimumLifeRatio, MlorSources.RetailerCategory)
+                : (fallback, MlorSources.ProductDefault);
+        }
+
+        return result;
+    }
+
+    public async Task<AllocationSettings> GetSettingsAsync(CancellationToken cancellationToken)
+    {
+        var weights = await ReadConfigurationAsync(BusinessConfigurationKeys.AllocationWeights, cancellationToken);
+        var radius = await ReadConfigurationAsync(BusinessConfigurationKeys.ServiceRadiusMeters, cancellationToken);
+
+        var shelfLife = 0.5m;
+        var distance = 0.3m;
+        var coverage = 0.2m;
+        if (weights is not null)
+        {
+            using var document = JsonDocument.Parse(weights);
+            shelfLife = ReadDecimal(document.RootElement, "expiry", shelfLife);
+            distance = ReadDecimal(document.RootElement, "distance", distance);
+            coverage = ReadDecimal(document.RootElement, "coverage", coverage);
+        }
+
+        var servingDistance = 20_000;
+        if (radius is not null && int.TryParse(radius, out var parsed) && parsed > 0)
+        {
+            servingDistance = parsed;
+        }
+
+        return new AllocationSettings(shelfLife, distance, coverage, servingDistance);
+    }
+
+    public async Task<string> NextRunCodeAsync(DateOnly businessDate, CancellationToken cancellationToken)
+    {
+        var sequence = await dbContext.AllocationRunRecords.AsNoTracking()
+            .CountAsync(item => item.BusinessDate == businessDate, cancellationToken);
+        return $"DOT-{businessDate:yyyyMMdd}-{sequence + 1:00}";
+    }
+
+    public void AddRun(AllocationRun run) => dbContext.AllocationRunRecords.Add(run);
+
+    public void AddOrders(IEnumerable<AllocationRunOrder> orders) => dbContext.AllocationRunOrderRecords.AddRange(orders);
+
+    public void AddLines(IEnumerable<AllocationRunLine> lines) => dbContext.AllocationRunLineRecords.AddRange(lines);
+
+    public void AddPool(IEnumerable<AllocationRunStock> pool) => dbContext.AllocationRunStockRecords.AddRange(pool);
+
+    public Task SaveChangesAsync(CancellationToken cancellationToken) => dbContext.SaveChangesAsync(cancellationToken);
+
+    public async Task ExecuteInTransactionAsync(
+        Func<CancellationToken, Task> action, CancellationToken cancellationToken)
+    {
+        var strategy = dbContext.Database.CreateExecutionStrategy();
+        await strategy.ExecuteAsync(async () =>
+        {
+            dbContext.ChangeTracker.Clear();
+            await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
+            try
+            {
+                await action(cancellationToken);
+                await transaction.CommitAsync(cancellationToken);
+            }
+            catch
+            {
+                await transaction.RollbackAsync(cancellationToken);
+                throw;
+            }
+        });
+    }
+
+    public void ClearTracking() => dbContext.ChangeTracker.Clear();
+
+    private async Task<AllocationRunView?> BuildViewAsync(
+        IQueryable<AllocationRun> runs, CancellationToken cancellationToken)
+    {
+        var run = await runs.SingleOrDefaultAsync(cancellationToken);
+        if (run is null) return null;
+
+        var orders = await dbContext.AllocationRunOrderRecords.AsNoTracking()
+            .Where(item => item.AllocationRunId == run.Id)
+            .OrderBy(item => item.PriorityRank)
+            .ToArrayAsync(cancellationToken);
+        var orderIds = orders.Select(item => item.Id).ToArray();
+        var lines = await dbContext.AllocationRunLineRecords.AsNoTracking()
+            .Where(item => orderIds.Contains(item.AllocationRunOrderId))
+            .ToArrayAsync(cancellationToken);
+        var pool = await dbContext.AllocationRunStockRecords.AsNoTracking()
+            .Where(item => item.AllocationRunId == run.Id)
+            .ToArrayAsync(cancellationToken);
+
+        return new AllocationRunView(run, orders, lines, pool);
+    }
+
+    private Task<string?> ReadConfigurationAsync(string key, CancellationToken cancellationToken) =>
+        dbContext.SystemConfigurationRecords.AsNoTracking()
+            .Where(item => item.ConfigKey == key && item.IsActive)
+            .Select(item => (string?)item.ConfigValue)
+            .SingleOrDefaultAsync(cancellationToken);
+
+    private async Task<decimal> ReadDefaultMlorRatioAsync(CancellationToken cancellationToken)
+    {
+        var raw = await ReadConfigurationAsync(BusinessConfigurationKeys.DefaultMlorRatio, cancellationToken);
+        return raw is not null && decimal.TryParse(raw, out var parsed) && parsed is > 0 and < 1 ? parsed : 0.25m;
+    }
+
+    private static decimal ReadDecimal(JsonElement element, string name, decimal fallback) =>
+        element.TryGetProperty(name, out var property) && property.TryGetDecimal(out var value) ? value : fallback;
+}

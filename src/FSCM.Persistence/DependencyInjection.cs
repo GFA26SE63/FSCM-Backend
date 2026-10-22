@@ -1,3 +1,4 @@
+using FSCM.Application.Features.AllocationRuns;
 using FSCM.Application.Features.Catalog;
 using FSCM.Application.Features.DeliveryEta;
 using FSCM.Application.Features.Deliveries;
@@ -15,6 +16,7 @@ using FSCM.Application.Features.Promotions;
 using FSCM.Application.Features.Territory;
 using FSCM.Application.Features.TransitTables;
 using FSCM.Application.Features.WarehouseConfiguration;
+using FSCM.Persistence.AllocationRuns;
 using FSCM.Persistence.Catalog;
 using FSCM.Persistence.DeliveryEta;
 using FSCM.Persistence.DbContexts;
@@ -58,6 +60,7 @@ public static class DependencyInjection
             });
         }
 
+        services.AddScoped<IAllocationRunStore, AllocationRunStore>();
         services.AddScoped<ICatalogStore, CatalogStore>();
         services.AddScoped<IDeliveryStore, DeliveryStore>();
         services.AddScoped<IIdentityStore, IdentityStore>();
