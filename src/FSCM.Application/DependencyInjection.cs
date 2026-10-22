@@ -1,4 +1,6 @@
 using FluentValidation;
+using FSCM.Application.Features.AllocationRuns;
+using FSCM.Domain.Allocation;
 using FSCM.Application.Features.Catalog;
 using FSCM.Application.Features.DeliveryEta;
 using FSCM.Application.Features.Deliveries;
@@ -14,6 +16,7 @@ using FSCM.Application.Features.Retailers;
 using FSCM.Application.Features.Refunds;
 using FSCM.Application.Features.QrLabels;
 using FSCM.Application.Features.Promotions;
+using FSCM.Application.Features.ShelfLifeDiscounts;
 using FSCM.Application.Features.Territory;
 using FSCM.Application.Features.TransitTables;
 using FSCM.Application.Features.WarehouseConfiguration;
@@ -28,6 +31,11 @@ public static class DependencyInjection
         services.AddAutoMapper(_ => { }, typeof(DependencyInjection).Assembly);
         services.AddValidatorsFromAssembly(typeof(DependencyInjection).Assembly);
         services.AddSingleton(TimeProvider.System);
+        services.AddSingleton<AllocationEngine>();
+        services.AddScoped<BatchSwapResolver>();
+        services.AddScoped<AllocationPlanner>();
+        services.AddScoped<AllocationPricingService>();
+        services.AddScoped<AllocationRunService>();
         services.AddScoped<CatalogService>();
         services.AddScoped<DeliveryService>();
         services.AddScoped<IdentityService>();
@@ -51,6 +59,7 @@ public static class DependencyInjection
         services.AddScoped<RetailerService>();
         services.AddScoped<RefundService>();
         services.AddScoped<TerritoryService>();
+        services.AddScoped<ShelfLifeDiscountService>();
         services.AddScoped<TransitTableService>();
         services.AddScoped<DeliveryEtaService>();
         services.AddScoped<WarehouseConfigurationService>();

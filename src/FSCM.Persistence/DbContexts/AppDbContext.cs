@@ -23,7 +23,14 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<ProductPrice> ProductPriceRecords => Set<ProductPrice>();
     public DbSet<RetailerProductMlor> RetailerProductMlorRecords => Set<RetailerProductMlor>();
     public DbSet<TransitTimeRule> TransitTimeRuleRecords => Set<TransitTimeRule>();
+    public DbSet<AllocationRun> AllocationRunRecords => Set<AllocationRun>();
+    public DbSet<AllocationRunOrder> AllocationRunOrderRecords => Set<AllocationRunOrder>();
+    public DbSet<AllocationRunLine> AllocationRunLineRecords => Set<AllocationRunLine>();
+    public DbSet<AllocationRunStock> AllocationRunStockRecords => Set<AllocationRunStock>();
+    public DbSet<AllocationRunAllocation> AllocationRunAllocationRecords => Set<AllocationRunAllocation>();
     public DbSet<TransitTable> TransitTableRecords => Set<TransitTable>();
+    public DbSet<ShelfLifeDiscountTable> ShelfLifeDiscountTableRecords => Set<ShelfLifeDiscountTable>();
+    public DbSet<ShelfLifeDiscountTier> ShelfLifeDiscountTierRecords => Set<ShelfLifeDiscountTier>();
     public DbSet<TransitTableBand> TransitTableBandRecords => Set<TransitTableBand>();
     public DbSet<GoodsReceipt> GoodsReceiptRecords => Set<GoodsReceipt>();
     public DbSet<GoodsReceiptLine> GoodsReceiptLineRecords => Set<GoodsReceiptLine>();
