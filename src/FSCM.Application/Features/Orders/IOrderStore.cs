@@ -11,9 +11,19 @@ public sealed record OrderInventoryCandidate(
     decimal? WarehouseLatitude,
     decimal? WarehouseLongitude);
 
+public sealed record OrderMlorSnapshot(
+    string SourceScope,
+    Guid? SourceRuleId,
+    int SourceVersion,
+    Guid? ProductCategoryId,
+    decimal MinimumLifeRatio,
+    int? MinimumLifeHours,
+    DateTimeOffset ResolvedAt);
+
 public sealed record OrderLineView(
     SalesOrderLine Line,
-    IReadOnlyCollection<Allocation> Allocations);
+    IReadOnlyCollection<Allocation> Allocations,
+    OrderPromotion? OrdinaryPromotion);
 
 public sealed record OrderView(
     SalesOrder Order,
@@ -31,7 +41,8 @@ public interface IOrderStore
     Task<Product?> FindPublishedProductAsync(Guid productId, CancellationToken cancellationToken);
     Task<IReadOnlyCollection<OrderInventoryCandidate>> ListCandidatesAsync(Guid productId, CancellationToken cancellationToken);
     Task<MapLocation?> FindRetailerLocationAsync(Guid retailerId, CancellationToken cancellationToken);
-    Task<decimal?> FindMlorRatioAsync(Guid retailerId, Guid productId, CancellationToken cancellationToken);
+    Task<OrderMlorSnapshot?> ResolveMlorAsync(
+        Guid retailerId, Guid productId, DateTimeOffset at, CancellationToken cancellationToken);
     Task<string?> FindConfigurationAsync(string key, CancellationToken cancellationToken);
     Task<string> NextOrderCodeAsync(CancellationToken cancellationToken);
     Task<OrderView?> FindAsync(Guid orderId, bool forUpdate, CancellationToken cancellationToken);

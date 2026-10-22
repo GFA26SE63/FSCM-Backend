@@ -8,9 +8,16 @@ public sealed record OrderPriceSnapshot(
     decimal DiscountPercent,
     decimal DiscountAmount,
     decimal NetAmount,
+    Guid ProductPriceId,
+    DateTimeOffset ProductPriceEffectiveFrom,
+    DateTimeOffset? ProductPriceEffectiveTo,
     Guid? PromotionId,
     string? DiscountSourceType,
-    string? DiscountSourceCode);
+    string? DiscountSourceCode,
+    string? PromotionName,
+    decimal? PromotionMinimumQuantity,
+    DateTimeOffset? PromotionEffectiveFrom,
+    DateTimeOffset? PromotionEffectiveTo);
 
 public interface IOrderPricingService
 {
@@ -39,8 +46,15 @@ public sealed class OrderPricingService(PromotionService promotionService) : IOr
             result.DiscountPercent,
             result.DiscountAmount,
             result.NetAmount,
+            result.ProductPriceId,
+            result.ProductPriceEffectiveFrom,
+            result.ProductPriceEffectiveTo,
             result.AppliedPromotion?.PromotionId,
             result.AppliedPromotion?.PromotionType,
-            result.AppliedPromotion?.Code);
+            result.AppliedPromotion?.Code,
+            result.AppliedPromotion?.Name,
+            result.AppliedPromotion?.MinimumQuantity,
+            result.AppliedPromotion?.EffectiveFrom,
+            result.AppliedPromotion?.EffectiveTo);
     }
 }
