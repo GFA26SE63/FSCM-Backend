@@ -43,6 +43,7 @@ public static class ServiceCollectionExtensions
         services.AddExceptionHandler<PromotionExceptionHandler>();
         services.AddExceptionHandler<RetailerExceptionHandler>();
         services.AddExceptionHandler<TerritoryExceptionHandler>();
+        services.AddExceptionHandler<ShelfLifeDiscountExceptionHandler>();
         services.AddExceptionHandler<TransitTableExceptionHandler>();
         services.AddExceptionHandler<DeliveryEtaExceptionHandler>();
         services.AddExceptionHandler<WarehouseConfigurationExceptionHandler>();

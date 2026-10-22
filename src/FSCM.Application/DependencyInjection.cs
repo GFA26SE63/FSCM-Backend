@@ -15,6 +15,7 @@ using FSCM.Application.Features.Picking;
 using FSCM.Application.Features.Retailers;
 using FSCM.Application.Features.QrLabels;
 using FSCM.Application.Features.Promotions;
+using FSCM.Application.Features.ShelfLifeDiscounts;
 using FSCM.Application.Features.Territory;
 using FSCM.Application.Features.TransitTables;
 using FSCM.Application.Features.WarehouseConfiguration;
@@ -55,6 +56,7 @@ public static class DependencyInjection
         services.AddScoped<PromotionService>();
         services.AddScoped<RetailerService>();
         services.AddScoped<TerritoryService>();
+        services.AddScoped<ShelfLifeDiscountService>();
         services.AddScoped<TransitTableService>();
         services.AddScoped<DeliveryEtaService>();
         services.AddScoped<WarehouseConfigurationService>();
