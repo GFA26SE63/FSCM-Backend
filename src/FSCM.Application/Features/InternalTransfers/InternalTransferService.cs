@@ -203,7 +203,7 @@ public sealed class InternalTransferService(IInternalTransferStore store, TimePr
             itemView.Item.DispatchedQuantity = itemView.Item.RequestedQuantity;
             itemView.Item.Status = InternalTransferStatuses.InTransit;
             itemView.Item.UpdatedAt = now;
-            store.AddInventoryTransaction(CreateInventoryTransaction(inventory, userId, view.Transfer.TransferCode,
+            store.AddInventoryTransaction(CreateInventoryTransaction(inventory, userId, view.Transfer.Id, view.Transfer.TransferCode,
                 -itemView.Item.RequestedQuantity, InventoryTransactionTypes.TransferDispatch,
                 "Xuất kho điều chuyển nội bộ", now));
             foreach (var label in itemLabels)
@@ -297,14 +297,14 @@ public sealed class InternalTransferService(IInternalTransferStore store, TimePr
             destinationBatch.Version++;
             destinationBatch.UpdatedAt = now;
             balance.PhysicalQuantity += itemView.Item.DispatchedQuantity;
-            balance.AvailableQuantity = balance.PhysicalQuantity - balance.HeldQuantity - balance.ReservedQuantity;
+            balance.AvailableQuantity = balance.PhysicalQuantity - balance.ReservedQuantity;
             balance.Version++;
             balance.UpdatedAt = now;
             itemView.Item.DestinationBatchId = destinationBatch.Id;
             itemView.Item.ReceivedQuantity = itemView.Item.DispatchedQuantity;
             itemView.Item.Status = InternalTransferStatuses.Received;
             itemView.Item.UpdatedAt = now;
-            store.AddInventoryTransaction(CreateInventoryTransaction(destinationBatch, balance, userId,
+            store.AddInventoryTransaction(CreateInventoryTransaction(destinationBatch, balance, userId, view.Transfer.Id,
                 view.Transfer.TransferCode, itemView.Item.ReceivedQuantity, InventoryTransactionTypes.TransferReceipt,
                 "Nhận kho điều chuyển nội bộ", now));
             foreach (var binding in itemView.Labels)
@@ -439,17 +439,17 @@ public sealed class InternalTransferService(IInternalTransferStore store, TimePr
         inventory.Batch.Version++;
         inventory.Batch.UpdatedAt = now;
         inventory.Balance.PhysicalQuantity -= quantity;
-        inventory.Balance.AvailableQuantity = inventory.Balance.PhysicalQuantity - inventory.Balance.HeldQuantity - inventory.Balance.ReservedQuantity;
+        inventory.Balance.AvailableQuantity = inventory.Balance.PhysicalQuantity - inventory.Balance.ReservedQuantity;
         inventory.Balance.Version++;
         inventory.Balance.UpdatedAt = now;
     }
 
     private static InventoryTransaction CreateInventoryTransaction(TransferInventoryView inventory, Guid userId,
-        string reference, decimal delta, string type, string note, DateTimeOffset now) =>
-        CreateInventoryTransaction(inventory.Batch, inventory.Balance, userId, reference, delta, type, note, now);
+        Guid sourceId, string reference, decimal delta, string type, string note, DateTimeOffset now) =>
+        CreateInventoryTransaction(inventory.Batch, inventory.Balance, userId, sourceId, reference, delta, type, note, now);
 
     private static InventoryTransaction CreateInventoryTransaction(Batch batch, InventoryBalance balance, Guid userId,
-        string reference, decimal delta, string type, string note, DateTimeOffset now) => new()
+        Guid sourceId, string reference, decimal delta, string type, string note, DateTimeOffset now) => new()
         {
             Id = Guid.NewGuid(),
             BatchId = batch.Id,
@@ -457,10 +457,11 @@ public sealed class InternalTransferService(IInternalTransferStore store, TimePr
             ProductId = batch.ProductId,
             CreatedByUserId = userId,
             TransactionType = type,
+            SourceType = InventoryTransactionSourceTypes.InternalTransfer,
+            SourceId = sourceId,
             ReferenceCode = reference,
             PhysicalQuantityDelta = delta,
             PhysicalQuantityAfter = balance.PhysicalQuantity,
-            HeldQuantityAfter = balance.HeldQuantity,
             ReservedQuantityAfter = balance.ReservedQuantity,
             AvailableQuantityAfter = balance.AvailableQuantity,
             Note = note,

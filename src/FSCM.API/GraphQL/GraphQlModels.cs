@@ -1,5 +1,4 @@
 using FSCM.Application.Features.Catalog;
-using FSCM.Application.Features.InternalTransfers;
 using FSCM.Application.Features.Inventory;
 using FSCM.Application.Features.QrLabels;
 using FSCM.Application.Features.Retailers;
@@ -39,6 +38,7 @@ public sealed class ProductGraphQlExtensions
         CancellationToken cancellationToken) =>
         await loader.LoadAsync(product.Id, cancellationToken) ?? [];
 
+    [Authorize(Roles = [SystemRoles.Admin])]
     public async Task<IReadOnlyList<MlorResult>> MlorConfigurations(
         [Parent] ProductResult product,
         IMlorByProductIdDataLoader loader,
@@ -126,29 +126,4 @@ public sealed class QrLabelGraphQlExtensions
 
     public BatchReference Batch([Parent] QrLabelResult label) =>
         new(label.BatchId, label.BatchCode);
-}
-
-[ExtendObjectType<InternalTransferResult>]
-public sealed class InternalTransferGraphQlExtensions
-{
-    public WarehouseReference SourceWarehouse([Parent] InternalTransferResult transfer) =>
-        new(transfer.SourceWarehouseId, transfer.SourceWarehouseCode, transfer.SourceWarehouseName);
-
-    public WarehouseReference DestinationWarehouse([Parent] InternalTransferResult transfer) =>
-        new(transfer.DestinationWarehouseId, transfer.DestinationWarehouseCode, transfer.DestinationWarehouseName);
-}
-
-[ExtendObjectType<InternalTransferItemResult>]
-public sealed class InternalTransferItemGraphQlExtensions
-{
-    public ProductReference Product([Parent] InternalTransferItemResult item) =>
-        new(item.ProductId, item.Sku, item.ProductName);
-
-    public BatchReference SourceBatch([Parent] InternalTransferItemResult item) =>
-        new(item.SourceBatchId, item.SourceBatchCode, item.ExpirationDate);
-
-    public BatchReference? DestinationBatch([Parent] InternalTransferItemResult item) =>
-        item.DestinationBatchId is { } id && item.DestinationBatchCode is { } code
-            ? new(id, code, item.ExpirationDate)
-            : null;
 }

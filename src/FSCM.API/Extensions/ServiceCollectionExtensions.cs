@@ -43,6 +43,8 @@ public static class ServiceCollectionExtensions
         services.AddExceptionHandler<PromotionExceptionHandler>();
         services.AddExceptionHandler<RetailerExceptionHandler>();
         services.AddExceptionHandler<TerritoryExceptionHandler>();
+        services.AddExceptionHandler<TransitTableExceptionHandler>();
+        services.AddExceptionHandler<DeliveryEtaExceptionHandler>();
         services.AddExceptionHandler<WarehouseConfigurationExceptionHandler>();
         services.AddExceptionHandler<IdentityExceptionHandler>();
 
@@ -106,9 +108,7 @@ public static class ServiceCollectionExtensions
             .AddTypeExtension<InventoryGraphQlExtensions>()
             .AddTypeExtension<GoodsReceiptGraphQlExtensions>()
             .AddTypeExtension<GoodsReceiptLineGraphQlExtensions>()
-            .AddTypeExtension<QrLabelGraphQlExtensions>()
-            .AddTypeExtension<InternalTransferGraphQlExtensions>()
-            .AddTypeExtension<InternalTransferItemGraphQlExtensions>();
+            .AddTypeExtension<QrLabelGraphQlExtensions>();
 
         return services;
     }

@@ -90,6 +90,61 @@ Accept: application/json
 
 ###
 
+# Admin and Warehouse Keeper can receive stock. Reusing the same key and payload returns the same receipt.
+# @name goodsReceipt
+POST {{FSCM.API_HostAddress}}/api/v1/goods-receipts
+Authorization: Bearer {{login.response.body.$.accessToken}}
+Idempotency-Key: {{$guid}}
+Content-Type: application/json
+
+{
+  "warehouseId": "{{warehouses.response.body.$.[0].id}}",
+  "lines": [
+    {
+      "productId": "{{products.response.body.$.items[0].id}}",
+      "sourceLotCode": "LOT-S1D-DEMO",
+      "quantity": 10,
+      "expirationDate": "2027-12-31"
+    }
+  ]
+}
+
+###
+
+GET {{FSCM.API_HostAddress}}/api/v1/goods-receipts/{{goodsReceipt.response.body.$.id}}
+Authorization: Bearer {{login.response.body.$.accessToken}}
+Accept: application/json
+
+###
+
+GET {{FSCM.API_HostAddress}}/api/v1/inventory?warehouseId={{warehouses.response.body.$.[0].id}}
+Authorization: Bearer {{login.response.body.$.accessToken}}
+Accept: application/json
+
+###
+
+GET {{FSCM.API_HostAddress}}/api/v1/inventory/expiry/health
+Authorization: Bearer {{login.response.body.$.accessToken}}
+Accept: application/json
+
+###
+
+GET {{FSCM.API_HostAddress}}/api/v1/qr-labels/TEM-000208/print
+Authorization: Bearer {{login.response.body.$.accessToken}}
+Accept: text/html
+
+###
+
+POST {{FSCM.API_HostAddress}}/graphql
+Authorization: Bearer {{login.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "query": "{ goodsReceipt(id: \"{{goodsReceipt.response.body.$.id}}\") { receiptCode status warehouse { code } lines { sku batchCode quantity expirationDate } } inventory(warehouseId: \"{{warehouses.response.body.$.[0].id}}\", first: 20) { totalCount nodes { sku batchCode physicalQuantity reservedQuantity availableQuantity } } inventoryExpiryHealth { schedulerEnabled timeZone runAtLocalTime latestRun { status batchesScanned statusesUpdated batchesExpired } } }"
+}
+
+###
+
 POST {{FSCM.API_HostAddress}}/api/v1/map/distances/refresh
 Authorization: Bearer {{login.response.body.$.accessToken}}
 Content-Type: application/json
@@ -200,7 +255,7 @@ Accept: application/json
 
 ###
 
-GET {{FSCM.API_HostAddress}}/api/v1/pricing/snapshot?productId={{batchDiscounts.response.body.$.[0].productId}}&quantity=10&batchId={{batchDiscounts.response.body.$.[0].batchId}}
+GET {{FSCM.API_HostAddress}}/api/v1/pricing/snapshot?productId={{batchDiscounts.response.body.$.[0].productId}}&quantity=10
 Authorization: Bearer {{login.response.body.$.accessToken}}
 Accept: application/json
 
@@ -242,12 +297,18 @@ Accept: application/json
 
 ###
 
+GET {{FSCM.API_HostAddress}}/api/v1/orders/{{assistedOrder.response.body.$.id}}/timeline
+Authorization: Bearer {{salesLogin.response.body.$.accessToken}}
+Accept: application/json
+
+###
+
 POST {{FSCM.API_HostAddress}}/graphql
 Authorization: Bearer {{salesLogin.response.body.$.accessToken}}
 Content-Type: application/json
 
 {
-  "query": "{ orders(first: 20) { totalCount nodes { id orderCode status finalAmount version } } }"
+  "query": "{ orders(createdByMe: true, page: 1, pageSize: 20) { totalCount items { id orderCode status finalAmount finalPricePendingAllocation allocationState version } } }"
 }
 
 ###
@@ -295,6 +356,23 @@ Accept: application/json
 GET {{FSCM.API_HostAddress}}/api/v1/qr-labels/TEM-000208
 Authorization: Bearer {{warehouseKeeperLogin.response.body.$.accessToken}}
 Accept: application/json
+
+###
+
+# Generic QR scans are inspection-only. Receipt, picking, transfer, and dispatch own stock movement.
+POST {{FSCM.API_HostAddress}}/api/v1/qr-labels/TEM-000208/scans
+Authorization: Bearer {{warehouseKeeperLogin.response.body.$.accessToken}}
+Idempotency-Key: {{$guid}}
+Content-Type: application/json
+
+{
+  "action": "Inspect",
+  "warehouseId": "{{pickingLabel.response.body.$.label.warehouseId}}",
+  "destinationBatchId": null,
+  "referenceCode": "S1D-DEMO",
+  "note": "Kiểm tra tem tại kho",
+  "expectedVersion": {{pickingLabel.response.body.$.label.version}}
+}
 
 ###
 
@@ -392,7 +470,7 @@ Accept: application/json
 
 ###
 
-# Supply a Delivered Credit order ID and its current payment version.
+# Supply a final-approved Prepaid order ID and its current payment version.
 # The response includes checkoutUrl and VietQR qrCode. Configure PayOS secrets first.
 POST {{FSCM.API_HostAddress}}/api/v1/payments/orders/00000000-0000-0000-0000-000000000000/payos-checkout
 Authorization: Bearer {{retailerLogin.response.body.$.accessToken}}
@@ -404,13 +482,14 @@ Content-Type: application/json
 
 ###
 
-# Supply a Delivered Credit order ID and its current payment version.
+# Supply a delivered deferred-payment order ID and its current payment version.
 POST {{FSCM.API_HostAddress}}/api/v1/payments/orders/00000000-0000-0000-0000-000000000000/collect
 Authorization: Bearer {{salesLogin.response.body.$.accessToken}}
 Idempotency-Key: {{$guid}}
 Content-Type: application/json
 
 {
+  "amount": 100000,
   "collectionMethod": "Cash",
   "expectedVersion": 0,
   "note": "Sales đã thu đủ tiền mặt"
@@ -423,5 +502,32 @@ Authorization: Bearer {{salesLogin.response.body.$.accessToken}}
 Content-Type: application/json
 
 {
-  "query": "{ payments(first: 20) { totalCount nodes { orderCode orderPaymentMethod status amount creditTermDays deliveredDate dueDate daysOverdue paidDate collectionMethod payOsCheckoutUrl payOsQrCode payOsLinkStatus payOsReference version } } }"
+  "query": "{ payments(first: 20) { totalCount nodes { orderCode orderPaymentMethod status amount confirmedAmount outstandingAmount finalApprovedAt finalApprovalReference creditTermDays deliveredDate dueDate daysOverdue paidDate collectionMethod payOsCheckoutUrl payOsQrCode payOsLinkStatus payOsReference version } } }"
+}
+
+###
+
+# Admin/Operator only. COD requires complete delivery; prepaid requires final approval.
+POST {{FSCM.API_HostAddress}}/api/v1/manual-payments
+Authorization: Bearer {{operatorLogin.response.body.$.accessToken}}
+Idempotency-Key: {{$guid}}
+Content-Type: application/json
+
+{
+  "salesOrderId": "00000000-0000-0000-0000-000000000000",
+  "method": "COD",
+  "amount": 100000,
+  "markPaid": false,
+  "note": "Chờ xác nhận thu đủ tiền khi giao hàng"
+}
+
+###
+
+POST {{FSCM.API_HostAddress}}/graphql
+Authorization: Bearer {{salesLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "query": "query($orderId: UUID!) { manualPaymentsBySalesOrder(salesOrderId: $orderId, first: 20) { totalCount nodes { id orderCode method status amount totalConfirmedAmount outstandingAmount version } } }",
+  "variables": { "orderId": "00000000-0000-0000-0000-000000000000" }
 }

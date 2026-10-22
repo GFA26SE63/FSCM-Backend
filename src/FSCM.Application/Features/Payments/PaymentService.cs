@@ -55,10 +55,11 @@ public sealed class PaymentService(
         CancellationToken cancellationToken)
     {
         operationKey = NormalizeOperationKey(operationKey);
+        ValidateAmount(data.Amount);
         var collectionMethod = NormalizeCollectionMethod(data.CollectionMethod);
         ValidateCollectionAuthority(actorRole, collectionMethod);
         ValidateNote(data.Note);
-        var requestHash = Hash(orderId, collectionMethod, NormalizeNote(data.Note));
+        var requestHash = Hash(orderId, data.Amount, collectionMethod, NormalizeNote(data.Note));
 
         var prior = await store.FindByOperationKeyAsync(operationKey, cancellationToken);
         if (prior is not null)
@@ -77,6 +78,8 @@ public sealed class PaymentService(
                 ?? throw PaymentOperationException.NotFound("Payment was not found.");
             if (view.Payment.Method != OrderPaymentMethods.Credit)
                 throw PaymentOperationException.Conflict("Only a credit receivable can be collected manually.");
+            if (!view.Payment.DeliveredDate.HasValue)
+                throw PaymentOperationException.Conflict("Deferred payment can only be collected after complete receipt.");
             if (view.Payment.Status == PaymentStatuses.Paid)
                 throw PaymentOperationException.Conflict("Payment was already collected in full.");
             if (view.Payment.PayOsPaymentLinkId is not null)
@@ -88,11 +91,16 @@ public sealed class PaymentService(
             if (actorRole == SystemRoles.Sales && view.Order.CreatedByUserId != actorUserId)
                 throw PaymentOperationException.Forbidden(
                     "Sales can only record cash collection for their own order.");
+            var outstanding = view.Payment.Amount - view.Payment.ConfirmedAmount;
+            if (data.Amount != outstanding)
+                throw PaymentOperationException.Conflict(
+                    $"Only full collection is supported; outstanding amount is {outstanding:0.##} VND.");
 
             var now = timeProvider.GetUtcNow();
             var oldValues = new
             {
                 view.Payment.Status,
+                view.Payment.ConfirmedAmount,
                 view.Payment.PaidDate,
                 view.Payment.CollectionMethod,
                 view.Payment.ConfirmedByUserId,
@@ -100,6 +108,7 @@ public sealed class PaymentService(
                 view.Payment.Version
             };
             view.Payment.Status = PaymentStatuses.Paid;
+            view.Payment.ConfirmedAmount = view.Payment.Amount;
             view.Payment.PaidDate = DateOnly.FromDateTime(now.ToOffset(VietnamOffset).DateTime);
             view.Payment.CollectionMethod = collectionMethod;
             view.Payment.OperationKey = operationKey;
@@ -120,6 +129,7 @@ public sealed class PaymentService(
                 NewValues = JsonSerializer.Serialize(new
                 {
                     view.Payment.Status,
+                    view.Payment.ConfirmedAmount,
                     view.Payment.PaidDate,
                     view.Payment.CollectionMethod,
                     view.Payment.ConfirmedByUserId,
@@ -150,8 +160,8 @@ public sealed class PaymentService(
             ?? throw PaymentOperationException.NotFound("Payment was not found.");
         if (!await store.CanViewAsync(view, actorUserId, actorRole, cancellationToken))
             throw PaymentOperationException.Forbidden("You cannot create a checkout for this payment.");
-        if (view.Payment.Method != OrderPaymentMethods.Credit)
-            throw PaymentOperationException.Conflict("Only a credit receivable can use payOS checkout.");
+        if (view.Payment.Method != OrderPaymentMethods.Prepaid)
+            throw PaymentOperationException.Conflict("Only a prepaid order can use payOS checkout.");
         if (view.Payment.Status == PaymentStatuses.Paid)
             throw PaymentOperationException.Conflict("Payment was already collected in full.");
         if (view.Payment.PayOsPaymentLinkId is not null) return ToCheckoutResult(view.Payment);
@@ -160,10 +170,11 @@ public sealed class PaymentService(
         var orderCode = CreatePayOsOrderCode(view.Payment.Id);
         var link = await payOsGateway.CreatePaymentLinkAsync(new(
             orderCode,
-            ToPayOsAmount(view.Payment.Amount),
+            ToPayOsAmount(view.Payment.Amount - view.Payment.ConfirmedAmount),
             $"FSCM {view.Order.OrderCode}",
             view.Order.RetailerNameSnapshot), cancellationToken);
-        if (link.OrderCode != orderCode || link.Amount != ToPayOsAmount(view.Payment.Amount) ||
+        if (link.OrderCode != orderCode ||
+            link.Amount != ToPayOsAmount(view.Payment.Amount - view.Payment.ConfirmedAmount) ||
             string.IsNullOrWhiteSpace(link.PaymentLinkId) || string.IsNullOrWhiteSpace(link.CheckoutUrl))
             throw PaymentOperationException.Gateway("payOS returned an inconsistent payment link.");
 
@@ -233,7 +244,8 @@ public sealed class PaymentService(
             {
                 if (current.Payment.CollectionMethod == PaymentCollectionMethods.BankTransfer &&
                     current.Payment.PayOsPaymentLinkId is not null &&
-                    current.Payment.PayOsReference == verified.Data.Reference)
+                    current.Payment.PayOsReference == verified.Data.Reference &&
+                    current.Payment.PayOsWebhookHash == HashPayOsWebhook(verified.Data))
                 {
                     result = new(true, "Payment webhook was already processed.", current.Payment.Id);
                     return;
@@ -243,19 +255,25 @@ public sealed class PaymentService(
 
             var now = timeProvider.GetUtcNow();
             var paidAt = ParsePayOsTransactionTime(verified.Data.TransactionDateTime, now);
+            var webhookHash = HashPayOsWebhook(verified.Data);
+            if (current.Payment.ConfirmedAmount + verified.Data.Amount > current.Payment.Amount)
+                throw PaymentOperationException.Conflict("payOS payment would exceed the final approved amount.");
             var oldValues = new
             {
                 current.Payment.Status,
+                current.Payment.ConfirmedAmount,
                 current.Payment.CollectionMethod,
                 current.Payment.Version
             };
             current.Payment.Status = PaymentStatuses.Paid;
+            current.Payment.ConfirmedAmount += verified.Data.Amount;
             current.Payment.PaidDate = DateOnly.FromDateTime(paidAt.ToOffset(VietnamOffset).DateTime);
             current.Payment.CollectionMethod = PaymentCollectionMethods.BankTransfer;
             current.Payment.OperationKey = $"payos:{verified.Data.Reference}";
-            current.Payment.RequestHash = HashPayOsWebhook(verified.Data);
+            current.Payment.RequestHash = webhookHash;
             current.Payment.PayOsLinkStatus = "PAID";
             current.Payment.PayOsReference = verified.Data.Reference;
+            current.Payment.PayOsWebhookHash = webhookHash;
             current.Payment.ConfirmedByUserId = null;
             current.Payment.ConfirmedAt = paidAt;
             current.Payment.Note = "payOS xác nhận đã nhận đủ tiền";
@@ -271,6 +289,7 @@ public sealed class PaymentService(
                 NewValues = JsonSerializer.Serialize(new
                 {
                     current.Payment.Status,
+                    current.Payment.ConfirmedAmount,
                     current.Payment.CollectionMethod,
                     current.Payment.PayOsOrderCode,
                     current.Payment.PayOsPaymentLinkId,
@@ -301,7 +320,10 @@ public sealed class PaymentService(
             view.Payment.Id, view.Order.Id, view.Order.OrderCode, view.Retailer.Id,
             view.Order.RetailerCodeSnapshot, view.Order.RetailerNameSnapshot,
             view.Order.CreatedByUserId, view.Payment.Method, effectiveStatus,
-            view.Payment.Amount, view.Order.CreditTermDays, view.Payment.DeliveredDate,
+            view.Payment.Amount, view.Payment.ConfirmedAmount,
+            view.Payment.Amount - view.Payment.ConfirmedAmount,
+            view.Order.CreditTermDays, view.Payment.FinalApprovedAt,
+            view.Payment.FinalApprovalReference, view.Payment.DeliveredDate,
             view.Payment.DueDate, daysOverdue, view.Payment.PaidDate,
             view.Payment.CollectionMethod, view.Payment.PayOsOrderCode,
             view.Payment.PayOsPaymentLinkId, view.Payment.PayOsCheckoutUrl,
@@ -362,18 +384,24 @@ public sealed class PaymentService(
     private static string? NormalizeNote(string? note) =>
         string.IsNullOrWhiteSpace(note) ? null : note.Trim();
 
-    private static string Hash(Guid orderId, string method, string? note)
+    private static string Hash(Guid orderId, decimal amount, string method, string? note)
     {
-        var canonical = $"{orderId:N}|{method}|{note}";
+        var canonical = $"{orderId:N}|{amount:0.00}|{method}|{note}";
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(canonical))).ToLowerInvariant();
     }
 
     private static void ValidatePayOsEligible(PaymentView view, int expectedVersion)
     {
-        if (view.Payment.Method != OrderPaymentMethods.Credit)
-            throw PaymentOperationException.Conflict("Only a credit receivable can use payOS checkout.");
+        if (view.Payment.Method != OrderPaymentMethods.Prepaid)
+            throw PaymentOperationException.Conflict("Only a prepaid order can use payOS checkout.");
+        if (view.Payment.FinalApprovedAt == default || string.IsNullOrWhiteSpace(view.Payment.FinalApprovalReference))
+            throw PaymentOperationException.Conflict(
+                "PayOS checkout requires a final allocation approval snapshot.");
         if (view.Payment.Status == PaymentStatuses.Paid)
             throw PaymentOperationException.Conflict("Payment was already collected in full.");
+        if (view.Payment.ConfirmedAmount != 0)
+            throw PaymentOperationException.Conflict(
+                "PayOS checkout requires the full final approved amount to remain outstanding.");
         if (view.Payment.Version != expectedVersion)
             throw PaymentOperationException.Conflict(
                 $"Payment version is {view.Payment.Version}; refresh and retry.");
@@ -427,5 +455,12 @@ public sealed class PaymentService(
     {
         var canonical = $"{data.OrderCode}|{data.Amount}|{data.PaymentLinkId}|{data.Reference}";
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(canonical))).ToLowerInvariant();
+    }
+
+    private static void ValidateAmount(decimal amount)
+    {
+        if (amount <= 0 || decimal.Round(amount, 2) != amount)
+            throw PaymentOperationException.Validation(
+                "Payment amount must be positive and have at most two decimal places.");
     }
 }

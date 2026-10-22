@@ -1,7 +1,7 @@
 using FSCM.Application.Features.Identity;
 using FSCM.Application.Features.Inventory;
-using FSCM.Application.Features.InternalTransfers;
 using FSCM.Application.Features.Orders;
+using FSCM.Application.Features.Payments;
 using FSCM.Application.Features.Retailers;
 using FSCM.Application.Features.QrLabels;
 using FSCM.Application.Features.Promotions;
@@ -21,6 +21,7 @@ public sealed class DevelopmentDataSeeder(
     IConfiguration configuration,
     TimeProvider timeProvider,
     OrderService orderService,
+    IPaymentPlanService paymentPlanService,
     ILogger<DevelopmentDataSeeder> logger)
 {
     private const string DemoWarehouseCode = "WH-HCM-01";
@@ -67,10 +68,10 @@ public sealed class DevelopmentDataSeeder(
         await SeedInventoryDataAsync(configuredWarehouses, products, users[SystemRoles.WarehouseKeeper].Id, now, cancellationToken);
         await dbContext.SaveChangesAsync(cancellationToken);
         await SeedQrLabelDataAsync(users[SystemRoles.WarehouseKeeper].Id, now, cancellationToken);
-        await SeedInternalTransferDataAsync(users[SystemRoles.Operator].Id, now, cancellationToken);
         await SeedSalesGroupMembershipsAsync(users, salesGroups, now, cancellationToken);
         await SeedRetailerAssignmentsAsync(retailer.Id, salesGroups, now, cancellationToken);
-        await SeedAdditionalRetailersAsync(regions, salesGroups, users, now, cancellationToken);
+        await SeedAdditionalRetailersAsync(
+            regions, salesGroups, users, categories["CAT-01"].Id, now, cancellationToken);
         await SeedPromotionDataAsync(products, categories, retailer, users[SystemRoles.Admin].Id,
             now, cancellationToken);
         await dbContext.SaveChangesAsync(cancellationToken);
@@ -85,14 +86,40 @@ public sealed class DevelopmentDataSeeder(
                 [new CreateOrderLineData(products["SKU001"].Id, 12)]),
             users[SystemRoles.Sales].Id,
             cancellationToken);
-        if (demoOrder.Status is OrderStatuses.PendingApproval or OrderStatuses.Approved)
+        var paymentSeedReference = "CHỜ-PHÂN-BỔ";
+        if (!demoOrder.FinalPricePendingAllocation)
         {
-            demoOrder = await orderService.ApproveAsync(
-                demoOrder.Id, demoOrder.Version, users[SystemRoles.Operator].Id, cancellationToken);
+            if (demoOrder.Status is OrderStatuses.PendingApproval or OrderStatuses.Approved)
+            {
+                demoOrder = await orderService.ApproveAsync(
+                    demoOrder.Id, demoOrder.Version, users[SystemRoles.Operator].Id, cancellationToken);
+            }
+            paymentSeedReference = $"SEED-S1E-{demoOrder.OrderCode}";
+            var existingPayment = await dbContext.PaymentRecords.SingleOrDefaultAsync(
+                item => item.SalesOrderId == demoOrder.Id, cancellationToken);
+            if (existingPayment is null)
+            {
+                await paymentPlanService.CreateForFinalApprovedOrderAsync(
+                    await dbContext.SalesOrderRecords.SingleAsync(
+                        item => item.Id == demoOrder.Id, cancellationToken),
+                    users[SystemRoles.Admin].Id,
+                    now,
+                    paymentSeedReference,
+                    cancellationToken);
+            }
+            else
+            {
+                if (existingPayment.Method != demoOrder.PaymentMethod ||
+                    existingPayment.Amount != demoOrder.FinalAmount)
+                    throw new InvalidOperationException(
+                        "Sổ thanh toán mẫu không khớp phương thức hoặc giá trị cuối của đơn hàng mẫu.");
+                paymentSeedReference = existingPayment.FinalApprovalReference;
+            }
         }
+        await dbContext.SaveChangesAsync(cancellationToken);
 
         logger.LogInformation(
-            "Development data seeded: {UserCount} users, {CategoryCount} categories, {ProductCount} products, {WarehouseCount} warehouses, {RegionCount} regions, {SalesGroupCount} sales groups, retailer {RetailerCode}, assisted order {OrderCode}.",
+            "Development data seeded: {UserCount} users, {CategoryCount} categories, {ProductCount} products, {WarehouseCount} warehouses, {RegionCount} regions, {SalesGroupCount} sales groups, retailer {RetailerCode}, assisted order {OrderCode}, payment state {PaymentReference}.",
             users.Count,
             categories.Count,
             products.Count,
@@ -100,7 +127,8 @@ public sealed class DevelopmentDataSeeder(
             regions.Count,
             salesGroups.Count,
             DemoRetailerCode,
-            demoOrder.OrderCode);
+            demoOrder.OrderCode,
+            paymentSeedReference);
     }
 
     private async Task SeedDeliveryMasterDataAsync(
@@ -236,7 +264,7 @@ public sealed class DevelopmentDataSeeder(
         await dbContext.SaveChangesAsync(cancellationToken);
 
         var batch = await dbContext.BatchRecords.SingleAsync(
-            item => item.BatchCode == "WH-TD-SKU002-20102026", cancellationToken);
+            item => item.BatchCode == "WH-TD-SKU002-28102026", cancellationToken);
         var batchPromotion = await dbContext.PromotionRecords.SingleOrDefaultAsync(
             item => item.Code == "KM-003", cancellationToken);
         if (batchPromotion is null)
@@ -280,100 +308,13 @@ public sealed class DevelopmentDataSeeder(
         await dbContext.SaveChangesAsync(cancellationToken);
     }
 
-    private async Task SeedInternalTransferDataAsync(Guid operatorId, DateTimeOffset now, CancellationToken cancellationToken)
-    {
-        var source = await dbContext.WarehouseRecords.SingleAsync(item => item.Code == "WH-HCM-01", cancellationToken);
-        var destinations = await dbContext.WarehouseRecords.Where(item => item.Code == "WH-TD" || item.Code == "WH-Q7")
-            .ToDictionaryAsync(item => item.Code, StringComparer.Ordinal, cancellationToken);
-        var sourceBatch = await dbContext.BatchRecords.SingleAsync(
-            item => item.BatchCode == "WH-HCM-01-SKU001-30042027", cancellationToken);
-        var definitions = new[]
-        {
-            new InternalTransferSeed("DC-261001-01", "WH-TD", 20m, InternalTransferStatuses.Requested,
-                "Đề nghị bổ sung sữa tiệt trùng cho kho vùng Thủ Đức", null),
-            new InternalTransferSeed("DC-261002-01", "WH-Q7", 10m, InternalTransferStatuses.Rejected,
-                "Đề nghị bổ sung sữa tiệt trùng cho kho vùng Quận 7", "Kho vùng đang tạm sắp xếp lại khu vực lưu trữ")
-        };
-        foreach (var definition in definitions)
-        {
-            var transfer = await dbContext.WarehouseTransferRecords.SingleOrDefaultAsync(
-                item => item.TransferCode == definition.Code, cancellationToken);
-            if (transfer is null)
-            {
-                transfer = new WarehouseTransfer { Id = Guid.NewGuid(), TransferCode = definition.Code, CreatedAt = now.AddDays(-12) };
-                dbContext.WarehouseTransferRecords.Add(transfer);
-            }
-            transfer.SourceWarehouseId = source.Id;
-            transfer.DestinationWarehouseId = destinations[definition.DestinationCode].Id;
-            transfer.CreatedByUserId = operatorId;
-            transfer.Status = definition.Status;
-            transfer.Note = definition.Note;
-            transfer.RejectionReason = definition.RejectionReason;
-            transfer.RequestedAt = now.AddDays(-12);
-            transfer.Version = Math.Max(transfer.Version, 1);
-            transfer.UpdatedAt = now;
-            await dbContext.SaveChangesAsync(cancellationToken);
-
-            var item = await dbContext.WarehouseTransferItemRecords.SingleOrDefaultAsync(
-                candidate => candidate.WarehouseTransferId == transfer.Id && candidate.SourceBatchId == sourceBatch.Id,
-                cancellationToken);
-            if (item is null)
-            {
-                item = new WarehouseTransferItem
-                {
-                    Id = Guid.NewGuid(),
-                    WarehouseTransferId = transfer.Id,
-                    SourceBatchId = sourceBatch.Id,
-                    CreatedAt = now.AddDays(-12)
-                };
-                dbContext.WarehouseTransferItemRecords.Add(item);
-            }
-            item.RequestedQuantity = definition.Quantity;
-            item.Status = definition.Status;
-            item.Note = "Dòng hàng điều chuyển mẫu bằng tiếng Việt";
-            item.UpdatedAt = now;
-
-            var createdKey = $"du-lieu-mau-{definition.Code.ToLowerInvariant()}-tao-phieu";
-            await UpsertTransferEventAsync(transfer, operatorId, createdKey, InternalTransferActions.Created,
-                string.Empty, InternalTransferStatuses.Requested, "Tạo phiếu điều chuyển nội bộ mẫu", now.AddDays(-12), cancellationToken);
-            if (definition.Status == InternalTransferStatuses.Rejected)
-            {
-                var rejectedKey = $"du-lieu-mau-{definition.Code.ToLowerInvariant()}-tu-choi";
-                await UpsertTransferEventAsync(transfer, operatorId, rejectedKey, InternalTransferActions.Rejected,
-                    InternalTransferStatuses.Requested, InternalTransferStatuses.Rejected,
-                    definition.RejectionReason, now.AddDays(-11), cancellationToken);
-            }
-        }
-        await dbContext.SaveChangesAsync(cancellationToken);
-    }
-
-    private async Task UpsertTransferEventAsync(WarehouseTransfer transfer, Guid userId, string key,
-        string action, string fromStatus, string toStatus, string? note, DateTimeOffset occurredAt,
-        CancellationToken cancellationToken)
-    {
-        var transferEvent = await dbContext.WarehouseTransferEventRecords.SingleOrDefaultAsync(
-            item => item.OperationKey == key, cancellationToken);
-        if (transferEvent is null)
-        {
-            transferEvent = new WarehouseTransferEvent { Id = Guid.NewGuid(), OperationKey = key };
-            dbContext.WarehouseTransferEventRecords.Add(transferEvent);
-        }
-        transferEvent.WarehouseTransferId = transfer.Id;
-        transferEvent.PerformedByUserId = userId;
-        transferEvent.Action = action;
-        transferEvent.FromStatus = fromStatus;
-        transferEvent.ToStatus = toStatus;
-        transferEvent.Note = note;
-        transferEvent.OccurredAt = occurredAt;
-    }
-
     private async Task SeedQrLabelDataAsync(Guid warehouseKeeperId, DateTimeOffset now, CancellationToken cancellationToken)
     {
         var definitions = new[]
         {
             new QrLabelSeed("TEM-000204", "WH-HCM-01-SKU001-30042027", 300m, null, QrLabelStatuses.Available, "Tem gốc cho lô sữa tiệt trùng"),
             new QrLabelSeed("TEM-000205", "WH-HCM-01-SKU001-30042027", 100m, "TEM-000204", QrLabelStatuses.Available, "Tem con tách từ tem TEM-000204"),
-            new QrLabelSeed("TEM-000206", "WH-TD-SKU002-20102026", 80m, null, QrLabelStatuses.Available, "Tem cho lô sữa chua gần hạn"),
+            new QrLabelSeed("TEM-000206", "WH-TD-SKU002-28102026", 80m, null, QrLabelStatuses.Available, "Tem cho lô sữa chua gần hạn"),
             new QrLabelSeed("TEM-000207", "WH-Q7-SKU003-10102026", 20m, null, QrLabelStatuses.Invalidated, "Tem lô thực phẩm hết hạn đã vô hiệu hóa"),
             new QrLabelSeed("TEM-000208", "WH-TD-SKU001-31032027", 200m, null, QrLabelStatuses.Available, "Tem gốc cho lô sữa tươi phục vụ soạn đơn tại kho Thủ Đức")
         };
@@ -759,6 +700,7 @@ public sealed class DevelopmentDataSeeder(
         warehouse.Name = "Kho trung tâm Củ Chi";
         warehouse.Type = WarehouseTypes.Central;
         warehouse.Address = "Đường Nguyễn Thị Rành, huyện Củ Chi, Thành phố Hồ Chí Minh";
+        warehouse.MinimumStockThresholdCartons = 150;
         warehouse.IsActive = true;
         warehouse.UpdatedAt = now;
         await dbContext.SaveChangesAsync(cancellationToken);
@@ -776,11 +718,11 @@ public sealed class DevelopmentDataSeeder(
         var definitions = new[]
         {
             new WarehouseSeed(centralWarehouse.Code, "Kho trung tâm Củ Chi", WarehouseTypes.Central,
-                "Đường Nguyễn Thị Rành, huyện Củ Chi, Thành phố Hồ Chí Minh", 10.9747000m, 106.4931000m),
+                "Đường Nguyễn Thị Rành, huyện Củ Chi, Thành phố Hồ Chí Minh", 10.9747000m, 106.4931000m, 150),
             new WarehouseSeed("WH-TD", "Kho vùng Thủ Đức", WarehouseTypes.Regional,
-                "Đường Võ Chí Công, thành phố Thủ Đức, Thành phố Hồ Chí Minh", 10.8480000m, 106.7720000m),
+                "Đường Võ Chí Công, thành phố Thủ Đức, Thành phố Hồ Chí Minh", 10.8480000m, 106.7720000m, 100),
             new WarehouseSeed("WH-Q7", "Kho vùng Quận 7", WarehouseTypes.Regional,
-                "Đường Nguyễn Văn Linh, Quận 7, Thành phố Hồ Chí Minh", 10.7298000m, 106.7219000m)
+                "Đường Nguyễn Văn Linh, Quận 7, Thành phố Hồ Chí Minh", 10.7298000m, 106.7219000m, 80)
         };
         var warehouses = new List<Warehouse>();
         foreach (var definition in definitions)
@@ -796,6 +738,7 @@ public sealed class DevelopmentDataSeeder(
             warehouse.Name = definition.Name;
             warehouse.Type = definition.Type;
             warehouse.Address = definition.Address;
+            warehouse.MinimumStockThresholdCartons = definition.MinimumStockThresholdCartons;
             warehouse.IsActive = true;
             warehouse.UpdatedAt = now;
             await dbContext.SaveChangesAsync(cancellationToken);
@@ -822,16 +765,62 @@ public sealed class DevelopmentDataSeeder(
         await dbContext.SaveChangesAsync(cancellationToken);
         foreach (var warehouse in warehouses)
         {
-            if (!await dbContext.TransitTimeRuleRecords.AnyAsync(
-                    item => item.WarehouseId == warehouse.Id && item.IsActive, cancellationToken))
+            var activeTransitRules = await dbContext.TransitTimeRuleRecords.Where(
+                item => item.WarehouseId == warehouse.Id && item.IsActive).ToArrayAsync(cancellationToken);
+            if (activeTransitRules.Length == 0)
             {
                 dbContext.TransitTimeRuleRecords.AddRange(
-                    CreateTransitRule(warehouse.Id, 0, 10_000, 60, 1_440, now),
-                    CreateTransitRule(warehouse.Id, 10_001, 20_000, 60, 2_880, now));
+                    CreateTransitRule(warehouse.Id, 0, 10_000, 60, 1_440, 120_000m, now),
+                    CreateTransitRule(warehouse.Id, 10_001, 20_000, 60, 2_880, 220_000m, now));
+            }
+            else
+            {
+                foreach (var rule in activeTransitRules)
+                    rule.EstimatedTransportCost = rule.MaxDistanceMeters <= 10_000 ? 120_000m : 220_000m;
             }
         }
 
-        foreach (var definition in new[] { (Product: products["SKU001"], Ratio: 0.25m), (Product: products["SKU002"], Ratio: 0.30m) })
+        // The shared transit table the ETA function reads. Without it a fresh database answers
+        // every ETA request with "no transit table has been published yet".
+        if (!await dbContext.TransitTableRecords.AnyAsync(item => item.IsActive, cancellationToken))
+        {
+            var transitTable = new TransitTable
+            {
+                Id = Guid.NewGuid(),
+                Version = 1,
+                MaxServingDistanceMeters = 20_000,
+                EffectiveFrom = now,
+                IsActive = true,
+                Note = "Bảng vận chuyển dùng chung mặc định cho môi trường phát triển",
+                CreatedByUserId = adminUserId,
+                CreatedAt = now,
+                UpdatedAt = now
+            };
+            dbContext.TransitTableRecords.Add(transitTable);
+            dbContext.TransitTableBandRecords.AddRange(
+                CreateTransitBand(transitTable.Id, 0, 10_000, 60, 1_440, 80_000m, now),
+                CreateTransitBand(transitTable.Id, 10_000, 20_000, 60, 2_880, 120_000m, now));
+        }
+
+        var categoryId = products["SKU001"].ProductCategoryId;
+        if (!await dbContext.RetailerProductMlorRecords.AnyAsync(
+                item => item.RetailerId == retailer.Id && item.ProductCategoryId == categoryId && item.IsActive,
+                cancellationToken))
+        {
+            dbContext.RetailerProductMlorRecords.Add(new RetailerProductMlor
+            {
+                Id = Guid.NewGuid(),
+                RetailerId = retailer.Id,
+                ProductCategoryId = categoryId,
+                MinimumLifeRatio = 0.25m,
+                Version = 1,
+                UpdatedByUserId = adminUserId,
+                EffectiveFrom = now,
+                IsActive = true
+            });
+        }
+
+        foreach (var definition in new[] { (Product: products["SKU002"], Ratio: 0.30m) })
         {
             if (!await dbContext.RetailerProductMlorRecords.AnyAsync(
                     item => item.RetailerId == retailer.Id && item.ProductId == definition.Product.Id && item.IsActive,
@@ -844,6 +833,8 @@ public sealed class DevelopmentDataSeeder(
                     ProductId = definition.Product.Id,
                     MinimumLifeRatio = definition.Ratio,
                     MinimumLifeHours = (int)Math.Ceiling(definition.Product.ShelfLifeHours * definition.Ratio),
+                    Version = 1,
+                    UpdatedByUserId = adminUserId,
                     EffectiveFrom = now,
                     IsActive = true
                 });
@@ -862,7 +853,12 @@ public sealed class DevelopmentDataSeeder(
             new ConfigurationSeed(BusinessConfigurationKeys.OrderBufferStockCartons, "0", "integer",
                 "Tồn kho đệm mặc định dành cho giới hạn số lượng đặt hàng"),
             new ConfigurationSeed(BusinessConfigurationKeys.OrderStepCartons, "1", "integer",
-                "Bước số lượng đặt hàng mặc định là một thùng")
+                "Bước số lượng đặt hàng mặc định là một thùng"),
+            new ConfigurationSeed(BusinessConfigurationKeys.EtaSchedule,
+                "{\"timeZone\":\"Asia/Ho_Chi_Minh\",\"allocationRunLocalTime\":\"12:00\"," +
+                "\"planApprovalDeadlineLocalTime\":\"14:00\",\"preparationMinutes\":240," +
+                "\"bufferMinutes\":60,\"dispatchSlotsLocalTime\":[\"06:00\",\"14:00\"]}", "object",
+                "Lịch tính ETA: chạy đợt 12:00, hạn duyệt 14:00, soạn 4 giờ, đệm 1 giờ, xuất 06:00 và 14:00")
         };
         foreach (var definition in configurations)
         {
@@ -892,7 +888,7 @@ public sealed class DevelopmentDataSeeder(
 
     private static TransitTimeRule CreateTransitRule(
         Guid warehouseId, int minimumDistance, int maximumDistance,
-        int handlingMinutes, int transitMinutes, DateTimeOffset now) => new()
+        int handlingMinutes, int transitMinutes, decimal estimatedTransportCost, DateTimeOffset now) => new()
         {
             Id = Guid.NewGuid(),
             WarehouseId = warehouseId,
@@ -900,12 +896,27 @@ public sealed class DevelopmentDataSeeder(
             MaxDistanceMeters = maximumDistance,
             HandlingMinutes = handlingMinutes,
             TransitMinutes = transitMinutes,
+            EstimatedTransportCost = estimatedTransportCost,
             MaxServingDistanceMeters = 20_000,
             Version = 1,
             EffectiveFrom = now,
             IsActive = true,
             CreatedAt = now,
             UpdatedAt = now
+        };
+
+    private static TransitTableBand CreateTransitBand(
+        Guid transitTableId, int minimumDistance, int maximumDistance,
+        int handlingMinutes, int transitMinutes, decimal estimatedCost, DateTimeOffset now) => new()
+        {
+            Id = Guid.NewGuid(),
+            TransitTableId = transitTableId,
+            MinDistanceMeters = minimumDistance,
+            MaxDistanceMeters = maximumDistance,
+            HandlingMinutes = handlingMinutes,
+            TransitMinutes = transitMinutes,
+            EstimatedCostAmount = estimatedCost,
+            CreatedAt = now
         };
 
     private async Task<IReadOnlyDictionary<string, SalesGroup>> SeedSalesGroupsAsync(
@@ -1019,6 +1030,7 @@ public sealed class DevelopmentDataSeeder(
         IReadOnlyDictionary<string, Region> regions,
         IReadOnlyDictionary<string, SalesGroup> salesGroups,
         IReadOnlyDictionary<string, UserAccount> users,
+        Guid defaultMlorCategoryId,
         DateTimeOffset now,
         CancellationToken cancellationToken)
     {
@@ -1085,6 +1097,22 @@ public sealed class DevelopmentDataSeeder(
                     IsActive = true
                 });
             }
+
+            if (!await dbContext.RetailerProductMlorRecords.AnyAsync(
+                    item => item.RetailerId == retailer.Id && item.IsActive, cancellationToken))
+            {
+                dbContext.RetailerProductMlorRecords.Add(new RetailerProductMlor
+                {
+                    Id = Guid.NewGuid(),
+                    RetailerId = retailer.Id,
+                    ProductCategoryId = defaultMlorCategoryId,
+                    MinimumLifeRatio = 0.25m,
+                    Version = 1,
+                    UpdatedByUserId = users[SystemRoles.Sales].Id,
+                    EffectiveFrom = now.AddDays(-20),
+                    IsActive = true
+                });
+            }
         }
     }
 
@@ -1126,10 +1154,10 @@ public sealed class DevelopmentDataSeeder(
         var warehouseByCode = warehouses.ToDictionary(item => item.Code, StringComparer.Ordinal);
         var definitions = new[]
         {
-            new InventorySeed("PN-260901-01", "WH-HCM-01", "SKU001", new DateOnly(2027, 4, 30), 500m, 40m, 60m, "LÔ-SỮA-THÁNG-09", BatchExpiryStatuses.Valid),
-            new InventorySeed("PN-261001-02", "WH-TD", "SKU001", new DateOnly(2027, 3, 31), 200m, 0m, 0m, "LÔ-SỮA-THỦ-ĐỨC-THÁNG-10", BatchExpiryStatuses.Valid),
-            new InventorySeed("PN-261001-01", "WH-TD", "SKU002", new DateOnly(2026, 10, 20), 120m, 10m, 20m, "LÔ-SỮA-CHUA-THÁNG-10", BatchExpiryStatuses.NearExpiry),
-            new InventorySeed("PN-260901-02", "WH-Q7", "SKU003", new DateOnly(2026, 10, 10), 30m, 0m, 0m, "LÔ-THỰC-PHẨM-THÁNG-09", BatchExpiryStatuses.Expired)
+            new InventorySeed("PN-260901-01", "WH-HCM-01", "SKU001", new DateOnly(2027, 4, 30), 500m, 60m, "LÔ-SỮA-THÁNG-09", BatchExpiryStatuses.Valid),
+            new InventorySeed("PN-261001-02", "WH-TD", "SKU001", new DateOnly(2027, 3, 31), 200m, 0m, "LÔ-SỮA-THỦ-ĐỨC-THÁNG-10", BatchExpiryStatuses.Valid),
+            new InventorySeed("PN-261001-01", "WH-TD", "SKU002", new DateOnly(2026, 10, 28), 120m, 20m, "LÔ-SỮA-CHUA-THÁNG-10", BatchExpiryStatuses.NearExpiry),
+            new InventorySeed("PN-260901-02", "WH-Q7", "SKU003", new DateOnly(2026, 10, 10), 30m, 0m, "LÔ-THỰC-PHẨM-THÁNG-09", BatchExpiryStatuses.Expired)
         };
 
         foreach (var definition in definitions)
@@ -1208,13 +1236,20 @@ public sealed class DevelopmentDataSeeder(
                     Id = Guid.NewGuid(),
                     BatchId = batch.Id,
                     PhysicalQuantity = definition.OnHand,
-                    HeldQuantity = definition.Held,
                     ReservedQuantity = definition.Reserved,
-                    AvailableQuantity = definition.OnHand - definition.Held - definition.Reserved,
+                    AvailableQuantity = definition.OnHand - definition.Reserved,
                     Version = 1,
                     UpdatedAt = now
                 };
                 dbContext.InventoryBalanceRecords.Add(balance);
+            }
+            else
+            {
+                balance.PhysicalQuantity = definition.OnHand;
+                balance.ReservedQuantity = definition.Reserved;
+                balance.AvailableQuantity = definition.OnHand - definition.Reserved;
+                balance.Version = Math.Max(balance.Version, 1);
+                balance.UpdatedAt = now;
             }
 
             if (!await dbContext.InventoryTransactionRecords.AnyAsync(item =>
@@ -1231,12 +1266,13 @@ public sealed class DevelopmentDataSeeder(
                     GoodsReceiptLineId = line.Id,
                     CreatedByUserId = warehouseKeeperId,
                     TransactionType = InventoryTransactionTypes.GoodsReceipt,
+                    SourceType = InventoryTransactionSourceTypes.GoodsReceipt,
+                    SourceId = receipt.Id,
                     ReferenceCode = receipt.ReceiptCode,
                     PhysicalQuantityDelta = definition.OnHand,
                     PhysicalQuantityAfter = definition.OnHand,
-                    HeldQuantityAfter = definition.Held,
                     ReservedQuantityAfter = definition.Reserved,
-                    AvailableQuantityAfter = definition.OnHand - definition.Held - definition.Reserved,
+                    AvailableQuantityAfter = definition.OnHand - definition.Reserved,
                     Note = "Dữ liệu mẫu nhập hàng vào kho",
                     OccurredAt = receivedAt
                 });
@@ -1384,7 +1420,8 @@ public sealed class DevelopmentDataSeeder(
         string Type,
         string Address,
         decimal Latitude,
-        decimal Longitude);
+        decimal Longitude,
+        int MinimumStockThresholdCartons);
 
     private sealed record RegionSeed(
         string Code,
@@ -1406,15 +1443,11 @@ public sealed class DevelopmentDataSeeder(
 
     private sealed record InventorySeed(
         string ReceiptCode, string WarehouseCode, string Sku, DateOnly ExpirationDate,
-        decimal OnHand, decimal Held, decimal Reserved, string SourceLotCode, string ExpiryStatus);
+        decimal OnHand, decimal Reserved, string SourceLotCode, string ExpiryStatus);
 
     private sealed record QrLabelSeed(
         string QrCode, string BatchCode, decimal Quantity, string? ParentQrCode,
         string Status, string Note);
-
-    private sealed record InternalTransferSeed(
-        string Code, string DestinationCode, decimal Quantity, string Status,
-        string Note, string? RejectionReason);
 
     private sealed record ConfigurationSeed(
         string Key,

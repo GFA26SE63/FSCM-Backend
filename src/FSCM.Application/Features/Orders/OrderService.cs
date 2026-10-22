@@ -4,11 +4,8 @@ using System.Text;
 using System.Text.Json;
 using FSCM.Application.Features.Inventory;
 using FSCM.Application.Features.Picking;
-using FSCM.Application.Features.WarehouseConfiguration;
-using FSCM.Domain.Allocation;
 using FSCM.Domain.Authorization;
 using FSCM.Domain.Entities;
-using DomainAllocation = FSCM.Domain.Entities.Allocation;
 
 namespace FSCM.Application.Features.Orders;
 
@@ -19,8 +16,6 @@ public sealed class OrderService(
     IPickingPlanService pickingPlanService,
     TimeProvider timeProvider)
 {
-    private const int MaximumPlacementAttempts = 3;
-    private const string BufferStockKey = "order.buffer_stock_cartons";
     private const string OrderStepKey = "order.order_step_cartons";
     private static readonly TimeZoneInfo VietnamTimeZone = TimeZoneInfo.FindSystemTimeZoneById("Asia/Ho_Chi_Minh");
     private static readonly JsonSerializerOptions TraceJsonOptions = new(JsonSerializerDefaults.Web);
@@ -61,60 +56,47 @@ public sealed class OrderService(
         }
 
         var orderCode = await store.NextOrderCodeAsync(cancellationToken);
-        for (var attempt = 1; attempt <= MaximumPlacementAttempts; attempt++)
+        var plan = await BuildCaptureAsync(
+            normalized, retailerContext, salesUserId, orderCode, requestHash, now, cancellationToken);
+        try
         {
-            try
+            await store.ExecuteInTransactionAsync(async transactionCancellationToken =>
             {
-                var plan = await BuildPlanAsync(
-                    normalized, retailerContext, salesUserId, orderCode, requestHash, now, today, cancellationToken);
-                await store.ExecuteInTransactionAsync(async transactionCancellationToken =>
-                {
-                    Persist(plan);
-                    await store.SaveChangesAsync(transactionCancellationToken);
-                    foreach (var allocation in plan.Allocations.OrderBy(item => item.AllocationSequence))
-                    {
-                        await inventoryLifecycleService.HoldAsync(
-                            allocation.Id,
-                            salesUserId,
-                            plan.InventoryVersions[allocation.BatchId],
-                            transactionCancellationToken);
-                    }
-                }, cancellationToken);
-
-                store.ClearTracking();
-                return await GetAsync(plan.Order.Id, salesUserId, SystemRoles.Sales, cancellationToken);
-            }
-            catch (InventoryOperationException exception) when (
-                exception.Code == "conflict" && attempt < MaximumPlacementAttempts)
-            {
-                store.ClearTracking();
-            }
-            catch (InventoryOperationException exception) when (exception.Code == "conflict")
-            {
-                store.ClearTracking();
-                throw OrderOperationException.Conflict(
-                    "Inventory changed while the order was being allocated. Refresh stock and retry the request.");
-            }
+                Persist(plan);
+                await store.SaveChangesAsync(transactionCancellationToken);
+            }, cancellationToken);
+        }
+        catch (OrderOperationException exception) when (exception.Code == "conflict")
+        {
+            store.ClearTracking();
+            var concurrent = await store.FindByClientOrderKeyAsync(normalized.ClientOrderKey, cancellationToken);
+            if (concurrent is null || concurrent.CreatedByUserId != salesUserId || concurrent.RequestHash != requestHash)
+                throw;
+            return await GetAsync(concurrent.Id, salesUserId, SystemRoles.Sales, cancellationToken);
         }
 
-        throw OrderOperationException.Conflict("Order placement could not be completed.");
+        store.ClearTracking();
+        return await GetAsync(plan.Order.Id, salesUserId, SystemRoles.Sales, cancellationToken);
     }
 
-    public async Task<IReadOnlyCollection<OrderSummaryResult>> ListAsync(
+    public async Task<PagedOrderResult> ListAsync(
         Guid actorUserId,
         string actorRole,
-        string? status,
-        Guid? retailerId,
+        OrderListQuery query,
         CancellationToken cancellationToken)
     {
         ValidateReadRole(actorRole);
-        if (!string.IsNullOrWhiteSpace(status) && !OrderStatusSet.Contains(status))
+        if (!string.IsNullOrWhiteSpace(query.Status) && !OrderStatusSet.Contains(query.Status))
         {
             throw OrderOperationException.Validation("Order status filter is invalid.");
         }
+        if (query.Page < 1 || query.PageSize is < 1 or > 100)
+            throw OrderOperationException.Validation("Page must be at least 1 and pageSize must be between 1 and 100.");
+        if (query.Search?.Length > 200)
+            throw OrderOperationException.Validation("Search cannot exceed 200 characters.");
 
-        var items = await store.ListAsync(actorUserId, actorRole, status, retailerId, cancellationToken);
-        return items.Select(ToSummary).ToArray();
+        var result = await store.ListAsync(actorUserId, actorRole, query, cancellationToken);
+        return new(result.Items.Select(ToSummary).ToArray(), query.Page, query.PageSize, result.TotalCount);
     }
 
     public async Task<OrderDetailResult> GetAsync(
@@ -142,6 +124,32 @@ public sealed class OrderService(
     {
         var order = await GetViewableAsync(orderId, actorUserId, actorRole, cancellationToken);
         return new(order.Order.Id, order.Order.OrderCode, order.Order.AllocationTraceJson);
+    }
+
+    public async Task<OrderTimelineResult> GetTimelineAsync(
+        Guid orderId,
+        Guid actorUserId,
+        string actorRole,
+        CancellationToken cancellationToken)
+    {
+        var view = await GetViewableAsync(orderId, actorUserId, actorRole, cancellationToken);
+        return new(view.Order.Id, view.Order.OrderCode, view.Order.Status, AllocationState(view), null, null, null,
+            ToHistory(view.History), ToShipments(view.Deliveries));
+    }
+
+    public async Task EnsurePricingScopeAsync(
+        Guid? retailerId,
+        Guid actorUserId,
+        string actorRole,
+        CancellationToken cancellationToken)
+    {
+        if (actorRole is SystemRoles.Admin or SystemRoles.Operator) return;
+        if (actorRole != SystemRoles.Sales)
+            throw OrderOperationException.Forbidden("Role cannot request an order price snapshot.");
+        if (!retailerId.HasValue) return;
+        if (await store.FindRetailerContextAsync(actorUserId, retailerId.Value, cancellationToken) is null)
+            throw OrderOperationException.Forbidden(
+                "Sales can only request retailer pricing inside the assigned territory.");
     }
 
     public Task<OrderDetailResult> ApproveAsync(
@@ -293,20 +301,15 @@ public sealed class OrderService(
         }
     }
 
-    private async Task<PlacementPlan> BuildPlanAsync(
+    private async Task<CapturePlan> BuildCaptureAsync(
         CreateAssistedOrderData data,
         OrderRetailerContext retailerContext,
         Guid salesUserId,
         string orderCode,
         string requestHash,
         DateTimeOffset now,
-        DateOnly today,
         CancellationToken cancellationToken)
     {
-        var retailerLocation = await store.FindRetailerLocationAsync(data.RetailerId, cancellationToken)
-            ?? throw OrderOperationException.Conflict("Retailer location is required for order allocation.");
-        var weights = await GetWeightsAsync(cancellationToken);
-        var bufferStock = await GetPositiveConfigurationAsync(BufferStockKey, 0, allowZero: true, cancellationToken);
         var orderStep = await GetPositiveConfigurationAsync(OrderStepKey, 1, allowZero: false, cancellationToken);
         var deliveryAddress = data.DeliveryAddress ?? CleanOptional(retailerContext.Retailer.Address, 1_000)
             ?? throw OrderOperationException.Validation(
@@ -331,15 +334,19 @@ public sealed class OrderService(
             DeliveryAddress = deliveryAddress,
             RequestedDeliveryDate = data.RequestedDeliveryDate,
             Note = data.Note,
+            FinalPricePendingAllocation = true,
+            AllocationTraceJson = JsonSerializer.Serialize(new
+            {
+                state = "PendingRun",
+                finalPricePendingAllocation = true,
+                message = "Đơn hàng chưa chọn lô; giá HSD cuối cùng sẽ được tính sau phân bổ."
+            }, TraceJsonOptions),
             ServerReceivedAt = now,
             CreatedAt = now,
             UpdatedAt = now
         };
         var lines = new List<SalesOrderLine>();
-        var allocations = new List<DomainAllocation>();
         var promotions = new List<OrderPromotion>();
-        var traces = new List<AllocationResult>();
-        var inventoryVersions = new Dictionary<Guid, int>();
         var lineNumber = 0;
 
         foreach (var requestedLine in data.Lines.OrderBy(item => item.ProductId))
@@ -353,61 +360,8 @@ public sealed class OrderService(
 
             var product = await store.FindPublishedProductAsync(requestedLine.ProductId, cancellationToken)
                 ?? throw OrderOperationException.NotFound("Published product was not found.");
-            var candidates = await store.ListCandidatesAsync(product.Id, cancellationToken);
-            var rules = await store.ListTransitRulesAsync(
-                candidates.Select(item => item.Warehouse.Id).Distinct().ToArray(), cancellationToken);
-            var engineCandidates = candidates.Select(item =>
-            {
-                var distance = item.WarehouseLatitude.HasValue && item.WarehouseLongitude.HasValue
-                    ? CalculateDistanceMeters(item.WarehouseLatitude.Value, item.WarehouseLongitude.Value,
-                        retailerLocation.Latitude, retailerLocation.Longitude)
-                    : weights.MaximumDistanceMeters + 1;
-                var rule = rules.Where(rule => rule.WarehouseId == item.Warehouse.Id && rule.IsActive &&
-                        distance >= rule.MinDistanceMeters && distance <= rule.MaxDistanceMeters &&
-                        distance <= rule.MaxServingDistanceMeters)
-                    .OrderBy(rule => rule.MaxDistanceMeters)
-                    .FirstOrDefault();
-                var transitDays = rule is null
-                    ? (int?)null
-                    : Math.Max(0, (int)Math.Ceiling((rule.HandlingMinutes + rule.TransitMinutes) / 1_440m));
-                var allocatable = Math.Max(0m,
-                    Math.Floor((item.Balance.AvailableQuantity - bufferStock) / orderStep) * orderStep);
-                var available = allocatable > int.MaxValue ? int.MaxValue : (int)allocatable;
-                inventoryVersions[item.Batch.Id] = item.Balance.Version;
-                return new BatchCandidate(
-                    item.Batch.Id,
-                    item.Batch.BatchCode,
-                    item.Warehouse.Id,
-                    item.Warehouse.Code,
-                    item.Batch.ExpirationDate,
-                    available,
-                    distance,
-                    transitDays);
-            }).ToArray();
-            var mlorRatio = await store.FindMlorRatioAsync(
-                data.RetailerId, product.Id, cancellationToken) ??
-                await GetDecimalConfigurationAsync(
-                    BusinessConfigurationKeys.DefaultMlorRatio, 0.25m, cancellationToken);
-            if (mlorRatio is < 0 or > 1)
-            {
-                throw OrderOperationException.Conflict("MLOR configuration must be between 0 and 1.");
-            }
-            var allocationResult = new AllocationEngine(weights).Allocate(
-                new AllocationRequest(
-                    product.Sku,
-                    requestedLine.Quantity,
-                    (int)Math.Ceiling(product.ShelfLifeHours / 24m),
-                    mlorRatio,
-                    today,
-                    today,
-                    data.RequestedDeliveryDate),
-                engineCandidates);
-            traces.Add(allocationResult);
-            if (!allocationResult.IsFullyAllocated)
-            {
-                throw OrderOperationException.Conflict(
-                    $"Insufficient eligible inventory for {product.Sku}; shortage is {allocationResult.ShortageQuantity} cartons. Partial fulfilment is not allowed.");
-            }
+            var price = await pricingService.CalculateAsync(
+                product.Id, requestedLine.Quantity, data.RetailerId, now, cancellationToken);
 
             var line = new SalesOrderLine
             {
@@ -418,100 +372,68 @@ public sealed class OrderService(
                 SkuSnapshot = product.Sku,
                 ProductNameSnapshot = product.Name,
                 OrderedQuantity = requestedLine.Quantity,
+                UnitPrice = price.UnitPrice,
+                GrossAmount = price.GrossAmount,
+                DiscountPercent = price.DiscountPercent,
+                DiscountAmount = price.DiscountAmount,
+                NetAmount = price.NetAmount,
+                DiscountSourceType = price.DiscountSourceType,
+                DiscountSourceCode = price.DiscountSourceCode,
+                FinalPricePendingAllocation = true,
                 CreatedAt = now
             };
-            var linePrices = new List<OrderPriceSnapshot>();
-            foreach (var decision in allocationResult.Allocations)
+            if (price.PromotionId.HasValue)
             {
-                var price = await pricingService.CalculateAsync(
-                    product.Id, decision.Quantity, decision.BatchId, data.RetailerId, now, cancellationToken);
-                linePrices.Add(price);
-                var selectedScore = allocationResult.ScoreTrace.Single(item =>
-                    item.Selected && item.BatchId == decision.BatchId && item.Iteration == decision.Sequence);
-                var allocation = new DomainAllocation
+                promotions.Add(new OrderPromotion
                 {
                     Id = Guid.NewGuid(),
                     SalesOrderLineId = line.Id,
-                    BatchId = decision.BatchId,
-                    WarehouseId = decision.WarehouseId,
-                    AllocatedQuantity = decision.Quantity,
-                    AllocationSequence = decision.Sequence,
-                    DistanceMeters = decision.DistanceMeters,
-                    EstimatedArrivalAt = ToVietnamStartOfDay(decision.EstimatedArrivalDate),
-                    RemainingLifeHoursAtArrival = (int)(decision.RemainingShelfLifeDays * 24),
-                    ShelfLifeScore = selectedScore.ShelfLifeScore,
-                    DistanceScore = selectedScore.DistanceScore,
-                    CoverageScore = selectedScore.CoverageScore,
-                    WeightedScore = selectedScore.WeightedScore,
-                    UnitPrice = price.UnitPrice,
-                    GrossAmount = price.GrossAmount,
+                    PromotionId = price.PromotionId.Value,
                     DiscountPercent = price.DiscountPercent,
                     DiscountAmount = price.DiscountAmount,
-                    NetAmount = price.NetAmount,
-                    PromotionId = price.PromotionId,
-                    DiscountSourceType = price.DiscountSourceType,
-                    DiscountSourceCode = price.DiscountSourceCode,
-                    Status = "Allocated",
-                    CreatedAt = now
-                };
-                allocations.Add(allocation);
-                if (price.PromotionId.HasValue)
-                {
-                    promotions.Add(new OrderPromotion
-                    {
-                        Id = Guid.NewGuid(),
-                        SalesOrderLineId = line.Id,
-                        PromotionId = price.PromotionId.Value,
-                        DiscountPercent = price.DiscountPercent,
-                        DiscountAmount = price.DiscountAmount,
-                        IsServerFinal = true,
-                        AppliedAt = now
-                    });
-                }
+                    IsServerFinal = false,
+                    AppliedAt = now
+                });
             }
-
-            line.UnitPrice = linePrices[0].UnitPrice;
-            line.GrossAmount = linePrices.Sum(item => item.GrossAmount);
-            line.DiscountAmount = linePrices.Sum(item => item.DiscountAmount);
-            line.NetAmount = linePrices.Sum(item => item.NetAmount);
-            line.DiscountPercent = line.GrossAmount == 0
-                ? 0
-                : Math.Round(line.DiscountAmount / line.GrossAmount * 100m, 2);
-            var sourceCodes = linePrices.Select(item => item.DiscountSourceCode)
-                .Distinct(StringComparer.Ordinal).ToArray();
-            line.DiscountSourceCode = sourceCodes.Length == 1 ? sourceCodes[0] : "MIXED";
-            var sourceTypes = linePrices.Select(item => item.DiscountSourceType)
-                .Distinct(StringComparer.Ordinal).ToArray();
-            line.DiscountSourceType = sourceTypes.Length == 1 ? sourceTypes[0] : "Mixed";
-            line.EstimatedArrivalAt = allocations.Where(item => item.SalesOrderLineId == line.Id)
-                .Max(item => item.EstimatedArrivalAt);
             lines.Add(line);
         }
 
         order.SubtotalAmount = lines.Sum(item => item.GrossAmount);
         order.DiscountAmount = lines.Sum(item => item.DiscountAmount);
         order.FinalAmount = lines.Sum(item => item.NetAmount);
-        order.AllocationTraceJson = JsonSerializer.Serialize(new
-        {
-            orderCode,
-            evaluatedAt = now,
-            weights,
-            bufferStock,
-            orderStep,
-            lines = traces
-        }, TraceJsonOptions);
         var history = NewHistory(order.Id, null, OrderStatuses.PendingApproval,
             salesUserId, "Sales tạo đơn hỗ trợ", now);
-        return new(order, lines, allocations, promotions, history, inventoryVersions);
+        var audit = new AuditLog
+        {
+            Id = Guid.NewGuid(),
+            UserAccountId = salesUserId,
+            EntityName = nameof(SalesOrder),
+            EntityId = order.Id,
+            Action = "OrderCaptured",
+            NewValues = JsonSerializer.Serialize(new
+            {
+                order.OrderCode,
+                order.RetailerId,
+                order.PaymentMethod,
+                order.RequestedDeliveryDate,
+                order.SubtotalAmount,
+                order.DiscountAmount,
+                IndicativeAmount = order.FinalAmount,
+                order.FinalPricePendingAllocation
+            }, TraceJsonOptions),
+            Reason = "Sales tạo đơn trước phân bổ; chưa chọn lô hoặc thay đổi tồn kho.",
+            CreatedAt = now
+        };
+        return new(order, lines, promotions, history, audit);
     }
 
-    private void Persist(PlacementPlan plan)
+    private void Persist(CapturePlan plan)
     {
         store.AddOrder(plan.Order);
         foreach (var line in plan.Lines) store.AddLine(line);
-        foreach (var allocation in plan.Allocations) store.AddAllocation(allocation);
         foreach (var promotion in plan.Promotions) store.AddPromotion(promotion);
         store.AddHistory(plan.History);
+        store.AddAuditLog(plan.Audit);
     }
 
     private async Task<OrderView> GetViewableAsync(
@@ -531,31 +453,6 @@ public sealed class OrderService(
         return order;
     }
 
-    private async Task<AllocationWeights> GetWeightsAsync(CancellationToken cancellationToken)
-    {
-        var maximumDistance = await GetPositiveConfigurationAsync(
-            BusinessConfigurationKeys.ServiceRadiusMeters, 20_000, false, cancellationToken);
-        var raw = await store.FindConfigurationAsync(
-            BusinessConfigurationKeys.AllocationWeights, cancellationToken);
-        if (string.IsNullOrWhiteSpace(raw)) return new(MaximumDistanceMeters: maximumDistance);
-        try
-        {
-            using var document = JsonDocument.Parse(raw);
-            var root = document.RootElement;
-            var weights = new AllocationWeights(
-                root.GetProperty("expiry").GetDecimal(),
-                root.GetProperty("distance").GetDecimal(),
-                root.GetProperty("coverage").GetDecimal(),
-                maximumDistance);
-            _ = new AllocationEngine(weights);
-            return weights;
-        }
-        catch (Exception exception) when (exception is JsonException or KeyNotFoundException or ArgumentException)
-        {
-            throw OrderOperationException.Conflict("Allocation weight configuration is invalid.");
-        }
-    }
-
     private async Task<int> GetPositiveConfigurationAsync(
         string key,
         int fallback,
@@ -566,21 +463,6 @@ public sealed class OrderService(
         if (raw is null) return fallback;
         if (!int.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var value) ||
             (allowZero ? value < 0 : value <= 0))
-        {
-            throw OrderOperationException.Conflict($"Configuration '{key}' is invalid.");
-        }
-
-        return value;
-    }
-
-    private async Task<decimal> GetDecimalConfigurationAsync(
-        string key,
-        decimal fallback,
-        CancellationToken cancellationToken)
-    {
-        var raw = await store.FindConfigurationAsync(key, cancellationToken);
-        if (raw is null) return fallback;
-        if (!decimal.TryParse(raw, NumberStyles.Number, CultureInfo.InvariantCulture, out var value))
         {
             throw OrderOperationException.Conflict($"Configuration '{key}' is invalid.");
         }
@@ -695,6 +577,12 @@ public sealed class OrderService(
         view.Order.Status,
         view.Order.PaymentMethod,
         view.Order.FinalAmount,
+        view.Order.FinalPricePendingAllocation,
+        AllocationState(view),
+        null,
+        null,
+        null,
+        view.Deliveries.Count,
         (int)view.Lines.Sum(item => item.Line.OrderedQuantity),
         view.Lines.Count,
         view.Order.Source,
@@ -720,6 +608,11 @@ public sealed class OrderService(
         view.Order.SubtotalAmount,
         view.Order.DiscountAmount,
         view.Order.FinalAmount,
+        view.Order.FinalPricePendingAllocation,
+        AllocationState(view),
+        null,
+        null,
+        null,
         view.Order.RejectionReason,
         view.Order.Version,
         view.Order.ServerReceivedAt,
@@ -740,6 +633,7 @@ public sealed class OrderService(
             item.Line.DiscountSourceType,
             item.Line.DiscountSourceCode,
             item.Line.EstimatedArrivalAt,
+            item.Line.FinalPricePendingAllocation,
             item.Allocations.OrderBy(allocation => allocation.AllocationSequence).Select(allocation =>
                 new OrderAllocationResult(
                     allocation.Id,
@@ -764,8 +658,27 @@ public sealed class OrderService(
                     allocation.DiscountSourceType,
                     allocation.DiscountSourceCode,
                     allocation.Status)).ToArray())).ToArray(),
-        view.History.OrderBy(item => item.ChangedAt).Select(item => new OrderStatusHistoryResult(
-            item.FromStatus, item.ToStatus, item.Reason, item.ChangedByUserId, item.ChangedAt)).ToArray());
+        ToHistory(view.History),
+        ToShipments(view.Deliveries));
+
+    private static IReadOnlyCollection<OrderStatusHistoryResult> ToHistory(
+        IReadOnlyCollection<OrderStatusHistory> history) =>
+        history.OrderBy(item => item.ChangedAt).ThenBy(item => item.Id).Select(item =>
+            new OrderStatusHistoryResult(item.FromStatus, item.ToStatus, item.Reason,
+                item.ChangedByUserId, item.ChangedAt)).ToArray();
+
+    private static IReadOnlyCollection<OrderShipmentLinkResult> ToShipments(
+        IReadOnlyCollection<Delivery> deliveries) =>
+        deliveries.OrderBy(item => item.CreatedAt).ThenBy(item => item.Id).Select(item =>
+            new OrderShipmentLinkResult(item.Id, item.Status, item.DispatchedAt, item.DeliveredAt)).ToArray();
+
+    private static string AllocationState(OrderView view) => view.Order.Status switch
+    {
+        OrderStatuses.Cancelled or OrderStatuses.Rejected => "NotApplicable",
+        _ when view.Lines.SelectMany(item => item.Allocations).Any() =>
+            view.Order.FinalPricePendingAllocation ? "Proposed" : "Allocated",
+        _ => "PendingRun"
+    };
 
     private static string ComputeRequestHash(CreateAssistedOrderData data, Guid salesUserId)
     {
@@ -776,27 +689,6 @@ public sealed class OrderService(
             data.DeliveryAddress, data.Note, string.Join(';', lines));
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(canonical)));
     }
-
-    private static decimal CalculateDistanceMeters(
-        decimal fromLatitude,
-        decimal fromLongitude,
-        decimal toLatitude,
-        decimal toLongitude)
-    {
-        const double earthRadiusMeters = 6_371_000;
-        static double Radians(decimal degrees) => (double)degrees * Math.PI / 180d;
-        var latitudeDelta = Radians(toLatitude - fromLatitude);
-        var longitudeDelta = Radians(toLongitude - fromLongitude);
-        var firstLatitude = Radians(fromLatitude);
-        var secondLatitude = Radians(toLatitude);
-        var value = Math.Sin(latitudeDelta / 2) * Math.Sin(latitudeDelta / 2) +
-                    Math.Cos(firstLatitude) * Math.Cos(secondLatitude) *
-                    Math.Sin(longitudeDelta / 2) * Math.Sin(longitudeDelta / 2);
-        return Math.Round((decimal)(earthRadiusMeters * 2 * Math.Atan2(Math.Sqrt(value), Math.Sqrt(1 - value))), 3);
-    }
-
-    private static DateTimeOffset ToVietnamStartOfDay(DateOnly date) =>
-        new DateTimeOffset(date.ToDateTime(TimeOnly.MinValue), TimeSpan.FromHours(7)).ToUniversalTime();
 
     private static DateOnly GetVietnamDate(DateTimeOffset now) =>
         DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(now, VietnamTimeZone).DateTime);
@@ -821,11 +713,10 @@ public sealed class OrderService(
         OrderStatuses.Delivered
     ];
 
-    private sealed record PlacementPlan(
+    private sealed record CapturePlan(
         SalesOrder Order,
         IReadOnlyCollection<SalesOrderLine> Lines,
-        IReadOnlyCollection<DomainAllocation> Allocations,
         IReadOnlyCollection<OrderPromotion> Promotions,
         OrderStatusHistory History,
-        Dictionary<Guid, int> InventoryVersions);
+        AuditLog Audit);
 }

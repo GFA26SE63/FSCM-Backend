@@ -59,6 +59,8 @@ public sealed class PhysicalSchemaModelTests
         "SALES_ORDER_LINE",
         "STOCK_HOLD",
         "SYSTEM_CONFIGURATION",
+        "TRANSIT_TABLE",
+        "TRANSIT_TABLE_BAND",
         "TRANSIT_TIME_RULE",
         "USER_ACCOUNT",
         "USER_REGION_ASSIGNMENT",
@@ -88,9 +90,9 @@ public sealed class PhysicalSchemaModelTests
             .ToArray();
 
         Assert.Equal(ExpectedTables, tableNames);
-        Assert.Equal(64, entityTypes.Length);
-        Assert.Equal(662, entityTypes.Sum(entityType => entityType.GetProperties().Count()));
-        Assert.Equal(142, entityTypes.Sum(entityType => entityType.GetForeignKeys().Count()));
+        Assert.Equal(66, entityTypes.Length);
+        Assert.Equal(691, entityTypes.Sum(entityType => entityType.GetProperties().Count()));
+        Assert.Equal(147, entityTypes.Sum(entityType => entityType.GetForeignKeys().Count()));
         Assert.All(
             entityTypes.SelectMany(entityType => entityType.GetForeignKeys()),
             foreignKey => Assert.Equal(DeleteBehavior.Restrict, foreignKey.DeleteBehavior));
@@ -134,7 +136,8 @@ public sealed class PhysicalSchemaModelTests
                  {
                      nameof(Payment.PayOsOrderCode),
                      nameof(Payment.PayOsPaymentLinkId),
-                     nameof(Payment.PayOsReference)
+                     nameof(Payment.PayOsReference),
+                     nameof(Payment.PayOsWebhookHash)
                  })
         {
             var index = payment.GetIndexes().Single(candidate => candidate.Properties.Count == 1 &&
@@ -142,6 +145,16 @@ public sealed class PhysicalSchemaModelTests
             Assert.True(index.IsUnique);
             Assert.Equal($"\"{propertyName}\" IS NOT NULL", index.GetFilter());
         }
+
+        Assert.False(payment.FindProperty(nameof(Payment.ConfirmedAmount))!.IsNullable);
+        Assert.False(payment.FindProperty(nameof(Payment.FinalApprovedAt))!.IsNullable);
+        Assert.False(payment.FindProperty(nameof(Payment.FinalApprovalReference))!.IsNullable);
+        Assert.True(payment.FindProperty(nameof(Payment.DeliveredDate))!.IsNullable);
+
+        var manualPayment = context.Model.FindEntityType(typeof(ManualPayment))!;
+        Assert.True(manualPayment.FindProperty(nameof(ManualPayment.Version))!.IsConcurrencyToken);
+        Assert.True(manualPayment.GetIndexes().Single(index => index.Properties.Count == 1 &&
+            index.Properties[0].Name == nameof(ManualPayment.OperationKey)).IsUnique);
     }
 
     [Fact]
@@ -250,6 +263,16 @@ public sealed class PhysicalSchemaModelTests
         var transit = context.Model.FindEntityType(typeof(TransitTimeRule))!;
         Assert.False(transit.FindProperty(nameof(TransitTimeRule.Version))!.IsNullable);
         Assert.False(transit.FindProperty(nameof(TransitTimeRule.EffectiveFrom))!.IsNullable);
+        Assert.False(transit.FindProperty(nameof(TransitTimeRule.EstimatedTransportCost))!.IsNullable);
+
+        var warehouse = context.Model.FindEntityType(typeof(Warehouse))!;
+        Assert.False(warehouse.FindProperty(nameof(Warehouse.MinimumStockThresholdCartons))!.IsNullable);
+
+        var mlor = context.Model.FindEntityType(typeof(RetailerProductMlor))!;
+        Assert.True(mlor.FindProperty(nameof(RetailerProductMlor.ProductCategoryId))!.IsNullable);
+        Assert.True(mlor.FindProperty(nameof(RetailerProductMlor.ProductId))!.IsNullable);
+        Assert.False(mlor.FindProperty(nameof(RetailerProductMlor.Version))!.IsNullable);
+        Assert.False(mlor.FindProperty(nameof(RetailerProductMlor.UpdatedByUserId))!.IsNullable);
     }
 
     [Fact]
@@ -264,6 +287,21 @@ public sealed class PhysicalSchemaModelTests
         Assert.Equal("date", receiptLine.FindProperty(nameof(GoodsReceiptLine.ExpirationDate))!.GetColumnType());
         Assert.True(batch.FindProperty(nameof(Batch.Version))!.IsConcurrencyToken);
         Assert.True(balance.FindProperty(nameof(InventoryBalance.Version))!.IsConcurrencyToken);
+        Assert.Null(balance.FindProperty("HeldQuantity"));
+        var transaction = context.Model.FindEntityType(typeof(InventoryTransaction))!;
+        Assert.Null(transaction.FindProperty("HeldQuantityDelta"));
+        Assert.Null(transaction.FindProperty("HeldQuantityAfter"));
+        Assert.False(transaction.FindProperty(nameof(InventoryTransaction.SourceType))!.IsNullable);
+        Assert.False(transaction.FindProperty(nameof(InventoryTransaction.SourceId))!.IsNullable);
+
+        var expiryRun = context.Model.FindEntityType(typeof(ExpirySweepRun))!;
+        Assert.Equal("date", expiryRun.FindProperty(nameof(ExpirySweepRun.BusinessDate))!.GetColumnType());
+
+        var notification = context.Model.FindEntityType(typeof(Notification))!;
+        var userId = notification.FindProperty(nameof(Notification.UserAccountId))!;
+        var outboxId = notification.FindProperty(nameof(Notification.OutboxMessageId))!;
+        Assert.True(notification.GetIndexes().Single(index =>
+            index.Properties.SequenceEqual([userId, outboxId])).IsUnique);
     }
 
     [Fact]
@@ -326,6 +364,8 @@ public sealed class PhysicalSchemaModelTests
         Assert.True(order.FindProperty(nameof(SalesOrder.Version))!.IsConcurrencyToken);
         Assert.False(order.FindProperty(nameof(SalesOrder.RetailerCodeSnapshot))!.IsNullable);
         Assert.False(order.FindProperty(nameof(SalesOrder.RetailerNameSnapshot))!.IsNullable);
+        Assert.False(order.FindProperty(nameof(SalesOrder.FinalPricePendingAllocation))!.IsNullable);
+        Assert.False(line.FindProperty(nameof(SalesOrderLine.FinalPricePendingAllocation))!.IsNullable);
 
         var orderId = line.FindProperty(nameof(SalesOrderLine.SalesOrderId))!;
         var lineNumber = line.FindProperty(nameof(SalesOrderLine.LineNumber))!;

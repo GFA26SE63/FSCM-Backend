@@ -258,8 +258,13 @@ public sealed class PromotionService(IPromotionStore store, TimeProvider timePro
         return new PriceSnapshotResult(productId, productView.Product.Sku, productView.Product.Name,
             batch?.Id, batch?.BatchCode, retailerId, quantity, unitPrice, gross,
             discountPercent, discountAmount, Math.Round(net / quantity, 2), net,
-            applied, ordered, pricedAt);
+            applied, ordered, pricedAt, batch is null);
     }
+
+    public Task<PriceSnapshotResult> CalculateIndicativePriceAsync(
+        Guid productId, decimal quantity, Guid? retailerId,
+        DateTimeOffset? at, CancellationToken cancellationToken) =>
+        CalculatePriceAsync(productId, quantity, null, retailerId, at, cancellationToken);
 
     private async Task<PromotionResult> SetCampaignActiveAsync(
         Guid id, bool isActive, Guid actorUserId, CancellationToken cancellationToken)

@@ -23,8 +23,10 @@ public sealed class InventoryExpirySweepServiceTests
         var message = Assert.Single(store.Outbox);
         Assert.Equal(InventoryOutboxEventTypes.BatchExpired, message.EventType);
         Assert.Equal(OutboxAggregateTypes.Batch, message.AggregateType);
+        Assert.Equal(batch.Id, message.Id);
         Assert.Equal(batch.Id, message.AggregateId);
         Assert.Equal(OutboxMessageStatuses.Pending, message.Status);
+        Assert.Equal(ExpirySweepStatuses.Completed, Assert.Single(store.Runs).Status);
         Assert.True(store.Saved);
     }
 
@@ -44,7 +46,7 @@ public sealed class InventoryExpirySweepServiceTests
     }
 
     [Fact]
-    public async Task Sweep_does_not_persist_or_duplicate_when_nothing_changes()
+    public async Task Sweep_records_completed_run_without_duplicate_event_when_nothing_changes()
     {
         var batch = NewBatch(new DateOnly(2027, 1, 1), BatchExpiryStatuses.Valid);
         var store = new FakeStore([new BatchExpiryCandidate(batch, NearDateThresholdHours: 48)]);
@@ -53,7 +55,10 @@ public sealed class InventoryExpirySweepServiceTests
         var result = await service.RunAsync(default);
 
         Assert.Equal(0, result.StatusesUpdated);
-        Assert.False(store.Saved);
+        Assert.True(store.Saved);
+        var run = Assert.Single(store.Runs);
+        Assert.Equal(ExpirySweepStatuses.Completed, run.Status);
+        Assert.Equal(1, run.BatchesScanned);
         Assert.Empty(store.Outbox);
     }
 
@@ -73,12 +78,14 @@ public sealed class InventoryExpirySweepServiceTests
     private sealed class FakeStore(IReadOnlyCollection<BatchExpiryCandidate> candidates) : IBatchExpiryStore
     {
         public List<OutboxMessage> Outbox { get; } = [];
+        public List<ExpirySweepRun> Runs { get; } = [];
         public bool Saved { get; private set; }
 
         public Task<IReadOnlyCollection<BatchExpiryCandidate>> ListBatchesForExpirySweepAsync(
             CancellationToken cancellationToken) => Task.FromResult(candidates);
 
         public void AddOutboxMessage(OutboxMessage message) => Outbox.Add(message);
+        public void AddSweepRun(ExpirySweepRun run) => Runs.Add(run);
 
         public Task SaveChangesAsync(CancellationToken cancellationToken)
         {

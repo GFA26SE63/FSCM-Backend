@@ -40,20 +40,4 @@ public sealed record MapDistanceResult(
     DateTimeOffset ExpiresAt,
     bool IsExpired);
 
-public sealed record EtaEstimateResult(
-    Guid WarehouseId,
-    Guid RetailerId,
-    DateTimeOffset DepartureAt,
-    DateTimeOffset EstimatedReceiptAt,
-    int DistanceMeters,
-    int RouteDurationSeconds,
-    int HandlingMinutes,
-    int TransitMinutes,
-    int BufferMinutes,
-    int DistanceVersion,
-    int TransitRuleVersion,
-    bool IsEstimate,
-    string Disclaimer);
-
 public sealed record GeocodeTarget(string EntityType, Guid EntityId, string Address);
-public sealed record EtaEstimateInput(Guid WarehouseId, Guid RetailerId, DateTimeOffset? DepartureAt, int BufferMinutes);

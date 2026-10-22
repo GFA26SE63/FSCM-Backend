@@ -23,6 +23,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<ProductPrice> ProductPriceRecords => Set<ProductPrice>();
     public DbSet<RetailerProductMlor> RetailerProductMlorRecords => Set<RetailerProductMlor>();
     public DbSet<TransitTimeRule> TransitTimeRuleRecords => Set<TransitTimeRule>();
+    public DbSet<TransitTable> TransitTableRecords => Set<TransitTable>();
+    public DbSet<TransitTableBand> TransitTableBandRecords => Set<TransitTableBand>();
     public DbSet<GoodsReceipt> GoodsReceiptRecords => Set<GoodsReceipt>();
     public DbSet<GoodsReceiptLine> GoodsReceiptLineRecords => Set<GoodsReceiptLine>();
     public DbSet<Batch> BatchRecords => Set<Batch>();
@@ -30,6 +32,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<QrLabelEvent> QrLabelEventRecords => Set<QrLabelEvent>();
     public DbSet<InventoryBalance> InventoryBalanceRecords => Set<InventoryBalance>();
     public DbSet<InventoryTransaction> InventoryTransactionRecords => Set<InventoryTransaction>();
+    public DbSet<ExpirySweepRun> ExpirySweepRunRecords => Set<ExpirySweepRun>();
     public DbSet<BusinessDocumentSequence> BusinessDocumentSequenceRecords => Set<BusinessDocumentSequence>();
     public DbSet<Promotion> PromotionRecords => Set<Promotion>();
     public DbSet<PromotionProduct> PromotionProductRecords => Set<PromotionProduct>();

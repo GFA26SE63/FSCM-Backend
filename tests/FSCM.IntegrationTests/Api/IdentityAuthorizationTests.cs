@@ -43,7 +43,7 @@ public sealed class IdentityAuthorizationTests : IClassFixture<IdentityAuthoriza
         var response = await client.GetAsync("/api/v1/users?page=1&pageSize=20");
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
-        Assert.Equal(3, json.RootElement.GetProperty("totalCount").GetInt32());
+        Assert.Equal(4, json.RootElement.GetProperty("totalCount").GetInt32());
     }
 
     [Fact]
@@ -60,8 +60,57 @@ public sealed class IdentityAuthorizationTests : IClassFixture<IdentityAuthoriza
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
         Assert.False(json.RootElement.TryGetProperty("errors", out _));
-        Assert.Equal(3, json.RootElement.GetProperty("data").GetProperty("users")
+        Assert.Equal(4, json.RootElement.GetProperty("data").GetProperty("users")
             .GetProperty("totalCount").GetInt32());
+    }
+
+    [Fact]
+    public async Task Internal_transfer_public_contracts_are_disabled_for_the_registered_mvp()
+    {
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization = Bearer(factory.CreateToken(factory.Admin));
+
+        Assert.Equal(HttpStatusCode.NotFound,
+            (await client.GetAsync("/api/v1/internal-transfers")).StatusCode);
+
+        using var content = JsonContent.Create(new
+        {
+            query = "query { internalTransfers(first: 20) { totalCount } }"
+        });
+        var response = await client.PostAsync("/graphql", content);
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.True(json.RootElement.TryGetProperty("errors", out var errors));
+        Assert.NotEmpty(errors.EnumerateArray());
+    }
+
+    [Fact]
+    public async Task Local_and_entra_login_can_run_in_parallel_for_the_same_account()
+    {
+        using var client = factory.CreateClient();
+
+        var localResponse = await client.PostAsJsonAsync("/api/v1/auth/login", new
+        {
+            Email = factory.Admin.Email,
+            Password = IdentityApiFactory.LocalPassword
+        });
+        Assert.Equal(HttpStatusCode.OK, localResponse.StatusCode);
+
+        const string entraObjectId = "4c45f3a1-36fe-43a3-a21b-a763495134e4";
+        client.DefaultRequestHeaders.Authorization = Bearer(
+            factory.CreateEntraToken(factory.Admin, entraObjectId));
+        var entraResponse = await client.PostAsync("/api/v1/auth/entra/exchange", null);
+        Assert.Equal(HttpStatusCode.OK, entraResponse.StatusCode);
+        Assert.Equal(entraObjectId, factory.Admin.EntraObjectId);
+        Assert.Equal(IdentityProviders.Local, factory.Admin.IdentityProvider);
+
+        client.DefaultRequestHeaders.Authorization = null;
+        var secondLocalResponse = await client.PostAsJsonAsync("/api/v1/auth/login", new
+        {
+            Email = factory.Admin.Email,
+            Password = IdentityApiFactory.LocalPassword
+        });
+        Assert.Equal(HttpStatusCode.OK, secondLocalResponse.StatusCode);
     }
 
     private static AuthenticationHeaderValue Bearer(string token) => new("Bearer", token);
@@ -70,18 +119,30 @@ public sealed class IdentityAuthorizationTests : IClassFixture<IdentityAuthoriza
     {
         private const string Issuer = "FSCM.API.Tests";
         private const string Audience = "FSCM.Clients.Tests";
+        private const string EntraIssuer = "https://login.microsoftonline.com/fscm-tests/v2.0";
+        private const string EntraAudience = "fscm-tests-client";
         private const string Secret = "identity-tests-signing-key-at-least-32-bytes-long";
+        public const string LocalPassword = "Correct#Pass1";
         private readonly TestIdentityStore store = new();
 
         public IdentityApiFactory()
         {
             Admin = AddUser("admin@test.local", SystemRoles.Admin, true);
             Sales = AddUser("sales@test.local", SystemRoles.Sales, true);
+            WarehouseKeeper = AddUser("warehouse.keeper@test.local", SystemRoles.WarehouseKeeper, true);
             InactiveAdmin = AddUser("inactive.admin@test.local", SystemRoles.Admin, false);
+            store.Credentials.Add(new UserCredential
+            {
+                UserAccountId = Admin.Id,
+                PasswordHash = TestPasswordHasher.CreateHash(LocalPassword),
+                CreatedAt = DateTimeOffset.UtcNow,
+                UpdatedAt = DateTimeOffset.UtcNow
+            });
         }
 
         public UserAccount Admin { get; }
         public UserAccount Sales { get; }
+        public UserAccount WarehouseKeeper { get; }
         public UserAccount InactiveAdmin { get; }
 
         public string CreateToken(UserAccount user)
@@ -104,6 +165,25 @@ public sealed class IdentityAuthorizationTests : IClassFixture<IdentityAuthoriza
             return handler.WriteToken(handler.CreateToken(descriptor));
         }
 
+        public string CreateEntraToken(UserAccount user, string entraObjectId)
+        {
+            var descriptor = new SecurityTokenDescriptor
+            {
+                Issuer = EntraIssuer,
+                Audience = EntraAudience,
+                Subject = new ClaimsIdentity([
+                    new Claim("oid", entraObjectId),
+                    new Claim("preferred_username", user.Email)
+                ]),
+                Expires = DateTime.UtcNow.AddMinutes(10),
+                SigningCredentials = new SigningCredentials(
+                    new SymmetricSecurityKey(Encoding.UTF8.GetBytes(Secret)),
+                    SecurityAlgorithms.HmacSha256)
+            };
+            var handler = new JwtSecurityTokenHandler();
+            return handler.WriteToken(handler.CreateToken(descriptor));
+        }
+
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
             builder.UseEnvironment("Production");
@@ -115,12 +195,15 @@ public sealed class IdentityAuthorizationTests : IClassFixture<IdentityAuthoriza
             builder.UseSetting("Jwt:AccessTokenExpiryMinutes", "10");
             builder.UseSetting("Jwt:RefreshTokenExpiryDays", "1");
             builder.UseSetting("BackgroundJobs:DateTracker:Enabled", "false");
+            builder.UseSetting("BackgroundJobs:InventoryOutbox:Enabled", "false");
             builder.ConfigureTestServices(services =>
             {
                 services.RemoveAll<IIdentityStore>();
                 services.AddSingleton<IIdentityStore>(store);
                 services.RemoveAll<IIdentityTokenProvider>();
                 services.AddSingleton<IIdentityTokenProvider, TestIdentityTokenProvider>();
+                services.RemoveAll<IPasswordHasher>();
+                services.AddSingleton<IPasswordHasher, TestPasswordHasher>();
                 services.PostConfigure<JwtBearerOptions>(
                     JwtBearerDefaults.AuthenticationScheme,
                     options => options.TokenValidationParameters = new TokenValidationParameters
@@ -133,6 +216,24 @@ public sealed class IdentityAuthorizationTests : IClassFixture<IdentityAuthoriza
                         IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(Secret)),
                         ValidateLifetime = true,
                         ClockSkew = TimeSpan.Zero
+                    });
+                services.PostConfigure<JwtBearerOptions>(
+                    FSCM.API.Security.AuthenticationSchemes.Entra,
+                    options =>
+                    {
+                        options.Authority = null;
+                        options.Audience = EntraAudience;
+                        options.TokenValidationParameters = new TokenValidationParameters
+                        {
+                            ValidateIssuer = true,
+                            ValidIssuer = EntraIssuer,
+                            ValidateAudience = true,
+                            ValidAudience = EntraAudience,
+                            ValidateIssuerSigningKey = true,
+                            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(Secret)),
+                            ValidateLifetime = true,
+                            ClockSkew = TimeSpan.Zero
+                        };
                     });
             });
         }
@@ -167,9 +268,20 @@ public sealed class IdentityAuthorizationTests : IClassFixture<IdentityAuthoriza
             DateTimeOffset issuedAt) => new("access-test-token", issuedAt.AddMinutes(10));
     }
 
+    private sealed class TestPasswordHasher : IPasswordHasher
+    {
+        public static string CreateHash(string password) => $"hash:{password}";
+
+        public string Hash(string password) => CreateHash(password);
+
+        public bool Verify(string password, string passwordHash) =>
+            passwordHash == CreateHash(password);
+    }
+
     private sealed class TestIdentityStore : IIdentityStore
     {
         public List<UserAccount> Users { get; } = [];
+        public List<UserCredential> Credentials { get; } = [];
 
         public Task<UserAccount?> FindUserByEmailAsync(string normalizedEmail, CancellationToken cancellationToken) =>
             Task.FromResult(Users.SingleOrDefault(user => user.Email == normalizedEmail));
@@ -187,7 +299,8 @@ public sealed class IdentityAuthorizationTests : IClassFixture<IdentityAuthoriza
             return Task.FromResult<(IReadOnlyCollection<UserAccount>, int)>(
                 (items.Skip((query.Page - 1) * query.PageSize).Take(query.PageSize).ToArray(), items.Length));
         }
-        public Task<UserCredential?> FindCredentialAsync(Guid userId, CancellationToken cancellationToken) => Task.FromResult<UserCredential?>(null);
+        public Task<UserCredential?> FindCredentialAsync(Guid userId, CancellationToken cancellationToken) =>
+            Task.FromResult(Credentials.SingleOrDefault(credential => credential.UserAccountId == userId));
         public Task<RefreshToken?> FindRefreshTokenAsync(string tokenHash, CancellationToken cancellationToken) => Task.FromResult<RefreshToken?>(null);
         public Task<AccountToken?> FindAccountTokenAsync(string tokenHash, string purpose, CancellationToken cancellationToken) => Task.FromResult<AccountToken?>(null);
         public Task<IdentityScope> GetScopeAsync(Guid userId, CancellationToken cancellationToken) => Task.FromResult(IdentityScope.Empty);
@@ -202,7 +315,7 @@ public sealed class IdentityAuthorizationTests : IClassFixture<IdentityAuthoriza
         public Task<UserRegionAssignment?> FindRegionAssignmentAsync(Guid userId, Guid regionId, CancellationToken cancellationToken) => Task.FromResult<UserRegionAssignment?>(null);
         public Task<IReadOnlyCollection<RefreshToken>> GetActiveRefreshTokensAsync(Guid userId, DateTimeOffset now, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyCollection<RefreshToken>>([]);
         public void AddUser(UserAccount user) => Users.Add(user);
-        public void AddCredential(UserCredential credential) { }
+        public void AddCredential(UserCredential credential) => Credentials.Add(credential);
         public void AddRefreshToken(RefreshToken refreshToken) { }
         public void AddAccountToken(AccountToken accountToken) { }
         public void AddWarehouseAssignment(UserWarehouseAssignment assignment) { }

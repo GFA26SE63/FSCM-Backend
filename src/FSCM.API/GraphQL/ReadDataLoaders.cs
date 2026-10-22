@@ -53,9 +53,9 @@ internal static class ReadDataLoaders
         WarehouseConfigurationService service,
         CancellationToken cancellationToken)
     {
-        var items = await service.ListMlorAsync(null, null, false, cancellationToken);
-        return items.Where(item => productIds.Contains(item.ProductId))
-            .GroupBy(item => item.ProductId)
+        var items = await service.ListMlorAsync(null, null, null, false, cancellationToken);
+        return items.Where(item => item.ProductId.HasValue && productIds.Contains(item.ProductId.Value))
+            .GroupBy(item => item.ProductId!.Value)
             .ToDictionary(group => group.Key, group => group.ToArray());
     }
 
@@ -65,7 +65,7 @@ internal static class ReadDataLoaders
         WarehouseConfigurationService service,
         CancellationToken cancellationToken)
     {
-        var items = await service.ListMlorAsync(null, null, false, cancellationToken);
+        var items = await service.ListMlorAsync(null, null, null, false, cancellationToken);
         return items.Where(item => retailerIds.Contains(item.RetailerId))
             .GroupBy(item => item.RetailerId)
             .ToDictionary(group => group.Key, group => group.ToArray());

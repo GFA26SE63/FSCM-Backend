@@ -26,75 +26,6 @@ public sealed class MapServiceTests
         Assert.Equal("map_provider_error", exception.Code);
     }
 
-    [Fact]
-    public async Task Eta_uses_distance_and_transit_versions_and_is_explicitly_an_estimate()
-    {
-        var fixture = new Fixture();
-        fixture.Store.Distances.Add(new MapDistanceCache
-        {
-            Id = Guid.NewGuid(),
-            WarehouseId = fixture.WarehouseId,
-            RetailerId = fixture.RetailerId,
-            OriginLocationId = fixture.Store.Locations[0].Id,
-            DestinationLocationId = fixture.Store.Locations[1].Id,
-            OriginLocationVersion = 1,
-            DestinationLocationVersion = 1,
-            DistanceMeters = 12_500,
-            DurationSeconds = 1_800,
-            Provider = "GoogleMaps",
-            ProviderStatus = "ROUTE_EXISTS",
-            Version = 3,
-            CalculatedAt = Now.AddHours(-1),
-            ExpiresAt = Now.AddHours(23),
-            IsActive = true
-        });
-        fixture.Store.TransitRules.Add(new TransitTimeRule
-        {
-            Id = Guid.NewGuid(),
-            WarehouseId = fixture.WarehouseId,
-            MinDistanceMeters = 0,
-            MaxDistanceMeters = 20_000,
-            MaxServingDistanceMeters = 20_000,
-            HandlingMinutes = 60,
-            TransitMinutes = 120,
-            Version = 4,
-            IsActive = true
-        });
-
-        var result = await fixture.Service.EstimateEtaAsync(
-            new EtaEstimateInput(fixture.WarehouseId, fixture.RetailerId, Now, 30), CancellationToken.None);
-
-        Assert.True(result.IsEstimate);
-        Assert.Equal(3, result.DistanceVersion);
-        Assert.Equal(4, result.TransitRuleVersion);
-        Assert.Equal(Now.AddMinutes(210), result.EstimatedReceiptAt);
-        Assert.Contains("không phải cam kết", result.Disclaimer);
-    }
-
-    [Fact]
-    public async Task Eta_rejects_cache_after_location_version_changes()
-    {
-        var fixture = new Fixture();
-        fixture.Store.Distances.Add(new MapDistanceCache
-        {
-            WarehouseId = fixture.WarehouseId,
-            RetailerId = fixture.RetailerId,
-            OriginLocationVersion = 1,
-            DestinationLocationVersion = 1,
-            DistanceMeters = 1_000,
-            DurationSeconds = 300,
-            Version = 1,
-            ExpiresAt = Now.AddHours(1),
-            IsActive = true
-        });
-        fixture.Store.Locations[1].Version = 2;
-
-        var exception = await Assert.ThrowsAsync<MapOperationException>(() => fixture.Service.EstimateEtaAsync(
-            new EtaEstimateInput(fixture.WarehouseId, fixture.RetailerId, Now, 0), CancellationToken.None));
-
-        Assert.Equal("conflict", exception.Code);
-    }
-
     private sealed class Fixture
     {
         public Guid WarehouseId { get; } = Guid.NewGuid();
@@ -127,7 +58,6 @@ public sealed class MapServiceTests
         private readonly Guid _retailerId;
         public List<MapLocation> Locations { get; } = [];
         public List<MapDistanceCache> Distances { get; } = [];
-        public List<TransitTimeRule> TransitRules { get; } = [];
 
         public FakeStore(Guid warehouseId, Guid retailerId)
         {
@@ -145,9 +75,6 @@ public sealed class MapServiceTests
             Task.FromResult(Distances.SingleOrDefault(item => item.WarehouseId == warehouseId && item.RetailerId == retailerId && item.IsActive));
         public Task<IReadOnlyCollection<MapDistanceCache>> ListDistancesAsync(Guid? warehouseId, Guid? retailerId, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyCollection<MapDistanceCache>>(Distances.Where(item => item.IsActive).ToArray());
-        public Task<TransitTimeRule?> FindTransitRuleAsync(Guid warehouseId, int distanceMeters, CancellationToken cancellationToken) =>
-            Task.FromResult(TransitRules.SingleOrDefault(item => item.WarehouseId == warehouseId && item.IsActive &&
-                item.MinDistanceMeters <= distanceMeters && distanceMeters <= item.MaxDistanceMeters));
         public void AddLocation(MapLocation location) => Locations.Add(location);
         public void AddDistance(MapDistanceCache distance) => Distances.Add(distance);
         public Task SaveChangesAsync(CancellationToken cancellationToken) => Task.CompletedTask;

@@ -67,7 +67,8 @@ public sealed class QrLabelStore(AppDbContext dbContext) : IQrLabelStore
 
     public Task<decimal> SumActiveQuantityAsync(Guid batchId, CancellationToken cancellationToken) =>
         dbContext.BatchQrLabelRecords.AsNoTracking()
-            .Where(item => item.BatchId == batchId && item.Status == QrLabelStatuses.Available)
+            .Where(item => item.BatchId == batchId &&
+                           (item.Status == QrLabelStatuses.Available || item.Status == QrLabelStatuses.Picked))
             .SumAsync(item => item.Quantity, cancellationToken);
 
     public async Task<string> NextQrCodeAsync(CancellationToken cancellationToken)

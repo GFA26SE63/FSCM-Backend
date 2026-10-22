@@ -51,24 +51,42 @@ public sealed class WarehouseConfigurationStore(AppDbContext dbContext) : IWareh
     public void AddTransitRules(IEnumerable<TransitTimeRule> rules) => dbContext.TransitTimeRuleRecords.AddRange(rules);
 
     public async Task<IReadOnlyCollection<MlorView>> ListMlorAsync(
-        Guid? retailerId, Guid? productId, bool includeInactive, CancellationToken cancellationToken)
+        Guid? retailerId, Guid? productCategoryId, Guid? productId,
+        bool includeInactive, CancellationToken cancellationToken)
     {
         var query = dbContext.RetailerProductMlorRecords.AsNoTracking().AsQueryable();
         if (retailerId.HasValue) query = query.Where(item => item.RetailerId == retailerId.Value);
+        if (productCategoryId.HasValue) query = query.Where(item => item.ProductCategoryId == productCategoryId.Value);
         if (productId.HasValue) query = query.Where(item => item.ProductId == productId.Value);
         if (!includeInactive) query = query.Where(item => item.IsActive);
-        return await (
+        var rows = await (
             from mlor in query
             join retailer in dbContext.RetailerRecords.AsNoTracking() on mlor.RetailerId equals retailer.Id
-            join product in dbContext.ProductRecords.AsNoTracking() on mlor.ProductId equals product.Id
-            orderby retailer.Code, product.Sku, mlor.EffectiveFrom descending
-            select new MlorView(mlor, retailer.Code, retailer.Name, product.Sku, product.Name))
+            orderby retailer.Code, mlor.EffectiveFrom descending
+            select new { Mlor = mlor, retailer.Code, retailer.Name })
             .ToArrayAsync(cancellationToken);
+        var categoryIds = rows.Where(item => item.Mlor.ProductCategoryId.HasValue)
+            .Select(item => item.Mlor.ProductCategoryId!.Value).Distinct().ToArray();
+        var productIds = rows.Where(item => item.Mlor.ProductId.HasValue)
+            .Select(item => item.Mlor.ProductId!.Value).Distinct().ToArray();
+        var categories = await dbContext.ProductCategoryRecords.AsNoTracking()
+            .Where(item => categoryIds.Contains(item.Id)).ToDictionaryAsync(item => item.Id, cancellationToken);
+        var products = await dbContext.ProductRecords.AsNoTracking()
+            .Where(item => productIds.Contains(item.Id)).ToDictionaryAsync(item => item.Id, cancellationToken);
+        return rows.Select(item =>
+        {
+            categories.TryGetValue(item.Mlor.ProductCategoryId ?? Guid.Empty, out var category);
+            products.TryGetValue(item.Mlor.ProductId ?? Guid.Empty, out var product);
+            return new MlorView(item.Mlor, item.Code, item.Name,
+                category?.Code, category?.Name, product?.Sku, product?.Name);
+        }).ToArray();
     }
 
-    public Task<RetailerProductMlor?> FindActiveMlorAsync(Guid retailerId, Guid productId, CancellationToken cancellationToken) =>
+    public Task<RetailerProductMlor?> FindActiveMlorAsync(
+        Guid retailerId, Guid? productCategoryId, Guid? productId, CancellationToken cancellationToken) =>
         dbContext.RetailerProductMlorRecords.SingleOrDefaultAsync(
-            item => item.RetailerId == retailerId && item.ProductId == productId && item.IsActive,
+            item => item.RetailerId == retailerId && item.ProductCategoryId == productCategoryId &&
+                item.ProductId == productId && item.IsActive,
             cancellationToken);
 
     public Task<Retailer?> FindRetailerAsync(Guid retailerId, CancellationToken cancellationToken) =>
@@ -77,7 +95,11 @@ public sealed class WarehouseConfigurationStore(AppDbContext dbContext) : IWareh
     public Task<Product?> FindProductAsync(Guid productId, CancellationToken cancellationToken) =>
         dbContext.ProductRecords.AsNoTracking().SingleOrDefaultAsync(item => item.Id == productId, cancellationToken);
 
+    public Task<ProductCategory?> FindCategoryAsync(Guid categoryId, CancellationToken cancellationToken) =>
+        dbContext.ProductCategoryRecords.AsNoTracking().SingleOrDefaultAsync(item => item.Id == categoryId, cancellationToken);
+
     public void AddMlor(RetailerProductMlor mlor) => dbContext.RetailerProductMlorRecords.Add(mlor);
+    public void AddAuditLog(AuditLog auditLog) => dbContext.AuditLogRecords.Add(auditLog);
 
     public async Task<IReadOnlyCollection<SystemConfiguration>> ListCurrentConfigurationsAsync(CancellationToken cancellationToken) =>
         await dbContext.SystemConfigurationRecords.AsNoTracking()

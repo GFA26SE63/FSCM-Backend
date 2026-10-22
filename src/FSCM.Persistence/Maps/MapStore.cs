@@ -40,12 +40,6 @@ public sealed class MapStore(AppDbContext dbContext) : IMapStore
             .ToArrayAsync(cancellationToken);
     }
 
-    public Task<TransitTimeRule?> FindTransitRuleAsync(
-        Guid warehouseId, int distanceMeters, CancellationToken cancellationToken) =>
-        dbContext.TransitTimeRuleRecords.AsNoTracking().Where(item => item.WarehouseId == warehouseId &&
-            item.IsActive && item.MinDistanceMeters <= distanceMeters && distanceMeters <= item.MaxDistanceMeters)
-            .OrderByDescending(item => item.Version).FirstOrDefaultAsync(cancellationToken);
-
     public void AddLocation(MapLocation location) => dbContext.MapLocationRecords.Add(location);
     public void AddDistance(MapDistanceCache distance) => dbContext.MapDistanceCacheRecords.Add(distance);
     public Task SaveChangesAsync(CancellationToken cancellationToken) => dbContext.SaveChangesAsync(cancellationToken);
