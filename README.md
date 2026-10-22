@@ -131,11 +131,11 @@ Supply `AdminBootstrap:Email`, `AdminBootstrap:FullName`, `AdminBootstrap:Identi
 Create the development-only identity dataset after applying migrations:
 
 ```powershell
-dotnet user-secrets set "SeedData:DefaultPassword" "FscmDemo#2026" --project src/FSCM.API/FSCM.API.csproj
+dotnet user-secrets set "SeedData:DefaultPassword" "LogisticsThesis@123" --project src/FSCM.API/FSCM.API.csproj
 dotnet run --project src/FSCM.API/FSCM.API.csproj --launch-profile http -- --seed
 ```
 
-The command is idempotent and creates active users for all six roles plus BE-02 catalog dump data. The example password above is for local development only and must not be used in a deployed environment.
+The command is idempotent and creates active users for all six roles plus BE-02 catalog dump data. All seeded demo accounts use the canonical password shown above. It is for local development only and must not be used in a deployed environment.
 
 | Role | Email | Seeded scope |
 | --- | --- | --- |
