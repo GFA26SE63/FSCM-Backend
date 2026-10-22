@@ -30,7 +30,8 @@ public sealed class BatchSwapTests
                 // C is due on day 2, so D arrives too late and only B will do.
                 Order("DH-C", 2, deadlineDay: 2, Line(40m, mlor: 0.20m))
             ],
-            [batchB, batchD]);
+            [batchB, batchD],
+            Route);
 
         Assert.True(plan.Orders[0].IsFullyAllocated);
         Assert.True(plan.Orders[1].IsFullyAllocated);
@@ -50,7 +51,8 @@ public sealed class BatchSwapTests
 
         var plan = planner.Plan(
             [Order("DH-A", 1, 30, Line(40m, 0.20m)), Order("DH-C", 2, 2, Line(40m, 0.20m))],
-            [batchB, batchD]);
+            [batchB, batchD],
+            Route);
 
         var moved = Assert.Single(plan.Orders[0].Allocations);
         Assert.Equal(500m, moved.RemainingShelfLifeHours);
@@ -71,7 +73,8 @@ public sealed class BatchSwapTests
                 Order("DH-A", 2, deadlineDay: 30, Line(40m, mlor: 0.20m)),
                 Order("DH-C", 3, deadlineDay: 2, Line(40m, mlor: 0.20m))
             ],
-            [batchB, batchD]);
+            [batchB, batchD],
+            Route);
 
         var thirdOrder = plan.Orders.Single(item => item.OrderCode == "DH-E");
         var shortOrder = plan.Orders.Single(item => item.OrderCode == "DH-C");
@@ -93,7 +96,8 @@ public sealed class BatchSwapTests
         var plan = planner.Plan(
             [Order("DH-A", 1, deadlineDay: 30, Line(40m, mlor: 0.50m)),
              Order("DH-C", 2, deadlineDay: 2, Line(40m, mlor: 0.20m))],
-            [batchB, batchD]);
+            [batchB, batchD],
+            Route);
 
         Assert.True(plan.Orders[0].IsFullyAllocated);
         Assert.False(plan.Orders[1].IsFullyAllocated);
@@ -115,6 +119,7 @@ public sealed class BatchSwapTests
             [Order("DH-A", 1, deadlineDay: 30, Line(40m, mlor: 0.20m)),
              Order("DH-C", 2, deadlineDay: 2, Line(40m, mlor: 0.20m))],
             [batchB, .. alternatives],
+            Route,
             swapAttemptLimit: 3);
 
         var shortOrder = plan.Orders[1];
@@ -134,7 +139,8 @@ public sealed class BatchSwapTests
         var plan = planner.Plan(
             [Order("DH-A", 1, deadlineDay: 30, Line(40m, mlor: 0.20m)),
              Order("DH-C", 2, deadlineDay: 2, Line(40m, mlor: 0.20m))],
-            [batchB, tooSmall, bigEnough]);
+            [batchB, tooSmall, bigEnough],
+            Route);
 
         var attempts = plan.Orders[1].SwapAttempts;
         Assert.Contains(attempts, item => !item.Succeeded && item.AlternativeBatchCode == "D1");
@@ -153,7 +159,8 @@ public sealed class BatchSwapTests
         var plan = planner.Plan(
             [Order("DH-A", 1, deadlineDay: 30, Line(40m, mlor: 0.20m)),
              Order("DH-C", 2, deadlineDay: 2, Line(40m, mlor: 0.20m))],
-            [batchB, batchD]);
+            [batchB, batchD],
+            Route);
 
         Assert.False(plan.Orders[1].IsFullyAllocated);
         Assert.Contains(plan.Orders[1].SwapAttempts, item =>
@@ -174,11 +181,22 @@ public sealed class BatchSwapTests
     private static PlannerLine Line(decimal quantity, decimal mlor) =>
         new(Guid.NewGuid(), Product, "SKU-A", 1, quantity, 720, mlor);
 
+    private static readonly Dictionary<Guid, int> ArrivalDayByWarehouse = [];
+
     private static PlannerBatch Batch(
         string code, decimal quantity, int remainingLifeHours, int arrivesOnDay)
     {
         var arrivesAt = Arrival.AddDays(arrivesOnDay);
-        return new PlannerBatch(Guid.NewGuid(), code, Guid.NewGuid(), "WH-01", Product,
-            arrivesAt.AddHours(remainingLifeHours), quantity, 5_000m, arrivesAt, Day0.AddDays(arrivesOnDay));
+        var batch = new PlannerBatch(Guid.NewGuid(), code, Guid.NewGuid(), "WH-01", Product,
+            arrivesAt.AddHours(remainingLifeHours), quantity);
+        ArrivalDayByWarehouse[batch.WarehouseId] = arrivesOnDay;
+        return batch;
+    }
+
+    /// <summary>The leg length is what makes a batch reachable for one order and not another.</summary>
+    private static PlannerRoute? Route(Guid warehouseId, Guid retailerId)
+    {
+        var day = ArrivalDayByWarehouse.GetValueOrDefault(warehouseId);
+        return new PlannerRoute(5_000m, Arrival.AddDays(day), Day0.AddDays(day));
     }
 }

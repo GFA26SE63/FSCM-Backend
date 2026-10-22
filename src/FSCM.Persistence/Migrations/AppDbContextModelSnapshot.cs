@@ -244,6 +244,60 @@ namespace FSCM.Persistence.Migrations
                     b.ToTable("ALLOCATION_RUN", (string)null);
                 });
 
+            modelBuilder.Entity("FSCM.Domain.Entities.AllocationRunAllocation", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("AllocationRunId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("AllocationRunLineId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("BatchId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset>("EstimatedArrivalAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<decimal>("Quantity")
+                        .HasPrecision(18, 3)
+                        .HasColumnType("numeric(18,3)");
+
+                    b.Property<decimal>("RemainingShelfLifeHours")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<int>("Sequence")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid?>("SwappedFromBatchId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("WarehouseId")
+                        .HasColumnType("uuid");
+
+                    b.Property<decimal>("WeightedScore")
+                        .HasPrecision(18, 6)
+                        .HasColumnType("numeric(18,6)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("BatchId");
+
+                    b.HasIndex("AllocationRunId", "BatchId");
+
+                    b.HasIndex("AllocationRunLineId", "BatchId")
+                        .IsUnique();
+
+                    b.ToTable("ALLOCATION_RUN_ALLOCATION", (string)null);
+                });
+
             modelBuilder.Entity("FSCM.Domain.Entities.AllocationRunLine", b =>
                 {
                     b.Property<Guid>("Id")
@@ -4086,6 +4140,27 @@ namespace FSCM.Persistence.Migrations
                     b.HasOne("FSCM.Domain.Entities.Warehouse", null)
                         .WithMany()
                         .HasForeignKey("WarehouseId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("FSCM.Domain.Entities.AllocationRunAllocation", b =>
+                {
+                    b.HasOne("FSCM.Domain.Entities.AllocationRun", null)
+                        .WithMany()
+                        .HasForeignKey("AllocationRunId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("FSCM.Domain.Entities.AllocationRunLine", null)
+                        .WithMany()
+                        .HasForeignKey("AllocationRunLineId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("FSCM.Domain.Entities.Batch", null)
+                        .WithMany()
+                        .HasForeignKey("BatchId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
                 });

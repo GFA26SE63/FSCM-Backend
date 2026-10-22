@@ -68,9 +68,12 @@ public sealed class BatchSwapResolver(AllocationEngine engine)
     /// </summary>
     public SwapOutcome Resolve(
         AllocationRequest shortRequest,
+        Guid shortRetailerId,
         int shortPriorityRank,
         IReadOnlyCollection<PlannerBatch> productBatches,
         Func<Guid, AllocationRequest> holderRequest,
+        Func<Guid, Guid> holderRetailer,
+        Func<Guid, Guid, PlannerRoute?> route,
         IDictionary<Guid, decimal> remainingPool,
         IList<BatchHolding> holdings,
         decimal shortfall,
@@ -99,8 +102,8 @@ public sealed class BatchSwapResolver(AllocationEngine engine)
             var donorBatch = batchByIdentifier[donorBatchId];
             var held = holdings.Where(item => item.BatchId == donorBatchId
                 && item.PriorityRank < shortPriorityRank).ToArray();
-            var usability = engine.Evaluate(
-                shortRequest, ToCandidate(donorBatch, held.Sum(item => item.Quantity)));
+            var usability = engine.Evaluate(shortRequest, ToCandidate(
+                donorBatch, held.Sum(item => item.Quantity), route(donorBatch.WarehouseId, shortRetailerId)));
             if (usability != AllocationFilterReason.Eligible)
             {
                 attempts.Add(new SwapAttempt(donorBatchId, donorBatch.BatchCode, "-", null, null, 0m, false,
@@ -116,7 +119,7 @@ public sealed class BatchSwapResolver(AllocationEngine engine)
                     return new SwapOutcome(released, attempts, SwapStopReasons.AttemptLimitReached);
                 }
 
-                if (TryMove(holding, donorBatch, productBatches, holderRequest,
+                if (TryMove(holding, donorBatch, productBatches, holderRequest, holderRetailer, route,
                         remainingPool, holdings, attempts, attemptLimit))
                 {
                     released += holding.Quantity;
@@ -139,12 +142,17 @@ public sealed class BatchSwapResolver(AllocationEngine engine)
         PlannerBatch donorBatch,
         IReadOnlyCollection<PlannerBatch> productBatches,
         Func<Guid, AllocationRequest> holderRequest,
+        Func<Guid, Guid> holderRetailer,
+        Func<Guid, Guid, PlannerRoute?> route,
         IDictionary<Guid, decimal> remainingPool,
         IList<BatchHolding> holdings,
         List<SwapAttempt> attempts,
         int attemptLimit)
     {
         var request = holderRequest(holding.RunLineId);
+        // The alternative is judged against the holder's own leg: it is the order that must keep
+        // meeting its deadline and MLOR after the move.
+        var retailerId = holderRetailer(holding.RunLineId);
         foreach (var alternative in productBatches
                      .Where(item => item.BatchId != donorBatch.BatchId)
                      .OrderBy(item => item.ExpiresAt)
@@ -164,7 +172,8 @@ public sealed class BatchSwapResolver(AllocationEngine engine)
                 continue;
             }
 
-            var candidate = ToCandidate(alternative, unassigned);
+            var alternativeRoute = route(alternative.WarehouseId, retailerId);
+            var candidate = ToCandidate(alternative, unassigned, alternativeRoute);
             var reason = engine.Evaluate(request, candidate);
             if (reason != AllocationFilterReason.Eligible)
             {
@@ -177,7 +186,7 @@ public sealed class BatchSwapResolver(AllocationEngine engine)
 
             // Commit the whole move or nothing: the holder leaves the donor batch entirely, and its
             // arrival and remaining life are restated for the batch it actually ends up on.
-            var arrival = alternative.EstimatedArrivalAt!.Value;
+            var arrival = alternativeRoute!.EstimatedArrivalAt;
             remainingPool[alternative.BatchId] = unassigned - holding.Quantity;
             remainingPool[donorBatch.BatchId] =
                 (remainingPool.TryGetValue(donorBatch.BatchId, out var donorFree) ? donorFree : 0m) + holding.Quantity;
@@ -200,14 +209,18 @@ public sealed class BatchSwapResolver(AllocationEngine engine)
         return false;
     }
 
-    private static BatchCandidate ToCandidate(PlannerBatch batch, decimal availableQuantity) =>
+    /// <summary>
+    /// Builds an engine candidate for one batch on one leg. A missing route leaves the arrival
+    /// null, which the engine reports as RouteUnavailable rather than guessing a distance.
+    /// </summary>
+    public static BatchCandidate ToCandidate(PlannerBatch batch, decimal availableQuantity, PlannerRoute? route) =>
         new(batch.BatchId,
             batch.BatchCode,
             batch.WarehouseId,
             batch.WarehouseCode,
             batch.ExpiresAt,
             availableQuantity,
-            batch.DistanceMeters,
-            batch.EstimatedArrivalAt,
-            batch.EstimatedArrivalDate);
+            route?.DistanceMeters ?? 0m,
+            route?.EstimatedArrivalAt,
+            route?.EstimatedArrivalDate);
 }

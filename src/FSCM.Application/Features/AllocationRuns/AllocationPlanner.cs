@@ -2,7 +2,10 @@ using FSCM.Domain.Allocation;
 
 namespace FSCM.Application.Features.AllocationRuns;
 
-/// <summary>Where a batch sits and how far it is, so the planner can build engine candidates.</summary>
+/// <summary>
+/// A batch in the run pool. How far it is and when it would arrive depends on the retailer, so
+/// that is resolved per order through <see cref="PlannerRoute"/>.
+/// </summary>
 public sealed record PlannerBatch(
     Guid BatchId,
     string BatchCode,
@@ -10,10 +13,16 @@ public sealed record PlannerBatch(
     string WarehouseCode,
     Guid ProductId,
     DateTimeOffset ExpiresAt,
-    decimal RemainingQuantity,
+    decimal RemainingQuantity);
+
+/// <summary>
+/// The leg from one warehouse to one retailer. A null route means the pair cannot be served, and
+/// every batch in that warehouse is skipped for that order.
+/// </summary>
+public sealed record PlannerRoute(
     decimal DistanceMeters,
-    DateTimeOffset? EstimatedArrivalAt,
-    DateOnly? EstimatedArrivalDate);
+    DateTimeOffset EstimatedArrivalAt,
+    DateOnly EstimatedArrivalDate);
 
 public sealed record PlannerLine(
     Guid RunLineId,
@@ -67,30 +76,33 @@ public sealed record AllocationPlan(
 /// shared pool, so an earlier order genuinely takes stock away from a later one.
 ///
 /// When a line falls short, one-level batch swapping is tried before the order is given up: an
-/// earlier order may be moved onto stock nobody has claimed so it can hand its batch over.
+/// earlier order may be moved onto stock nobody has claimed so it can hand its batch over. A move
+/// is judged against the holder's own route and deadline, not the short order's, because the holder
+/// is the one that has to keep working afterwards.
 ///
 /// An order is all or nothing. A line that still cannot be filled undoes every tentative draw the
 /// order already made, including the lines that succeeded, and hands the quantity back to the pool
-/// for the orders behind it. Keeping a partly served order would both break "no partial delivery"
-/// and quietly starve the orders that follow.
+/// for the orders behind it.
 ///
-/// The holdings ledger is the single source of truth. A swap can move an order that was already
-/// planned, so each order's committed allocations are read back from the ledger at the end rather
-/// than from what it was first given.
+/// The holdings ledger is the single source of truth: a swap can move an order that was already
+/// planned, so each order's committed allocations are read back from the ledger at the end.
 /// </summary>
 public sealed class AllocationPlanner(AllocationEngine engine, BatchSwapResolver swapResolver)
 {
     public AllocationPlan Plan(
         IReadOnlyList<PlannerOrder> orders,
         IReadOnlyCollection<PlannerBatch> pool,
+        Func<Guid, Guid, PlannerRoute?> route,
         int swapAttemptLimit = BatchSwapResolver.DefaultAttemptLimit)
     {
         ArgumentNullException.ThrowIfNull(orders);
         ArgumentNullException.ThrowIfNull(pool);
+        ArgumentNullException.ThrowIfNull(route);
 
         var remaining = pool.ToDictionary(item => item.BatchId, item => item.RemainingQuantity);
         var holdings = new List<BatchHolding>();
         var requestByLine = new Dictionary<Guid, AllocationRequest>();
+        var retailerByLine = new Dictionary<Guid, Guid>();
         var byProduct = pool.GroupBy(item => item.ProductId)
             .ToDictionary(group => group.Key, group => group.ToArray());
         var planned = new List<PlannedOrder>();
@@ -108,17 +120,21 @@ public sealed class AllocationPlanner(AllocationEngine engine, BatchSwapResolver
                     line.Sku, line.OrderedQuantity, line.TotalShelfLifeHours,
                     line.EffectiveMlorRatio, order.DeliveryDeadline);
                 requestByLine[line.RunLineId] = request;
+                retailerByLine[line.RunLineId] = order.RetailerId;
 
                 var batches = byProduct.TryGetValue(line.ProductId, out var found) ? found : [];
-                var result = engine.Allocate(request, Candidates(batches, remaining));
+                var result = engine.Allocate(request, Candidates(batches, remaining, order.RetailerId, route));
 
                 if (!result.IsFullyAllocated)
                 {
                     var outcome = swapResolver.Resolve(
                         request,
+                        order.RetailerId,
                         order.PriorityRank,
                         batches,
                         holderLine => requestByLine[holderLine],
+                        holderLine => retailerByLine[holderLine],
+                        route,
                         remaining,
                         holdings,
                         result.ShortageQuantity,
@@ -127,7 +143,7 @@ public sealed class AllocationPlanner(AllocationEngine engine, BatchSwapResolver
                     swapStopReason = outcome.StopReason;
                     if (outcome.ReleasedQuantity > 0)
                     {
-                        result = engine.Allocate(request, Candidates(batches, remaining));
+                        result = engine.Allocate(request, Candidates(batches, remaining, order.RetailerId, route));
                     }
                 }
 
@@ -167,8 +183,6 @@ public sealed class AllocationPlanner(AllocationEngine engine, BatchSwapResolver
                 [], lineResults, swapAttempts, swapStopReason));
         }
 
-        // Read every fulfilled order's allocations back from the ledger, so an order a later swap
-        // moved reports the batch it ended up on rather than the one it first chose.
         var byOrder = holdings.GroupBy(item => item.RunOrderId)
             .ToDictionary(group => group.Key, group => group
                 .OrderBy(item => item.Sequence)
@@ -186,15 +200,10 @@ public sealed class AllocationPlanner(AllocationEngine engine, BatchSwapResolver
     }
 
     private static BatchCandidate[] Candidates(
-        IReadOnlyCollection<PlannerBatch> batches, IReadOnlyDictionary<Guid, decimal> remaining) =>
-        batches.Select(batch => new BatchCandidate(
-            batch.BatchId,
-            batch.BatchCode,
-            batch.WarehouseId,
-            batch.WarehouseCode,
-            batch.ExpiresAt,
-            remaining.GetValueOrDefault(batch.BatchId),
-            batch.DistanceMeters,
-            batch.EstimatedArrivalAt,
-            batch.EstimatedArrivalDate)).ToArray();
+        IReadOnlyCollection<PlannerBatch> batches,
+        IReadOnlyDictionary<Guid, decimal> remaining,
+        Guid retailerId,
+        Func<Guid, Guid, PlannerRoute?> route) =>
+        batches.Select(batch => BatchSwapResolver.ToCandidate(
+            batch, remaining.GetValueOrDefault(batch.BatchId), route(batch.WarehouseId, retailerId))).ToArray();
 }

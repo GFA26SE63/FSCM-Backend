@@ -19,7 +19,8 @@ public sealed class AllocationPlannerTests
         var plan = planner.Plan(
             [Order("DH-000001", 1, Line(ProductA, "SKU-A", 25m)),
              Order("DH-000002", 2, Line(ProductA, "SKU-A", 25m))],
-            [batch]);
+            [batch],
+            Route);
 
         Assert.True(plan.Orders[0].IsFullyAllocated);
         Assert.False(plan.Orders[1].IsFullyAllocated);
@@ -35,7 +36,8 @@ public sealed class AllocationPlannerTests
 
         var plan = planner.Plan(
             [Order("DH-000001", 1, Line(ProductA, "SKU-A", 10m), Line(ProductB, "SKU-B", 10m))],
-            [plentiful, scarce]);
+            [plentiful, scarce],
+            Route);
 
         var order = Assert.Single(plan.Orders);
         Assert.False(order.IsFullyAllocated);
@@ -58,7 +60,8 @@ public sealed class AllocationPlannerTests
                 Order("DH-000001", 1, Line(ProductA, "SKU-A", 10m), Line(ProductB, "SKU-B", 5m)),
                 Order("DH-000002", 2, Line(ProductA, "SKU-A", 10m))
             ],
-            [shared, scarce]);
+            [shared, scarce],
+            Route);
 
         Assert.False(plan.Orders[0].IsFullyAllocated);
         Assert.True(plan.Orders[1].IsFullyAllocated);
@@ -72,7 +75,7 @@ public sealed class AllocationPlannerTests
         var near = Batch("B-NEAR", ProductA, quantity: 6m, distanceMeters: 2_000m);
         var far = Batch("B-FAR", ProductA, quantity: 6m, distanceMeters: 15_000m);
 
-        var plan = planner.Plan([Order("DH-000001", 1, Line(ProductA, "SKU-A", 10m))], [near, far]);
+        var plan = planner.Plan([Order("DH-000001", 1, Line(ProductA, "SKU-A", 10m))], [near, far], Route);
 
         var order = Assert.Single(plan.Orders);
         Assert.True(order.IsFullyAllocated);
@@ -87,7 +90,8 @@ public sealed class AllocationPlannerTests
 
         var plan = planner.Plan(
             [Order("DH-000001", 1, Line(ProductA, "SKU-A", 40m))],
-            [Batch("B-A", ProductA, quantity: 15m)]);
+            [Batch("B-A", ProductA, quantity: 15m)],
+            Route);
 
         var reason = Assert.Single(plan.Orders).ShortageReason;
         Assert.Contains("SKU-A", reason);
@@ -101,7 +105,8 @@ public sealed class AllocationPlannerTests
 
         var plan = planner.Plan(
             [Order("DH-000001", 1, Line(ProductA, "SKU-A", 40m))],
-            [Batch("B-A", ProductA, quantity: 15m)]);
+            [Batch("B-A", ProductA, quantity: 15m)],
+            Route);
 
         var result = Assert.Single(Assert.Single(plan.Orders).LineResults);
         Assert.False(result.IsFullyAllocated);
@@ -117,7 +122,8 @@ public sealed class AllocationPlannerTests
         var plan = planner.Plan(
             [Order("DH-LATE", 2, Line(ProductA, "SKU-A", 10m)),
              Order("DH-EARLY", 1, Line(ProductA, "SKU-A", 10m))],
-            [batch]);
+            [batch],
+            Route);
 
         Assert.Equal("DH-EARLY", plan.Orders[0].OrderCode);
         Assert.True(plan.Orders[0].IsFullyAllocated);
@@ -137,7 +143,17 @@ public sealed class AllocationPlannerTests
         new(Guid.NewGuid(), productId, sku, 1, quantity, 720, 0.25m);
 
     private static PlannerBatch Batch(
-        string code, Guid productId, decimal quantity, decimal distanceMeters = 5_000m) =>
-        new(Guid.NewGuid(), code, Guid.NewGuid(), "WH-01", productId,
-            Arrival.AddHours(400), quantity, distanceMeters, Arrival, ArrivalDate);
+        string code, Guid productId, decimal quantity, decimal distanceMeters = 5_000m)
+    {
+        var batch = new PlannerBatch(Guid.NewGuid(), code, Guid.NewGuid(), "WH-01", productId,
+            Arrival.AddHours(400), quantity);
+        Distances[batch.WarehouseId] = distanceMeters;
+        return batch;
+    }
+
+    private static readonly Dictionary<Guid, decimal> Distances = [];
+
+    /// <summary>Every warehouse reaches every retailer on the same day; only distance differs.</summary>
+    private static PlannerRoute? Route(Guid warehouseId, Guid retailerId) =>
+        new(Distances.GetValueOrDefault(warehouseId, 5_000m), Arrival, ArrivalDate);
 }

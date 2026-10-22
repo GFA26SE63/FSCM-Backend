@@ -1,4 +1,8 @@
 using FSCM.Application.Features.AllocationRuns;
+using FSCM.Application.Features.DeliveryEta;
+using FSCM.Application.Features.ShelfLifeDiscounts;
+using FSCM.Application.Features.TransitTables;
+using FSCM.Domain.Allocation;
 using FSCM.Application.Features.Orders;
 using FSCM.Domain.Entities;
 
@@ -120,12 +124,28 @@ public sealed class AllocationRunServiceTests
         Assert.Empty(run.Pool);
     }
 
-    private sealed class Fixture
+    internal class Fixture
     {
         public FakeStore Store { get; } = new();
         public AllocationRunService Service { get; }
 
-        public Fixture() => Service = new AllocationRunService(Store, new FixedClock());
+        /// <summary>
+        /// These tests cover closing the run, so the planning collaborators are real objects over
+        /// empty stores: if planning were reached by accident it would fail with a clear
+        /// "nothing published" error rather than a null reference.
+        /// </summary>
+        public Fixture()
+        {
+            var engine = new AllocationEngine();
+            var clock = new FixedClock();
+            var transit = new TransitTableService(new EmptyTransitTableStore(), clock);
+            Service = new AllocationRunService(
+                Store,
+                new AllocationPlanner(engine, new BatchSwapResolver(engine)),
+                new AllocationPricingService(new ShelfLifeDiscountService(new EmptyDiscountStore(), clock)),
+                new DeliveryEtaService(new EmptyEtaStore(), transit, clock),
+                clock);
+        }
 
         public void AddOrder(string code, DateTimeOffset acceptedAt, decimal netAmount = 500m, decimal quantity = 5m) =>
             Store.Eligible.Add(new EligibleOrderView(
@@ -159,7 +179,7 @@ public sealed class AllocationRunServiceTests
         public override DateTimeOffset GetUtcNow() => Cutoff;
     }
 
-    private sealed class FakeStore : IAllocationRunStore
+    internal sealed class FakeStore : IAllocationRunStore
     {
         public Guid RetailerId { get; } = Guid.NewGuid();
         public Guid ProductId { get; } = Guid.NewGuid();
@@ -208,6 +228,39 @@ public sealed class AllocationRunServiceTests
                 IReadOnlyCollection<(Guid RetailerId, Guid ProductId)> pairs, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyDictionary<(Guid, Guid), (decimal, string)>>(
                 pairs.ToDictionary(pair => pair, _ => (0.3m, MlorSources.RetailerProduct)));
+
+        public List<AllocationRunAllocation> Allocations { get; } = [];
+
+        public Task<IReadOnlyCollection<PlannerBatch>> ListPlannerBatchesAsync(
+            Guid runId, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyCollection<PlannerBatch>>(Pool
+                .Where(item => item.AllocationRunId == runId && item.RemainingQuantity > 0)
+                .Select(item => new PlannerBatch(
+                    item.BatchId, "B-001", item.WarehouseId, "WH-01", item.ProductId,
+                    new DateTimeOffset(item.ExpirationDate.ToDateTime(TimeOnly.MaxValue), TimeSpan.Zero),
+                    item.RemainingQuantity))
+                .ToArray());
+
+        public Task<IReadOnlyDictionary<(Guid WarehouseId, Guid RetailerId), decimal>> ListDistancesAsync(
+            IReadOnlyCollection<Guid> warehouseIds,
+            IReadOnlyCollection<Guid> retailerIds,
+            CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyDictionary<(Guid, Guid), decimal>>(
+                warehouseIds.SelectMany(warehouse => retailerIds.Select(retailer => (warehouse, retailer)))
+                    .ToDictionary(pair => pair, _ => 5_000m));
+
+        public Task<IReadOnlyDictionary<Guid, Guid>> ListProductCategoriesAsync(
+            IReadOnlyCollection<Guid> productIds, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyDictionary<Guid, Guid>>(
+                productIds.ToDictionary(item => item, _ => Guid.NewGuid()));
+
+        public Task<IReadOnlyDictionary<Guid, DateTimeOffset>> ListBatchExpiryAsync(
+            IReadOnlyCollection<Guid> batchIds, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyDictionary<Guid, DateTimeOffset>>(
+                batchIds.ToDictionary(item => item, _ => Cutoff.AddDays(20)));
+
+        public void AddAllocations(IEnumerable<AllocationRunAllocation> allocations) =>
+            Allocations.AddRange(allocations);
 
         public Task<AllocationSettings> GetSettingsAsync(CancellationToken cancellationToken) =>
             Task.FromResult(new AllocationSettings(0.5m, 0.3m, 0.2m, 20_000));

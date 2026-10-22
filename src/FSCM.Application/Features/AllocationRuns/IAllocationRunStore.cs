@@ -48,6 +48,26 @@ public interface IAllocationRunStore
     Task<IReadOnlyDictionary<(Guid RetailerId, Guid ProductId), (decimal Ratio, string Source)>> ResolveMlorAsync(
         IReadOnlyCollection<(Guid RetailerId, Guid ProductId)> pairs, CancellationToken cancellationToken);
 
+    /// <summary>The pool as planner input: batch and warehouse codes joined to what is left.</summary>
+    Task<IReadOnlyCollection<PlannerBatch>> ListPlannerBatchesAsync(Guid runId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Straight-line distance per warehouse-retailer pair from the cached matrix. A pair with no
+    /// usable row is simply absent, and the planner treats it as unreachable.
+    /// </summary>
+    Task<IReadOnlyDictionary<(Guid WarehouseId, Guid RetailerId), decimal>> ListDistancesAsync(
+        IReadOnlyCollection<Guid> warehouseIds,
+        IReadOnlyCollection<Guid> retailerIds,
+        CancellationToken cancellationToken);
+
+    Task<IReadOnlyDictionary<Guid, Guid>> ListProductCategoriesAsync(
+        IReadOnlyCollection<Guid> productIds, CancellationToken cancellationToken);
+
+    Task<IReadOnlyDictionary<Guid, DateTimeOffset>> ListBatchExpiryAsync(
+        IReadOnlyCollection<Guid> batchIds, CancellationToken cancellationToken);
+
+    void AddAllocations(IEnumerable<AllocationRunAllocation> allocations);
+
     Task<AllocationSettings> GetSettingsAsync(CancellationToken cancellationToken);
     Task<string> NextRunCodeAsync(DateOnly businessDate, CancellationToken cancellationToken);
 

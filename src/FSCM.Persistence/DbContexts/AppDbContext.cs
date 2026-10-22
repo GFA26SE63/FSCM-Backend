@@ -27,6 +27,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<AllocationRunOrder> AllocationRunOrderRecords => Set<AllocationRunOrder>();
     public DbSet<AllocationRunLine> AllocationRunLineRecords => Set<AllocationRunLine>();
     public DbSet<AllocationRunStock> AllocationRunStockRecords => Set<AllocationRunStock>();
+    public DbSet<AllocationRunAllocation> AllocationRunAllocationRecords => Set<AllocationRunAllocation>();
     public DbSet<TransitTable> TransitTableRecords => Set<TransitTable>();
     public DbSet<ShelfLifeDiscountTable> ShelfLifeDiscountTableRecords => Set<ShelfLifeDiscountTable>();
     public DbSet<ShelfLifeDiscountTier> ShelfLifeDiscountTierRecords => Set<ShelfLifeDiscountTier>();

@@ -1,17 +1,23 @@
 using System.Text.Json;
+using FSCM.Application.Features.DeliveryEta;
 using FSCM.Domain.Entities;
 
 namespace FSCM.Application.Features.AllocationRuns;
 
 /// <summary>
-/// Closes the daily allocation run at the cutoff: it locks the orders that may compete, freezes the
-/// stock pool and the settings they will be scored against, and leaves the plan itself to batch
-/// selection (F33), batch swapping (F86) and pricing (F89).
+/// Drives the daily allocation run: it locks the orders that may compete at the cutoff, freezes the
+/// stock pool and the settings they will be scored against, then builds the plan by choosing
+/// batches (F33), swapping where that frees a short line (F86) and pricing what survives (F89).
 ///
 /// Nothing here touches a real inventory balance. The pool is the run's own copy, so a plan can be
 /// built, discarded and rebuilt without ever committing stock; only run approval reserves (F88).
 /// </summary>
-public sealed class AllocationRunService(IAllocationRunStore store, TimeProvider timeProvider)
+public sealed class AllocationRunService(
+    IAllocationRunStore store,
+    AllocationPlanner planner,
+    AllocationPricingService pricing,
+    DeliveryEtaService deliveryEta,
+    TimeProvider timeProvider)
 {
     private static readonly TimeZoneInfo VietnamTimeZone = TimeZoneInfo.FindSystemTimeZoneById("Asia/Ho_Chi_Minh");
 
@@ -152,6 +158,186 @@ public sealed class AllocationRunService(IAllocationRunStore store, TimeProvider
         store.ClearTracking();
         return await GetByBusinessDateAsync(businessDate, cancellationToken);
     }
+
+    /// <summary>
+    /// Builds the plan for a snapshotted run: batches are chosen and swapped, the surviving orders
+    /// are priced, and the run moves to AwaitingApproval. Nothing is reserved here; the plan stays
+    /// a proposal until Admin approves it (F87, F88).
+    ///
+    /// Planning an already planned run is refused rather than silently rebuilding, so a retry
+    /// cannot replace a plan an Admin is in the middle of reviewing.
+    /// </summary>
+    public async Task<AllocationPricing> PlanAsync(Guid runId, CancellationToken cancellationToken)
+    {
+        var view = await store.FindViewAsync(runId, cancellationToken)
+            ?? throw AllocationRunOperationException.NotFound("Allocation run was not found.");
+        if (view.Run.Status != AllocationRunStatuses.Snapshotted)
+        {
+            throw AllocationRunOperationException.Conflict(
+                $"Run {view.Run.RunCode} is {view.Run.Status}; only a snapshotted run can be planned.");
+        }
+
+        var now = timeProvider.GetUtcNow();
+        var batches = await store.ListPlannerBatchesAsync(runId, cancellationToken);
+        var linesByOrder = view.Lines.GroupBy(item => item.AllocationRunOrderId)
+            .ToDictionary(group => group.Key, group => group.OrderBy(item => item.LineNumber).ToArray());
+
+        var plannerOrders = view.Orders.OrderBy(item => item.PriorityRank).Select(order => new PlannerOrder(
+            order.Id,
+            order.OrderCodeSnapshot,
+            order.RetailerId,
+            order.PriorityRank,
+            order.DeliveryDeadline,
+            (linesByOrder.TryGetValue(order.Id, out var lines) ? lines : [])
+                .Select(line => new PlannerLine(
+                    line.Id, line.ProductId, line.SkuSnapshot, line.LineNumber,
+                    line.OrderedQuantity, line.TotalShelfLifeHours, line.EffectiveMlorRatio))
+                .ToArray())).ToArray();
+
+        var routes = await BuildRoutesAsync(batches, plannerOrders, cancellationToken);
+        var plan = planner.Plan(
+            plannerOrders,
+            batches,
+            (warehouseId, retailerId) => routes.GetValueOrDefault((warehouseId, retailerId)));
+
+        var priced = await PriceAsync(plan, view, now, cancellationToken);
+        await PersistAsync(view.Run.Id, plan, now, cancellationToken);
+        store.ClearTracking();
+        return priced;
+    }
+
+    /// <summary>
+    /// ETA per warehouse-retailer pair, read once for the whole run. A pair with no cached distance
+    /// or no estimable ETA is left out, and the planner treats that warehouse as unreachable for
+    /// that order rather than guessing a leg.
+    /// </summary>
+    private async Task<Dictionary<(Guid, Guid), PlannerRoute>> BuildRoutesAsync(
+        IReadOnlyCollection<PlannerBatch> batches,
+        IReadOnlyCollection<PlannerOrder> orders,
+        CancellationToken cancellationToken)
+    {
+        var warehouseIds = batches.Select(item => item.WarehouseId).Distinct().ToArray();
+        var retailerIds = orders.Select(item => item.RetailerId).Distinct().ToArray();
+        var distances = await store.ListDistancesAsync(warehouseIds, retailerIds, cancellationToken);
+        var routes = new Dictionary<(Guid, Guid), PlannerRoute>();
+
+        foreach (var warehouseId in warehouseIds)
+        {
+            foreach (var retailerId in retailerIds)
+            {
+                if (!distances.TryGetValue((warehouseId, retailerId), out var distanceMeters)) continue;
+                try
+                {
+                    var eta = await deliveryEta.EstimateAsync(
+                        new EtaRequest(warehouseId, retailerId, null), cancellationToken);
+                    routes[(warehouseId, retailerId)] = new PlannerRoute(
+                        distanceMeters,
+                        eta.EstimatedArrivalAt,
+                        DateOnly.FromDateTime(
+                            TimeZoneInfo.ConvertTime(eta.EstimatedArrivalAt, VietnamTimeZone).DateTime));
+                }
+                catch (DeliveryEtaOperationException)
+                {
+                    // Unreachable is a legitimate outcome for one pair, not a failure of the run.
+                }
+            }
+        }
+
+        return routes;
+    }
+
+    private async Task<AllocationPricing> PriceAsync(
+        AllocationPlan plan,
+        AllocationRunView view,
+        DateTimeOffset pricedAt,
+        CancellationToken cancellationToken)
+    {
+        var fulfilled = plan.Fulfilled.ToArray();
+        if (fulfilled.Length == 0) return new AllocationPricing(pricedAt, []);
+
+        var lineById = view.Lines.ToDictionary(item => item.Id);
+        var batchIds = fulfilled.SelectMany(order => order.Allocations)
+            .Select(item => item.BatchId).Distinct().ToArray();
+        var expiry = await store.ListBatchExpiryAsync(batchIds, cancellationToken);
+        var categories = await store.ListProductCategoriesAsync(
+            view.Lines.Select(item => item.ProductId).Distinct().ToArray(), cancellationToken);
+
+        var orders = fulfilled.Select(order => new PricingOrder(
+            order.RunOrderId,
+            order.OrderCode,
+            order.Allocations.Select(allocation =>
+            {
+                var line = lineById[allocation.RunLineId];
+                return new PricingPart(
+                    allocation.RunLineId,
+                    allocation.BatchId,
+                    allocation.WarehouseId,
+                    line.ProductId,
+                    categories.GetValueOrDefault(line.ProductId),
+                    line.SkuSnapshot,
+                    allocation.Quantity,
+                    expiry.GetValueOrDefault(allocation.BatchId, pricedAt),
+                    line.TotalShelfLifeHours,
+                    line.BaseNetUnitPrice);
+            }).ToArray())).ToArray();
+
+        return await pricing.PriceAsync(pricedAt, orders, cancellationToken);
+    }
+
+    private async Task PersistAsync(
+        Guid runId,
+        AllocationPlan plan,
+        DateTimeOffset now,
+        CancellationToken cancellationToken) =>
+        await store.ExecuteInTransactionAsync(async transactionCancellationToken =>
+        {
+            var tracked = await store.FindViewAsync(runId, transactionCancellationToken)
+                ?? throw AllocationRunOperationException.NotFound("Allocation run disappeared while planning.");
+            var orderById = tracked.Orders.ToDictionary(item => item.Id);
+            var lineById = tracked.Lines.ToDictionary(item => item.Id);
+            var allocations = new List<AllocationRunAllocation>();
+
+            foreach (var planned in plan.Orders)
+            {
+                var runOrder = orderById[planned.RunOrderId];
+                runOrder.Status = planned.IsFullyAllocated
+                    ? AllocationRunOrderStatuses.Fulfilled
+                    : AllocationRunOrderStatuses.Short;
+                runOrder.ShortageReason = planned.ShortageReason;
+
+                foreach (var group in planned.Allocations.GroupBy(item => item.RunLineId))
+                {
+                    lineById[group.Key].AllocatedQuantity = group.Sum(item => item.Quantity);
+                    allocations.AddRange(group.Select(item => new AllocationRunAllocation
+                    {
+                        Id = Guid.NewGuid(),
+                        AllocationRunId = runId,
+                        AllocationRunLineId = item.RunLineId,
+                        BatchId = item.BatchId,
+                        WarehouseId = item.WarehouseId,
+                        Quantity = item.Quantity,
+                        Sequence = item.Sequence,
+                        EstimatedArrivalAt = item.EstimatedArrivalAt,
+                        RemainingShelfLifeHours = item.RemainingShelfLifeHours,
+                        WeightedScore = item.WeightedScore,
+                        SwappedFromBatchId = item.SwappedFromBatchId,
+                        CreatedAt = now
+                    }));
+                }
+            }
+
+            foreach (var row in tracked.Pool)
+            {
+                row.RemainingQuantity = plan.RemainingPool.GetValueOrDefault(row.BatchId, row.RemainingQuantity);
+            }
+
+            store.AddAllocations(allocations);
+            tracked.Run.Status = AllocationRunStatuses.AwaitingApproval;
+            tracked.Run.CompletedAt = now;
+            tracked.Run.Version++;
+            tracked.Run.UpdatedAt = now;
+            await store.SaveChangesAsync(transactionCancellationToken);
+        }, cancellationToken);
 
     public async Task<AllocationRunResult> GetAsync(Guid runId, CancellationToken cancellationToken) =>
         ToResult(await store.FindViewAsync(runId, cancellationToken)

@@ -122,6 +122,74 @@ public sealed class AllocationRunStore(AppDbContext dbContext) : IAllocationRunS
         return result;
     }
 
+    public async Task<IReadOnlyCollection<PlannerBatch>> ListPlannerBatchesAsync(
+        Guid runId, CancellationToken cancellationToken) =>
+        await dbContext.AllocationRunStockRecords.AsNoTracking()
+            .Where(pool => pool.AllocationRunId == runId && pool.RemainingQuantity > 0)
+            .Join(dbContext.BatchRecords.AsNoTracking(),
+                pool => pool.BatchId, batch => batch.Id, (pool, batch) => new { pool, batch })
+            .Join(dbContext.WarehouseRecords.AsNoTracking(),
+                item => item.pool.WarehouseId, warehouse => warehouse.Id,
+                (item, warehouse) => new PlannerBatch(
+                    item.pool.BatchId,
+                    item.batch.BatchCode,
+                    item.pool.WarehouseId,
+                    warehouse.Code,
+                    item.pool.ProductId,
+                    // A batch is usable up to the end of its expiration day.
+                    new DateTimeOffset(item.pool.ExpirationDate.ToDateTime(TimeOnly.MaxValue), TimeSpan.Zero),
+                    item.pool.RemainingQuantity))
+            .ToArrayAsync(cancellationToken);
+
+    public async Task<IReadOnlyDictionary<(Guid WarehouseId, Guid RetailerId), decimal>> ListDistancesAsync(
+        IReadOnlyCollection<Guid> warehouseIds,
+        IReadOnlyCollection<Guid> retailerIds,
+        CancellationToken cancellationToken)
+    {
+        if (warehouseIds.Count == 0 || retailerIds.Count == 0)
+        {
+            return new Dictionary<(Guid, Guid), decimal>();
+        }
+
+        var warehouses = warehouseIds.ToArray();
+        var retailers = retailerIds.ToArray();
+        var rows = await dbContext.MapDistanceCacheRecords.AsNoTracking()
+            .Where(item => item.IsActive
+                && warehouses.Contains(item.WarehouseId)
+                && retailers.Contains(item.RetailerId))
+            .Select(item => new { item.WarehouseId, item.RetailerId, item.DistanceMeters })
+            .ToArrayAsync(cancellationToken);
+        return rows.ToDictionary(
+            item => (item.WarehouseId, item.RetailerId), item => (decimal)item.DistanceMeters);
+    }
+
+    public async Task<IReadOnlyDictionary<Guid, Guid>> ListProductCategoriesAsync(
+        IReadOnlyCollection<Guid> productIds, CancellationToken cancellationToken)
+    {
+        if (productIds.Count == 0) return new Dictionary<Guid, Guid>();
+        var ids = productIds.ToArray();
+        return await dbContext.ProductRecords.AsNoTracking()
+            .Where(item => ids.Contains(item.Id))
+            .ToDictionaryAsync(item => item.Id, item => item.ProductCategoryId, cancellationToken);
+    }
+
+    public async Task<IReadOnlyDictionary<Guid, DateTimeOffset>> ListBatchExpiryAsync(
+        IReadOnlyCollection<Guid> batchIds, CancellationToken cancellationToken)
+    {
+        if (batchIds.Count == 0) return new Dictionary<Guid, DateTimeOffset>();
+        var ids = batchIds.ToArray();
+        var rows = await dbContext.BatchRecords.AsNoTracking()
+            .Where(item => ids.Contains(item.Id))
+            .Select(item => new { item.Id, item.ExpirationDate })
+            .ToArrayAsync(cancellationToken);
+        return rows.ToDictionary(
+            item => item.Id,
+            item => new DateTimeOffset(item.ExpirationDate.ToDateTime(TimeOnly.MaxValue), TimeSpan.Zero));
+    }
+
+    public void AddAllocations(IEnumerable<AllocationRunAllocation> allocations) =>
+        dbContext.AllocationRunAllocationRecords.AddRange(allocations);
+
     public async Task<AllocationSettings> GetSettingsAsync(CancellationToken cancellationToken)
     {
         var weights = await ReadConfigurationAsync(BusinessConfigurationKeys.AllocationWeights, cancellationToken);

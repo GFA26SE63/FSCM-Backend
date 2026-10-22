@@ -10,6 +10,7 @@ public sealed class PhysicalSchemaModelTests
     [
         "ALLOCATION",
         "ALLOCATION_RUN",
+        "ALLOCATION_RUN_ALLOCATION",
         "ALLOCATION_RUN_LINE",
         "ALLOCATION_RUN_ORDER",
         "ALLOCATION_RUN_STOCK",
@@ -96,9 +97,9 @@ public sealed class PhysicalSchemaModelTests
             .ToArray();
 
         Assert.Equal(ExpectedTables, tableNames);
-        Assert.Equal(72, entityTypes.Length);
-        Assert.Equal(760, entityTypes.Sum(entityType => entityType.GetProperties().Count()));
-        Assert.Equal(157, entityTypes.Sum(entityType => entityType.GetForeignKeys().Count()));
+        Assert.Equal(73, entityTypes.Length);
+        Assert.Equal(772, entityTypes.Sum(entityType => entityType.GetProperties().Count()));
+        Assert.Equal(160, entityTypes.Sum(entityType => entityType.GetForeignKeys().Count()));
         Assert.All(
             entityTypes.SelectMany(entityType => entityType.GetForeignKeys()),
             foreignKey => Assert.Equal(DeleteBehavior.Restrict, foreignKey.DeleteBehavior));
