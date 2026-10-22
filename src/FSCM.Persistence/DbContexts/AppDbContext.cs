@@ -59,6 +59,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<ReceiptDiscrepancyItem> ReceiptDiscrepancyItemRecords => Set<ReceiptDiscrepancyItem>();
     public DbSet<Payment> PaymentRecords => Set<Payment>();
     public DbSet<ManualPayment> ManualPaymentRecords => Set<ManualPayment>();
+    public DbSet<ManualRefund> ManualRefundRecords => Set<ManualRefund>();
     public DbSet<OrderStatusHistory> OrderStatusHistoryRecords => Set<OrderStatusHistory>();
     public DbSet<Notification> NotificationRecords => Set<Notification>();
     public DbSet<AuditLog> AuditLogRecords => Set<AuditLog>();

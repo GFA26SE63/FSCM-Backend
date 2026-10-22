@@ -113,6 +113,21 @@ public sealed class AllocationRunServiceTests
     }
 
     [Fact]
+    public async Task A_line_keeps_the_mlor_the_order_was_accepted_under()
+    {
+        var fixture = new Fixture();
+        // The order was captured at 40%; the current configuration says 30%. The run must honour
+        // what the retailer agreed to, not what the table says today.
+        fixture.AddOrder("DH-000001", Cutoff.AddHours(-1), capturedMlorRatio: 0.40m);
+
+        var run = await fixture.Service.StartAsync(Cutoff, CancellationToken.None);
+
+        var line = Assert.Single(run.Orders.Single().Lines);
+        Assert.Equal(0.40m, line.EffectiveMlorRatio);
+        Assert.Equal("RetailerCategory", line.MlorSource);
+    }
+
+    [Fact]
     public async Task A_run_with_no_eligible_order_still_exists_and_holds_nothing()
     {
         var fixture = new Fixture();
@@ -147,7 +162,9 @@ public sealed class AllocationRunServiceTests
                 clock);
         }
 
-        public void AddOrder(string code, DateTimeOffset acceptedAt, decimal netAmount = 500m, decimal quantity = 5m) =>
+        public void AddOrder(
+            string code, DateTimeOffset acceptedAt, decimal netAmount = 500m, decimal quantity = 5m,
+            decimal capturedMlorRatio = 0m) =>
             Store.Eligible.Add(new EligibleOrderView(
                 new SalesOrder
                 {
@@ -168,7 +185,9 @@ public sealed class AllocationRunServiceTests
                             SkuSnapshot = "SKU001",
                             LineNumber = 1,
                             OrderedQuantity = quantity,
-                            NetAmount = netAmount
+                            NetAmount = netAmount,
+                            MlorMinimumLifeRatio = capturedMlorRatio,
+                            MlorSourceScope = capturedMlorRatio > 0 ? "RetailerCategory" : string.Empty
                         },
                         new Product { Id = Store.ProductId, ShelfLifeHours = 720 })
                 ]));

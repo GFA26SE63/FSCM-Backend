@@ -14,12 +14,6 @@ public sealed record UpdateWarehouseRequest(
 
 public sealed record UpdateWarehouseStatusRequest(bool IsActive);
 
-public sealed record ReplaceTransitTimeRulesRequest(IReadOnlyCollection<TransitTimeRuleRequest> Rules);
-
-public sealed record TransitTimeRuleRequest(
-    int MinDistanceMeters, int MaxDistanceMeters, int HandlingMinutes,
-    int TransitMinutes, decimal EstimatedTransportCost, int MaxServingDistanceMeters);
-
 public sealed record SetMlorRequest(
     Guid RetailerId, Guid? ProductCategoryId, Guid? ProductId,
     decimal MinimumLifeRatio, int? MinimumLifeHours);

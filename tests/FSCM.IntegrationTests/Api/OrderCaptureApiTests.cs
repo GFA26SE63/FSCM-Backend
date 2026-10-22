@@ -39,13 +39,14 @@ public sealed class OrderCaptureApiTests
 
         var graphQlResponse = await client.PostAsJsonAsync("/graphql", new
         {
-            query = "query($productId: UUID!, $retailerId: UUID!) { priceSnapshot(productId: $productId, retailerId: $retailerId, quantity: 10) { batchId discountPercent finalPricePendingAllocation appliedPromotion { promotionType } } }",
+            query = "query($productId: UUID!, $retailerId: UUID!) { priceSnapshot(productId: $productId, retailerId: $retailerId, quantity: 10) { batchId discountPercent finalPricePendingAllocation productPriceId productPriceEffectiveFrom appliedPromotion { promotionType minimumQuantity effectiveFrom effectiveTo } } }",
             variables = new { productId = store.Product.Id, retailerId = orderStore.Retailer.Id }
         });
         var graphQl = JsonDocument.Parse(await graphQlResponse.Content.ReadAsStringAsync()).RootElement;
         Assert.False(graphQl.TryGetProperty("errors", out _), graphQl.ToString());
         var quote = graphQl.GetProperty("data").GetProperty("priceSnapshot");
         Assert.True(quote.GetProperty("finalPricePendingAllocation").GetBoolean());
+        Assert.Equal(store.Price.Id, quote.GetProperty("productPriceId").GetGuid());
         Assert.Equal(PromotionTypes.Campaign, quote.GetProperty("appliedPromotion").GetProperty("promotionType").GetString());
         Assert.Equal(0, store.BatchDiscountQueryCount);
 
@@ -92,7 +93,12 @@ public sealed class OrderCaptureApiTests
         var created = JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement;
         var orderId = created.GetProperty("id").GetGuid();
         Assert.True(created.GetProperty("finalPricePendingAllocation").GetBoolean());
-        Assert.Empty(created.GetProperty("lines")[0].GetProperty("allocations").EnumerateArray());
+        var createdLine = created.GetProperty("lines")[0];
+        Assert.Empty(createdLine.GetProperty("allocations").EnumerateArray());
+        Assert.Equal("Sku", createdLine.GetProperty("mlor").GetProperty("sourceScope").GetString());
+        Assert.Equal(2, createdLine.GetProperty("mlor").GetProperty("sourceVersion").GetInt32());
+        Assert.Equal("KM-001", createdLine.GetProperty("ordinaryPromotion").GetProperty("code").GetString());
+        Assert.NotEqual(Guid.Empty, createdLine.GetProperty("productPriceId").GetGuid());
         Assert.Equal(900m, created.GetProperty("finalAmount").GetDecimal());
         Assert.Equal("OrderCaptured", Assert.Single(store.Audits).Action);
 
@@ -107,13 +113,15 @@ public sealed class OrderCaptureApiTests
 
         var graphQlResponse = await client.PostAsJsonAsync("/graphql", new
         {
-            query = "query($id: UUID!) { orders(createdByMe: true, page: 1, pageSize: 10) { totalCount items { id allocationState finalPricePendingAllocation } } orderTimeline(id: $id) { currentStatus events { toStatus } } }",
+            query = "query($id: UUID!) { orders(createdByMe: true, page: 1, pageSize: 10) { totalCount items { id allocationState finalPricePendingAllocation } } order(id: $id) { lines { productPriceId pricedAt mlor { sourceScope sourceVersion minimumLifeRatio } ordinaryPromotion { code minimumQuantity effectiveFrom effectiveTo } } } orderTimeline(id: $id) { currentStatus events { toStatus } } }",
             variables = new { id = orderId }
         });
         Assert.Equal(HttpStatusCode.OK, graphQlResponse.StatusCode);
         var graphQl = JsonDocument.Parse(await graphQlResponse.Content.ReadAsStringAsync()).RootElement;
         Assert.False(graphQl.TryGetProperty("errors", out _), graphQl.ToString());
         Assert.Equal(1, graphQl.GetProperty("data").GetProperty("orders").GetProperty("totalCount").GetInt32());
+        Assert.Equal("Sku", graphQl.GetProperty("data").GetProperty("order")
+            .GetProperty("lines")[0].GetProperty("mlor").GetProperty("sourceScope").GetString());
     }
 
     [Fact]
@@ -157,8 +165,11 @@ public sealed class OrderCaptureApiTests
         {
             var gross = quantity * 100m;
             return Task.FromResult(new OrderPriceSnapshot(100m, gross, 10m, gross * 0.1m,
-                gross * 0.9m, Guid.Parse("40000000-0000-0000-0000-000000000001"),
-                "Campaign", "KM-001"));
+                gross * 0.9m, Guid.Parse("50000000-0000-0000-0000-000000000001"),
+                pricedAt.AddDays(-30), null,
+                Guid.Parse("40000000-0000-0000-0000-000000000001"),
+                "Campaign", "KM-001", "Khuyến mãi tháng mười", 5m,
+                pricedAt.AddDays(-1), pricedAt.AddDays(10)));
         }
     }
 
@@ -277,8 +288,11 @@ public sealed class OrderCaptureApiTests
             CancellationToken cancellationToken) => throw new InvalidOperationException("Capture must not query stock.");
         public Task<MapLocation?> FindRetailerLocationAsync(Guid retailerId, CancellationToken cancellationToken) =>
             throw new InvalidOperationException("Capture must not query allocation distance.");
-        public Task<decimal?> FindMlorRatioAsync(Guid retailerId, Guid productId,
-            CancellationToken cancellationToken) => throw new InvalidOperationException("Capture must not resolve allocation MLOR.");
+        public Task<OrderMlorSnapshot?> ResolveMlorAsync(
+            Guid retailerId, Guid productId, DateTimeOffset at,
+            CancellationToken cancellationToken) => Task.FromResult<OrderMlorSnapshot?>(new(
+                "Sku", Guid.Parse("30000000-0000-0000-0000-000000000001"), 2,
+                null, 0.25m, null, at));
         public Task<string?> FindConfigurationAsync(string key, CancellationToken cancellationToken) =>
             Task.FromResult<string?>(key == "order.order_step_cartons" ? "1" : null);
         public Task<string> NextOrderCodeAsync(CancellationToken cancellationToken) => Task.FromResult("DH-001100");
@@ -317,7 +331,8 @@ public sealed class OrderCaptureApiTests
         {
             if (order is null) return null;
             var lines = Lines.Where(item => item.SalesOrderId == order.Id)
-                .Select(item => new OrderLineView(item, [])).ToArray();
+                .Select(item => new OrderLineView(item, [],
+                    Promotions.SingleOrDefault(promotion => promotion.SalesOrderLineId == item.Id))).ToArray();
             return new(order, lines, History.Where(item => item.SalesOrderId == order.Id).ToArray(), [],
                 new Dictionary<Guid, string>(), new Dictionary<Guid, string>(), new Dictionary<Guid, int>());
         }

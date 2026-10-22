@@ -145,6 +145,8 @@ public sealed class IdentityAuthorizationTests : IClassFixture<IdentityAuthoriza
         public UserAccount WarehouseKeeper { get; }
         public UserAccount InactiveAdmin { get; }
 
+        public UserAccount AddTestUser(string email, string role) => AddUser(email, role, true);
+
         public string CreateToken(UserAccount user)
         {
             var descriptor = new SecurityTokenDescriptor

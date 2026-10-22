@@ -42,6 +42,7 @@ public static class ServiceCollectionExtensions
         services.AddExceptionHandler<QrLabelExceptionHandler>();
         services.AddExceptionHandler<PromotionExceptionHandler>();
         services.AddExceptionHandler<RetailerExceptionHandler>();
+        services.AddExceptionHandler<RefundExceptionHandler>();
         services.AddExceptionHandler<TerritoryExceptionHandler>();
         services.AddExceptionHandler<ShelfLifeDiscountExceptionHandler>();
         services.AddExceptionHandler<TransitTableExceptionHandler>();

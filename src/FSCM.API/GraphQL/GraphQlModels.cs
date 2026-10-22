@@ -56,11 +56,6 @@ public sealed class WarehouseGraphQlExtensions
         CancellationToken cancellationToken) =>
         await loader.LoadAsync(warehouse.Id, cancellationToken) ?? [];
 
-    public async Task<IReadOnlyList<TransitTimeRuleResult>> TransitTimeRules(
-        [Parent] WarehouseResult warehouse,
-        ITransitTimeRulesByWarehouseIdDataLoader loader,
-        CancellationToken cancellationToken) =>
-        await loader.LoadAsync(warehouse.Id, cancellationToken) ?? [];
 }
 
 [ExtendObjectType<RetailerDetails>]
@@ -111,8 +106,10 @@ public sealed class GoodsReceiptLineGraphQlExtensions
     public ProductReference Product([Parent] GoodsReceiptLineResult line) =>
         new(line.ProductId, line.Sku, line.ProductName);
 
-    public BatchReference Batch([Parent] GoodsReceiptLineResult line) =>
-        new(line.BatchId, line.BatchCode, line.ExpirationDate);
+    public BatchReference? Batch([Parent] GoodsReceiptLineResult line) =>
+        line.BatchId.HasValue && line.BatchCode is not null
+            ? new(line.BatchId.Value, line.BatchCode, line.ExpirationDate)
+            : null;
 }
 
 [ExtendObjectType<QrLabelResult>]

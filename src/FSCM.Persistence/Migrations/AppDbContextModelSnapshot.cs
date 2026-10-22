@@ -919,6 +919,10 @@ namespace FSCM.Persistence.Migrations
                     b.Property<DateTimeOffset>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<int>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("integer");
+
                     b.Property<Guid>("WarehouseId")
                         .HasColumnType("uuid");
 
@@ -937,7 +941,10 @@ namespace FSCM.Persistence.Migrations
 
                     b.HasIndex("WarehouseId");
 
-                    b.ToTable("GOODS_RECEIPT", (string)null);
+                    b.ToTable("GOODS_RECEIPT", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_GOODS_RECEIPT_Status", "\"Status\" IN ('Pending', 'Received')");
+                        });
                 });
 
             modelBuilder.Entity("FSCM.Domain.Entities.GoodsReceiptLine", b =>
@@ -958,6 +965,9 @@ namespace FSCM.Persistence.Migrations
                     b.Property<Guid>("ProductId")
                         .HasColumnType("uuid");
 
+                    b.Property<DateOnly>("ProductionDate")
+                        .HasColumnType("date");
+
                     b.Property<decimal>("ReceivedQuantity")
                         .HasPrecision(18, 3)
                         .HasColumnType("numeric(18,3)");
@@ -974,6 +984,8 @@ namespace FSCM.Persistence.Migrations
 
                     b.ToTable("GOODS_RECEIPT_LINE", null, t =>
                         {
+                            t.HasCheckConstraint("CK_GOODS_RECEIPT_LINE_Dates", "\"ProductionDate\" < \"ExpirationDate\"");
+
                             t.HasCheckConstraint("CK_GOODS_RECEIPT_LINE_ReceivedQuantity", "\"ReceivedQuantity\" > 0 AND TRUNC(\"ReceivedQuantity\") = \"ReceivedQuantity\"");
                         });
                 });
@@ -1385,6 +1397,132 @@ namespace FSCM.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("FSCM.Domain.Entities.ManualRefund", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<decimal>("Amount")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<string>("CreateOperationKey")
+                        .IsRequired()
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)");
+
+                    b.Property<string>("CreateRequestHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("CreatedByUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("EvidenceOperationKey")
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)");
+
+                    b.Property<string>("EvidenceReference")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<string>("EvidenceRequestHash")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<Guid>("PaymentId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<string>("Recipient")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<Guid>("SalesOrderId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)");
+
+                    b.Property<DateTimeOffset?>("SubmittedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("SubmittedByUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("TransactionReference")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<DateTimeOffset?>("TransferredAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("VerificationNote")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<string>("VerificationOperationKey")
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)");
+
+                    b.Property<string>("VerificationRequestHash")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<DateTimeOffset?>("VerifiedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("VerifiedByUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CreateOperationKey")
+                        .IsUnique();
+
+                    b.HasIndex("CreatedByUserId");
+
+                    b.HasIndex("EvidenceOperationKey")
+                        .IsUnique()
+                        .HasFilter("\"EvidenceOperationKey\" IS NOT NULL");
+
+                    b.HasIndex("PaymentId");
+
+                    b.HasIndex("SubmittedByUserId");
+
+                    b.HasIndex("VerificationOperationKey")
+                        .IsUnique()
+                        .HasFilter("\"VerificationOperationKey\" IS NOT NULL");
+
+                    b.HasIndex("VerifiedByUserId");
+
+                    b.HasIndex("SalesOrderId", "Status");
+
+                    b.ToTable("MANUAL_REFUND", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_MANUAL_REFUND_Amount", "\"Amount\" > 0");
+                        });
+                });
+
             modelBuilder.Entity("FSCM.Domain.Entities.MapDistanceCache", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1587,11 +1725,36 @@ namespace FSCM.Persistence.Migrations
                         .HasPrecision(5, 2)
                         .HasColumnType("numeric(5,2)");
 
+                    b.Property<DateTimeOffset>("EffectiveFromSnapshot")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset>("EffectiveToSnapshot")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<bool>("IsServerFinal")
                         .HasColumnType("boolean");
 
+                    b.Property<decimal>("MinimumQuantitySnapshot")
+                        .HasPrecision(18, 3)
+                        .HasColumnType("numeric(18,3)");
+
+                    b.Property<string>("PromotionCodeSnapshot")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
+
                     b.Property<Guid>("PromotionId")
                         .HasColumnType("uuid");
+
+                    b.Property<string>("PromotionNameSnapshot")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("PromotionTypeSnapshot")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)");
 
                     b.Property<Guid>("SalesOrderLineId")
                         .HasColumnType("uuid");
@@ -1691,6 +1854,10 @@ namespace FSCM.Persistence.Migrations
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
+
+                    b.Property<decimal>("AdjustedAmount")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
 
                     b.Property<decimal>("Amount")
                         .HasPrecision(18, 2)
@@ -1820,6 +1987,8 @@ namespace FSCM.Persistence.Migrations
 
                     b.ToTable("PAYMENT", null, t =>
                         {
+                            t.HasCheckConstraint("CK_PAYMENT_AdjustedAmount", "\"AdjustedAmount\" >= 0 AND \"AdjustedAmount\" <= \"Amount\"");
+
                             t.HasCheckConstraint("CK_PAYMENT_Amount", "\"Amount\" > 0");
 
                             t.HasCheckConstraint("CK_PAYMENT_ConfirmedAmount", "\"ConfirmedAmount\" >= 0 AND \"ConfirmedAmount\" <= \"Amount\"");
@@ -3183,6 +3352,30 @@ namespace FSCM.Persistence.Migrations
                     b.Property<int>("LineNumber")
                         .HasColumnType("integer");
 
+                    b.Property<int?>("MlorMinimumLifeHours")
+                        .HasColumnType("integer");
+
+                    b.Property<decimal>("MlorMinimumLifeRatio")
+                        .HasPrecision(6, 5)
+                        .HasColumnType("numeric(6,5)");
+
+                    b.Property<Guid?>("MlorProductCategoryId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("MlorResolvedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("MlorSourceRuleId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("MlorSourceScope")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<int>("MlorSourceVersion")
+                        .HasColumnType("integer");
+
                     b.Property<decimal>("NetAmount")
                         .HasPrecision(18, 2)
                         .HasColumnType("numeric(18,2)");
@@ -3191,6 +3384,9 @@ namespace FSCM.Persistence.Migrations
                         .HasPrecision(18, 3)
                         .HasColumnType("numeric(18,3)");
 
+                    b.Property<DateTimeOffset>("PricedAt")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<Guid>("ProductId")
                         .HasColumnType("uuid");
 
@@ -3198,6 +3394,15 @@ namespace FSCM.Persistence.Migrations
                         .IsRequired()
                         .HasMaxLength(200)
                         .HasColumnType("character varying(200)");
+
+                    b.Property<DateTimeOffset>("ProductPriceEffectiveFrom")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset?>("ProductPriceEffectiveTo")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("ProductPriceId")
+                        .HasColumnType("uuid");
 
                     b.Property<Guid>("SalesOrderId")
                         .HasColumnType("uuid");
@@ -3213,12 +3418,21 @@ namespace FSCM.Persistence.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("MlorProductCategoryId");
+
+                    b.HasIndex("MlorSourceRuleId");
+
                     b.HasIndex("ProductId");
+
+                    b.HasIndex("ProductPriceId");
 
                     b.HasIndex("SalesOrderId", "LineNumber")
                         .IsUnique();
 
-                    b.ToTable("SALES_ORDER_LINE", (string)null);
+                    b.ToTable("SALES_ORDER_LINE", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_SALES_ORDER_LINE_MLOR_RATIO", "\"MlorMinimumLifeRatio\" > 0 AND \"MlorMinimumLifeRatio\" < 1");
+                        });
                 });
 
             modelBuilder.Entity("FSCM.Domain.Entities.ShelfLifeDiscountTable", b =>
@@ -4476,6 +4690,37 @@ namespace FSCM.Persistence.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("FSCM.Domain.Entities.ManualRefund", b =>
+                {
+                    b.HasOne("FSCM.Domain.Entities.UserAccount", null)
+                        .WithMany()
+                        .HasForeignKey("CreatedByUserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("FSCM.Domain.Entities.Payment", null)
+                        .WithMany()
+                        .HasForeignKey("PaymentId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("FSCM.Domain.Entities.SalesOrder", null)
+                        .WithMany()
+                        .HasForeignKey("SalesOrderId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("FSCM.Domain.Entities.UserAccount", null)
+                        .WithMany()
+                        .HasForeignKey("SubmittedByUserId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("FSCM.Domain.Entities.UserAccount", null)
+                        .WithMany()
+                        .HasForeignKey("VerifiedByUserId")
+                        .OnDelete(DeleteBehavior.Restrict);
+                });
+
             modelBuilder.Entity("FSCM.Domain.Entities.MapDistanceCache", b =>
                 {
                     b.HasOne("FSCM.Domain.Entities.MapLocation", null)
@@ -5018,9 +5263,25 @@ namespace FSCM.Persistence.Migrations
 
             modelBuilder.Entity("FSCM.Domain.Entities.SalesOrderLine", b =>
                 {
+                    b.HasOne("FSCM.Domain.Entities.ProductCategory", null)
+                        .WithMany()
+                        .HasForeignKey("MlorProductCategoryId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("FSCM.Domain.Entities.RetailerProductMlor", null)
+                        .WithMany()
+                        .HasForeignKey("MlorSourceRuleId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
                     b.HasOne("FSCM.Domain.Entities.Product", null)
                         .WithMany()
                         .HasForeignKey("ProductId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("FSCM.Domain.Entities.ProductPrice", null)
+                        .WithMany()
+                        .HasForeignKey("ProductPriceId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 

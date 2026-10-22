@@ -2,6 +2,7 @@ namespace FSCM.Application.Features.Inventory;
 
 public static class GoodsReceiptStatuses
 {
+    public const string Pending = "Pending";
     public const string Received = "Received";
 }
 

@@ -35,6 +35,27 @@ public sealed record OrderAllocationResult(
     string? DiscountSourceCode,
     string Status);
 
+public sealed record OrderMlorSnapshotResult(
+    string SourceScope,
+    Guid? SourceRuleId,
+    int SourceVersion,
+    Guid? ProductCategoryId,
+    decimal MinimumLifeRatio,
+    int? MinimumLifeHours,
+    DateTimeOffset ResolvedAt);
+
+public sealed record OrderOrdinaryPromotionSnapshotResult(
+    Guid PromotionId,
+    string Code,
+    string Name,
+    string Type,
+    decimal MinimumQuantity,
+    decimal DiscountPercent,
+    decimal DiscountAmount,
+    DateTimeOffset EffectiveFrom,
+    DateTimeOffset EffectiveTo,
+    DateTimeOffset AppliedAt);
+
 public sealed record OrderLineResult(
     Guid Id,
     int LineNumber,
@@ -49,6 +70,12 @@ public sealed record OrderLineResult(
     decimal NetAmount,
     string? DiscountSourceType,
     string? DiscountSourceCode,
+    Guid ProductPriceId,
+    DateTimeOffset ProductPriceEffectiveFrom,
+    DateTimeOffset? ProductPriceEffectiveTo,
+    DateTimeOffset PricedAt,
+    OrderMlorSnapshotResult Mlor,
+    OrderOrdinaryPromotionSnapshotResult? OrdinaryPromotion,
     DateTimeOffset? EstimatedArrivalAt,
     bool FinalPricePendingAllocation,
     IReadOnlyCollection<OrderAllocationResult> Allocations)

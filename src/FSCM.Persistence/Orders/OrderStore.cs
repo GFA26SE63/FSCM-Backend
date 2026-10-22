@@ -1,5 +1,7 @@
 using System.Data;
+using System.Text.Json;
 using FSCM.Application.Features.Orders;
+using FSCM.Application.Features.WarehouseConfiguration;
 using FSCM.Domain.Authorization;
 using FSCM.Domain.Entities;
 using FSCM.Persistence.DbContexts;
@@ -56,13 +58,52 @@ public sealed class OrderStore(AppDbContext dbContext) : IOrderStore
         dbContext.MapLocationRecords.AsNoTracking()
             .SingleOrDefaultAsync(item => item.RetailerId == retailerId, cancellationToken);
 
-    public Task<decimal?> FindMlorRatioAsync(
-        Guid retailerId, Guid productId, CancellationToken cancellationToken) =>
-        dbContext.RetailerProductMlorRecords.AsNoTracking()
-            .Where(item => item.RetailerId == retailerId && item.ProductId == productId && item.IsActive)
-            .OrderByDescending(item => item.EffectiveFrom)
-            .Select(item => (decimal?)item.MinimumLifeRatio)
+    public async Task<OrderMlorSnapshot?> ResolveMlorAsync(
+        Guid retailerId, Guid productId, DateTimeOffset at, CancellationToken cancellationToken)
+    {
+        var product = await dbContext.ProductRecords.AsNoTracking()
+            .SingleOrDefaultAsync(item => item.Id == productId, cancellationToken);
+        if (product is null) return null;
+
+        var active = await dbContext.RetailerProductMlorRecords.AsNoTracking()
+            .Where(item => item.RetailerId == retailerId && item.IsActive &&
+                           item.EffectiveFrom <= at &&
+                           (!item.EffectiveTo.HasValue || item.EffectiveTo.Value > at))
+            .ToArrayAsync(cancellationToken);
+        var skuRule = active.Where(item => item.ProductId == productId)
+            .OrderByDescending(item => item.Version).FirstOrDefault();
+        if (skuRule is not null) return Snapshot("Sku", skuRule, null, at);
+
+        var categories = await dbContext.ProductCategoryRecords.AsNoTracking()
+            .ToDictionaryAsync(item => item.Id, cancellationToken);
+        var categoryId = product.ProductCategoryId;
+        var visited = new HashSet<Guid>();
+        while (visited.Add(categoryId))
+        {
+            var categoryRule = active.Where(item => item.ProductCategoryId == categoryId)
+                .OrderByDescending(item => item.Version).FirstOrDefault();
+            if (categoryRule is not null) return Snapshot("Category", categoryRule, categoryId, at);
+            if (!categories.TryGetValue(categoryId, out var category) || !category.ParentCategoryId.HasValue)
+                break;
+            categoryId = category.ParentCategoryId.Value;
+        }
+
+        var configuration = await dbContext.SystemConfigurationRecords.AsNoTracking()
+            .Where(item => item.ConfigKey == BusinessConfigurationKeys.DefaultMlorRatio &&
+                           item.IsActive && item.EffectiveFrom <= at)
+            .OrderByDescending(item => item.Version)
             .FirstOrDefaultAsync(cancellationToken);
+        if (configuration is null) return null;
+        using var document = JsonDocument.Parse(configuration.ConfigValue);
+        if (!document.RootElement.TryGetDecimal(out var ratio) || ratio <= 0 || ratio >= 1)
+            return null;
+        return new("Default", null, configuration.Version, null, ratio, null, at);
+    }
+
+    private static OrderMlorSnapshot Snapshot(
+        string scope, RetailerProductMlor rule, Guid? categoryId, DateTimeOffset at) =>
+        new(scope, rule.Id, rule.Version, categoryId, rule.MinimumLifeRatio,
+            rule.MinimumLifeHours, at);
 
     public Task<string?> FindConfigurationAsync(string key, CancellationToken cancellationToken) =>
         dbContext.SystemConfigurationRecords.AsNoTracking()
@@ -230,6 +271,9 @@ public sealed class OrderStore(AppDbContext dbContext) : IOrderStore
         var allocationQuery = dbContext.AllocationRecords.Where(item => lineIds.Contains(item.SalesOrderLineId));
         if (!forUpdate) allocationQuery = allocationQuery.AsNoTracking();
         var allocations = await allocationQuery.OrderBy(item => item.AllocationSequence).ToArrayAsync(cancellationToken);
+        var promotionSnapshots = await dbContext.OrderPromotionRecords.AsNoTracking()
+            .Where(item => lineIds.Contains(item.SalesOrderLineId))
+            .ToArrayAsync(cancellationToken);
         var batchIds = allocations.Select(item => item.BatchId).Distinct().ToArray();
         var warehouseIds = allocations.Select(item => item.WarehouseId).Distinct().ToArray();
         var batchCodes = await dbContext.BatchRecords.AsNoTracking().Where(item => batchIds.Contains(item.Id))
@@ -249,7 +293,9 @@ public sealed class OrderStore(AppDbContext dbContext) : IOrderStore
             .OrderBy(item => item.CreatedAt)
             .ToArrayAsync(cancellationToken);
         var lineViews = lines.Select(line => new OrderLineView(
-            line, allocations.Where(item => item.SalesOrderLineId == line.Id).ToArray())).ToArray();
+            line,
+            allocations.Where(item => item.SalesOrderLineId == line.Id).ToArray(),
+            promotionSnapshots.SingleOrDefault(item => item.SalesOrderLineId == line.Id))).ToArray();
         return new OrderView(order, lineViews, history, deliveries, batchCodes, warehouseCodes, inventoryVersions);
     }
 

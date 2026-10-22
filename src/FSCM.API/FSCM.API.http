@@ -78,19 +78,7 @@ Accept: application/json
 
 ###
 
-GET {{FSCM.API_HostAddress}}/api/v1/warehouses/{{warehouses.response.body.$.[0].id}}/transit-time-rules
-Authorization: Bearer {{login.response.body.$.accessToken}}
-Accept: application/json
-
-###
-
-GET {{FSCM.API_HostAddress}}/api/v1/warehouses/{{warehouses.response.body.$.[0].id}}/transit-time-rules/history
-Authorization: Bearer {{login.response.body.$.accessToken}}
-Accept: application/json
-
-###
-
-# Admin and Warehouse Keeper can receive stock. Reusing the same key and payload returns the same receipt.
+# Admin and Warehouse Keeper create a pending receipt. Reusing the same key and payload returns the same receipt.
 # @name goodsReceipt
 POST {{FSCM.API_HostAddress}}/api/v1/goods-receipts
 Authorization: Bearer {{login.response.body.$.accessToken}}
@@ -104,10 +92,18 @@ Content-Type: application/json
       "productId": "{{products.response.body.$.items[0].id}}",
       "sourceLotCode": "LOT-S1D-DEMO",
       "quantity": 10,
+      "productionDate": "2026-12-31",
       "expirationDate": "2027-12-31"
     }
   ]
 }
+
+###
+
+# Approval is idempotent. Only this command creates/merges the batch and increases inventory.
+POST {{FSCM.API_HostAddress}}/api/v1/goods-receipts/{{goodsReceipt.response.body.$.id}}/approve
+Authorization: Bearer {{login.response.body.$.accessToken}}
+Accept: application/json
 
 ###
 

@@ -89,10 +89,4 @@ internal static class ReadDataLoaders
             .Where(item => salesGroupIds.Contains(item.Id))
             .ToDictionary(item => item.Id);
 
-    [DataLoader]
-    public static Task<Dictionary<Guid, TransitTimeRuleResult[]>> GetTransitTimeRulesByWarehouseIdAsync(
-        IReadOnlyList<Guid> warehouseIds,
-        WarehouseConfigurationService service,
-        CancellationToken cancellationToken) =>
-        service.ListTransitRulesByWarehouseIdsAsync(warehouseIds, cancellationToken);
 }

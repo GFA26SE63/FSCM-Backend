@@ -25,12 +25,19 @@ public sealed class OrderServiceTests
         Assert.Equal(900m, result.FinalAmount);
         Assert.True(result.FinalPricePendingAllocation);
         Assert.True(Assert.Single(result.Lines).FinalPricePendingAllocation);
-        Assert.Equal("KM-001", Assert.Single(result.Lines).DiscountSourceCode);
+        var line = Assert.Single(result.Lines);
+        Assert.Equal("KM-001", line.DiscountSourceCode);
+        Assert.Equal("Sku", line.Mlor.SourceScope);
+        Assert.Equal(2, line.Mlor.SourceVersion);
+        Assert.Equal(0.25m, line.Mlor.MinimumLifeRatio);
+        Assert.NotEqual(Guid.Empty, line.ProductPriceId);
+        Assert.Equal("Khuyến mãi tháng mười", line.OrdinaryPromotion!.Name);
         Assert.Empty(result.Lines.Single().Allocations);
         Assert.Equal(0m, fixture.Store.Balance.ReservedQuantity);
         Assert.Equal(50m, fixture.Store.Balance.AvailableQuantity);
         Assert.Contains("pendingRun", fixture.Store.Orders.Single().AllocationTraceJson, StringComparison.OrdinalIgnoreCase);
         Assert.False(Assert.Single(fixture.Store.Promotions).IsServerFinal);
+        Assert.Equal("KM-001", fixture.Store.Promotions.Single().PromotionCodeSnapshot);
         Assert.Equal("OrderCaptured", Assert.Single(fixture.Store.Audits).Action);
     }
 
@@ -340,8 +347,11 @@ public sealed class OrderServiceTests
                 [new(Batch, Balance, Warehouse, 10.802m, 106.743m)]);
         public Task<MapLocation?> FindRetailerLocationAsync(Guid retailerId, CancellationToken cancellationToken) =>
             Task.FromResult<MapLocation?>(retailerId == Retailer.Id ? RetailerLocation : null);
-        public Task<decimal?> FindMlorRatioAsync(Guid retailerId, Guid productId, CancellationToken cancellationToken) =>
-            Task.FromResult<decimal?>(0.25m);
+        public Task<OrderMlorSnapshot?> ResolveMlorAsync(
+            Guid retailerId, Guid productId, DateTimeOffset at, CancellationToken cancellationToken) =>
+            Task.FromResult<OrderMlorSnapshot?>(new(
+                "Sku", Guid.Parse("30000000-0000-0000-0000-000000000001"), 2,
+                null, 0.25m, null, at));
         public Task<string?> FindConfigurationAsync(string key, CancellationToken cancellationToken) =>
             Task.FromResult(Configurations.GetValueOrDefault(key));
         public Task<string> NextOrderCodeAsync(CancellationToken cancellationToken) => Task.FromResult("DH-001030");
@@ -375,7 +385,8 @@ public sealed class OrderServiceTests
             if (order is null) return null;
             var lines = Lines.Where(item => item.SalesOrderId == order.Id)
                 .Select(line => new OrderLineView(line,
-                    Allocations.Where(item => item.SalesOrderLineId == line.Id).ToArray())).ToArray();
+                    Allocations.Where(item => item.SalesOrderLineId == line.Id).ToArray(),
+                    Promotions.SingleOrDefault(item => item.SalesOrderLineId == line.Id))).ToArray();
             return new(order, lines, History.Where(item => item.SalesOrderId == order.Id).ToArray(), [],
                 new Dictionary<Guid, string> { [Batch.Id] = Batch.BatchCode },
                 new Dictionary<Guid, string> { [Warehouse.Id] = Warehouse.Code },
@@ -390,7 +401,9 @@ public sealed class OrderServiceTests
         {
             var gross = quantity * 100m;
             return Task.FromResult(new OrderPriceSnapshot(100m, gross, 10m, gross * 0.1m,
-                gross * 0.9m, Guid.NewGuid(), "Campaign", "KM-001"));
+                gross * 0.9m, Guid.Parse("50000000-0000-0000-0000-000000000001"),
+                Now.AddDays(-30), null, Guid.NewGuid(), "Campaign", "KM-001",
+                "Khuyến mãi tháng mười", 5m, Now.AddDays(-1), Now.AddDays(10)));
         }
     }
 

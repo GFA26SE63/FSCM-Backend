@@ -98,8 +98,8 @@ public sealed class PhysicalSchemaModelTests
 
         Assert.Equal(ExpectedTables, tableNames);
         Assert.Equal(73, entityTypes.Length);
-        Assert.Equal(772, entityTypes.Sum(entityType => entityType.GetProperties().Count()));
-        Assert.Equal(160, entityTypes.Sum(entityType => entityType.GetForeignKeys().Count()));
+        Assert.Equal(792, entityTypes.Sum(entityType => entityType.GetProperties().Count()));
+        Assert.Equal(163, entityTypes.Sum(entityType => entityType.GetForeignKeys().Count()));
         Assert.All(
             entityTypes.SelectMany(entityType => entityType.GetForeignKeys()),
             foreignKey => Assert.Equal(DeleteBehavior.Restrict, foreignKey.DeleteBehavior));
@@ -288,12 +288,15 @@ public sealed class PhysicalSchemaModelTests
         using var context = CreateContext();
         var batch = context.Model.FindEntityType(typeof(Batch))!;
         var balance = context.Model.FindEntityType(typeof(InventoryBalance))!;
+        var receipt = context.Model.FindEntityType(typeof(GoodsReceipt))!;
         var receiptLine = context.Model.FindEntityType(typeof(GoodsReceiptLine))!;
 
         Assert.Equal("date", batch.FindProperty(nameof(Batch.ExpirationDate))!.GetColumnType());
+        Assert.Equal("date", receiptLine.FindProperty(nameof(GoodsReceiptLine.ProductionDate))!.GetColumnType());
         Assert.Equal("date", receiptLine.FindProperty(nameof(GoodsReceiptLine.ExpirationDate))!.GetColumnType());
         Assert.True(batch.FindProperty(nameof(Batch.Version))!.IsConcurrencyToken);
         Assert.True(balance.FindProperty(nameof(InventoryBalance.Version))!.IsConcurrencyToken);
+        Assert.True(receipt.FindProperty(nameof(GoodsReceipt.Version))!.IsConcurrencyToken);
         Assert.Null(balance.FindProperty("HeldQuantity"));
         var transaction = context.Model.FindEntityType(typeof(InventoryTransaction))!;
         Assert.Null(transaction.FindProperty("HeldQuantityDelta"));
@@ -364,6 +367,7 @@ public sealed class PhysicalSchemaModelTests
         using var context = CreateContext();
         var order = context.Model.FindEntityType(typeof(SalesOrder))!;
         var line = context.Model.FindEntityType(typeof(SalesOrderLine))!;
+        var orderPromotion = context.Model.FindEntityType(typeof(OrderPromotion))!;
         var allocation = context.Model.FindEntityType(typeof(Allocation))!;
         var retailer = context.Model.FindEntityType(typeof(Retailer))!;
 
@@ -373,6 +377,12 @@ public sealed class PhysicalSchemaModelTests
         Assert.False(order.FindProperty(nameof(SalesOrder.RetailerNameSnapshot))!.IsNullable);
         Assert.False(order.FindProperty(nameof(SalesOrder.FinalPricePendingAllocation))!.IsNullable);
         Assert.False(line.FindProperty(nameof(SalesOrderLine.FinalPricePendingAllocation))!.IsNullable);
+        Assert.False(line.FindProperty(nameof(SalesOrderLine.ProductPriceId))!.IsNullable);
+        Assert.False(line.FindProperty(nameof(SalesOrderLine.MlorSourceScope))!.IsNullable);
+        Assert.False(line.FindProperty(nameof(SalesOrderLine.MlorSourceVersion))!.IsNullable);
+        Assert.False(line.FindProperty(nameof(SalesOrderLine.MlorMinimumLifeRatio))!.IsNullable);
+        Assert.False(orderPromotion.FindProperty(nameof(OrderPromotion.PromotionCodeSnapshot))!.IsNullable);
+        Assert.False(orderPromotion.FindProperty(nameof(OrderPromotion.EffectiveFromSnapshot))!.IsNullable);
 
         var orderId = line.FindProperty(nameof(SalesOrderLine.SalesOrderId))!;
         var lineNumber = line.FindProperty(nameof(SalesOrderLine.LineNumber))!;

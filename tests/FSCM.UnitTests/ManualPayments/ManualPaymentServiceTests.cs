@@ -158,6 +158,7 @@ public sealed class ManualPaymentServiceTests
                 Method = paymentMethod,
                 Status = PaymentStatuses.Unpaid,
                 Amount = Order.FinalAmount,
+                AdjustedAmount = Order.FinalAmount,
                 ConfirmedAmount = 0,
                 FinalApprovedAt = Now.AddHours(-2),
                 FinalApprovalReference = "RUN-20261020-01",

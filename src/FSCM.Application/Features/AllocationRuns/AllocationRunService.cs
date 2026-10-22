@@ -99,11 +99,17 @@ public sealed class AllocationRunService(
 
                 foreach (var line in candidate.Lines.OrderBy(item => item.Line.LineNumber))
                 {
+                    // The ratio the order was accepted under wins. Re-resolving here would let a
+                    // configuration change made after acceptance silently restate an old order,
+                    // which is exactly what F22 stores the snapshot to prevent. Resolution is a
+                    // fallback for lines captured before that snapshot existed.
                     var key = (candidate.Order.RetailerId, line.Line.ProductId);
-                    var resolved = mlor.TryGetValue(key, out var value)
-                        ? value
-                        : throw AllocationRunOperationException.Conflict(
-                            $"No MLOR could be resolved for order {candidate.Order.OrderCode} line {line.Line.LineNumber}.");
+                    var resolved = line.Line.MlorMinimumLifeRatio > 0
+                        ? (Ratio: line.Line.MlorMinimumLifeRatio, Source: line.Line.MlorSourceScope)
+                        : mlor.TryGetValue(key, out var value)
+                            ? value
+                            : throw AllocationRunOperationException.Conflict(
+                                $"No MLOR could be resolved for order {candidate.Order.OrderCode} line {line.Line.LineNumber}.");
 
                     runLines.Add(new AllocationRunLine
                     {
