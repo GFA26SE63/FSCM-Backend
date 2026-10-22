@@ -771,6 +771,28 @@ public sealed class DevelopmentDataSeeder(
             }
         }
 
+        // The shared transit table the ETA function reads. Without it a fresh database answers
+        // every ETA request with "no transit table has been published yet".
+        if (!await dbContext.TransitTableRecords.AnyAsync(item => item.IsActive, cancellationToken))
+        {
+            var transitTable = new TransitTable
+            {
+                Id = Guid.NewGuid(),
+                Version = 1,
+                MaxServingDistanceMeters = 20_000,
+                EffectiveFrom = now,
+                IsActive = true,
+                Note = "Bảng vận chuyển dùng chung mặc định cho môi trường phát triển",
+                CreatedByUserId = adminUserId,
+                CreatedAt = now,
+                UpdatedAt = now
+            };
+            dbContext.TransitTableRecords.Add(transitTable);
+            dbContext.TransitTableBandRecords.AddRange(
+                CreateTransitBand(transitTable.Id, 0, 10_000, 60, 1_440, 80_000m, now),
+                CreateTransitBand(transitTable.Id, 10_000, 20_000, 60, 2_880, 120_000m, now));
+        }
+
         foreach (var definition in new[] { (Product: products["SKU001"], Ratio: 0.25m), (Product: products["SKU002"], Ratio: 0.30m) })
         {
             if (!await dbContext.RetailerProductMlorRecords.AnyAsync(
@@ -851,6 +873,20 @@ public sealed class DevelopmentDataSeeder(
             IsActive = true,
             CreatedAt = now,
             UpdatedAt = now
+        };
+
+    private static TransitTableBand CreateTransitBand(
+        Guid transitTableId, int minimumDistance, int maximumDistance,
+        int handlingMinutes, int transitMinutes, decimal estimatedCost, DateTimeOffset now) => new()
+        {
+            Id = Guid.NewGuid(),
+            TransitTableId = transitTableId,
+            MinDistanceMeters = minimumDistance,
+            MaxDistanceMeters = maximumDistance,
+            HandlingMinutes = handlingMinutes,
+            TransitMinutes = transitMinutes,
+            EstimatedCostAmount = estimatedCost,
+            CreatedAt = now
         };
 
     private async Task<IReadOnlyDictionary<string, SalesGroup>> SeedSalesGroupsAsync(
