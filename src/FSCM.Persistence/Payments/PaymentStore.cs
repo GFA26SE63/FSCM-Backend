@@ -1,4 +1,5 @@
 using FSCM.Application.Features.Payments;
+using FSCM.Application.Features.Refunds;
 using FSCM.Domain.Authorization;
 using FSCM.Domain.Entities;
 using FSCM.Persistence.DbContexts;
@@ -138,6 +139,13 @@ public sealed class PaymentStore(AppDbContext dbContext) : IPaymentStore
         var order = await orderQuery.SingleAsync(cancellationToken);
         var retailer = await dbContext.RetailerRecords.AsNoTracking()
             .SingleAsync(item => item.Id == order.RetailerId, cancellationToken);
-        return new(payment, order, retailer);
+        var pendingRefundAmount = await dbContext.ManualRefundRecords.AsNoTracking()
+            .Where(item => item.PaymentId == payment.Id &&
+                (item.Status == RefundStatuses.PendingRefund || item.Status == RefundStatuses.AwaitingVerification))
+            .SumAsync(item => (decimal?)item.Amount, cancellationToken) ?? 0;
+        var refundedAmount = await dbContext.ManualRefundRecords.AsNoTracking()
+            .Where(item => item.PaymentId == payment.Id && item.Status == RefundStatuses.Refunded)
+            .SumAsync(item => (decimal?)item.Amount, cancellationToken) ?? 0;
+        return new(payment, order, retailer, pendingRefundAmount, refundedAmount);
     }
 }

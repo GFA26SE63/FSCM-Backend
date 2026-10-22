@@ -91,7 +91,7 @@ public sealed class PaymentService(
             if (actorRole == SystemRoles.Sales && view.Order.CreatedByUserId != actorUserId)
                 throw PaymentOperationException.Forbidden(
                     "Sales can only record cash collection for their own order.");
-            var outstanding = view.Payment.Amount - view.Payment.ConfirmedAmount;
+            var outstanding = Math.Max(0, view.Payment.AdjustedAmount - view.Payment.ConfirmedAmount);
             if (data.Amount != outstanding)
                 throw PaymentOperationException.Conflict(
                     $"Only full collection is supported; outstanding amount is {outstanding:0.##} VND.");
@@ -108,7 +108,7 @@ public sealed class PaymentService(
                 view.Payment.Version
             };
             view.Payment.Status = PaymentStatuses.Paid;
-            view.Payment.ConfirmedAmount = view.Payment.Amount;
+            view.Payment.ConfirmedAmount = view.Payment.AdjustedAmount;
             view.Payment.PaidDate = DateOnly.FromDateTime(now.ToOffset(VietnamOffset).DateTime);
             view.Payment.CollectionMethod = collectionMethod;
             view.Payment.OperationKey = operationKey;
@@ -320,8 +320,10 @@ public sealed class PaymentService(
             view.Payment.Id, view.Order.Id, view.Order.OrderCode, view.Retailer.Id,
             view.Order.RetailerCodeSnapshot, view.Order.RetailerNameSnapshot,
             view.Order.CreatedByUserId, view.Payment.Method, effectiveStatus,
-            view.Payment.Amount, view.Payment.ConfirmedAmount,
-            view.Payment.Amount - view.Payment.ConfirmedAmount,
+            view.Payment.Amount, view.Payment.AdjustedAmount, view.Payment.ConfirmedAmount,
+            Math.Max(0, view.Payment.AdjustedAmount - view.Payment.ConfirmedAmount),
+            view.PendingRefundAmount, view.RefundedAmount,
+            Math.Max(0, view.Payment.ConfirmedAmount - view.Payment.AdjustedAmount - view.RefundedAmount),
             view.Order.CreditTermDays, view.Payment.FinalApprovedAt,
             view.Payment.FinalApprovalReference, view.Payment.DeliveredDate,
             view.Payment.DueDate, daysOverdue, view.Payment.PaidDate,

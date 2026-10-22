@@ -11,6 +11,7 @@ using FSCM.Application.Features.Orders;
 using FSCM.Application.Features.Payments;
 using FSCM.Application.Features.Picking;
 using FSCM.Application.Features.Retailers;
+using FSCM.Application.Features.Refunds;
 using FSCM.Application.Features.QrLabels;
 using FSCM.Application.Features.Promotions;
 using FSCM.Application.Features.Territory;
@@ -48,6 +49,7 @@ public static class DependencyInjection
         services.AddScoped<QrLabelService>();
         services.AddScoped<PromotionService>();
         services.AddScoped<RetailerService>();
+        services.AddScoped<RefundService>();
         services.AddScoped<TerritoryService>();
         services.AddScoped<TransitTableService>();
         services.AddScoped<DeliveryEtaService>();

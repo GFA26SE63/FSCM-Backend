@@ -11,6 +11,7 @@ using FSCM.Application.Features.Picking;
 using FSCM.Application.Features.QrLabels;
 using FSCM.Application.Features.Promotions;
 using FSCM.Application.Features.Retailers;
+using FSCM.Application.Features.Refunds;
 using FSCM.Application.Features.Territory;
 using FSCM.Application.Features.WarehouseConfiguration;
 using FSCM.Domain.Authorization;
@@ -397,6 +398,24 @@ public sealed class SystemQuery
     {
         var user = CurrentUser.From(accessor);
         return service.GetAsync(id, user.Id, user.Role, cancellationToken);
+    }
+
+    [Authorize(Roles = [SystemRoles.Admin, SystemRoles.Operator, SystemRoles.SalesManager, SystemRoles.Sales, SystemRoles.Retailer])]
+    public Task<RefundResult> Refund(Guid id, [Service] RefundService service,
+        [Service] IHttpContextAccessor accessor, CancellationToken cancellationToken)
+    {
+        var user = CurrentUser.From(accessor);
+        return service.GetAsync(id, user.Id, user.Role, cancellationToken);
+    }
+
+    [Authorize(Roles = [SystemRoles.Admin, SystemRoles.Operator, SystemRoles.SalesManager, SystemRoles.Sales, SystemRoles.Retailer])]
+    [UsePaging(DefaultPageSize = 20, MaxPageSize = 100, IncludeTotalCount = true, RequirePagingBoundaries = true), UseFiltering, UseSorting]
+    public async Task<IEnumerable<RefundResult>> Refunds(Guid? orderId, string? status,
+        [Service] RefundService service, [Service] IHttpContextAccessor accessor,
+        CancellationToken cancellationToken)
+    {
+        var user = CurrentUser.From(accessor);
+        return await service.ListAsync(orderId, status, user.Id, user.Role, cancellationToken);
     }
 
     [Authorize(Roles = [SystemRoles.Admin, SystemRoles.Operator, SystemRoles.SalesManager, SystemRoles.Sales, SystemRoles.Retailer])]

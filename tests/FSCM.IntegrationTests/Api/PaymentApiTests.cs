@@ -5,6 +5,7 @@ using System.Text.Json;
 using FSCM.Application.Features.ManualPayments;
 using FSCM.Application.Features.Orders;
 using FSCM.Application.Features.Payments;
+using FSCM.Application.Features.Refunds;
 using FSCM.Domain.Authorization;
 using FSCM.Domain.Entities;
 using Microsoft.AspNetCore.TestHost;
@@ -120,6 +121,62 @@ public sealed class PaymentApiTests
         Assert.Equal(2, store.Ledger.Version);
     }
 
+    [Fact]
+    public async Task Refund_rest_commands_and_graphql_read_share_verified_manual_lifecycle()
+    {
+        using var identityFactory = new IdentityAuthorizationTests.IdentityApiFactory();
+        var operatorUser = identityFactory.AddTestUser("operator.payment@test.local", SystemRoles.Operator);
+        var store = new TestFinanceStore();
+        store.Ledger.ConfirmedAmount = store.Ledger.Amount;
+        store.Ledger.AdjustedAmount = store.Ledger.Amount - 50_000;
+        store.Ledger.Status = PaymentStatuses.Paid;
+        using var factory = CreateFactory(identityFactory, store);
+        using var client = factory.CreateClient();
+
+        client.DefaultRequestHeaders.Authorization = Bearer(operatorUser, identityFactory);
+        client.DefaultRequestHeaders.Add("Idempotency-Key", "api-refund-create-001");
+        var createdResponse = await client.PostAsJsonAsync("/api/v1/refunds", new
+        {
+            salesOrderId = store.Order.Id,
+            amount = 50_000,
+            recipient = "Cửa hàng An Phú",
+            reason = "Điều chỉnh nghĩa vụ hợp lệ"
+        });
+        Assert.Equal(HttpStatusCode.Created, createdResponse.StatusCode);
+        var created = JsonDocument.Parse(await createdResponse.Content.ReadAsStringAsync()).RootElement;
+        var refundId = created.GetProperty("id").GetGuid();
+
+        client.DefaultRequestHeaders.Remove("Idempotency-Key");
+        client.DefaultRequestHeaders.Add("Idempotency-Key", "api-refund-evidence-001");
+        var evidenceResponse = await client.PostAsJsonAsync($"/api/v1/refunds/{refundId}/evidence", new
+        {
+            expectedVersion = 0,
+            transferredAt = DateTimeOffset.UtcNow.AddMinutes(-2),
+            transactionReference = "FT-REFUND-001",
+            evidenceReference = "private://refunds/FT-REFUND-001"
+        });
+        Assert.Equal(HttpStatusCode.OK, evidenceResponse.StatusCode);
+
+        client.DefaultRequestHeaders.Authorization = Bearer(identityFactory.Admin, identityFactory);
+        client.DefaultRequestHeaders.Remove("Idempotency-Key");
+        client.DefaultRequestHeaders.Add("Idempotency-Key", "api-refund-verify-001");
+        var verifyResponse = await client.PostAsJsonAsync($"/api/v1/refunds/{refundId}/verify",
+            new { expectedVersion = 1, note = "Đã đối chiếu chứng từ" });
+        Assert.Equal(HttpStatusCode.OK, verifyResponse.StatusCode);
+
+        var graphQlResponse = await client.PostAsJsonAsync("/graphql", new
+        {
+            query = "query($id: UUID!, $orderId: UUID!) { refund(id: $id) { id status refundDueAmount transactionReference } refunds(orderId: $orderId, first: 20) { totalCount nodes { id status refundedAmount } } }",
+            variables = new { id = refundId, orderId = store.Order.Id }
+        });
+        Assert.Equal(HttpStatusCode.OK, graphQlResponse.StatusCode);
+        var graphQl = JsonDocument.Parse(await graphQlResponse.Content.ReadAsStringAsync());
+        Assert.False(graphQl.RootElement.TryGetProperty("errors", out _), graphQl.RootElement.ToString());
+        var data = graphQl.RootElement.GetProperty("data");
+        Assert.Equal(RefundStatuses.Refunded, data.GetProperty("refund").GetProperty("status").GetString());
+        Assert.Equal(1, data.GetProperty("refunds").GetProperty("totalCount").GetInt32());
+    }
+
     private static Microsoft.AspNetCore.Mvc.Testing.WebApplicationFactory<Program> CreateFactory(
         IdentityAuthorizationTests.IdentityApiFactory identityFactory,
         TestFinanceStore store) => identityFactory.WithWebHostBuilder(builder =>
@@ -131,13 +188,15 @@ public sealed class PaymentApiTests
             services.AddSingleton<IManualPaymentStore>(store);
             services.RemoveAll<IPayOsGateway>();
             services.AddSingleton<IPayOsGateway, TestPayOsGateway>();
+            services.RemoveAll<IRefundStore>();
+            services.AddSingleton<IRefundStore>(store);
         }));
 
     private static AuthenticationHeaderValue Bearer(
         UserAccount user, IdentityAuthorizationTests.IdentityApiFactory factory) =>
         new("Bearer", factory.CreateToken(user));
 
-    private sealed class TestFinanceStore : IPaymentStore, IManualPaymentStore
+    private sealed class TestFinanceStore : IPaymentStore, IManualPaymentStore, IRefundStore
     {
         public TestFinanceStore()
         {
@@ -166,6 +225,7 @@ public sealed class PaymentApiTests
                 Method = Order.PaymentMethod,
                 Status = PaymentStatuses.Unpaid,
                 Amount = Order.FinalAmount,
+                AdjustedAmount = Order.FinalAmount,
                 ConfirmedAmount = 0,
                 FinalApprovedAt = DateTimeOffset.UtcNow.AddMinutes(-5),
                 FinalApprovalReference = "RUN-20261021-01",
@@ -180,6 +240,7 @@ public sealed class PaymentApiTests
         public Payment Ledger { get; }
         public List<ManualPayment> ManualPayments { get; } = [];
         public List<AuditLog> Audits { get; } = [];
+        public List<ManualRefund> Refunds { get; } = [];
 
         public Task<PaymentView?> FindByOrderAsync(Guid orderId, bool forUpdate,
             CancellationToken cancellationToken) =>
@@ -240,6 +301,33 @@ public sealed class PaymentApiTests
         private ManualPaymentView? ToView(ManualPayment? payment) => payment is null
             ? null
             : new(payment, Order.OrderCode, Ledger.Amount, Ledger.ConfirmedAmount);
+
+        public Task<RefundView?> FindAsync(Guid id, bool forUpdate, CancellationToken cancellationToken) =>
+            Task.FromResult(ToRefundView(Refunds.SingleOrDefault(item => item.Id == id)));
+        Task<RefundView?> IRefundStore.FindByOperationKeyAsync(
+            string operationKey, CancellationToken cancellationToken) =>
+            Task.FromResult(ToRefundView(Refunds.SingleOrDefault(item =>
+                item.CreateOperationKey == operationKey || item.EvidenceOperationKey == operationKey ||
+                item.VerificationOperationKey == operationKey)));
+        Task<IReadOnlyCollection<RefundView>> IRefundStore.ListAsync(
+            Guid? orderId, string? status, Guid actorUserId, string actorRole,
+            CancellationToken cancellationToken) => Task.FromResult<IReadOnlyCollection<RefundView>>(
+            Refunds.Where(item => (!orderId.HasValue || item.SalesOrderId == orderId) &&
+                    (status is null || item.Status == status))
+                .Select(item => ToRefundView(item)!).ToArray());
+        public Task<(decimal Pending, decimal Refunded)> TotalsAsync(
+            Guid paymentId, CancellationToken cancellationToken) => Task.FromResult((
+            Refunds.Where(item => item.Status is RefundStatuses.PendingRefund or RefundStatuses.AwaitingVerification)
+                .Sum(item => item.Amount),
+            Refunds.Where(item => item.Status == RefundStatuses.Refunded).Sum(item => item.Amount)));
+        public void Add(ManualRefund refund) => Refunds.Add(refund);
+
+        private RefundView? ToRefundView(ManualRefund? refund)
+        {
+            if (refund is null) return null;
+            var totals = TotalsAsync(Ledger.Id, default).Result;
+            return new(refund, Ledger, Order, Retailer, totals.Pending, totals.Refunded);
+        }
     }
 
     private sealed class TestPayOsGateway : IPayOsGateway
