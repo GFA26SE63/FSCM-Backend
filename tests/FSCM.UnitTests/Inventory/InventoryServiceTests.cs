@@ -87,7 +87,7 @@ public sealed class InventoryServiceTests
 
         public Task<GoodsReceiptResult> ReceiveAsync(string key, decimal quantity, DateOnly expirationDate) =>
             Service.ReceiveAsync(UserId, SystemRoles.WarehouseKeeper, Store.Warehouse.Id, key,
-                [new ReceiveGoodsLineData(Store.Product.Id, "LÔ-THỬ-NGHIỆM", quantity, expirationDate)],
+                [new ReceiveGoodsLineData(Store.Product.Id, "LÔ-THỬ-NGHIỆM", quantity, new DateOnly(2026, 10, 1), expirationDate)],
                 CancellationToken.None);
     }
 

@@ -30,7 +30,7 @@ public sealed class GoodsReceiptsController(InventoryService service) : Controll
     {
         var result = await service.ReceiveAsync(GetActorUserId(), GetActorRole(), request.WarehouseId,
             idempotencyKey, request.Lines.Select(item => new ReceiveGoodsLineData(item.ProductId,
-                item.SourceLotCode, item.Quantity, item.ExpirationDate)).ToArray(), cancellationToken);
+                item.SourceLotCode, item.Quantity, item.ProductionDate, item.ExpirationDate)).ToArray(), cancellationToken);
         return CreatedAtAction(nameof(Get), new { receiptId = result.Id }, result);
     }
 

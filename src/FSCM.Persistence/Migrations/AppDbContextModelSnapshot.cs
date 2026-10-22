@@ -636,6 +636,9 @@ namespace FSCM.Persistence.Migrations
                     b.Property<Guid>("ProductId")
                         .HasColumnType("uuid");
 
+                    b.Property<DateOnly>("ProductionDate")
+                        .HasColumnType("date");
+
                     b.Property<decimal>("ReceivedQuantity")
                         .HasPrecision(18, 3)
                         .HasColumnType("numeric(18,3)");
