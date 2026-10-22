@@ -362,9 +362,27 @@ public sealed partial class WarehouseConfigurationService(
                 if (!value.TryGetDecimal(out var ratio) || ratio <= 0 || ratio >= 1)
                     throw WarehouseConfigurationOperationException.Validation("Default MLOR ratio must be greater than 0 and less than 1.");
                 break;
+            case BusinessConfigurationKeys.EtaSchedule:
+                if (value.ValueKind != JsonValueKind.Object ||
+                    !TryGetLocalTime(value, "allocationRunLocalTime", out var runAt) ||
+                    !TryGetLocalTime(value, "planApprovalDeadlineLocalTime", out var approveBy) ||
+                    approveBy <= runAt ||
+                    !value.TryGetProperty("dispatchSlotsLocalTime", out var slots) ||
+                    slots.ValueKind != JsonValueKind.Array || slots.GetArrayLength() == 0)
+                    throw WarehouseConfigurationOperationException.Validation(
+                        "ETA schedule needs a run time, a later approval deadline, and at least one dispatch slot.");
+                break;
         }
 
         return JsonSerializer.Serialize(value);
+    }
+
+    private static bool TryGetLocalTime(JsonElement element, string name, out TimeOnly value)
+    {
+        value = default;
+        return element.TryGetProperty(name, out var property) &&
+            property.ValueKind == JsonValueKind.String &&
+            TimeOnly.TryParse(property.GetString(), out value);
     }
 
     private static bool TryGetDecimal(JsonElement element, string name, out decimal value)

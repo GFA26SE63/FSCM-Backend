@@ -3031,6 +3031,90 @@ namespace FSCM.Persistence.Migrations
                     b.ToTable("SYSTEM_CONFIGURATION", (string)null);
                 });
 
+            modelBuilder.Entity("FSCM.Domain.Entities.TransitTable", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("CreatedByUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("EffectiveFrom")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset?>("EffectiveTo")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean");
+
+                    b.Property<int>("MaxServingDistanceMeters")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Note")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("Version")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CreatedByUserId");
+
+                    b.HasIndex("IsActive")
+                        .IsUnique()
+                        .HasFilter("\"IsActive\" = TRUE");
+
+                    b.HasIndex("Version")
+                        .IsUnique();
+
+                    b.ToTable("TRANSIT_TABLE", (string)null);
+                });
+
+            modelBuilder.Entity("FSCM.Domain.Entities.TransitTableBand", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<decimal>("EstimatedCostAmount")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<int>("HandlingMinutes")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("MaxDistanceMeters")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("MinDistanceMeters")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("TransitMinutes")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid>("TransitTableId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TransitTableId", "MinDistanceMeters")
+                        .IsUnique();
+
+                    b.ToTable("TRANSIT_TABLE_BAND", (string)null);
+                });
+
             modelBuilder.Entity("FSCM.Domain.Entities.TransitTimeRule", b =>
                 {
                     b.Property<Guid>("Id")
@@ -4523,6 +4607,24 @@ namespace FSCM.Persistence.Migrations
                         .WithMany()
                         .HasForeignKey("UpdatedByUserId")
                         .OnDelete(DeleteBehavior.Restrict);
+                });
+
+            modelBuilder.Entity("FSCM.Domain.Entities.TransitTable", b =>
+                {
+                    b.HasOne("FSCM.Domain.Entities.UserAccount", null)
+                        .WithMany()
+                        .HasForeignKey("CreatedByUserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("FSCM.Domain.Entities.TransitTableBand", b =>
+                {
+                    b.HasOne("FSCM.Domain.Entities.TransitTable", null)
+                        .WithMany()
+                        .HasForeignKey("TransitTableId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("FSCM.Domain.Entities.TransitTimeRule", b =>

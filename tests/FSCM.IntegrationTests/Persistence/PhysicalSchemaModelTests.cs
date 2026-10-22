@@ -59,6 +59,8 @@ public sealed class PhysicalSchemaModelTests
         "SALES_ORDER_LINE",
         "STOCK_HOLD",
         "SYSTEM_CONFIGURATION",
+        "TRANSIT_TABLE",
+        "TRANSIT_TABLE_BAND",
         "TRANSIT_TIME_RULE",
         "USER_ACCOUNT",
         "USER_REGION_ASSIGNMENT",
@@ -88,9 +90,9 @@ public sealed class PhysicalSchemaModelTests
             .ToArray();
 
         Assert.Equal(ExpectedTables, tableNames);
-        Assert.Equal(64, entityTypes.Length);
-        Assert.Equal(673, entityTypes.Sum(entityType => entityType.GetProperties().Count()));
-        Assert.Equal(145, entityTypes.Sum(entityType => entityType.GetForeignKeys().Count()));
+        Assert.Equal(66, entityTypes.Length);
+        Assert.Equal(691, entityTypes.Sum(entityType => entityType.GetProperties().Count()));
+        Assert.Equal(147, entityTypes.Sum(entityType => entityType.GetForeignKeys().Count()));
         Assert.All(
             entityTypes.SelectMany(entityType => entityType.GetForeignKeys()),
             foreignKey => Assert.Equal(DeleteBehavior.Restrict, foreignKey.DeleteBehavior));

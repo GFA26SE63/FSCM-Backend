@@ -1,8 +1,10 @@
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
+using FSCM.Application.Features.DeliveryEta;
 using FSCM.Application.Features.Maps;
 using FSCM.Application.Features.Retailers;
+using FSCM.Application.Features.TransitTables;
 using FSCM.Application.Features.WarehouseConfiguration;
 using FSCM.Domain.Entities;
 using Microsoft.AspNetCore.TestHost;
@@ -26,6 +28,10 @@ public sealed class S1BMasterDataApiTests
                 services.AddSingleton<IWarehouseConfigurationStore>(warehouseStore);
                 services.RemoveAll<IMapStore>();
                 services.AddSingleton<IMapStore>(mapStore);
+                services.RemoveAll<IDeliveryEtaStore>();
+                services.AddSingleton<IDeliveryEtaStore>(mapStore);
+                services.RemoveAll<ITransitTableStore>();
+                services.AddSingleton<ITransitTableStore>(new TestTransitTableStore());
                 services.RemoveAll<TimeProvider>();
                 services.AddSingleton<TimeProvider>(new FixedTimeProvider(TestMapStore.Now));
             }));
@@ -61,18 +67,14 @@ public sealed class S1BMasterDataApiTests
         {
             warehouseId = warehouseStore.Warehouse.Id,
             retailerId = mapStore.RetailerId,
-            requestedAt = TestMapStore.Now,
-            allocationRunAt = TestMapStore.Now.AddHours(4),
-            approvalMinutes = 45,
-            preparationMinutes = 30,
-            nextDispatchAt = TestMapStore.Now.AddHours(7),
-            bufferMinutes = 30
+            referenceAt = TestMapStore.Now
         });
         etaResponse.EnsureSuccessStatusCode();
         var eta = JsonDocument.Parse(await etaResponse.Content.ReadAsStringAsync()).RootElement;
-        Assert.Equal(240, eta.GetProperty("waitForRunMinutes").GetInt32());
-        Assert.Equal(45, eta.GetProperty("waitForDispatchMinutes").GetInt32());
-        Assert.Equal(180_000m, eta.GetProperty("estimatedTransportCost").GetDecimal());
+        var breakdown = eta.GetProperty("breakdown");
+        Assert.Equal(240, breakdown.GetProperty("waitForRunMinutes").GetInt32());
+        Assert.Equal(660, breakdown.GetProperty("waitForDispatchSlotMinutes").GetInt32());
+        Assert.Equal(180_000m, eta.GetProperty("estimatedCostAmount").GetDecimal());
 
         var graphQlResponse = await client.PostAsJsonAsync("/graphql", new
         {
@@ -207,7 +209,7 @@ public sealed class S1BMasterDataApiTests
         public Task SaveChangesAsync(CancellationToken cancellationToken) => Task.CompletedTask;
     }
 
-    private sealed class TestMapStore(TestWarehouseStore warehouseStore) : IMapStore
+    private sealed class TestMapStore(TestWarehouseStore warehouseStore) : IMapStore, IDeliveryEtaStore
     {
         public static readonly DateTimeOffset Now = new(2026, 10, 22, 1, 0, 0, TimeSpan.Zero);
         public Guid RetailerId { get; } = Guid.NewGuid();
@@ -244,9 +246,58 @@ public sealed class S1BMasterDataApiTests
             IsActive = true
         });
         public Task<IReadOnlyCollection<MapDistanceCache>> ListDistancesAsync(Guid? warehouseId, Guid? retailerId, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyCollection<MapDistanceCache>>([]);
-        public Task<TransitTimeRule?> FindTransitRuleAsync(Guid warehouseId, int distanceMeters, CancellationToken cancellationToken) => Task.FromResult<TransitTimeRule?>(warehouseStore.Rules.Single(item => item.IsActive));
+        public Task<SystemConfiguration?> FindScheduleConfigurationAsync(CancellationToken cancellationToken) =>
+            Task.FromResult<SystemConfiguration?>(new()
+            {
+                ConfigKey = "eta.schedule",
+                ConfigValue = "{\"timeZone\":\"Asia/Ho_Chi_Minh\",\"allocationRunLocalTime\":\"12:00\"," +
+                    "\"planApprovalDeadlineLocalTime\":\"14:00\",\"preparationMinutes\":240," +
+                    "\"bufferMinutes\":60,\"dispatchSlotsLocalTime\":[\"06:00\",\"14:00\"]}",
+                Version = 3,
+                IsActive = true
+            });
+        public Task<MapDistanceCache?> FindDistanceAsync(Guid warehouseId, Guid retailerId, CancellationToken cancellationToken) =>
+            FindActiveDistanceAsync(warehouseId, retailerId, false, cancellationToken);
+        public Task<MapLocation?> FindLocationAsync(string entityType, Guid entityId, CancellationToken cancellationToken) =>
+            FindLocationAsync(entityType, entityId, false, cancellationToken);
         public void AddLocation(MapLocation location) { }
         public void AddDistance(MapDistanceCache distance) { }
+        public Task SaveChangesAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+    }
+
+    private sealed class TestTransitTableStore : ITransitTableStore
+    {
+        private readonly TransitTable _table = new()
+        {
+            Id = Guid.NewGuid(),
+            Version = 1,
+            MaxServingDistanceMeters = 20_000,
+            EffectiveFrom = TestMapStore.Now.AddDays(-1),
+            IsActive = true
+        };
+
+        private TransitTableView View => new(_table,
+        [
+            new TransitTableBand
+            {
+                TransitTableId = _table.Id,
+                MinDistanceMeters = 0,
+                MaxDistanceMeters = 20_000,
+                HandlingMinutes = 60,
+                TransitMinutes = 120,
+                EstimatedCostAmount = 180_000m
+            }
+        ]);
+
+        public Task<TransitTableView?> FindCurrentAsync(CancellationToken cancellationToken) => Task.FromResult<TransitTableView?>(View);
+        public Task<TransitTableView?> FindByVersionAsync(int version, CancellationToken cancellationToken) => Task.FromResult<TransitTableView?>(version == 1 ? View : null);
+        public Task<TransitTableView?> FindEffectiveAtAsync(DateTimeOffset at, CancellationToken cancellationToken) => Task.FromResult<TransitTableView?>(View);
+        public Task<IReadOnlyCollection<TransitTableView>> ListAsync(CancellationToken cancellationToken) => Task.FromResult<IReadOnlyCollection<TransitTableView>>([View]);
+        public Task<TransitTable?> FindCurrentForUpdateAsync(CancellationToken cancellationToken) => Task.FromResult<TransitTable?>(_table);
+        public Task<int> MaxVersionAsync(CancellationToken cancellationToken) => Task.FromResult(1);
+        public void AddTable(TransitTable table) { }
+        public void AddBands(IEnumerable<TransitTableBand> bands) { }
+        public void AddAuditLog(AuditLog auditLog) { }
         public Task SaveChangesAsync(CancellationToken cancellationToken) => Task.CompletedTask;
     }
 

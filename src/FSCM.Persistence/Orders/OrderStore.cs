@@ -56,12 +56,6 @@ public sealed class OrderStore(AppDbContext dbContext) : IOrderStore
         dbContext.MapLocationRecords.AsNoTracking()
             .SingleOrDefaultAsync(item => item.RetailerId == retailerId, cancellationToken);
 
-    public async Task<IReadOnlyCollection<TransitTimeRule>> ListTransitRulesAsync(
-        IReadOnlyCollection<Guid> warehouseIds, CancellationToken cancellationToken) =>
-        await dbContext.TransitTimeRuleRecords.AsNoTracking()
-            .Where(item => warehouseIds.Contains(item.WarehouseId) && item.IsActive)
-            .ToArrayAsync(cancellationToken);
-
     public Task<decimal?> FindMlorRatioAsync(
         Guid retailerId, Guid productId, CancellationToken cancellationToken) =>
         dbContext.RetailerProductMlorRecords.AsNoTracking()
