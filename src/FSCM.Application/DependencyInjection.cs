@@ -1,5 +1,6 @@
 using FluentValidation;
 using FSCM.Application.Features.Catalog;
+using FSCM.Application.Features.DeliveryEta;
 using FSCM.Application.Features.Deliveries;
 using FSCM.Application.Features.Identity;
 using FSCM.Application.Features.Inventory;
@@ -13,6 +14,7 @@ using FSCM.Application.Features.Retailers;
 using FSCM.Application.Features.QrLabels;
 using FSCM.Application.Features.Promotions;
 using FSCM.Application.Features.Territory;
+using FSCM.Application.Features.TransitTables;
 using FSCM.Application.Features.WarehouseConfiguration;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -47,6 +49,8 @@ public static class DependencyInjection
         services.AddScoped<PromotionService>();
         services.AddScoped<RetailerService>();
         services.AddScoped<TerritoryService>();
+        services.AddScoped<TransitTableService>();
+        services.AddScoped<DeliveryEtaService>();
         services.AddScoped<WarehouseConfigurationService>();
 
         return services;

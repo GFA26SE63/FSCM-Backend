@@ -771,6 +771,28 @@ public sealed class DevelopmentDataSeeder(
             }
         }
 
+        // The shared transit table the ETA function reads. Without it a fresh database answers
+        // every ETA request with "no transit table has been published yet".
+        if (!await dbContext.TransitTableRecords.AnyAsync(item => item.IsActive, cancellationToken))
+        {
+            var transitTable = new TransitTable
+            {
+                Id = Guid.NewGuid(),
+                Version = 1,
+                MaxServingDistanceMeters = 20_000,
+                EffectiveFrom = now,
+                IsActive = true,
+                Note = "Bảng vận chuyển dùng chung mặc định cho môi trường phát triển",
+                CreatedByUserId = adminUserId,
+                CreatedAt = now,
+                UpdatedAt = now
+            };
+            dbContext.TransitTableRecords.Add(transitTable);
+            dbContext.TransitTableBandRecords.AddRange(
+                CreateTransitBand(transitTable.Id, 0, 10_000, 60, 1_440, 80_000m, now),
+                CreateTransitBand(transitTable.Id, 10_000, 20_000, 60, 2_880, 120_000m, now));
+        }
+
         foreach (var definition in new[] { (Product: products["SKU001"], Ratio: 0.25m), (Product: products["SKU002"], Ratio: 0.30m) })
         {
             if (!await dbContext.RetailerProductMlorRecords.AnyAsync(
@@ -802,7 +824,12 @@ public sealed class DevelopmentDataSeeder(
             new ConfigurationSeed(BusinessConfigurationKeys.OrderBufferStockCartons, "0", "integer",
                 "Tồn kho đệm mặc định dành cho giới hạn số lượng đặt hàng"),
             new ConfigurationSeed(BusinessConfigurationKeys.OrderStepCartons, "1", "integer",
-                "Bước số lượng đặt hàng mặc định là một thùng")
+                "Bước số lượng đặt hàng mặc định là một thùng"),
+            new ConfigurationSeed(BusinessConfigurationKeys.EtaSchedule,
+                "{\"timeZone\":\"Asia/Ho_Chi_Minh\",\"allocationRunLocalTime\":\"12:00\"," +
+                "\"planApprovalDeadlineLocalTime\":\"14:00\",\"preparationMinutes\":240," +
+                "\"bufferMinutes\":60,\"dispatchSlotsLocalTime\":[\"06:00\",\"14:00\"]}", "object",
+                "Lịch tính ETA: chạy đợt 12:00, hạn duyệt 14:00, soạn 4 giờ, đệm 1 giờ, xuất 06:00 và 14:00")
         };
         foreach (var definition in configurations)
         {
@@ -846,6 +873,20 @@ public sealed class DevelopmentDataSeeder(
             IsActive = true,
             CreatedAt = now,
             UpdatedAt = now
+        };
+
+    private static TransitTableBand CreateTransitBand(
+        Guid transitTableId, int minimumDistance, int maximumDistance,
+        int handlingMinutes, int transitMinutes, decimal estimatedCost, DateTimeOffset now) => new()
+        {
+            Id = Guid.NewGuid(),
+            TransitTableId = transitTableId,
+            MinDistanceMeters = minimumDistance,
+            MaxDistanceMeters = maximumDistance,
+            HandlingMinutes = handlingMinutes,
+            TransitMinutes = transitMinutes,
+            EstimatedCostAmount = estimatedCost,
+            CreatedAt = now
         };
 
     private async Task<IReadOnlyDictionary<string, SalesGroup>> SeedSalesGroupsAsync(
