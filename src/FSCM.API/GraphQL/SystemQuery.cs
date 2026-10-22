@@ -99,12 +99,6 @@ public sealed class SystemQuery
         [Service] MapService service, CancellationToken cancellationToken) =>
         await service.ListDistancesAsync(warehouseId, retailerId, cancellationToken);
 
-    [Authorize, UsePaging(DefaultPageSize = 20, MaxPageSize = 100, IncludeTotalCount = true, RequirePagingBoundaries = true), UseFiltering, UseSorting]
-    public async Task<IEnumerable<TransitTimeRuleResult>> TransitTimeRules(Guid warehouseId,
-        [DefaultValue(false)] bool includeInactive,
-        [Service] WarehouseConfigurationService service, CancellationToken cancellationToken) =>
-        await service.ListTransitRulesAsync(warehouseId, includeInactive, cancellationToken);
-
     [Authorize(Roles = [SystemRoles.Admin]), UsePaging(DefaultPageSize = 20, MaxPageSize = 100, IncludeTotalCount = true, RequirePagingBoundaries = true), UseFiltering, UseSorting]
     public async Task<IEnumerable<MlorResult>> MlorConfigurations(
         Guid? retailerId, Guid? productCategoryId, Guid? productId,
