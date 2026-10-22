@@ -13,7 +13,6 @@ public sealed class InventoryBalanceConfiguration : IEntityTypeConfiguration<Inv
         builder.Property(entity => entity.Id).HasColumnType("uuid").IsRequired();
         builder.Property(entity => entity.BatchId).HasColumnType("uuid").IsRequired();
         builder.Property(entity => entity.PhysicalQuantity).HasPrecision(18, 3).IsRequired();
-        builder.Property(entity => entity.HeldQuantity).HasPrecision(18, 3).IsRequired();
         builder.Property(entity => entity.ReservedQuantity).HasPrecision(18, 3).IsRequired();
         builder.Property(entity => entity.AvailableQuantity).HasPrecision(18, 3).IsRequired();
         builder.Property(entity => entity.Version).IsRequired().IsConcurrencyToken();
@@ -25,9 +24,8 @@ public sealed class InventoryBalanceConfiguration : IEntityTypeConfiguration<Inv
         builder.ToTable(table =>
         {
             table.HasCheckConstraint("CK_INVENTORY_BALANCE_PhysicalQuantity", "\"PhysicalQuantity\" >= 0");
-            table.HasCheckConstraint("CK_INVENTORY_BALANCE_HeldQuantity", "\"HeldQuantity\" >= 0");
             table.HasCheckConstraint("CK_INVENTORY_BALANCE_ReservedQuantity", "\"ReservedQuantity\" >= 0");
-            table.HasCheckConstraint("CK_INVENTORY_BALANCE_AvailableQuantity", "\"AvailableQuantity\" = \"PhysicalQuantity\" - \"HeldQuantity\" - \"ReservedQuantity\" AND \"AvailableQuantity\" >= 0");
+            table.HasCheckConstraint("CK_INVENTORY_BALANCE_AvailableQuantity", "\"AvailableQuantity\" = \"PhysicalQuantity\" - \"ReservedQuantity\" AND \"AvailableQuantity\" >= 0");
         });
     }
 }

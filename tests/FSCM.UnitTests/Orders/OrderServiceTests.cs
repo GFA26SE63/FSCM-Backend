@@ -13,7 +13,7 @@ public sealed class OrderServiceTests
     private static readonly DateTimeOffset Now = new(2026, 10, 14, 3, 0, 0, TimeSpan.Zero);
 
     [Fact]
-    public async Task Sales_creates_priced_allocated_and_held_order_for_assigned_retailer()
+    public async Task Sales_captures_indicative_order_without_selecting_batch_or_changing_inventory()
     {
         var fixture = new Fixture();
 
@@ -23,15 +23,26 @@ public sealed class OrderServiceTests
         Assert.Equal(1_000m, result.SubtotalAmount);
         Assert.Equal(100m, result.DiscountAmount);
         Assert.Equal(900m, result.FinalAmount);
-        Assert.Equal("KM-001", Assert.Single(result.Lines).DiscountSourceCode);
-        Assert.Equal("Held", Assert.Single(result.Lines.Single().Allocations).Status);
-        Assert.Equal(10m, fixture.Store.Balance.HeldQuantity);
-        Assert.Equal(40m, fixture.Store.Balance.AvailableQuantity);
-        Assert.Contains("filterTrace", fixture.Store.Orders.Single().AllocationTraceJson);
+        Assert.True(result.FinalPricePendingAllocation);
+        Assert.True(Assert.Single(result.Lines).FinalPricePendingAllocation);
+        var line = Assert.Single(result.Lines);
+        Assert.Equal("KM-001", line.DiscountSourceCode);
+        Assert.Equal("Sku", line.Mlor.SourceScope);
+        Assert.Equal(2, line.Mlor.SourceVersion);
+        Assert.Equal(0.25m, line.Mlor.MinimumLifeRatio);
+        Assert.NotEqual(Guid.Empty, line.ProductPriceId);
+        Assert.Equal("Khuyến mãi tháng mười", line.OrdinaryPromotion!.Name);
+        Assert.Empty(result.Lines.Single().Allocations);
+        Assert.Equal(0m, fixture.Store.Balance.ReservedQuantity);
+        Assert.Equal(50m, fixture.Store.Balance.AvailableQuantity);
+        Assert.Contains("pendingRun", fixture.Store.Orders.Single().AllocationTraceJson, StringComparison.OrdinalIgnoreCase);
+        Assert.False(Assert.Single(fixture.Store.Promotions).IsServerFinal);
+        Assert.Equal("KM-001", fixture.Store.Promotions.Single().PromotionCodeSnapshot);
+        Assert.Equal("OrderCaptured", Assert.Single(fixture.Store.Audits).Action);
     }
 
     [Fact]
-    public async Task Repeated_client_order_key_returns_original_order_without_holding_twice()
+    public async Task Repeated_client_order_key_returns_original_order_without_inventory_side_effect()
     {
         var fixture = new Fixture();
         var request = fixture.Request(10);
@@ -41,8 +52,8 @@ public sealed class OrderServiceTests
 
         Assert.Equal(first.Id, second.Id);
         Assert.Single(fixture.Store.Orders);
-        Assert.Equal(10m, fixture.Store.Balance.HeldQuantity);
-        Assert.Equal(1, fixture.Inventory.HoldCalls);
+        Assert.Equal(0m, fixture.Store.Balance.ReservedQuantity);
+        Assert.Equal(50m, fixture.Store.Balance.AvailableQuantity);
     }
 
     [Fact]
@@ -57,15 +68,15 @@ public sealed class OrderServiceTests
     }
 
     [Fact]
-    public async Task Insufficient_stock_rejects_whole_order_without_hold()
+    public async Task Order_capture_accepts_without_checking_current_stock()
     {
         var fixture = new Fixture(physicalQuantity: 5);
 
-        var exception = await Assert.ThrowsAsync<OrderOperationException>(() => fixture.CreateAsync(10));
+        var result = await fixture.CreateAsync(10);
 
-        Assert.Equal("conflict", exception.Code);
-        Assert.Empty(fixture.Store.Orders);
-        Assert.Equal(0, fixture.Inventory.HoldCalls);
+        Assert.Equal(OrderStatuses.PendingApproval, result.Status);
+        Assert.Single(fixture.Store.Orders);
+        Assert.Empty(fixture.Store.Allocations);
         Assert.Equal(5m, fixture.Store.Balance.AvailableQuantity);
     }
 
@@ -82,26 +93,27 @@ public sealed class OrderServiceTests
     }
 
     [Fact]
-    public async Task Operator_approval_reserves_every_allocation()
+    public async Task Reviewing_an_order_parks_it_for_the_run_and_commits_no_stock()
     {
         var fixture = new Fixture();
         var created = await fixture.CreateAsync(10);
 
         var approved = await fixture.Service.ApproveAsync(
-            created.Id, created.Version, fixture.OperatorUserId, default);
+            created.Id, created.Version, fixture.OperatorUserId, SystemRoles.Operator, default);
 
-        Assert.Equal(OrderStatuses.Approved, approved.Status);
-        Assert.Equal(0m, fixture.Store.Balance.HeldQuantity);
-        Assert.Equal(10m, fixture.Store.Balance.ReservedQuantity);
+        Assert.Equal(OrderStatuses.PendingAllocation, approved.Status);
+        Assert.Equal(0m, fixture.Store.Balance.ReservedQuantity);
+        Assert.Equal(50m, fixture.Store.Balance.AvailableQuantity);
         Assert.Equal(1, approved.Version);
-        Assert.Equal(1, fixture.Inventory.ReserveCalls);
-        Assert.Equal(1, fixture.PickingPlan.Calls);
+        Assert.Equal(0, fixture.Inventory.ReserveCalls);
+        // Picking lists come from the run (F43), not from reviewing one order.
+        Assert.Equal(0, fixture.PickingPlan.Calls);
     }
 
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task Reject_or_cancel_releases_inventory(bool cancel)
+    public async Task Reject_or_cancel_has_no_inventory_side_effect_before_allocation(bool cancel)
     {
         var fixture = new Fixture();
         var created = await fixture.CreateAsync(10);
@@ -110,13 +122,81 @@ public sealed class OrderServiceTests
             ? await fixture.Service.CancelAsync(created.Id, created.Version, fixture.SalesUserId,
                 SystemRoles.Sales, "Khách hàng đổi kế hoạch", default)
             : await fixture.Service.RejectAsync(created.Id, created.Version,
-                "Không đáp ứng lịch giao", fixture.OperatorUserId, default);
+                "Không đáp ứng lịch giao", fixture.OperatorUserId, SystemRoles.Operator, default);
 
         Assert.Equal(cancel ? OrderStatuses.Cancelled : OrderStatuses.Rejected, result.Status);
-        Assert.Equal(0m, fixture.Store.Balance.HeldQuantity);
         Assert.Equal(50m, fixture.Store.Balance.AvailableQuantity);
-        Assert.Equal(1, fixture.Inventory.ReleaseCalls);
+        Assert.Equal(0, fixture.Inventory.ReleaseCalls);
         Assert.Equal(cancel ? 1 : 0, fixture.PickingPlan.CancelCalls);
+    }
+
+    [Fact]
+    public async Task Admin_can_review_an_order_not_only_Operator()
+    {
+        var fixture = new Fixture();
+        var created = await fixture.CreateAsync(10);
+
+        var approved = await fixture.Service.ApproveAsync(
+            created.Id, created.Version, fixture.OperatorUserId, SystemRoles.Admin, default);
+
+        Assert.Equal(OrderStatuses.PendingAllocation, approved.Status);
+    }
+
+    [Fact]
+    public async Task Warehouse_keeper_cannot_review_an_order()
+    {
+        var fixture = new Fixture();
+        var created = await fixture.CreateAsync(10);
+
+        var exception = await Assert.ThrowsAsync<OrderOperationException>(() =>
+            fixture.Service.ApproveAsync(created.Id, created.Version, fixture.OperatorUserId,
+                SystemRoles.WarehouseKeeper, default));
+
+        Assert.Equal("forbidden", exception.Code);
+    }
+
+    [Fact]
+    public async Task Reviewing_twice_is_a_no_op_rather_than_a_second_decision()
+    {
+        var fixture = new Fixture();
+        var created = await fixture.CreateAsync(10);
+        var approved = await fixture.Service.ApproveAsync(
+            created.Id, created.Version, fixture.OperatorUserId, SystemRoles.Operator, default);
+
+        var again = await fixture.Service.ApproveAsync(
+            approved.Id, approved.Version, fixture.OperatorUserId, SystemRoles.Operator, default);
+
+        Assert.Equal(approved.Version, again.Version);
+        Assert.Equal(0, fixture.Inventory.ReserveCalls);
+        Assert.Equal(0, fixture.PickingPlan.Calls);
+    }
+
+    [Fact]
+    public async Task An_order_waiting_for_the_run_can_still_be_cancelled()
+    {
+        var fixture = new Fixture();
+        var created = await fixture.CreateAsync(10);
+        var approved = await fixture.Service.ApproveAsync(
+            created.Id, created.Version, fixture.OperatorUserId, SystemRoles.Operator, default);
+
+        var cancelled = await fixture.Service.CancelAsync(approved.Id, approved.Version,
+            fixture.OperatorUserId, SystemRoles.Operator, "Retailer đóng cửa", default);
+
+        Assert.Equal(OrderStatuses.Cancelled, cancelled.Status);
+    }
+
+    [Fact]
+    public async Task Rejecting_without_a_reason_is_refused()
+    {
+        var fixture = new Fixture();
+        var created = await fixture.CreateAsync(10);
+
+        var exception = await Assert.ThrowsAsync<OrderOperationException>(() =>
+            fixture.Service.RejectAsync(created.Id, created.Version, "   ",
+                fixture.OperatorUserId, SystemRoles.Operator, default));
+
+        Assert.Equal("validation_error", exception.Code);
+        Assert.Equal(OrderStatuses.PendingApproval, fixture.Store.Orders.Single().Status);
     }
 
     [Fact]
@@ -126,7 +206,8 @@ public sealed class OrderServiceTests
         var created = await fixture.CreateAsync(10);
 
         var exception = await Assert.ThrowsAsync<OrderOperationException>(() =>
-            fixture.Service.ApproveAsync(created.Id, created.Version + 1, fixture.OperatorUserId, default));
+            fixture.Service.ApproveAsync(created.Id, created.Version + 1, fixture.OperatorUserId,
+                SystemRoles.Operator, default));
 
         Assert.Equal("conflict", exception.Code);
         Assert.Equal(OrderStatuses.PendingApproval, fixture.Store.Orders.Single().Status);
@@ -206,6 +287,7 @@ public sealed class OrderServiceTests
         public List<DomainAllocation> Allocations { get; } = [];
         public List<OrderPromotion> Promotions { get; } = [];
         public List<OrderStatusHistory> History { get; } = [];
+        public List<AuditLog> Audits { get; } = [];
 
         public FakeStore(Guid salesUserId, decimal physicalQuantity)
         {
@@ -265,11 +347,11 @@ public sealed class OrderServiceTests
                 [new(Batch, Balance, Warehouse, 10.802m, 106.743m)]);
         public Task<MapLocation?> FindRetailerLocationAsync(Guid retailerId, CancellationToken cancellationToken) =>
             Task.FromResult<MapLocation?>(retailerId == Retailer.Id ? RetailerLocation : null);
-        public Task<IReadOnlyCollection<TransitTimeRule>> ListTransitRulesAsync(IReadOnlyCollection<Guid> warehouseIds, CancellationToken cancellationToken) =>
-            Task.FromResult<IReadOnlyCollection<TransitTimeRule>>(
-                [new() { Id = Guid.NewGuid(), WarehouseId = Warehouse.Id, MinDistanceMeters = 0, MaxDistanceMeters = 20_000, MaxServingDistanceMeters = 20_000, TransitMinutes = 1_440, IsActive = true }]);
-        public Task<decimal?> FindMlorRatioAsync(Guid retailerId, Guid productId, CancellationToken cancellationToken) =>
-            Task.FromResult<decimal?>(0.25m);
+        public Task<OrderMlorSnapshot?> ResolveMlorAsync(
+            Guid retailerId, Guid productId, DateTimeOffset at, CancellationToken cancellationToken) =>
+            Task.FromResult<OrderMlorSnapshot?>(new(
+                "Sku", Guid.Parse("30000000-0000-0000-0000-000000000001"), 2,
+                null, 0.25m, null, at));
         public Task<string?> FindConfigurationAsync(string key, CancellationToken cancellationToken) =>
             Task.FromResult(Configurations.GetValueOrDefault(key));
         public Task<string> NextOrderCodeAsync(CancellationToken cancellationToken) => Task.FromResult("DH-001030");
@@ -277,8 +359,13 @@ public sealed class OrderServiceTests
             Task.FromResult(ToView(Orders.SingleOrDefault(item => item.Id == orderId)));
         public Task<OrderView?> FindByCodeAsync(string orderCode, bool forUpdate, CancellationToken cancellationToken) =>
             Task.FromResult(ToView(Orders.SingleOrDefault(item => item.OrderCode == orderCode)));
-        public Task<IReadOnlyCollection<OrderView>> ListAsync(Guid actorUserId, string actorRole, string? status, Guid? retailerId, CancellationToken cancellationToken) =>
-            Task.FromResult<IReadOnlyCollection<OrderView>>(Orders.Select(item => ToView(item)!).ToArray());
+        public Task<(IReadOnlyCollection<OrderView> Items, int TotalCount)> ListAsync(
+            Guid actorUserId, string actorRole, OrderListQuery query, CancellationToken cancellationToken)
+        {
+            var items = Orders.Where(item => !query.CreatedByMe || item.CreatedByUserId == actorUserId)
+                .Select(item => ToView(item)!).ToArray();
+            return Task.FromResult<(IReadOnlyCollection<OrderView>, int)>((items, items.Length));
+        }
         public Task<bool> CanViewAsync(OrderView order, Guid actorUserId, string actorRole, CancellationToken cancellationToken) =>
             Task.FromResult(actorRole is SystemRoles.Admin or SystemRoles.Operator || order.Order.CreatedByUserId == actorUserId);
         public void AddOrder(SalesOrder order) => Orders.Add(order);
@@ -286,6 +373,7 @@ public sealed class OrderServiceTests
         public void AddAllocation(DomainAllocation allocation) => Allocations.Add(allocation);
         public void AddPromotion(OrderPromotion promotion) => Promotions.Add(promotion);
         public void AddHistory(OrderStatusHistory history) => History.Add(history);
+        public void AddAuditLog(AuditLog auditLog) => Audits.Add(auditLog);
         public Task SaveChangesAsync(CancellationToken cancellationToken) => Task.CompletedTask;
         public Task ExecuteInTransactionAsync(
             Func<CancellationToken, Task> operation,
@@ -297,8 +385,9 @@ public sealed class OrderServiceTests
             if (order is null) return null;
             var lines = Lines.Where(item => item.SalesOrderId == order.Id)
                 .Select(line => new OrderLineView(line,
-                    Allocations.Where(item => item.SalesOrderLineId == line.Id).ToArray())).ToArray();
-            return new(order, lines, History.Where(item => item.SalesOrderId == order.Id).ToArray(),
+                    Allocations.Where(item => item.SalesOrderLineId == line.Id).ToArray(),
+                    Promotions.SingleOrDefault(item => item.SalesOrderLineId == line.Id))).ToArray();
+            return new(order, lines, History.Where(item => item.SalesOrderId == order.Id).ToArray(), [],
                 new Dictionary<Guid, string> { [Batch.Id] = Batch.BatchCode },
                 new Dictionary<Guid, string> { [Warehouse.Id] = Warehouse.Code },
                 new Dictionary<Guid, int> { [Batch.Id] = Balance.Version });
@@ -307,38 +396,28 @@ public sealed class OrderServiceTests
 
     private sealed class FakePricing : IOrderPricingService
     {
-        public Task<OrderPriceSnapshot> CalculateAsync(Guid productId, int quantity, Guid batchId,
+        public Task<OrderPriceSnapshot> CalculateAsync(Guid productId, int quantity,
             Guid retailerId, DateTimeOffset pricedAt, CancellationToken cancellationToken)
         {
             var gross = quantity * 100m;
             return Task.FromResult(new OrderPriceSnapshot(100m, gross, 10m, gross * 0.1m,
-                gross * 0.9m, Guid.NewGuid(), "Campaign", "KM-001"));
+                gross * 0.9m, Guid.Parse("50000000-0000-0000-0000-000000000001"),
+                Now.AddDays(-30), null, Guid.NewGuid(), "Campaign", "KM-001",
+                "Khuyến mãi tháng mười", 5m, Now.AddDays(-1), Now.AddDays(10)));
         }
     }
 
     private sealed class FakeInventoryLifecycle(FakeStore store) : IInventoryLifecycleService
     {
-        public int HoldCalls { get; private set; }
         public int ReserveCalls { get; private set; }
         public int ReleaseCalls { get; private set; }
-
-        public Task<InventoryLifecycleResult> HoldAsync(Guid allocationId, Guid actorUserId, int expectedVersion, CancellationToken cancellationToken)
-        {
-            HoldCalls++;
-            var allocation = store.Allocations.Single(item => item.Id == allocationId);
-            store.Balance.HeldQuantity += allocation.AllocatedQuantity;
-            store.Balance.AvailableQuantity -= allocation.AllocatedQuantity;
-            store.Balance.Version++;
-            allocation.Status = AllocationInventoryStatuses.Held;
-            return Task.FromResult(Result(allocation));
-        }
 
         public Task<InventoryLifecycleResult> ReserveAsync(Guid allocationId, Guid actorUserId, int expectedVersion, CancellationToken cancellationToken)
         {
             ReserveCalls++;
             var allocation = store.Allocations.Single(item => item.Id == allocationId);
-            store.Balance.HeldQuantity -= allocation.AllocatedQuantity;
             store.Balance.ReservedQuantity += allocation.AllocatedQuantity;
+            store.Balance.AvailableQuantity = store.Balance.PhysicalQuantity - store.Balance.ReservedQuantity;
             store.Balance.Version++;
             allocation.Status = AllocationInventoryStatuses.Reserved;
             return Task.FromResult(Result(allocation));
@@ -349,11 +428,11 @@ public sealed class OrderServiceTests
             ReleaseCalls++;
             var allocation = store.Allocations.Single(item => item.Id == allocationId);
             if (allocation.Status == AllocationInventoryStatuses.Reserved)
+            {
                 store.Balance.ReservedQuantity -= allocation.AllocatedQuantity;
-            else
-                store.Balance.HeldQuantity -= allocation.AllocatedQuantity;
-            store.Balance.AvailableQuantity += allocation.AllocatedQuantity;
-            store.Balance.Version++;
+                store.Balance.AvailableQuantity = store.Balance.PhysicalQuantity - store.Balance.ReservedQuantity;
+                store.Balance.Version++;
+            }
             allocation.Status = AllocationInventoryStatuses.Released;
             return Task.FromResult(Result(allocation));
         }
@@ -363,8 +442,8 @@ public sealed class OrderServiceTests
 
         private InventoryLifecycleResult Result(DomainAllocation allocation) => new(
             allocation.Id, allocation.BatchId, allocation.WarehouseId, allocation.AllocatedQuantity,
-            allocation.Status, store.Balance.PhysicalQuantity, store.Balance.HeldQuantity,
-            store.Balance.ReservedQuantity, store.Balance.AvailableQuantity, store.Balance.Version);
+            allocation.Status, store.Balance.PhysicalQuantity, store.Balance.ReservedQuantity,
+            store.Balance.AvailableQuantity, store.Balance.Version);
     }
 
     private sealed class FixedTimeProvider(DateTimeOffset now) : TimeProvider

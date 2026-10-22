@@ -3,6 +3,7 @@ using System.Text;
 using FSCM.Application.Features.Orders;
 using FSCM.Application.Features.Payments;
 using FSCM.Application.Features.QrLabels;
+using FSCM.Application.Features.Inventory;
 using FSCM.Domain.Authorization;
 using FSCM.Domain.Entities;
 
@@ -11,6 +12,8 @@ namespace FSCM.Application.Features.Deliveries;
 public sealed class DeliveryService(
     IDeliveryStore store,
     IPaymentPlanService paymentPlanService,
+    IPaymentStore paymentStore,
+    IInventoryLifecycleService inventoryLifecycleService,
     TimeProvider timeProvider)
 {
     public async Task<IReadOnlyCollection<DriverResult>> ListDriversAsync(
@@ -83,6 +86,19 @@ public sealed class DeliveryService(
             if (order.Order.Status != OrderStatuses.Issued)
                 throw DeliveryOperationException.Conflict("Only an issued order can be dispatched.");
             EnsureVersion(order.Order.Version, data.ExpectedOrderVersion, "Order");
+            if (order.Order.PaymentMethod == OrderPaymentMethods.Prepaid)
+            {
+                var payment = await paymentStore.FindByOrderAsync(
+                        orderId, true, transactionCancellationToken)
+                    ?? throw DeliveryOperationException.Conflict(
+                        "Prepaid order does not have a final-approved payment ledger.");
+                if (payment.Payment.Status != PaymentStatuses.Paid ||
+                    payment.Payment.ConfirmedAmount != payment.Payment.Amount)
+                {
+                    throw DeliveryOperationException.Conflict(
+                        "Prepaid order must be confirmed as fully paid before dispatch.");
+                }
+            }
             if (await store.FindByOrderAsync(orderId, true, transactionCancellationToken) is not null)
                 throw DeliveryOperationException.Conflict("Order already has a delivery.");
 
@@ -106,6 +122,20 @@ public sealed class DeliveryService(
             if (vehicle.Capacity < totalQuantity)
                 throw DeliveryOperationException.Conflict(
                     $"Vehicle capacity is {vehicle.Capacity:0.###} cartons but the order requires {totalQuantity:0.###}.");
+
+            var inventoryIssues = await store.ListOrderInventoryIssuesAsync(orderId, transactionCancellationToken);
+            if (inventoryIssues.Count == 0)
+                throw DeliveryOperationException.Conflict("Order has no reserved allocations to issue.");
+            foreach (var batchGroup in inventoryIssues.GroupBy(item => item.BatchId))
+            {
+                var expectedVersion = batchGroup.First().InventoryVersion;
+                foreach (var issue in batchGroup)
+                {
+                    var issued = await inventoryLifecycleService.IssueAsync(
+                        issue.AllocationId, operatorUserId, expectedVersion, transactionCancellationToken);
+                    expectedVersion = issued.Version;
+                }
+            }
 
             var now = timeProvider.GetUtcNow();
             var delivery = new Delivery

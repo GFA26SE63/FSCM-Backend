@@ -11,18 +11,20 @@ namespace FSCM.Persistence.Migrations
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
-            // The physical database may already contain this column (created by an earlier
-            // schema revision). Add it only if missing so the migration is safe to apply
-            // against both fresh and pre-existing databases.
-            migrationBuilder.Sql(
-                "ALTER TABLE \"GOODS_RECEIPT_LINE\" ADD COLUMN IF NOT EXISTS \"ProductionDate\" date NOT NULL DEFAULT DATE '0001-01-01';");
+            migrationBuilder.AddColumn<DateOnly>(
+                name: "ProductionDate",
+                table: "GOODS_RECEIPT_LINE",
+                type: "date",
+                nullable: false,
+                defaultValue: new DateOnly(1, 1, 1));
         }
 
         /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
-            migrationBuilder.Sql(
-                "ALTER TABLE \"GOODS_RECEIPT_LINE\" DROP COLUMN IF EXISTS \"ProductionDate\";");
+            migrationBuilder.DropColumn(
+                name: "ProductionDate",
+                table: "GOODS_RECEIPT_LINE");
         }
     }
 }

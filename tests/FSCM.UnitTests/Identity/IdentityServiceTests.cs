@@ -15,6 +15,7 @@ public sealed class IdentityServiceTests
         var user = fixture.AddActiveUser(SystemRoles.Sales, "sales@fscm.local", "Correct#Pass1");
         fixture.Store.Scopes[user.Id] = new IdentityScope(
             [Guid.Parse("10000000-0000-0000-0000-000000000001")],
+            [Guid.Parse("15000000-0000-0000-0000-000000000001")],
             [Guid.Parse("20000000-0000-0000-0000-000000000001")],
             [Guid.Parse("30000000-0000-0000-0000-000000000001")]);
 
@@ -96,16 +97,107 @@ public sealed class IdentityServiceTests
                 "another@fscm.local",
                 "Another User",
                 SystemRoles.Admin,
+                IdentityProviders.Local,
+                Guid.NewGuid(),
                 CancellationToken.None));
         var promoteException = await Assert.ThrowsAsync<IdentityOperationException>(() =>
             fixture.Service.UpdateRoleAsync(
                 user.Id,
                 SystemRoles.Admin,
+                Guid.NewGuid(),
                 CancellationToken.None));
 
         Assert.Equal("forbidden", createException.Code);
         Assert.Equal("forbidden", promoteException.Code);
         Assert.Single(fixture.Store.Users);
+    }
+
+    [Fact]
+    public async Task Entra_exchange_links_only_preprovisioned_entra_account_and_issues_internal_tokens()
+    {
+        var fixture = new IdentityFixture();
+        var user = fixture.AddActiveUser(
+            SystemRoles.Operator,
+            "portal@fscm.local",
+            "Correct#Pass1",
+            IdentityProviders.Entra);
+        user.EntraObjectId = null;
+        fixture.Store.Credentials.RemoveAll(credential => credential.UserAccountId == user.Id);
+
+        var result = await fixture.Service.ExchangeEntraAsync(
+            new EntraIdentity("entra-object-123", "PORTAL@FSCM.LOCAL"),
+            "127.0.0.1",
+            CancellationToken.None);
+
+        Assert.Equal(user.Id, result.User.Id);
+        Assert.Equal("entra-object-123", user.EntraObjectId);
+        Assert.Equal("access-token", result.AccessToken);
+        Assert.Single(fixture.Store.RefreshTokens);
+        Assert.Contains(fixture.Store.AuditLogs, audit => audit.Action == "EntraIdentityLinked");
+
+        var refreshed = await fixture.Service.RefreshAsync(
+            result.RefreshToken,
+            "127.0.0.1",
+            CancellationToken.None);
+        Assert.Equal(user.Id, refreshed.User.Id);
+    }
+
+    [Fact]
+    public async Task Entra_exchange_links_local_account_and_keeps_password_login_available()
+    {
+        var fixture = new IdentityFixture();
+        var user = fixture.AddActiveUser(SystemRoles.Sales, "mobile@fscm.local", "Correct#Pass1");
+
+        var entraResult = await fixture.Service.ExchangeEntraAsync(
+            new EntraIdentity("entra-object-456", "MOBILE@FSCM.LOCAL"),
+            null,
+            CancellationToken.None);
+        var localResult = await fixture.Service.LoginAsync(
+            "mobile@fscm.local",
+            "Correct#Pass1",
+            null,
+            CancellationToken.None);
+
+        Assert.Equal(user.Id, entraResult.User.Id);
+        Assert.Equal(user.Id, localResult.User.Id);
+        Assert.Equal("entra-object-456", user.EntraObjectId);
+        Assert.Equal(IdentityProviders.Local, user.IdentityProvider);
+        Assert.Equal(2, fixture.Store.RefreshTokens.Count);
+        Assert.Contains(fixture.Store.AuditLogs, audit => audit.Action == "EntraIdentityLinked");
+    }
+
+    [Fact]
+    public async Task Entra_exchange_rejects_relinking_email_to_another_object_id()
+    {
+        var fixture = new IdentityFixture();
+        var user = fixture.AddActiveUser(SystemRoles.Sales, "mobile@fscm.local", "Correct#Pass1");
+        user.EntraObjectId = "entra-object-original";
+
+        var exception = await Assert.ThrowsAsync<IdentityOperationException>(() =>
+            fixture.Service.ExchangeEntraAsync(
+                new EntraIdentity("entra-object-other", "mobile@fscm.local"),
+                null,
+                CancellationToken.None));
+
+        Assert.Equal("conflict", exception.Code);
+        Assert.Equal("entra-object-original", user.EntraObjectId);
+        Assert.Empty(fixture.Store.RefreshTokens);
+    }
+
+    [Fact]
+    public async Task User_list_is_filtered_and_paged_deterministically()
+    {
+        var fixture = new IdentityFixture();
+        fixture.AddActiveUser(SystemRoles.Operator, "operator2@fscm.local", "Correct#Pass1");
+        fixture.AddActiveUser(SystemRoles.Sales, "sales2@fscm.local", "Correct#Pass1");
+
+        var result = await fixture.Service.ListUsersAsync(
+            new UserListQuery(null, SystemRoles.Sales, true, 1, 20),
+            CancellationToken.None);
+
+        Assert.Single(result.Items);
+        Assert.Equal(SystemRoles.Sales, result.Items.Single().Role);
+        Assert.Equal(1, result.TotalCount);
     }
 
     private sealed class IdentityFixture
@@ -127,12 +219,16 @@ public sealed class IdentityServiceTests
 
         public IdentityService Service { get; }
 
-        public UserAccount AddActiveUser(string role, string email, string password)
+        public UserAccount AddActiveUser(
+            string role,
+            string email,
+            string password,
+            string identityProvider = IdentityProviders.Local)
         {
             var user = new UserAccount
             {
                 Id = Guid.NewGuid(),
-                EntraObjectId = $"local:{Guid.NewGuid():N}",
+                IdentityProvider = identityProvider,
                 Email = email,
                 FullName = "Test User",
                 Role = role,
@@ -190,8 +286,12 @@ public sealed class IdentityServiceTests
         public List<AccountToken> AccountTokens { get; } = [];
         public List<UserWarehouseAssignment> WarehouseAssignments { get; } = [];
         public List<SalesGroupMember> SalesGroupMemberships { get; } = [];
+        public List<UserRegionAssignment> RegionAssignments { get; } = [];
+        public List<Retailer> Retailers { get; } = [];
+        public List<AuditLog> AuditLogs { get; } = [];
         public HashSet<Guid> Warehouses { get; } = [];
         public HashSet<Guid> SalesGroups { get; } = [];
+        public HashSet<Guid> Regions { get; } = [];
         public Dictionary<Guid, IdentityScope> Scopes { get; } = [];
 
         public Task<UserAccount?> FindUserByEmailAsync(
@@ -201,6 +301,28 @@ public sealed class IdentityServiceTests
 
         public Task<UserAccount?> FindUserByIdAsync(Guid userId, CancellationToken cancellationToken) =>
             Task.FromResult(Users.SingleOrDefault(user => user.Id == userId));
+
+        public Task<UserAccount?> FindUserByEntraObjectIdAsync(
+            string entraObjectId,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(Users.SingleOrDefault(user => user.EntraObjectId == entraObjectId));
+
+        public Task<(IReadOnlyCollection<UserAccount> Items, int TotalCount)> ListUsersAsync(
+            UserListQuery query,
+            CancellationToken cancellationToken)
+        {
+            var users = Users.AsEnumerable();
+            if (!string.IsNullOrWhiteSpace(query.Search))
+                users = users.Where(user => user.Email.Contains(query.Search, StringComparison.OrdinalIgnoreCase) ||
+                    user.FullName.Contains(query.Search, StringComparison.OrdinalIgnoreCase));
+            if (!string.IsNullOrWhiteSpace(query.Role))
+                users = users.Where(user => user.Role == query.Role);
+            if (query.IsActive.HasValue)
+                users = users.Where(user => user.IsActive == query.IsActive.Value);
+            var ordered = users.OrderBy(user => user.FullName).ThenBy(user => user.Email).ToArray();
+            return Task.FromResult<(IReadOnlyCollection<UserAccount>, int)>(
+                (ordered.Skip((query.Page - 1) * query.PageSize).Take(query.PageSize).ToArray(), ordered.Length));
+        }
 
         public Task<UserCredential?> FindCredentialAsync(Guid userId, CancellationToken cancellationToken) =>
             Task.FromResult(Credentials.SingleOrDefault(credential => credential.UserAccountId == userId));
@@ -226,6 +348,15 @@ public sealed class IdentityServiceTests
         public Task<bool> SalesGroupExistsAsync(Guid salesGroupId, CancellationToken cancellationToken) =>
             Task.FromResult(SalesGroups.Contains(salesGroupId));
 
+        public Task<bool> RegionExistsAsync(Guid regionId, CancellationToken cancellationToken) =>
+            Task.FromResult(Regions.Contains(regionId));
+
+        public Task<Retailer?> FindRetailerAsync(Guid retailerId, CancellationToken cancellationToken) =>
+            Task.FromResult(Retailers.SingleOrDefault(retailer => retailer.Id == retailerId));
+
+        public Task<Retailer?> FindRetailerByUserIdAsync(Guid userId, CancellationToken cancellationToken) =>
+            Task.FromResult(Retailers.SingleOrDefault(retailer => retailer.UserAccountId == userId));
+
         public Task<UserWarehouseAssignment?> FindWarehouseAssignmentAsync(
             Guid userId,
             Guid warehouseId,
@@ -249,6 +380,13 @@ public sealed class IdentityServiceTests
                 .Where(membership => membership.UserAccountId == userId && membership.IsActive)
                 .ToArray());
 
+        public Task<UserRegionAssignment?> FindRegionAssignmentAsync(
+            Guid userId,
+            Guid regionId,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(RegionAssignments.SingleOrDefault(
+                assignment => assignment.UserAccountId == userId && assignment.RegionId == regionId));
+
         public Task<IReadOnlyCollection<RefreshToken>> GetActiveRefreshTokensAsync(
             Guid userId,
             DateTimeOffset now,
@@ -263,6 +401,8 @@ public sealed class IdentityServiceTests
         public void AddAccountToken(AccountToken accountToken) => AccountTokens.Add(accountToken);
         public void AddWarehouseAssignment(UserWarehouseAssignment assignment) => WarehouseAssignments.Add(assignment);
         public void AddSalesGroupMembership(SalesGroupMember membership) => SalesGroupMemberships.Add(membership);
+        public void AddRegionAssignment(UserRegionAssignment assignment) => RegionAssignments.Add(assignment);
+        public void AddAuditLog(AuditLog auditLog) => AuditLogs.Add(auditLog);
         public Task SaveChangesAsync(CancellationToken cancellationToken) => Task.CompletedTask;
     }
 }

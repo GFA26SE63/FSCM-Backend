@@ -15,6 +15,7 @@ public static class PaymentCollectionMethods
 }
 
 public sealed record CollectPaymentData(
+    decimal Amount,
     string CollectionMethod,
     int ExpectedVersion,
     string? Note);
@@ -99,8 +100,16 @@ public sealed record PaymentResult(
     string OrderPaymentMethod,
     string Status,
     decimal Amount,
+    decimal AdjustedAmount,
+    decimal ConfirmedAmount,
+    decimal OutstandingAmount,
+    decimal PendingRefundAmount,
+    decimal RefundedAmount,
+    decimal RefundDueAmount,
     int CreditTermDays,
-    DateOnly DeliveredDate,
+    DateTimeOffset FinalApprovedAt,
+    string FinalApprovalReference,
+    DateOnly? DeliveredDate,
     DateOnly? DueDate,
     int DaysOverdue,
     DateOnly? PaidDate,

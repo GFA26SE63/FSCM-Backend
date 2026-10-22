@@ -14,6 +14,8 @@ public interface IBatchExpiryStore
     /// </summary>
     Task<IReadOnlyCollection<BatchExpiryCandidate>> ListBatchesForExpirySweepAsync(CancellationToken cancellationToken);
 
+    void AddSweepRun(ExpirySweepRun run);
+
     void AddOutboxMessage(OutboxMessage message);
 
     Task SaveChangesAsync(CancellationToken cancellationToken);

@@ -2,13 +2,6 @@ using FSCM.Domain.Entities;
 
 namespace FSCM.Application.Features.Inventory;
 
-public static class StockHoldStatuses
-{
-    public const string Active = "Active";
-    public const string Converted = "Converted";
-    public const string Released = "Released";
-}
-
 public static class ReservationStatuses
 {
     public const string Active = "Active";
@@ -18,7 +11,7 @@ public static class ReservationStatuses
 
 public static class AllocationInventoryStatuses
 {
-    public const string Held = "Held";
+    public const string Tentative = "Tentative";
     public const string Reserved = "Reserved";
     public const string Released = "Released";
     public const string Issued = "Issued";
@@ -31,62 +24,12 @@ public sealed record InventoryLifecycleResult(
     decimal Quantity,
     string Status,
     decimal OnHandQuantity,
-    decimal HeldQuantity,
     decimal ReservedQuantity,
     decimal AvailableQuantity,
     int Version);
 
 public sealed class InventoryLifecycleService(IInventoryLifecycleStore store, TimeProvider timeProvider) : IInventoryLifecycleService
 {
-    public async Task<InventoryLifecycleResult> HoldAsync(
-        Guid allocationId,
-        Guid actorUserId,
-        int expectedVersion,
-        CancellationToken cancellationToken)
-    {
-        var view = await GetAsync(allocationId, cancellationToken);
-        if (view.Reservation is not null || view.Hold?.Status == StockHoldStatuses.Active)
-        {
-            return ToResult(view);
-        }
-
-        if (view.Hold is not null)
-        {
-            throw InventoryOperationException.Conflict("Released or converted inventory cannot be held again.");
-        }
-
-        EnsureExpectedVersion(view.Balance, expectedVersion);
-        EnsureAllocationMatchesBatch(view);
-        if (view.Allocation.AllocatedQuantity <= 0 || decimal.Truncate(view.Allocation.AllocatedQuantity) != view.Allocation.AllocatedQuantity)
-        {
-            throw InventoryOperationException.Conflict("Allocated quantity must be a positive whole number of cartons.");
-        }
-
-        if (view.Balance.AvailableQuantity < view.Allocation.AllocatedQuantity)
-        {
-            throw InventoryOperationException.Conflict("Available inventory is insufficient for the allocation.");
-        }
-
-        var now = timeProvider.GetUtcNow();
-        view.Balance.HeldQuantity += view.Allocation.AllocatedQuantity;
-        UpdateBalance(view.Balance, now);
-        view.Allocation.Status = AllocationInventoryStatuses.Held;
-        view.Hold = new StockHold
-        {
-            Id = Guid.NewGuid(),
-            AllocationId = view.Allocation.Id,
-            BatchId = view.Batch.Id,
-            Quantity = view.Allocation.AllocatedQuantity,
-            Status = StockHoldStatuses.Active,
-            HeldAt = now
-        };
-        store.AddHold(view.Hold);
-        AddHistory(view, actorUserId, InventoryTransactionTypes.OrderHold,
-            0, view.Allocation.AllocatedQuantity, 0, "Giữ tồn kho cho đơn hàng", now);
-        await store.SaveChangesAsync(cancellationToken);
-        return ToResult(view);
-    }
-
     public async Task<InventoryLifecycleResult> ReserveAsync(
         Guid allocationId,
         Guid actorUserId,
@@ -99,35 +42,31 @@ public sealed class InventoryLifecycleService(IInventoryLifecycleStore store, Ti
             return ToResult(view);
         }
 
-        if (view.Hold?.Status != StockHoldStatuses.Active)
-        {
-            throw InventoryOperationException.Conflict("An active stock hold is required before reservation.");
-        }
-
         EnsureExpectedVersion(view.Balance, expectedVersion);
-        if (view.Balance.HeldQuantity < view.Hold.Quantity)
+        EnsureAllocationMatchesBatch(view);
+        var quantity = view.Allocation.AllocatedQuantity;
+        EnsurePositiveWholeQuantity(quantity);
+        if (view.Balance.AvailableQuantity < quantity)
         {
-            throw InventoryOperationException.Conflict("Held inventory is inconsistent with the allocation.");
+            throw InventoryOperationException.Conflict("Available inventory is insufficient for the allocation.");
         }
 
         var now = timeProvider.GetUtcNow();
-        view.Balance.HeldQuantity -= view.Hold.Quantity;
-        view.Balance.ReservedQuantity += view.Hold.Quantity;
+        view.Balance.ReservedQuantity += quantity;
         UpdateBalance(view.Balance, now);
-        view.Hold.Status = StockHoldStatuses.Converted;
         view.Allocation.Status = AllocationInventoryStatuses.Reserved;
         view.Reservation = new Reservation
         {
             Id = Guid.NewGuid(),
             AllocationId = view.Allocation.Id,
             BatchId = view.Batch.Id,
-            Quantity = view.Hold.Quantity,
+            Quantity = quantity,
             Status = ReservationStatuses.Active,
             ReservedAt = now
         };
         store.AddReservation(view.Reservation);
         AddHistory(view, actorUserId, InventoryTransactionTypes.OrderReserve,
-            0, -view.Hold.Quantity, view.Hold.Quantity, "Chuyển tồn kho giữ sang đặt trước", now);
+            0, quantity, "Đặt trước tồn kho khi duyệt kết quả phân bổ", now);
         await store.SaveChangesAsync(cancellationToken);
         return ToResult(view);
     }
@@ -139,56 +78,37 @@ public sealed class InventoryLifecycleService(IInventoryLifecycleStore store, Ti
         CancellationToken cancellationToken)
     {
         var view = await GetAsync(allocationId, cancellationToken);
-        if (view.Reservation?.Status == ReservationStatuses.Released ||
-            view.Reservation is null && view.Hold?.Status == StockHoldStatuses.Released)
+        if (view.Reservation is null)
+        {
+            view.Allocation.Status = AllocationInventoryStatuses.Released;
+            return ToResult(view);
+        }
+
+        if (view.Reservation.Status == ReservationStatuses.Released)
         {
             return ToResult(view);
         }
 
-        if (view.Reservation?.Status == ReservationStatuses.Consumed)
+        if (view.Reservation.Status == ReservationStatuses.Consumed)
         {
             throw InventoryOperationException.Conflict("Issued inventory cannot be released.");
         }
 
         EnsureExpectedVersion(view.Balance, expectedVersion);
+        if (view.Balance.ReservedQuantity < view.Reservation.Quantity)
+        {
+            throw InventoryOperationException.Conflict("Reserved inventory is inconsistent with the allocation.");
+        }
+
         var now = timeProvider.GetUtcNow();
-        decimal heldDelta;
-        decimal reservedDelta;
-        if (view.Reservation?.Status == ReservationStatuses.Active)
-        {
-            if (view.Balance.ReservedQuantity < view.Reservation.Quantity)
-            {
-                throw InventoryOperationException.Conflict("Reserved inventory is inconsistent with the allocation.");
-            }
-
-            heldDelta = 0;
-            reservedDelta = -view.Reservation.Quantity;
-            view.Balance.ReservedQuantity -= view.Reservation.Quantity;
-            view.Reservation.Status = ReservationStatuses.Released;
-            view.Reservation.ReleasedAt = now;
-        }
-        else if (view.Hold?.Status == StockHoldStatuses.Active)
-        {
-            if (view.Balance.HeldQuantity < view.Hold.Quantity)
-            {
-                throw InventoryOperationException.Conflict("Held inventory is inconsistent with the allocation.");
-            }
-
-            heldDelta = -view.Hold.Quantity;
-            reservedDelta = 0;
-            view.Balance.HeldQuantity -= view.Hold.Quantity;
-            view.Hold.Status = StockHoldStatuses.Released;
-            view.Hold.ReleasedAt = now;
-        }
-        else
-        {
-            throw InventoryOperationException.Conflict("No active hold or reservation exists for the allocation.");
-        }
-
+        var quantity = view.Reservation.Quantity;
+        view.Balance.ReservedQuantity -= quantity;
         UpdateBalance(view.Balance, now);
+        view.Reservation.Status = ReservationStatuses.Released;
+        view.Reservation.ReleasedAt = now;
         view.Allocation.Status = AllocationInventoryStatuses.Released;
         AddHistory(view, actorUserId, InventoryTransactionTypes.OrderRelease,
-            0, heldDelta, reservedDelta, "Hoàn trả tồn kho của đơn hàng", now);
+            0, -quantity, "Hoàn trả tồn kho đã đặt trước", now);
         await store.SaveChangesAsync(cancellationToken);
         return ToResult(view);
     }
@@ -212,7 +132,9 @@ public sealed class InventoryLifecycleService(IInventoryLifecycleStore store, Ti
 
         EnsureExpectedVersion(view.Balance, expectedVersion);
         var quantity = view.Reservation.Quantity;
-        if (view.Balance.PhysicalQuantity < quantity || view.Balance.ReservedQuantity < quantity || view.Batch.Quantity < quantity)
+        if (view.Balance.PhysicalQuantity < quantity ||
+            view.Balance.ReservedQuantity < quantity ||
+            view.Batch.Quantity < quantity)
         {
             throw InventoryOperationException.Conflict("Reserved inventory is insufficient for issue.");
         }
@@ -229,7 +151,7 @@ public sealed class InventoryLifecycleService(IInventoryLifecycleStore store, Ti
         view.Reservation.ConsumedAt = now;
         view.Allocation.Status = AllocationInventoryStatuses.Issued;
         AddHistory(view, actorUserId, InventoryTransactionTypes.OrderIssue,
-            -quantity, 0, -quantity, "Xuất kho hoàn tất picking", now);
+            -quantity, -quantity, "Xuất kho theo shipment", now);
         await store.SaveChangesAsync(cancellationToken);
         return ToResult(view);
     }
@@ -262,11 +184,18 @@ public sealed class InventoryLifecycleService(IInventoryLifecycleStore store, Ti
         }
     }
 
+    private static void EnsurePositiveWholeQuantity(decimal quantity)
+    {
+        if (quantity <= 0 || decimal.Truncate(quantity) != quantity)
+        {
+            throw InventoryOperationException.Conflict("Allocated quantity must be a positive whole number of cartons.");
+        }
+    }
+
     private static void UpdateBalance(InventoryBalance balance, DateTimeOffset now)
     {
-        balance.AvailableQuantity = balance.PhysicalQuantity - balance.HeldQuantity - balance.ReservedQuantity;
-        if (balance.PhysicalQuantity < 0 || balance.HeldQuantity < 0 ||
-            balance.ReservedQuantity < 0 || balance.AvailableQuantity < 0)
+        balance.AvailableQuantity = balance.PhysicalQuantity - balance.ReservedQuantity;
+        if (balance.PhysicalQuantity < 0 || balance.ReservedQuantity < 0 || balance.AvailableQuantity < 0)
         {
             throw InventoryOperationException.Conflict("Inventory quantities cannot become negative.");
         }
@@ -280,7 +209,6 @@ public sealed class InventoryLifecycleService(IInventoryLifecycleStore store, Ti
         Guid actorUserId,
         string transactionType,
         decimal physicalDelta,
-        decimal heldDelta,
         decimal reservedDelta,
         string note,
         DateTimeOffset now) =>
@@ -292,12 +220,12 @@ public sealed class InventoryLifecycleService(IInventoryLifecycleStore store, Ti
             ProductId = view.Batch.ProductId,
             CreatedByUserId = actorUserId,
             TransactionType = transactionType,
+            SourceType = InventoryTransactionSourceTypes.Allocation,
+            SourceId = view.Allocation.Id,
             ReferenceCode = view.Allocation.Id.ToString("N"),
             PhysicalQuantityDelta = physicalDelta,
-            HeldQuantityDelta = heldDelta,
             ReservedQuantityDelta = reservedDelta,
             PhysicalQuantityAfter = view.Balance.PhysicalQuantity,
-            HeldQuantityAfter = view.Balance.HeldQuantity,
             ReservedQuantityAfter = view.Balance.ReservedQuantity,
             AvailableQuantityAfter = view.Balance.AvailableQuantity,
             Note = note,
@@ -312,7 +240,6 @@ public sealed class InventoryLifecycleService(IInventoryLifecycleStore store, Ti
             view.Allocation.AllocatedQuantity,
             view.Allocation.Status,
             view.Balance.PhysicalQuantity,
-            view.Balance.HeldQuantity,
             view.Balance.ReservedQuantity,
             view.Balance.AvailableQuantity,
             view.Balance.Version);

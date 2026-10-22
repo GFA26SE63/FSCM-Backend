@@ -114,16 +114,28 @@ The development profile exposes Swagger at `/swagger`, GraphQL at `/graphql`, an
 
 ### Identity, catalog, warehouse configuration, and development data
 
-BE-01 provides JWT login and refresh-token rotation, account activation, password reset, six-role authorization, and warehouse/sales-group/retailer scopes under `/api/v1/auth` and `/api/v1/users`.
+BE-01 uses Entra ID to authenticate Portal sign-in. The Portal sends its Entra bearer token to `POST /api/v1/auth/entra/exchange`; the API validates tenant, audience, signature and lifetime, matches a pre-provisioned active FSCM account by immutable `oid` or links a null `EntraObjectId` by normalized email on first exchange, and returns the same FSCM JWT/refresh-token contract used by the rest of the system. Authentication methods are additive: an account that also has a password credential can continue using `POST /api/v1/auth/login` after Entra linking. Protected REST and GraphQL operations accept only the internal FSCM JWT. Google sign-in is not enabled.
+
+Configure `Entra:TenantId`, `Entra:ClientId`, `Jwt:Issuer`, `Jwt:Audience`, and a JWT secret of at least 32 UTF-8 bytes through environment variables, user secrets, or the deployment secret store. No credential is committed in `appsettings.json`. `/api/v1/auth/me` returns the current role plus warehouse, region, Sales-group, and Retailer scopes. Every request revalidates that the FSCM account is active and that the token role still matches the database, so status/role changes take effect without waiting for token expiry.
+
+Admin user management is available under `/api/v1/users`: filtered deterministic paging, detail/profile updates, role/status commands, and warehouse/region/Sales-group/Retailer scope assignment. `GET` reads have equivalent `users`, `user`, `userScope`, and `me` GraphQL fields. User creation accepts `identityProvider` as `Local` or `Entra` to select the initial provisioning flow: Entra-first accounts bind their immutable `oid` on first exchange, while Local-first accounts use activation and may later bind Entra without losing password login. Admin creation and promotion remain blocked in the public API.
+
+Create the first deployment Admin exactly once from the deployment secret store:
+
+```powershell
+dotnet run --project src/FSCM.API/FSCM.API.csproj -- --bootstrap-admin
+```
+
+Supply `AdminBootstrap:Email`, `AdminBootstrap:FullName`, `AdminBootstrap:IdentityProvider`, and either `AdminBootstrap:EntraObjectId` or `AdminBootstrap:Password`. The command applies pending migrations, exits without changing an existing Admin, and never logs the password.
 
 Create the development-only identity dataset after applying migrations:
 
 ```powershell
-dotnet user-secrets set "SeedData:DefaultPassword" "FscmDemo#2026" --project src/FSCM.API/FSCM.API.csproj
+dotnet user-secrets set "SeedData:DefaultPassword" "LogisticsThesis@123" --project src/FSCM.API/FSCM.API.csproj
 dotnet run --project src/FSCM.API/FSCM.API.csproj --launch-profile http -- --seed
 ```
 
-The command is idempotent and creates active users for all six roles plus BE-02 catalog dump data. The example password above is for local development only and must not be used in a deployed environment.
+The command is idempotent and creates active users for all six roles plus BE-02 catalog dump data. All seeded demo accounts use the canonical password shown above. It is for local development only and must not be used in a deployed environment.
 
 | Role | Email | Seeded scope |
 | --- | --- | --- |
@@ -138,15 +150,25 @@ Admin accounts are bootstrap-only: the user-management API rejects both Admin cr
 
 BE-02 exposes authenticated category and product reads under `/api/v1/categories` and `/api/v1/products`. Admin-only commands manage category relationships, Draft products, publication, inactivation, replacement SKUs, and effective price history. Publishing a replacement SKU automatically inactivates its predecessor. Published product master data is immutable; price changes are recorded as history instead of overwriting prior values.
 
-BE-03 exposes warehouse master data and coordinates under `/api/v1/warehouses`, per-warehouse ETA rules under `/api/v1/warehouses/{warehouseId}/transit-time-rules`, retailer-product MLOR under `/api/v1/mlor-configurations`, and versioned business settings under `/api/v1/configurations`. Authenticated users can read current data and history; only Admin can mutate it. Warehouse records are inactivated instead of deleted, and each configuration update preserves the previous version.
+BE-03 exposes warehouse master data, coordinates, and the non-negative per-warehouse minimum-stock monitoring threshold under `/api/v1/warehouses`. Warehouse records are inactivated instead of deleted. The obsolete per-warehouse `/api/v1/warehouses/{warehouseId}/transit-time-rules` API and GraphQL fields are no longer public; delivery timing and estimated cost use the shared, versioned `/api/v1/transit-tables` contract.
 
-BE-04 exposes region and Sales-group master data under `/api/v1/regions` and `/api/v1/sales-groups`. Admin and scoped Sales Managers can manage Sales and Retailer assignments under `/api/v1/territory-assignments`; every transfer closes the previous row and creates a new row so assignment history remains intact. Sales order eligibility is checked under `/api/v1/territory-access/retailers/{retailerId}/order-eligibility`. Only an active Sales user whose current group owns the Retailer in the same region is eligible. Later orders retain `CreatedByUserId` and `SalesGroupId` snapshots even after reassignment.
+Google Maps Platform is the server provider for address normalization and road distance. Configure `GoogleMaps:ServerApiKey` only through environment variables, user secrets, or a deployment secret store; use a separately restricted browser key for map rendering. Admin commands `POST /api/v1/map/geocode` and `POST /api/v1/map/distances/refresh` persist provider/location versions and a 24-hour distance cache. `GET /api/v1/map/locations/{entityType}/{entityId}` and `GET /api/v1/map/distances` have matching `mapLocation` and `mapDistances` GraphQL reads. `POST /api/v1/eta/estimate` uses only a current cached route plus the effective transit-rule version and calculates wait-for-run, approval, handling, preparation, next-dispatch wait, buffer, and transport components. Its result includes the distance/rule versions, estimated transport cost, and an explicit estimate disclaimer; provider failure or an unresolved route is never converted into zero kilometres.
 
-BE-09 exposes campaign management under `/api/v1/promotions`, shelf-life suggestions and batch assignments under `/api/v1/batch-discounts`, and deterministic price snapshots under `/api/v1/pricing/snapshot`. Admin manages campaigns and batch discounts; authenticated users can read applicable offers and calculate prices. Campaign and batch discounts do not compound: the highest eligible rate wins, an equal batch-specific rate wins over a campaign, and promotion code is the final stable tie-breaker. Every REST GET has an equivalent GraphQL query at `/graphql`.
+BE-04 exposes region and Sales-group master data under `/api/v1/regions` and `/api/v1/sales-groups`. Admin and scoped Sales Managers can manage Sales and Retailer assignments under `/api/v1/territory-assignments`; every transfer closes the previous row and creates a new row so assignment history remains intact. `GET /api/v1/retailers?scope=mine&search=...&page=1&pageSize=20` returns only the active Sales user's territory, and list/detail responses contain the two logical declaration sections `generalInformation` and `mlorDeclarations`. MLOR entries select exactly one Category or SKU scope, require `0 < ratio < 1`, and retain effective version history. A draft is submitted with `POST /api/v1/retailers/{id}/submit-review`; submission, approval, and reactivation are blocked until at least one valid MLOR entry exists. `GET /api/v1/retailers/{id}/mlor-resolution?productId=...` and GraphQL `retailerMlorResolution` resolve SKU, then the most-specific Category ancestor, then the versioned default. Only Admin may use the standalone `/api/v1/mlor-configurations` correction/history API. Admin approval activates the eight-digit Retailer code and fixes the final `0/7/14/30` payment term.
 
-Assisted ordering is exposed under `/api/v1/orders`. Sales can create an order only for an active retailer in their current territory; the server validates carton steps, calculates the final promotion, allocates eligible batches, stores the scoring trace, and holds inventory atomically. Operator approval converts holds to reservations, rejection releases them, and cancellation is restricted to the owning Sales user while pending or to Operator/Admin. Scoped list, detail, and allocation-trace reads are also available through GraphQL.
+BE-09 exposes campaign management under `/api/v1/promotions`, shelf-life suggestions and batch assignments under `/api/v1/batch-discounts`, and the pre-allocation quote under `/api/v1/pricing/snapshot`. The public quote uses base price plus an eligible ordinary campaign only and returns `finalPricePendingAllocation=true`; it never accepts a client-selected batch or applies a batch/HSD discount. The response identifies the exact product-price record and effective window and includes the applied campaign's quantity/effective conditions. Batch-derived final pricing remains an internal post-allocation concern. Every REST GET has an equivalent GraphQL query at `/graphql`.
 
-Order picking is exposed under `/api/v1/picking-lists`. Approval creates one immutable-code list per allocated warehouse (`{OrderCode}A`, `{OrderCode}B`, ...). An assigned Warehouse Keeper scans only available QR labels for the exact allocated warehouse, batch, and SKU. Partial scans create child labels while preserving lineage; every scan is idempotent and version checked. Completing a list issues its reservations, and completing every warehouse list moves the order to `Issued`. REST GET operations have equivalent scoped GraphQL queries.
+Assisted ordering is exposed under `/api/v1/orders`. Sales can create an order only for an active retailer in their current territory; the server snapshots the exact base-price record/effective window, ordinary-campaign conditions, and the resolved Retailer MLOR source/scope/version for every line, then marks pricing pending the final batch-derived HSD calculation. Capture does not query or select inventory, create an allocation, hold/reserve stock, or collect payment. `GET /api/v1/orders` supports scoped `createdByMe`, status, retailer, search, and deterministic paging; REST detail and GraphQL `order` expose the immutable pricing and MLOR snapshots alongside workflow state, history, and shipment links. The legacy approve/reject contract remains pending the separately tracked F36 rewrite.
+
+Order picking is exposed under `/api/v1/picking-lists`. Approval creates one immutable-code list per allocated warehouse (`{OrderCode}A`, `{OrderCode}B`, ...). An assigned Warehouse Keeper scans only available QR labels for the exact allocated warehouse, batch, and SKU. Partial scans create child labels while preserving lineage; every scan is idempotent and version checked. Completing all warehouse lists prepares the order for dispatch without changing stock. Dispatch atomically issues the reservation (`OnHand -= quantity`, `Reserved -= quantity`), records the delivery snapshot, and moves the order into delivery. REST GET operations have equivalent scoped GraphQL queries.
+
+Goods receipt is exposed under `/api/v1/goods-receipts`. Admin and Warehouse Keeper create an idempotent `Pending` receipt with production and expiry dates; creation never changes inventory. `POST /api/v1/goods-receipts/{receiptId}/approve` is the only transition to `Received`: it idempotently creates or merges batches by warehouse, SKU, and expiry date, increases stock once, and records approval and inventory-source audit data. Inventory exposes only `physicalQuantity`, `reservedQuantity`, and the enforced invariant `availableQuantity = physicalQuantity - reservedQuantity`.
+
+QR lookup and printable HTML labels are exposed under `/api/v1/qr-labels`. Single-label and batch print artifacts include QR payload, SKU, batch, warehouse, quantity, and expiry information. Splits require whole-carton quantities and preserve parent/root lineage and quantity conservation. The generic scan endpoint accepts inspection only; stock movement must go through the corresponding receipt, picking, transfer, or dispatch workflow.
+
+The inventory expiry sweep runs daily at 01:30 in `Asia/Ho_Chi_Minh`, updates expired batches, writes `BatchExpired` outbox events, and dispatches idempotent notifications to active Admin and assigned Warehouse Keeper accounts. Admin can inspect the latest run through `GET /api/v1/inventory/expiry/health` or the `inventoryExpiryHealth` GraphQL field. Configure the outbox worker with `BackgroundJobs:InventoryOutbox`.
+
+Internal warehouse transfers are outside the registered MVP. Their legacy persistence/application code is retained for migration compatibility, but REST and GraphQL contracts are disabled and the development seeder no longer creates transfer data.
 
 The development catalog dump contains:
 
@@ -155,10 +177,10 @@ The development catalog dump contains:
 | Categories | `CAT-01` through `CAT-04`, with Vietnamese names, a parent-child relationship, and an inactive category |
 | Products | `SKU001` through `SKU005`, with Vietnamese names and units covering Draft, Published, Inactive, and replacement states |
 | Prices | Multiple VND price-history entries for suggestion and effective-price testing |
-| Warehouses | One central warehouse and two regional warehouses with Vietnamese addresses and coordinates |
-| Transit time | Per-warehouse rules for up to 10 km in one day and up to 20 km in two days |
-| MLOR | Retailer-product rules for `SKU001` and `SKU002` |
-| Configuration | Allocation weights `0.5 / 0.3 / 0.2`, 20 km radius, 35-carton threshold, 25% default MLOR, zero-carton order buffer, and one-carton order step |
+| Warehouses | One central warehouse and two regional warehouses with Vietnamese addresses, coordinates, and minimum-stock monitoring thresholds |
+| Transit time | Versioned per-warehouse distance bands with handling/transit time and estimated VND cost |
+| MLOR | Retailer Category rule plus an SKU override, with effective version/audit metadata |
+| Configuration | Allocation weights `0.5 / 0.3 / 0.2`, 20 km radius, 25% default MLOR, zero-carton order buffer, and one-carton order step; obsolete regional-transfer minimum stock is inactive |
 | Regions | Hồ Chí Minh, Bình Dương, and an inactive Long An example |
 | Sales groups | `HCM-A`, `HCM-B`, `BD-A`, and inactive `LA-A`, all with Vietnamese names |
 | Assignment history | Current and previous Sales/retailer territory assignments for transfer testing |
@@ -167,13 +189,15 @@ The development catalog dump contains:
 | Picking QR | `TEM-000208` labels the seeded Thủ Đức `SKU001` batch and can demonstrate partial-label splitting during picking |
 | Delivery | `NG-010`–`NG-012` and three Vietnamese warehouse vehicles support order dispatch demonstrations |
 
-Approved orders create warehouse picking lists. Completing every list issues inventory and moves the order to `Issued`. Admin or Operator can then assign an active same-warehouse driver and vehicle, which snapshots their details and changes the order and picked QR labels to delivery state. The Retailer linked to the order must scan every dispatched QR label exactly once to confirm receipt and move the order to `Delivered`. Dispatch and receipt commands require idempotency keys and expected order versions.
+Approved orders create warehouse picking lists. Completing every list prepares the order for dispatch; Admin or Operator then assigns an active same-warehouse driver and vehicle, atomically issues reserved inventory, snapshots the delivery details, and changes the order and picked QR labels to delivery state. The Retailer linked to the order must scan every dispatched QR label exactly once to confirm receipt and move the order to `Delivered`. Dispatch and receipt commands require idempotency keys and expected order versions.
 
-Retailer receipt also creates one payment snapshot per order. COD and prepaid orders settle automatically on delivery. Credit orders create an unpaid receivable whose due date is the Vietnam delivery date plus the Retailer's 7, 14, or 30-day term. Sales may record one full cash collection for their own orders; Operator may record one full bank-transfer collection. A scoped user can also create a payOS VietQR checkout for an unpaid Credit receivable; its signed webhook records the payment as `BankTransfer` and keeps the payOS link/reference for reconciliation. Once a payOS checkout exists, manual collection is blocked to prevent duplicate settlement. Payment reads expose effective overdue status without implementing out-of-scope partial payments, credit limits, or debt-aging reports.
+Final allocation approval creates one canonical payment ledger from the approved amount. It records confirmed and outstanding values for PayOS, manual prepaid, COD, and deferred collection under the same database lock and cap. Prepaid PayOS checkout is unavailable before that final snapshot, and dispatch remains blocked until the ledger is fully paid. A signed, amount/order/link/currency-validated PayOS webhook confirms the effect once; browser return URLs never mark an order paid. COD is confirmed by Admin or Operator only after complete delivery, while a deferred due date is set from the Vietnam complete-receipt date plus the snapshotted 7, 14, or 30-day term. Receipt never auto-settles COD or prepaid orders. Only full collection is supported.
+
+`GET /api/v1/manual-payments/{id}` and `GET /api/v1/manual-payments?salesOrderId=...` share their scoped application read service with GraphQL `manualPayment` and `manualPaymentsBySalesOrder`. Manual writes require Admin or Operator; creation requires `Idempotency-Key`, while confirm/cancel commands require the current manual-payment version. Payment reads expose `amount`, `confirmedAmount`, and `outstandingAmount` without exposing provider secrets or raw webhook payloads.
 
 Configure `PayOS:ClientId`, `PayOS:ApiKey`, `PayOS:ChecksumKey`, `PayOS:ReturnUrl`, and `PayOS:CancelUrl` through user secrets or environment variables. Register the public `POST /api/v1/payments/payos/webhook` URL in the payOS dashboard; the endpoint accepts anonymous delivery but verifies every payload signature before changing payment state.
 
-Use [the HTTP request collection](src/FSCM.API/FSCM.API.http) after seeding to log in, query the catalog, inspect price history, and request a historical-price suggestion.
+Use [the HTTP request collection](src/FSCM.API/FSCM.API.http) after seeding to log in, exercise receipt and QR workflows, inspect inventory/expiry health, query the catalog, and request a historical-price suggestion.
 
 ## Validation
 

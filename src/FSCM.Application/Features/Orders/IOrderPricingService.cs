@@ -8,16 +8,22 @@ public sealed record OrderPriceSnapshot(
     decimal DiscountPercent,
     decimal DiscountAmount,
     decimal NetAmount,
+    Guid ProductPriceId,
+    DateTimeOffset ProductPriceEffectiveFrom,
+    DateTimeOffset? ProductPriceEffectiveTo,
     Guid? PromotionId,
     string? DiscountSourceType,
-    string? DiscountSourceCode);
+    string? DiscountSourceCode,
+    string? PromotionName,
+    decimal? PromotionMinimumQuantity,
+    DateTimeOffset? PromotionEffectiveFrom,
+    DateTimeOffset? PromotionEffectiveTo);
 
 public interface IOrderPricingService
 {
     Task<OrderPriceSnapshot> CalculateAsync(
         Guid productId,
         int quantity,
-        Guid batchId,
         Guid retailerId,
         DateTimeOffset pricedAt,
         CancellationToken cancellationToken);
@@ -28,21 +34,27 @@ public sealed class OrderPricingService(PromotionService promotionService) : IOr
     public async Task<OrderPriceSnapshot> CalculateAsync(
         Guid productId,
         int quantity,
-        Guid batchId,
         Guid retailerId,
         DateTimeOffset pricedAt,
         CancellationToken cancellationToken)
     {
-        var result = await promotionService.CalculatePriceAsync(
-            productId, quantity, batchId, retailerId, pricedAt, cancellationToken);
+        var result = await promotionService.CalculateIndicativePriceAsync(
+            productId, quantity, retailerId, pricedAt, cancellationToken);
         return new(
             result.UnitPrice,
             result.GrossAmount,
             result.DiscountPercent,
             result.DiscountAmount,
             result.NetAmount,
+            result.ProductPriceId,
+            result.ProductPriceEffectiveFrom,
+            result.ProductPriceEffectiveTo,
             result.AppliedPromotion?.PromotionId,
             result.AppliedPromotion?.PromotionType,
-            result.AppliedPromotion?.Code);
+            result.AppliedPromotion?.Code,
+            result.AppliedPromotion?.Name,
+            result.AppliedPromotion?.MinimumQuantity,
+            result.AppliedPromotion?.EffectiveFrom,
+            result.AppliedPromotion?.EffectiveTo);
     }
 }

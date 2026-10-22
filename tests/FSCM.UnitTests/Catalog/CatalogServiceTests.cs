@@ -108,6 +108,20 @@ public sealed class CatalogServiceTests
         Assert.True(category.IsActive);
     }
 
+    [Fact]
+    public async Task Draft_product_with_transaction_history_cannot_be_hard_deleted()
+    {
+        var fixture = new CatalogFixture();
+        var product = fixture.AddProduct(fixture.AddCategory("CAT-01").Id, "SKU001", ProductStatuses.Draft);
+        fixture.Store.ProductsWithHistory.Add(product.Id);
+
+        var exception = await Assert.ThrowsAsync<CatalogOperationException>(() =>
+            fixture.Service.DeleteDraftProductAsync(product.Id, CancellationToken.None));
+
+        Assert.Equal("conflict", exception.Code);
+        Assert.Contains(product, fixture.Store.Products);
+    }
+
     private sealed class CatalogFixture
     {
         public CatalogFixture()
@@ -181,6 +195,7 @@ public sealed class CatalogServiceTests
         public List<ProductCategory> Categories { get; } = [];
         public List<Product> Products { get; } = [];
         public List<ProductPrice> Prices { get; } = [];
+        public HashSet<Guid> ProductsWithHistory { get; } = [];
 
         public Task<IReadOnlyCollection<ProductCategory>> ListCategoriesAsync(
             bool includeInactive,
@@ -260,6 +275,9 @@ public sealed class CatalogServiceTests
             var product = Products.SingleOrDefault(candidate => candidate.Id == productId);
             return Task.FromResult(product is null ? null : CreateView(product));
         }
+
+        public Task<bool> ProductHasTransactionHistoryAsync(Guid productId, CancellationToken cancellationToken) =>
+            Task.FromResult(ProductsWithHistory.Contains(productId));
 
         public void AddProduct(Product product) => Products.Add(product);
         public void RemoveProduct(Product product) => Products.Remove(product);

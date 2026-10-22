@@ -10,10 +10,12 @@ public sealed class PaymentServiceTests
     private static readonly DateTimeOffset Now = new(2026, 10, 15, 3, 0, 0, TimeSpan.Zero);
 
     [Fact]
-    public async Task Delivered_credit_order_creates_unpaid_receivable_with_due_date()
+    public async Task Final_approval_creates_ledger_and_delivery_sets_credit_due_date()
     {
         var fixture = new Fixture(OrderPaymentMethods.Credit, creditTermDays: 14, withPayment: false);
 
+        await fixture.Plan.CreateForFinalApprovedOrderAsync(
+            fixture.Order, fixture.RetailerUserId, Now.AddHours(-1), "RUN-20261015-01", default);
         await fixture.Plan.CreateForDeliveredOrderAsync(
             fixture.Order, fixture.RetailerUserId, Now, default);
 
@@ -21,26 +23,30 @@ public sealed class PaymentServiceTests
         Assert.Equal(PaymentStatuses.Unpaid, payment.Status);
         Assert.Equal(new DateOnly(2026, 10, 29), payment.DueDate);
         Assert.Null(payment.ConfirmedByUserId);
-        var audit = Assert.Single(fixture.Store.Audits);
-        Assert.Equal("CreatedReceivable", audit.Action);
-        Assert.Equal(fixture.RetailerUserId, audit.UserAccountId);
+        Assert.Equal(2, fixture.Store.Audits.Count);
+        Assert.Equal("FinalPaymentLedgerCreated", fixture.Store.Audits[0].Action);
+        Assert.Equal("DeliveryDateRecorded", fixture.Store.Audits[1].Action);
+        Assert.Equal(fixture.RetailerUserId, fixture.Store.Audits[1].UserAccountId);
     }
 
     [Theory]
     [InlineData(OrderPaymentMethods.Cod)]
     [InlineData(OrderPaymentMethods.Prepaid)]
-    public async Task Delivered_non_credit_order_is_settled_automatically(string method)
+    public async Task Delivered_non_credit_order_is_not_settled_automatically(string method)
     {
         var fixture = new Fixture(method, creditTermDays: 0, withPayment: false);
 
+        await fixture.Plan.CreateForFinalApprovedOrderAsync(
+            fixture.Order, fixture.RetailerUserId, Now.AddHours(-1), "RUN-20261015-01", default);
         await fixture.Plan.CreateForDeliveredOrderAsync(
             fixture.Order, fixture.RetailerUserId, Now, default);
 
         var payment = Assert.Single(fixture.Store.Payments);
-        Assert.Equal(PaymentStatuses.Paid, payment.Status);
-        Assert.Equal(PaymentCollectionMethods.DeliverySettlement, payment.CollectionMethod);
-        Assert.Equal(fixture.RetailerUserId, payment.ConfirmedByUserId);
-        Assert.Equal("SettledAtDelivery", Assert.Single(fixture.Store.Audits).Action);
+        Assert.Equal(PaymentStatuses.Unpaid, payment.Status);
+        Assert.Equal(0, payment.ConfirmedAmount);
+        Assert.Null(payment.CollectionMethod);
+        Assert.Null(payment.ConfirmedByUserId);
+        Assert.Equal("DeliveryDateRecorded", fixture.Store.Audits[1].Action);
     }
 
     [Fact]
@@ -120,7 +126,7 @@ public sealed class PaymentServiceTests
         Assert.Equal(first.Id, repeated.Id);
         var exception = await Assert.ThrowsAsync<PaymentOperationException>(() =>
             fixture.Service.CollectAsync(fixture.Order.Id,
-                new(PaymentCollectionMethods.Cash, 1, "Nội dung khác"),
+                new(fixture.Order.FinalAmount, PaymentCollectionMethods.Cash, 1, "Nội dung khác"),
                 "payment-test-001", fixture.SalesUserId, SystemRoles.Sales, default));
         Assert.Equal("conflict", exception.Code);
     }
@@ -137,9 +143,9 @@ public sealed class PaymentServiceTests
     }
 
     [Fact]
-    public async Task Scoped_user_creates_payos_qr_checkout_for_unpaid_credit()
+    public async Task Scoped_user_creates_payos_qr_checkout_for_final_approved_prepaid_order()
     {
-        var fixture = new Fixture();
+        var fixture = new Fixture(OrderPaymentMethods.Prepaid);
 
         var result = await fixture.Service.CreatePayOsCheckoutAsync(
             fixture.Order.Id, new(0), fixture.SalesUserId, SystemRoles.Sales, default);
@@ -158,7 +164,7 @@ public sealed class PaymentServiceTests
     [Fact]
     public async Task Verified_payos_webhook_records_bank_transfer_idempotently()
     {
-        var fixture = new Fixture();
+        var fixture = new Fixture(OrderPaymentMethods.Prepaid);
         var checkout = await fixture.Service.CreatePayOsCheckoutAsync(
             fixture.Order.Id, new(0), fixture.SalesUserId, SystemRoles.Sales, default);
         var webhook = fixture.Gateway.CreateWebhook(checkout);
@@ -169,6 +175,7 @@ public sealed class PaymentServiceTests
         Assert.True(first.Processed);
         Assert.True(repeated.Processed);
         Assert.Equal(PaymentStatuses.Paid, fixture.Payment!.Status);
+        Assert.Equal(fixture.Payment.Amount, fixture.Payment.ConfirmedAmount);
         Assert.Equal(PaymentCollectionMethods.BankTransfer, fixture.Payment.CollectionMethod);
         Assert.Equal("FT-PAYOS-001", fixture.Payment.PayOsReference);
         Assert.Equal(2, fixture.Payment.Version);
@@ -179,7 +186,7 @@ public sealed class PaymentServiceTests
     [Fact]
     public async Task Manual_collection_is_blocked_after_payos_checkout_is_created()
     {
-        var fixture = new Fixture();
+        var fixture = new Fixture(OrderPaymentMethods.Prepaid);
         await fixture.Service.CreatePayOsCheckoutAsync(
             fixture.Order.Id, new(0), fixture.SalesUserId, SystemRoles.Sales, default);
 
@@ -234,6 +241,10 @@ public sealed class PaymentServiceTests
                 Method = method,
                 Status = PaymentStatuses.Unpaid,
                 Amount = Order.FinalAmount,
+                AdjustedAmount = Order.FinalAmount,
+                ConfirmedAmount = 0,
+                FinalApprovedAt = Now.AddHours(-1),
+                FinalApprovalReference = "RUN-20261015-01",
                 DeliveredDate = new DateOnly(2026, 10, 15),
                 DueDate = new DateOnly(2026, 10, 22),
                 Version = 0,
@@ -251,7 +262,7 @@ public sealed class PaymentServiceTests
             string role,
             string collectionMethod,
             int expectedVersion = 0) => Service.CollectAsync(Order.Id,
-            new(collectionMethod, expectedVersion, "Thu đủ công nợ"),
+            new(Order.FinalAmount, collectionMethod, expectedVersion, "Thu đủ công nợ"),
             "payment-test-001", actorUserId, role, default);
     }
 

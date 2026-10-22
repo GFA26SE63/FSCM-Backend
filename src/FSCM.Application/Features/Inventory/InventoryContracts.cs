@@ -1,11 +1,11 @@
 namespace FSCM.Application.Features.Inventory;
 
 public sealed record ReceiveGoodsLineData(
-    Guid ProductId, string? SourceLotCode, decimal Quantity, DateOnly ProductionDate, DateOnly ExpirationDate);
+    Guid ProductId, string? SourceLotCode, decimal Quantity, DateOnly ExpirationDate);
 
 public sealed record GoodsReceiptLineResult(
     Guid Id, Guid ProductId, string Sku, string ProductName, string? SourceLotCode,
-    decimal ReceivedQuantity, DateOnly ProductionDate, DateOnly ExpirationDate, Guid BatchId, string BatchCode);
+    decimal ReceivedQuantity, DateOnly ExpirationDate, Guid BatchId, string BatchCode);
 
 public sealed record GoodsReceiptResult(
     Guid Id, string ReceiptCode, Guid WarehouseId, string WarehouseCode, string WarehouseName,

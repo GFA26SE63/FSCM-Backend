@@ -15,6 +15,7 @@ public sealed class GoodsReceipt
     public DateTimeOffset? ReceivedAt { get; set; }
     public DateTimeOffset? ApprovedAt { get; set; }
     public string? RejectionReason { get; set; }
+    public int Version { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
 }

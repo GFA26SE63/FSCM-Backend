@@ -2,10 +2,19 @@ using FSCM.Domain.Entities;
 
 namespace FSCM.Application.Features.Payments;
 
-public sealed record PaymentView(Payment Payment, SalesOrder Order, Retailer Retailer);
+public sealed record PaymentView(
+    Payment Payment, SalesOrder Order, Retailer Retailer,
+    decimal PendingRefundAmount = 0, decimal RefundedAmount = 0);
 
 public interface IPaymentPlanService
 {
+    Task CreateForFinalApprovedOrderAsync(
+        SalesOrder order,
+        Guid approvalActorUserId,
+        DateTimeOffset approvedAt,
+        string finalApprovalReference,
+        CancellationToken cancellationToken);
+
     Task CreateForDeliveredOrderAsync(
         SalesOrder order,
         Guid receiptActorUserId,

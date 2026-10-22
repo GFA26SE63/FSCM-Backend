@@ -1,14 +1,28 @@
 using FSCM.Application.Features.Deliveries;
+using FSCM.Application.Features.Inventory;
 using FSCM.Application.Features.Orders;
 using FSCM.Application.Features.Payments;
 using FSCM.Application.Features.QrLabels;
 using FSCM.Domain.Authorization;
 using FSCM.Domain.Entities;
+using InventoryAllocation = FSCM.Domain.Entities.Allocation;
 
 namespace FSCM.UnitTests.Deliveries;
 
 public sealed class DeliveryServiceTests
 {
+    [Fact]
+    public async Task Prepaid_order_cannot_dispatch_until_canonical_ledger_is_fully_paid()
+    {
+        var fixture = new Fixture();
+        fixture.Order.PaymentMethod = OrderPaymentMethods.Prepaid;
+
+        var exception = await Assert.ThrowsAsync<DeliveryOperationException>(() => fixture.DispatchAsync());
+
+        Assert.Equal("conflict", exception.Code);
+        Assert.Equal(0, fixture.Inventory.IssueCalls);
+    }
+
     [Fact]
     public async Task Dispatch_snapshots_assignment_and_moves_labels_to_transit()
     {
@@ -21,6 +35,9 @@ public sealed class DeliveryServiceTests
         Assert.Equal(fixture.Driver.Code, result.DriverCode);
         Assert.Equal(fixture.Vehicle.PlateNumber, result.PlateNumber);
         Assert.All(fixture.Labels, item => Assert.Equal(QrLabelStatuses.InTransit, item.Label.Status));
+        Assert.Equal(1, fixture.Inventory.IssueCalls);
+        Assert.Equal(0, fixture.Balance.PhysicalQuantity);
+        Assert.Equal(0, fixture.Balance.ReservedQuantity);
         Assert.Contains(fixture.Store.History, item => item.ToStatus == OrderStatuses.Delivering);
     }
 
@@ -163,8 +180,12 @@ public sealed class DeliveryServiceTests
         public SalesOrder Order { get; }
         public Driver Driver { get; }
         public Vehicle Vehicle { get; }
+        public InventoryAllocation Allocation { get; }
+        public InventoryBalance Balance { get; }
         public List<DeliveryLabelView> Labels { get; }
         public FakeDeliveryStore Store { get; }
+        public FakePaymentStore PaymentStore { get; }
+        public FakeInventoryLifecycle Inventory { get; }
         public DeliveryService Service { get; }
 
         public Fixture()
@@ -205,9 +226,30 @@ public sealed class DeliveryServiceTests
                 Capacity = 20,
                 IsActive = true
             };
-            Labels = [CreateLabel("TEM-001010", 5), CreateLabel("TEM-001011", 5)];
+            var batchId = Guid.NewGuid();
+            Allocation = new InventoryAllocation
+            {
+                Id = Guid.NewGuid(),
+                BatchId = batchId,
+                WarehouseId = Warehouse.Id,
+                AllocatedQuantity = 10,
+                Status = AllocationInventoryStatuses.Reserved
+            };
+            Balance = new InventoryBalance
+            {
+                Id = Guid.NewGuid(),
+                BatchId = batchId,
+                PhysicalQuantity = 10,
+                ReservedQuantity = 10,
+                AvailableQuantity = 0,
+                Version = 0
+            };
+            Labels = [CreateLabel("TEM-001010", 5, batchId), CreateLabel("TEM-001011", 5, batchId)];
             Store = new FakeDeliveryStore(this);
-            Service = new DeliveryService(Store, new FakePaymentPlan(), new FixedTimeProvider(Now));
+            PaymentStore = new FakePaymentStore(this);
+            Inventory = new FakeInventoryLifecycle(this);
+            Service = new DeliveryService(
+                Store, new FakePaymentPlan(), PaymentStore, Inventory, new FixedTimeProvider(Now));
         }
 
         public Task<DeliveryResult> DispatchAsync(int expectedVersion = 3) =>
@@ -220,12 +262,12 @@ public sealed class DeliveryServiceTests
                 new(codes, expectedVersion ?? Order.Version, "Đã nhận đủ hàng"),
                 "receipt-test-001", RetailerUserId, SystemRoles.Retailer, default);
 
-        private DeliveryLabelView CreateLabel(string code, decimal quantity)
+        private DeliveryLabelView CreateLabel(string code, decimal quantity, Guid batchId)
         {
             var label = new BatchQrLabel
             {
                 Id = Guid.NewGuid(),
-                BatchId = Guid.NewGuid(),
+                BatchId = batchId,
                 CurrentWarehouseId = Warehouse.Id,
                 QrCode = code,
                 Quantity = quantity,
@@ -265,6 +307,12 @@ public sealed class DeliveryServiceTests
         public Task<IReadOnlyCollection<DeliveryLabelView>> ListOrderLabelsAsync(Guid orderId, bool forUpdate,
             CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyCollection<DeliveryLabelView>>(fixture.Labels);
+
+        public Task<IReadOnlyCollection<DeliveryInventoryIssue>> ListOrderInventoryIssuesAsync(
+            Guid orderId, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyCollection<DeliveryInventoryIssue>>([
+                new(fixture.Allocation.Id, fixture.Allocation.BatchId, fixture.Balance.Version)
+            ]);
 
         public Task<DeliveryView?> FindByOrderAsync(Guid orderId, bool forUpdate,
             CancellationToken cancellationToken) => Task.FromResult(
@@ -321,7 +369,68 @@ public sealed class DeliveryServiceTests
 
     private sealed class FakePaymentPlan : IPaymentPlanService
     {
+        public Task CreateForFinalApprovedOrderAsync(SalesOrder order, Guid approvalActorUserId,
+            DateTimeOffset approvedAt, string finalApprovalReference,
+            CancellationToken cancellationToken) => Task.CompletedTask;
+
         public Task CreateForDeliveredOrderAsync(SalesOrder order, Guid receiptActorUserId,
             DateTimeOffset deliveredAt, CancellationToken cancellationToken) => Task.CompletedTask;
+    }
+
+    private sealed class FakePaymentStore(Fixture fixture) : IPaymentStore
+    {
+        private readonly Payment ledger = new()
+        {
+            Id = Guid.NewGuid(),
+            Status = PaymentStatuses.Unpaid,
+            Amount = 100_000,
+            ConfirmedAmount = 0,
+            FinalApprovedAt = DateTimeOffset.UtcNow,
+            FinalApprovalReference = "RUN-TEST-01"
+        };
+
+        public Task<PaymentView?> FindByOrderAsync(Guid orderId, bool forUpdate,
+            CancellationToken cancellationToken) => Task.FromResult<PaymentView?>(
+            orderId == fixture.Order.Id ? new(ledger, fixture.Order, fixture.Retailer) : null);
+        public Task<PaymentView?> FindByOperationKeyAsync(string operationKey,
+            CancellationToken cancellationToken) => Task.FromResult<PaymentView?>(null);
+        public Task<PaymentView?> FindByPayOsOrderCodeAsync(long payOsOrderCode, bool forUpdate,
+            CancellationToken cancellationToken) => Task.FromResult<PaymentView?>(null);
+        public Task<IReadOnlyCollection<PaymentView>> ListAsync(Guid actorUserId, string actorRole,
+            CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyCollection<PaymentView>>([]);
+        public Task<bool> CanViewAsync(PaymentView view, Guid actorUserId, string actorRole,
+            CancellationToken cancellationToken) => Task.FromResult(false);
+        public void Add(Payment payment) => throw new NotSupportedException();
+        public void AddAuditLog(AuditLog auditLog) => throw new NotSupportedException();
+        public Task SaveChangesAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+        public Task ExecuteInTransactionAsync(Func<CancellationToken, Task> operation,
+            CancellationToken cancellationToken) => operation(cancellationToken);
+        public void ClearTracking() { }
+    }
+
+    private sealed class FakeInventoryLifecycle(Fixture fixture) : IInventoryLifecycleService
+    {
+        public int IssueCalls { get; private set; }
+
+        public Task<InventoryLifecycleResult> ReserveAsync(Guid allocationId, Guid actorUserId,
+            int expectedVersion, CancellationToken cancellationToken) => throw new NotSupportedException();
+        public Task<InventoryLifecycleResult> ReleaseAsync(Guid allocationId, Guid actorUserId,
+            int expectedVersion, CancellationToken cancellationToken) => throw new NotSupportedException();
+        public Task<InventoryLifecycleResult> IssueAsync(Guid allocationId, Guid actorUserId,
+            int expectedVersion, CancellationToken cancellationToken)
+        {
+            IssueCalls++;
+            fixture.Balance.PhysicalQuantity -= fixture.Allocation.AllocatedQuantity;
+            fixture.Balance.ReservedQuantity -= fixture.Allocation.AllocatedQuantity;
+            fixture.Balance.AvailableQuantity = fixture.Balance.PhysicalQuantity - fixture.Balance.ReservedQuantity;
+            fixture.Balance.Version++;
+            fixture.Allocation.Status = AllocationInventoryStatuses.Issued;
+            return Task.FromResult(new InventoryLifecycleResult(
+                fixture.Allocation.Id, fixture.Allocation.BatchId, fixture.Warehouse.Id,
+                fixture.Allocation.AllocatedQuantity, fixture.Allocation.Status,
+                fixture.Balance.PhysicalQuantity, fixture.Balance.ReservedQuantity,
+                fixture.Balance.AvailableQuantity, fixture.Balance.Version));
+        }
     }
 }

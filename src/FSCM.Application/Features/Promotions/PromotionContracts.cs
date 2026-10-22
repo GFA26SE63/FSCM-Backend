@@ -38,7 +38,8 @@ public sealed record BatchDiscountSuggestionResult(
 
 public sealed record AppliedPromotionSnapshot(
     Guid PromotionId, string Code, string Name, string PromotionType,
-    decimal DiscountPercent);
+    decimal DiscountPercent, decimal MinimumQuantity,
+    DateTimeOffset EffectiveFrom, DateTimeOffset EffectiveTo);
 
 public sealed record PriceSnapshotResult(
     Guid ProductId, string Sku, string ProductName, Guid? BatchId, string? BatchCode,
@@ -46,4 +47,14 @@ public sealed record PriceSnapshotResult(
     decimal DiscountPercent, decimal DiscountAmount, decimal NetUnitPrice,
     decimal NetAmount, AppliedPromotionSnapshot? AppliedPromotion,
     IReadOnlyCollection<AppliedPromotionSnapshot> EligiblePromotions,
-    DateTimeOffset PricedAt);
+    DateTimeOffset PricedAt,
+    bool FinalPricePendingAllocation,
+    Guid ProductPriceId,
+    DateTimeOffset ProductPriceEffectiveFrom,
+    DateTimeOffset? ProductPriceEffectiveTo)
+{
+    public decimal BaseUnitPrice => UnitPrice;
+    public decimal OrdinaryPromotionDiscountAmount => DiscountAmount;
+    public decimal IndicativeNetUnitPrice => NetUnitPrice;
+    public decimal IndicativeNetAmount => NetAmount;
+}

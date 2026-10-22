@@ -113,7 +113,6 @@ public sealed class InventoryService(IInventoryStore store, TimeProvider timePro
                 ProductId = input.ProductId,
                 SourceLotCode = input.SourceLotCode,
                 ReceivedQuantity = input.Quantity,
-                ProductionDate = input.ProductionDate,
                 ExpirationDate = input.ExpirationDate,
                 CreatedAt = now
             };
@@ -205,12 +204,8 @@ public sealed class InventoryService(IInventoryStore store, TimeProvider timePro
         if (line.ProductId == Guid.Empty) throw InventoryOperationException.Validation("Product identifier is required.");
         if (line.Quantity <= 0 || decimal.Truncate(line.Quantity) != line.Quantity)
             throw InventoryOperationException.Validation("Received quantity must be a positive whole number of cartons.");
-        if (line.ProductionDate > businessDate)
-            throw InventoryOperationException.Validation("Production date cannot be in the future.");
         if (line.ExpirationDate <= businessDate)
             throw InventoryOperationException.Validation("Expired goods or goods expiring today cannot be received.");
-        if (line.ExpirationDate <= line.ProductionDate)
-            throw InventoryOperationException.Validation("Expiration date must be after the production date.");
     }
 
     private static string ValidateIdempotencyKey(string value)
@@ -252,7 +247,6 @@ public sealed class InventoryService(IInventoryStore store, TimeProvider timePro
         var canonicalLines = lines.OrderBy(item => item.ProductId).ThenBy(item => item.ExpirationDate)
             .ThenBy(item => item.SourceLotCode, StringComparer.Ordinal)
             .Select(item => string.Join('|', item.ProductId, item.ExpirationDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
-                item.ProductionDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
                 item.Quantity.ToString(CultureInfo.InvariantCulture), item.SourceLotCode?.Trim().ToUpperInvariant()));
         var canonical = $"{userId}|{warehouseId}|{string.Join(';', canonicalLines)}";
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(canonical)));
@@ -264,7 +258,7 @@ public sealed class InventoryService(IInventoryStore store, TimeProvider timePro
         view.Receipt.ReceivedAt ?? view.Receipt.CreatedAt, view.Receipt.CreatedAt,
         view.Lines.Select(item => new GoodsReceiptLineResult(item.Line.Id, item.Line.ProductId,
             item.Sku, item.ProductName, item.Line.SourceLotCode, item.Line.ReceivedQuantity,
-            item.Line.ProductionDate, item.Line.ExpirationDate, item.BatchId, item.BatchCode)).ToArray());
+            item.Line.ExpirationDate, item.BatchId, item.BatchCode)).ToArray());
 
     private static BatchInventoryResult ToInventoryResult(BatchInventoryView view, DateOnly today) => new(
         view.Batch.Id, view.Batch.BatchCode, view.Batch.WarehouseId, view.WarehouseCode, view.WarehouseName,

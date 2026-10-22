@@ -1,4 +1,5 @@
 using System.Net.Mail;
+using System.Text.Json;
 using FSCM.Domain.Authorization;
 using FSCM.Domain.Entities;
 
@@ -27,6 +28,8 @@ public sealed class IdentityService(
             ? null
             : await store.FindCredentialAsync(user.Id, cancellationToken);
 
+        // Authentication methods are capabilities, not mutually exclusive account types.
+        // A password credential enables local login even after the same account is linked to Entra.
         if (user is null || credential is null || !user.IsActive)
         {
             throw IdentityOperationException.InvalidCredentials();
@@ -59,6 +62,42 @@ public sealed class IdentityService(
         return await IssueAuthenticationResultAsync(user, credential, ipAddress, now, cancellationToken);
     }
 
+    public async Task<AuthenticationResult> ExchangeEntraAsync(
+        EntraIdentity identity,
+        string? ipAddress,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(identity.ObjectId) || identity.ObjectId.Trim().Length > 150)
+            throw IdentityOperationException.InvalidToken();
+
+        var normalizedEmail = NormalizeEmail(identity.Email);
+        var objectId = identity.ObjectId.Trim();
+        var user = await store.FindUserByEntraObjectIdAsync(objectId, cancellationToken);
+        if (user is null)
+        {
+            user = await store.FindUserByEmailAsync(normalizedEmail, cancellationToken);
+            if (user is null)
+                throw IdentityOperationException.Forbidden(
+                    "The Entra identity has not been provisioned in FSCM.");
+            if (!user.IsActive)
+                throw IdentityOperationException.Forbidden("The FSCM account is inactive.");
+            if (!string.IsNullOrWhiteSpace(user.EntraObjectId))
+                throw IdentityOperationException.Conflict(
+                    "The FSCM account is already linked to another Entra identity.");
+
+            user.EntraObjectId = objectId;
+            user.UpdatedAt = timeProvider.GetUtcNow();
+            AddAudit(user.Id, user.Id, "EntraIdentityLinked", null, new { EntraObjectId = objectId });
+        }
+
+        if (!user.IsActive)
+            throw IdentityOperationException.Forbidden("The FSCM account is inactive.");
+
+        var now = timeProvider.GetUtcNow();
+        var credential = await store.FindCredentialAsync(user.Id, cancellationToken);
+        return await IssueAuthenticationResultAsync(user, credential, ipAddress, now, cancellationToken);
+    }
+
     public async Task<AuthenticationResult> RefreshAsync(
         string rawRefreshToken,
         string? ipAddress,
@@ -78,7 +117,8 @@ public sealed class IdentityService(
             ? null
             : await store.FindCredentialAsync(user.Id, cancellationToken);
 
-        if (user is null || credential is null || !user.IsActive)
+        if (user is null || !user.IsActive ||
+            (user.IdentityProvider == IdentityProviders.Local && credential is null))
         {
             throw IdentityOperationException.InvalidToken();
         }
@@ -127,6 +167,8 @@ public sealed class IdentityService(
             cancellationToken);
         var user = await store.FindUserByIdAsync(token.UserAccountId, cancellationToken)
             ?? throw IdentityOperationException.InvalidToken();
+        if (user.IdentityProvider != IdentityProviders.Local)
+            throw IdentityOperationException.InvalidToken();
         var credential = await store.FindCredentialAsync(user.Id, cancellationToken);
 
         if (credential is null)
@@ -158,7 +200,7 @@ public sealed class IdentityService(
         CancellationToken cancellationToken)
     {
         var user = await store.FindUserByEmailAsync(NormalizeEmail(email), cancellationToken);
-        if (user is null || !user.IsActive)
+        if (user is null || !user.IsActive || user.IdentityProvider != IdentityProviders.Local)
         {
             return null;
         }
@@ -213,15 +255,62 @@ public sealed class IdentityService(
         return ToAuthenticatedUser(user, credential?.MustChangePassword ?? false, scope);
     }
 
+    public async Task<PagedUserResult> ListUsersAsync(
+        UserListQuery query,
+        CancellationToken cancellationToken)
+    {
+        if (query.Page < 1)
+            throw IdentityOperationException.Validation("Page must be greater than zero.");
+        if (query.PageSize is < 1 or > 100)
+            throw IdentityOperationException.Validation("Page size must be between 1 and 100.");
+
+        var normalizedRole = string.IsNullOrWhiteSpace(query.Role) ? null : query.Role.Trim();
+        if (normalizedRole is not null && !SystemRoles.IsValid(normalizedRole))
+            throw IdentityOperationException.Validation("Role filter is invalid.");
+        var normalizedQuery = query with { Search = query.Search?.Trim(), Role = normalizedRole };
+        var result = await store.ListUsersAsync(normalizedQuery, cancellationToken);
+        return new PagedUserResult(
+            result.Items.Select(ToUserSummary).ToArray(),
+            query.Page,
+            query.PageSize,
+            result.TotalCount);
+    }
+
+    public async Task<AuthenticatedUser> UpdateProfileAsync(
+        Guid userId,
+        string email,
+        string fullName,
+        Guid actorUserId,
+        CancellationToken cancellationToken)
+    {
+        var user = await GetManageableUserAsync(userId, cancellationToken);
+        var normalizedEmail = NormalizeEmail(email);
+        ValidateFullName(fullName);
+        var duplicate = await store.FindUserByEmailAsync(normalizedEmail, cancellationToken);
+        if (duplicate is not null && duplicate.Id != userId)
+            throw IdentityOperationException.Conflict("A user with this email address already exists.");
+
+        var before = new { user.Email, user.FullName };
+        user.Email = normalizedEmail;
+        user.FullName = fullName.Trim();
+        user.UpdatedAt = timeProvider.GetUtcNow();
+        AddAudit(user.Id, actorUserId, "ProfileUpdated", before, new { user.Email, user.FullName });
+        await store.SaveChangesAsync(cancellationToken);
+        return await GetCurrentUserAsync(userId, cancellationToken);
+    }
+
     public async Task<CreatedUserResult> CreateUserAsync(
         string email,
         string fullName,
         string role,
+        string identityProvider,
+        Guid actorUserId,
         CancellationToken cancellationToken)
     {
         var normalizedEmail = NormalizeEmail(email);
         ValidateFullName(fullName);
         EnsureAssignableRole(role);
+        identityProvider = NormalizeIdentityProvider(identityProvider);
 
         if (await store.FindUserByEmailAsync(normalizedEmail, cancellationToken) is not null)
         {
@@ -233,46 +322,63 @@ public sealed class IdentityService(
         var user = new UserAccount
         {
             Id = userId,
-            EntraObjectId = $"local:{userId:N}",
+            IdentityProvider = identityProvider,
             Email = normalizedEmail,
             FullName = fullName.Trim(),
             Role = role,
-            IsActive = false,
+            IsActive = identityProvider == IdentityProviders.Entra,
             CreatedAt = now,
             UpdatedAt = now
         };
-        var (rawToken, accountToken) = CreateAccountToken(
-            userId,
-            AccountTokenPurposes.Activation,
-            now,
-            ActivationTokenLifetime);
-
         store.AddUser(user);
-        store.AddAccountToken(accountToken);
+        string? rawToken = null;
+        AccountToken? accountToken = null;
+        if (identityProvider == IdentityProviders.Local)
+        {
+            (rawToken, accountToken) = CreateAccountToken(
+                userId,
+                AccountTokenPurposes.Activation,
+                now,
+                ActivationTokenLifetime);
+            store.AddAccountToken(accountToken);
+        }
+        AddAudit(user.Id, actorUserId, "Created", null,
+            new { user.Email, user.FullName, user.Role, user.IdentityProvider, user.IsActive });
         await store.SaveChangesAsync(cancellationToken);
 
-        return new CreatedUserResult(user.Id, user.Email, user.Role, rawToken, accountToken.ExpiresAt);
+        return new CreatedUserResult(
+            user.Id,
+            user.Email,
+            user.Role,
+            user.IdentityProvider,
+            rawToken,
+            accountToken?.ExpiresAt);
     }
 
     public async Task UpdateRoleAsync(
         Guid userId,
         string role,
+        Guid actorUserId,
         CancellationToken cancellationToken)
     {
         EnsureAssignableRole(role);
         var user = await GetManageableUserAsync(userId, cancellationToken);
+        var oldRole = user.Role;
         user.Role = role;
         user.UpdatedAt = timeProvider.GetUtcNow();
+        AddAudit(user.Id, actorUserId, "RoleUpdated", new { Role = oldRole }, new { user.Role });
         await store.SaveChangesAsync(cancellationToken);
     }
 
     public async Task SetActiveStatusAsync(
         Guid userId,
         bool isActive,
+        Guid actorUserId,
         CancellationToken cancellationToken)
     {
         var user = await GetManageableUserAsync(userId, cancellationToken);
         var now = timeProvider.GetUtcNow();
+        var oldIsActive = user.IsActive;
         user.IsActive = isActive;
         user.UpdatedAt = now;
         if (!isActive)
@@ -280,15 +386,21 @@ public sealed class IdentityService(
             await RevokeActiveRefreshTokensAsync(userId, now, cancellationToken);
         }
 
+        AddAudit(user.Id, actorUserId, isActive ? "Activated" : "Deactivated",
+            new { IsActive = oldIsActive }, new { user.IsActive });
         await store.SaveChangesAsync(cancellationToken);
     }
 
     public async Task AssignWarehouseAsync(
         Guid userId,
         Guid warehouseId,
+        Guid actorUserId,
         CancellationToken cancellationToken)
     {
-        await GetManageableUserAsync(userId, cancellationToken);
+        var user = await GetManageableUserAsync(userId, cancellationToken);
+        if (user.Role != SystemRoles.WarehouseKeeper)
+            throw IdentityOperationException.Validation(
+                "Only Warehouse Keeper users can be assigned to a warehouse.");
         if (!await store.WarehouseExistsAsync(warehouseId, cancellationToken))
         {
             throw IdentityOperationException.NotFound("Warehouse was not found.");
@@ -312,23 +424,28 @@ public sealed class IdentityService(
             assignment.AssignedAt = timeProvider.GetUtcNow();
         }
 
+        AddAudit(userId, actorUserId, "WarehouseAssigned", null, new { WarehouseId = warehouseId });
         await store.SaveChangesAsync(cancellationToken);
     }
 
     public async Task UnassignWarehouseAsync(
         Guid userId,
         Guid warehouseId,
+        Guid actorUserId,
         CancellationToken cancellationToken)
     {
+        await GetManageableUserAsync(userId, cancellationToken);
         var assignment = await store.FindWarehouseAssignmentAsync(userId, warehouseId, cancellationToken)
             ?? throw IdentityOperationException.NotFound("Warehouse assignment was not found.");
         assignment.IsActive = false;
+        AddAudit(userId, actorUserId, "WarehouseUnassigned", new { WarehouseId = warehouseId }, null);
         await store.SaveChangesAsync(cancellationToken);
     }
 
     public async Task AssignSalesGroupAsync(
         Guid userId,
         Guid salesGroupId,
+        Guid actorUserId,
         CancellationToken cancellationToken)
     {
         var user = await GetManageableUserAsync(userId, cancellationToken);
@@ -364,24 +481,118 @@ public sealed class IdentityService(
             IsActive = true
         });
 
+        AddAudit(userId, actorUserId, "SalesGroupAssigned", null, new { SalesGroupId = salesGroupId });
         await store.SaveChangesAsync(cancellationToken);
     }
 
     public async Task UnassignSalesGroupAsync(
         Guid userId,
         Guid salesGroupId,
+        Guid actorUserId,
         CancellationToken cancellationToken)
     {
+        await GetManageableUserAsync(userId, cancellationToken);
         var membership = await store.FindSalesGroupMembershipAsync(userId, salesGroupId, cancellationToken)
             ?? throw IdentityOperationException.NotFound("Sales group membership was not found.");
         membership.IsActive = false;
         membership.UnassignedAt = timeProvider.GetUtcNow();
+        AddAudit(userId, actorUserId, "SalesGroupUnassigned", new { SalesGroupId = salesGroupId }, null);
+        await store.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task AssignRegionAsync(
+        Guid userId,
+        Guid regionId,
+        Guid actorUserId,
+        CancellationToken cancellationToken)
+    {
+        var user = await GetManageableUserAsync(userId, cancellationToken);
+        if (user.Role != SystemRoles.SalesManager)
+            throw IdentityOperationException.Validation("Only Sales Manager users can be assigned directly to a region.");
+        if (!await store.RegionExistsAsync(regionId, cancellationToken))
+            throw IdentityOperationException.NotFound("Region was not found.");
+
+        var now = timeProvider.GetUtcNow();
+        var assignment = await store.FindRegionAssignmentAsync(userId, regionId, cancellationToken);
+        if (assignment is null)
+        {
+            store.AddRegionAssignment(new UserRegionAssignment
+            {
+                Id = Guid.NewGuid(),
+                UserAccountId = userId,
+                RegionId = regionId,
+                AssignedAt = now,
+                IsActive = true
+            });
+        }
+        else
+        {
+            assignment.AssignedAt = now;
+            assignment.UnassignedAt = null;
+            assignment.IsActive = true;
+        }
+        AddAudit(userId, actorUserId, "RegionAssigned", null, new { RegionId = regionId });
+        await store.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task UnassignRegionAsync(
+        Guid userId,
+        Guid regionId,
+        Guid actorUserId,
+        CancellationToken cancellationToken)
+    {
+        await GetManageableUserAsync(userId, cancellationToken);
+        var assignment = await store.FindRegionAssignmentAsync(userId, regionId, cancellationToken)
+            ?? throw IdentityOperationException.NotFound("Region assignment was not found.");
+        assignment.IsActive = false;
+        assignment.UnassignedAt = timeProvider.GetUtcNow();
+        AddAudit(userId, actorUserId, "RegionUnassigned", new { RegionId = regionId }, null);
+        await store.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task AssignRetailerAsync(
+        Guid userId,
+        Guid retailerId,
+        Guid actorUserId,
+        CancellationToken cancellationToken)
+    {
+        var user = await GetManageableUserAsync(userId, cancellationToken);
+        if (user.Role != SystemRoles.Retailer)
+            throw IdentityOperationException.Validation("Only Retailer users can be assigned to a Retailer profile.");
+        var retailer = await store.FindRetailerAsync(retailerId, cancellationToken)
+            ?? throw IdentityOperationException.NotFound("Retailer was not found.");
+        if (retailer.UserAccountId.HasValue && retailer.UserAccountId != userId)
+            throw IdentityOperationException.Conflict("The Retailer is already assigned to another user.");
+        var current = await store.FindRetailerByUserIdAsync(userId, cancellationToken);
+        if (current is not null && current.Id != retailerId)
+            throw IdentityOperationException.Conflict("The user is already assigned to another Retailer.");
+
+        retailer.UserAccountId = userId;
+        retailer.UpdatedAt = timeProvider.GetUtcNow();
+        AddAudit(userId, actorUserId, "RetailerAssigned", null, new { RetailerId = retailerId });
+        await store.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task UnassignRetailerAsync(
+        Guid userId,
+        Guid retailerId,
+        Guid actorUserId,
+        CancellationToken cancellationToken)
+    {
+        await GetManageableUserAsync(userId, cancellationToken);
+        var retailer = await store.FindRetailerAsync(retailerId, cancellationToken)
+            ?? throw IdentityOperationException.NotFound("Retailer was not found.");
+        if (retailer.UserAccountId != userId)
+            throw IdentityOperationException.NotFound("Retailer assignment was not found.");
+        retailer.UserAccountId = null;
+        retailer.UpdatedAt = timeProvider.GetUtcNow();
+        AddAudit(userId, actorUserId, "RetailerUnassigned", new { RetailerId = retailerId }, null);
         await store.SaveChangesAsync(cancellationToken);
     }
 
     private async Task<AuthenticationResult> IssueAuthenticationResultAsync(
         UserAccount user,
-        UserCredential credential,
+        UserCredential? credential,
         string? ipAddress,
         DateTimeOffset now,
         CancellationToken cancellationToken)
@@ -407,7 +618,7 @@ public sealed class IdentityService(
             accessToken.ExpiresAt,
             rawRefreshToken,
             refreshToken.ExpiresAt,
-            ToAuthenticatedUser(user, credential.MustChangePassword, scope));
+            ToAuthenticatedUser(user, credential?.MustChangePassword ?? false, scope));
     }
 
     private async Task<AccountToken> FindUsableAccountTokenAsync(
@@ -474,6 +685,23 @@ public sealed class IdentityService(
         IdentityScope scope) =>
         new(user.Id, user.Email, user.FullName, user.Role, mustChangePassword, scope);
 
+    private static UserSummary ToUserSummary(UserAccount user) =>
+        new(user.Id, user.Email, user.FullName, user.Role, user.IsActive,
+            user.IdentityProvider, user.CreatedAt, user.UpdatedAt);
+
+    private void AddAudit(Guid entityId, Guid actorUserId, string action, object? oldValues, object? newValues) =>
+        store.AddAuditLog(new AuditLog
+        {
+            Id = Guid.NewGuid(),
+            UserAccountId = actorUserId,
+            EntityName = nameof(UserAccount),
+            EntityId = entityId,
+            Action = action,
+            OldValues = oldValues is null ? null : JsonSerializer.Serialize(oldValues),
+            NewValues = newValues is null ? null : JsonSerializer.Serialize(newValues),
+            CreatedAt = timeProvider.GetUtcNow()
+        });
+
     private static string NormalizeEmail(string email)
     {
         var normalized = email.Trim().ToLowerInvariant();
@@ -513,6 +741,17 @@ public sealed class IdentityService(
             throw IdentityOperationException.Forbidden(
                 "The requested role is invalid or cannot be assigned through this API.");
         }
+    }
+
+    private static string NormalizeIdentityProvider(string identityProvider)
+    {
+        if (string.IsNullOrWhiteSpace(identityProvider))
+            throw IdentityOperationException.Validation("Identity provider must be Local or Entra.");
+        if (identityProvider.Equals(IdentityProviders.Local, StringComparison.OrdinalIgnoreCase))
+            return IdentityProviders.Local;
+        if (identityProvider.Equals(IdentityProviders.Entra, StringComparison.OrdinalIgnoreCase))
+            return IdentityProviders.Entra;
+        throw IdentityOperationException.Validation("Identity provider must be Local or Entra.");
     }
 
     private static string? LimitIpAddress(string? ipAddress) =>
