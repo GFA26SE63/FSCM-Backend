@@ -128,7 +128,7 @@ public sealed class AllocationPlannerTests
             [Batch("B-A", ProductA, quantity: 15m)],
             Route);
 
-        var result = Assert.Single(Assert.Single(plan.Orders).LineResults);
+        var result = Assert.Single(Assert.Single(plan.Orders).LineResults).Result;
         Assert.False(result.IsFullyAllocated);
         Assert.NotEmpty(result.FilterTrace);
     }

@@ -292,6 +292,109 @@ public sealed class AllocationRunService(
         return await pricing.PriceAsync(pricedAt, orders, cancellationToken);
     }
 
+    /// <summary>
+    /// Keeps the engine's working for every line of the version: the weights and the MLOR it was
+    /// measured against, every batch each hard filter looked at and what stopped it, and every
+    /// ranking of every greedy turn.
+    ///
+    /// Rejections and losing scores are the point. "Why not that batch" cannot be answered from the
+    /// chosen ones, and a score means nothing without the scores it beat.
+    ///
+    /// Nothing here is a price. Batches are settled first and priced after (F89), so the reason a
+    /// batch was chosen stays separate from the reason it was later reduced.
+    /// </summary>
+    private void PersistTrace(AllocationPlan plan, Guid planVersionId, DateTimeOffset now)
+    {
+        var traces = new List<AllocationLineTrace>();
+        var candidates = new List<AllocationTraceCandidate>();
+        var scores = new List<AllocationTraceScore>();
+
+        foreach (var planned in plan.Orders)
+        {
+            foreach (var line in planned.LineResults)
+            {
+                var result = line.Result;
+                // A short order hands back every draw it made, so the lines that succeeded before
+                // the shortfall are Released rather than Allocated. Lines after it were never
+                // reached and have no result to record.
+                var outcome = result.IsFullyAllocated
+                    ? planned.IsFullyAllocated
+                        ? AllocationLineTraceOutcomes.Allocated
+                        : AllocationLineTraceOutcomes.Released
+                    : AllocationLineTraceOutcomes.Short;
+                var note = outcome switch
+                {
+                    AllocationLineTraceOutcomes.Short => planned.ShortageReason,
+                    AllocationLineTraceOutcomes.Released =>
+                        $"Trả {result.AllocatedQuantity:0.###} về quỹ chung vì đơn {planned.OrderCode} thiếu ở dòng khác.",
+                    _ => null
+                };
+
+                var trace = new AllocationLineTrace
+                {
+                    Id = Guid.NewGuid(),
+                    AllocationPlanVersionId = planVersionId,
+                    AllocationRunLineId = line.RunLineId,
+                    Outcome = outcome,
+                    OrderedQuantity = result.RequiredQuantity,
+                    DrawnQuantity = result.AllocatedQuantity,
+                    ShortageQuantity = result.ShortageQuantity,
+                    RequiredShelfLifeHours = Round3(result.RequiredShelfLifeHours),
+                    ShelfLifeWeight = result.Weights.ShelfLife,
+                    DistanceWeight = result.Weights.Distance,
+                    CoverageWeight = result.Weights.Coverage,
+                    MaximumDistanceMeters = result.Weights.MaximumDistanceMeters,
+                    Note = note,
+                    CreatedAt = now
+                };
+                traces.Add(trace);
+
+                candidates.AddRange(result.FilterTrace.Select(item => new AllocationTraceCandidate
+                {
+                    Id = Guid.NewGuid(),
+                    AllocationLineTraceId = trace.Id,
+                    BatchId = item.BatchId,
+                    BatchCodeSnapshot = item.BatchCode,
+                    WarehouseId = item.WarehouseId,
+                    WarehouseCodeSnapshot = item.WarehouseCode,
+                    Stage = item.Stage.ToString(),
+                    Passed = item.Passed,
+                    Reason = item.Reason.ToString(),
+                    EstimatedArrivalAt = item.EstimatedArrivalAt,
+                    RemainingShelfLifeHours = item.RemainingShelfLifeHours is { } remaining ? Round3(remaining) : null,
+                    RequiredShelfLifeHours = item.RequiredShelfLifeHours is { } required ? Round3(required) : null,
+                    CreatedAt = now
+                }));
+
+                scores.AddRange(result.ScoreTrace.Select(item => new AllocationTraceScore
+                {
+                    Id = Guid.NewGuid(),
+                    AllocationLineTraceId = trace.Id,
+                    Iteration = item.Iteration,
+                    Rank = item.Rank,
+                    BatchId = item.BatchId,
+                    BatchCodeSnapshot = item.BatchCode,
+                    WarehouseId = item.WarehouseId,
+                    WarehouseCodeSnapshot = item.WarehouseCode,
+                    RemainingDemand = item.RemainingDemand,
+                    ShelfLifeScore = item.ShelfLifeScore,
+                    DistanceScore = item.DistanceScore,
+                    CoverageScore = item.CoverageScore,
+                    WeightedScore = item.WeightedScore,
+                    Selected = item.Selected,
+                    SelectedQuantity = item.SelectedQuantity,
+                    CreatedAt = now
+                }));
+            }
+        }
+
+        store.AddLineTraces(traces);
+        store.AddTraceCandidates(candidates);
+        store.AddTraceScores(scores);
+    }
+
+    private static decimal Round3(decimal value) => Math.Round(value, 3, MidpointRounding.AwayFromZero);
+
     private async Task PersistAsync(
         Guid runId,
         AllocationPlan plan,
@@ -390,6 +493,7 @@ public sealed class AllocationRunService(
             }
 
             store.AddAllocations(allocations);
+            PersistTrace(plan, planVersion.Id, now);
             tracked.Run.Status = AllocationRunStatuses.AwaitingApproval;
             tracked.Run.CompletedAt = now;
             tracked.Run.Version++;

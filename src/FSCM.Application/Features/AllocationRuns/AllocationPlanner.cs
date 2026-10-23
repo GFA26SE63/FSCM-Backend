@@ -51,13 +51,22 @@ public sealed record PlannedAllocation(
     decimal RemainingShelfLifeHours,
     decimal WeightedScore);
 
+/// <summary>
+/// What the engine worked out for one line, tied back to the line it was asked about. The engine
+/// itself deals in SKUs and knows nothing of run line identifiers, so the planner carries the link.
+/// </summary>
+public sealed record PlannedLineResult(
+    Guid RunLineId,
+    int LineNumber,
+    AllocationResult Result);
+
 public sealed record PlannedOrder(
     Guid RunOrderId,
     string OrderCode,
     bool IsFullyAllocated,
     string? ShortageReason,
     IReadOnlyList<PlannedAllocation> Allocations,
-    IReadOnlyList<AllocationResult> LineResults);
+    IReadOnlyList<PlannedLineResult> LineResults);
 
 public sealed record AllocationPlan(
     IReadOnlyList<PlannedOrder> Orders,
@@ -99,7 +108,7 @@ public sealed class AllocationPlanner(AllocationEngine engine)
         foreach (var order in orders.OrderBy(item => item.PriorityRank))
         {
             var orderAllocations = new List<PlannedAllocation>();
-            var lineResults = new List<AllocationResult>();
+            var lineResults = new List<PlannedLineResult>();
             // Draws this order has made but not yet earned: released in full if any line falls short.
             var tentative = new Dictionary<Guid, decimal>();
             string? shortageReason = null;
@@ -111,7 +120,7 @@ public sealed class AllocationPlanner(AllocationEngine engine)
                     line.EffectiveMlorRatio, order.DeliveryDeadline);
                 var batches = byProduct.TryGetValue(line.ProductId, out var found) ? found : [];
                 var result = engine.Allocate(request, Candidates(batches, remaining, order.RetailerId, route));
-                lineResults.Add(result);
+                lineResults.Add(new PlannedLineResult(line.RunLineId, line.LineNumber, result));
 
                 if (!result.IsFullyAllocated)
                 {

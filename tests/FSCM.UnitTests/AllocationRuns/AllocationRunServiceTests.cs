@@ -288,6 +288,17 @@ public sealed class AllocationRunServiceTests
 
         public override void AddPlanPrices(IEnumerable<AllocationPlanPrice> prices) => PlanPrices.AddRange(prices);
 
+        public List<AllocationLineTrace> LineTraces { get; } = [];
+        public List<AllocationTraceCandidate> TraceCandidates { get; } = [];
+        public List<AllocationTraceScore> TraceScores { get; } = [];
+
+        public override void AddLineTraces(IEnumerable<AllocationLineTrace> traces) => LineTraces.AddRange(traces);
+
+        public override void AddTraceCandidates(IEnumerable<AllocationTraceCandidate> candidates) =>
+            TraceCandidates.AddRange(candidates);
+
+        public override void AddTraceScores(IEnumerable<AllocationTraceScore> scores) => TraceScores.AddRange(scores);
+
         public override Task<int> MaxPlanVersionNumberAsync(Guid runId, CancellationToken cancellationToken) =>
             Task.FromResult(PlanVersions.Where(item => item.AllocationRunId == runId)
                 .Select(item => item.VersionNumber).DefaultIfEmpty(0).Max());

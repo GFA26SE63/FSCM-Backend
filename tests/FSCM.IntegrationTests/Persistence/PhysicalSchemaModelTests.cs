@@ -9,6 +9,7 @@ public sealed class PhysicalSchemaModelTests
     private static readonly string[] ExpectedTables =
     [
         "ALLOCATION",
+        "ALLOCATION_LINE_TRACE",
         "ALLOCATION_PLAN_PRICE",
         "ALLOCATION_PLAN_VERSION",
         "ALLOCATION_RUN",
@@ -16,6 +17,8 @@ public sealed class PhysicalSchemaModelTests
         "ALLOCATION_RUN_LINE",
         "ALLOCATION_RUN_ORDER",
         "ALLOCATION_RUN_STOCK",
+        "ALLOCATION_TRACE_CANDIDATE",
+        "ALLOCATION_TRACE_SCORE",
         "AUDIT_LOG",
         "BATCH",
         "BATCH_PROMOTION",
@@ -102,9 +105,9 @@ public sealed class PhysicalSchemaModelTests
             .ToArray();
 
         Assert.Equal(ExpectedTables, tableNames);
-        Assert.Equal(78, entityTypes.Length);
-        Assert.Equal(865, entityTypes.Sum(entityType => entityType.GetProperties().Count()));
-        Assert.Equal(177, entityTypes.Sum(entityType => entityType.GetForeignKeys().Count()));
+        Assert.Equal(81, entityTypes.Length);
+        Assert.Equal(908, entityTypes.Sum(entityType => entityType.GetProperties().Count()));
+        Assert.Equal(181, entityTypes.Sum(entityType => entityType.GetForeignKeys().Count()));
         Assert.All(
             entityTypes.SelectMany(entityType => entityType.GetForeignKeys()),
             foreignKey => Assert.Equal(DeleteBehavior.Restrict, foreignKey.DeleteBehavior));

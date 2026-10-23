@@ -19,6 +19,24 @@ public sealed record OrderPriceView(
     IReadOnlyCollection<OrderPriceLineView> Lines,
     IReadOnlyCollection<OrderPricePartView> Prices);
 
+/// <summary>
+/// One line's working, as stored. The line itself comes along because the MLOR ratio and its source
+/// were frozen on it by the run; copying them into the trace would create a second version of the
+/// same fact that could disagree with the first.
+/// </summary>
+public sealed record AllocationLineTraceView(
+    AllocationLineTrace Trace,
+    AllocationRunLine Line,
+    IReadOnlyCollection<AllocationTraceCandidate> Candidates,
+    IReadOnlyCollection<AllocationTraceScore> Scores);
+
+public sealed record AllocationOrderTraceView(
+    string OrderCode,
+    Guid AllocationRunId,
+    string RunCode,
+    AllocationPlanVersion PlanVersion,
+    IReadOnlyCollection<AllocationLineTraceView> Lines);
+
 public sealed record RunPickingListView(
     RunPickingList List,
     IReadOnlyCollection<RunPickingGather> Gathers,
@@ -131,7 +149,12 @@ public interface IAllocationRunStore
     Task<RunPickingListView?> FindRunPickingListAsync(Guid pickingListId, CancellationToken cancellationToken);
 
     Task<OrderPriceView?> FindOrderPriceAsync(Guid salesOrderId, CancellationToken cancellationToken);
+    Task<AllocationOrderTraceView?> FindOrderTraceAsync(Guid salesOrderId, CancellationToken cancellationToken);
     Task<Guid?> FindOrderIdForLineAsync(Guid salesOrderLineId, CancellationToken cancellationToken);
+
+    void AddLineTraces(IEnumerable<AllocationLineTrace> traces);
+    void AddTraceCandidates(IEnumerable<AllocationTraceCandidate> candidates);
+    void AddTraceScores(IEnumerable<AllocationTraceScore> scores);
 
     void AddRunPickingLists(IEnumerable<RunPickingList> lists);
     void AddRunPickingGathers(IEnumerable<RunPickingGather> gathers);

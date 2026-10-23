@@ -355,6 +355,61 @@ public sealed class AllocationRunStore(AppDbContext dbContext) : IAllocationRunS
                 line => line.AllocationRunOrderId, order => order.Id, (line, order) => (Guid?)order.SalesOrderId)
             .FirstOrDefaultAsync(cancellationToken);
 
+    /// <summary>
+    /// The newest plan version the order appears in, same rule as the priced record: the two are
+    /// keyed alike, so a trace and the price beside it always describe the same proposal.
+    /// </summary>
+    public async Task<AllocationOrderTraceView?> FindOrderTraceAsync(
+        Guid salesOrderId, CancellationToken cancellationToken)
+    {
+        var header = await dbContext.AllocationRunOrderRecords.AsNoTracking()
+            .Where(order => order.SalesOrderId == salesOrderId)
+            .Join(dbContext.AllocationRunRecords.AsNoTracking(),
+                order => order.AllocationRunId, run => run.Id, (order, run) => new { order, run })
+            .Join(dbContext.AllocationPlanVersionRecords.AsNoTracking(),
+                item => item.run.Id, version => version.AllocationRunId,
+                (item, version) => new { item.order, item.run, version })
+            .OrderByDescending(item => item.version.VersionNumber)
+            .FirstOrDefaultAsync(cancellationToken);
+        if (header is null) return null;
+
+        var traces = await dbContext.AllocationLineTraceRecords.AsNoTracking()
+            .Where(trace => trace.AllocationPlanVersionId == header.version.Id)
+            .Join(dbContext.AllocationRunLineRecords.AsNoTracking(),
+                trace => trace.AllocationRunLineId, line => line.Id, (trace, line) => new { trace, line })
+            .Where(item => item.line.AllocationRunOrderId == header.order.Id)
+            .ToArrayAsync(cancellationToken);
+        if (traces.Length == 0) return null;
+
+        var traceIds = traces.Select(item => item.trace.Id).ToArray();
+        var candidates = await dbContext.AllocationTraceCandidateRecords.AsNoTracking()
+            .Where(item => traceIds.Contains(item.AllocationLineTraceId))
+            .ToArrayAsync(cancellationToken);
+        var scores = await dbContext.AllocationTraceScoreRecords.AsNoTracking()
+            .Where(item => traceIds.Contains(item.AllocationLineTraceId))
+            .ToArrayAsync(cancellationToken);
+
+        return new AllocationOrderTraceView(
+            header.order.OrderCodeSnapshot,
+            header.run.Id,
+            header.run.RunCode,
+            header.version,
+            traces.Select(item => new AllocationLineTraceView(
+                item.trace,
+                item.line,
+                candidates.Where(row => row.AllocationLineTraceId == item.trace.Id).ToArray(),
+                scores.Where(row => row.AllocationLineTraceId == item.trace.Id).ToArray())).ToArray());
+    }
+
+    public void AddLineTraces(IEnumerable<AllocationLineTrace> traces) =>
+        dbContext.AllocationLineTraceRecords.AddRange(traces);
+
+    public void AddTraceCandidates(IEnumerable<AllocationTraceCandidate> candidates) =>
+        dbContext.AllocationTraceCandidateRecords.AddRange(candidates);
+
+    public void AddTraceScores(IEnumerable<AllocationTraceScore> scores) =>
+        dbContext.AllocationTraceScoreRecords.AddRange(scores);
+
     public void AddRunPickingLists(IEnumerable<RunPickingList> lists) =>
         dbContext.RunPickingListRecords.AddRange(lists);
 

@@ -1,4 +1,5 @@
 using FSCM.Application.Features.AllocationRuns;
+using FSCM.Domain.Allocation;
 
 namespace FSCM.UnitTests.AllocationRuns;
 
@@ -65,6 +66,32 @@ public sealed class AllocationRunPlanningTests
         Assert.Equal(AllocationRunStatuses.AwaitingApproval, planned.Status);
         // The pool is the run's own copy and no real balance was touched.
         Assert.All(planned.Pool, row => Assert.Equal(row.SnapshotQuantity, row.RemainingQuantity));
+    }
+
+    [Fact]
+    public async Task Planning_records_why_each_line_came_out_the_way_it_did()
+    {
+        // No ETA schedule, so every leg is unreachable: the interesting part is that the trace says
+        // which batches were looked at and what stopped them, not just that the order went short.
+        var fixture = new PlanningFixture();
+        var run = await fixture.StartAsync();
+
+        await fixture.Service.PlanAsync(run.Id, CancellationToken.None);
+
+        var trace = Assert.Single(fixture.Store.LineTraces);
+        Assert.Equal(AllocationLineTraceOutcomes.Short, trace.Outcome);
+        Assert.Equal(0m, trace.DrawnQuantity);
+        Assert.NotNull(trace.Note);
+        // The weights and the MLOR in hours are frozen on the trace, not read back later.
+        Assert.Equal(0.5m, trace.ShelfLifeWeight);
+        Assert.True(trace.RequiredShelfLifeHours > 0);
+
+        var rejected = Assert.Single(fixture.Store.TraceCandidates,
+            item => item.Stage == nameof(AllocationFilterStage.Distance));
+        Assert.False(rejected.Passed);
+        Assert.Equal(nameof(AllocationFilterReason.RouteUnavailable), rejected.Reason);
+        // Nothing survived the filters, so there was never a ranking to record.
+        Assert.Empty(fixture.Store.TraceScores);
     }
 
     private sealed class PlanningFixture : AllocationRunServiceTests.Fixture
