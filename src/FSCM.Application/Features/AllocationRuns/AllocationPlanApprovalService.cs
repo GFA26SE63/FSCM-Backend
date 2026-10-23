@@ -180,5 +180,19 @@ public sealed class AllocationPlanApprovalService(
             price.FinalNetUnitPrice,
             price.Amount,
             price.DiscountTableVersion,
-            price.Explanation)).ToArray());
+            price.Explanation)).ToArray(),
+        view.Allocations
+            .OrderBy(item => item.Allocation.Sequence)
+            .Select(item => new AllocationPlanAllocationResult(
+                item.Allocation.AllocationRunLineId,
+                item.Allocation.BatchId,
+                item.BatchCode,
+                item.Allocation.WarehouseId,
+                item.WarehouseCode,
+                item.Allocation.Quantity,
+                item.Allocation.Sequence,
+                item.Allocation.EstimatedArrivalAt,
+                item.Allocation.RemainingShelfLifeHours,
+                item.Allocation.WeightedScore))
+            .ToArray());
 }
