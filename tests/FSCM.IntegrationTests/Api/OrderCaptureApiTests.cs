@@ -3,6 +3,7 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
 using FSCM.Application.Features.Orders;
+using FSCM.Application.Features.MobileSnapshots;
 using FSCM.Application.Features.Promotions;
 using FSCM.Domain.Authorization;
 using FSCM.Domain.Entities;
@@ -14,6 +15,61 @@ namespace FSCM.IntegrationTests.Api;
 
 public sealed class OrderCaptureApiTests
 {
+    [Fact]
+    public async Task Mobile_snapshot_is_sales_only_and_sync_conflict_does_not_create_order()
+    {
+        using var identityFactory = new IdentityAuthorizationTests.IdentityApiFactory();
+        var orderStore = new TestOrderStore(identityFactory.Sales.Id);
+        var snapshotStore = new TestMobileSnapshotStore();
+        using var factory = identityFactory.WithWebHostBuilder(builder =>
+            builder.ConfigureTestServices(services =>
+            {
+                services.RemoveAll<IOrderStore>();
+                services.AddSingleton<IOrderStore>(orderStore);
+                services.RemoveAll<IOrderPricingService>();
+                services.AddSingleton<IOrderPricingService, TestPricingService>();
+                services.RemoveAll<IMobileSnapshotStore>();
+                services.AddSingleton<IMobileSnapshotStore>(snapshotStore);
+            }));
+        using var client = factory.CreateClient();
+
+        client.DefaultRequestHeaders.Authorization = Bearer(identityFactory.Admin, identityFactory);
+        Assert.Equal(HttpStatusCode.Forbidden,
+            (await client.GetAsync("/api/v1/mobile/snapshot")).StatusCode);
+        client.DefaultRequestHeaders.Authorization = Bearer(identityFactory.Sales, identityFactory);
+        var snapshot = await client.GetFromJsonAsync<JsonElement>("/api/v1/mobile/snapshot");
+        Assert.Equal("Full", snapshot.GetProperty("deltaMode").GetString());
+        Assert.Contains("tham khảo", snapshot.GetProperty("stockDisclaimer").GetString());
+
+        var key = Guid.NewGuid();
+        var response = await client.PostAsJsonAsync("/api/v1/orders/sync", new
+        {
+            clientOrderKey = key,
+            retailerId = orderStore.Retailer.Id,
+            paymentMethod = OrderPaymentMethods.Cod,
+            requestedDeliveryDate = "2027-01-10",
+            offlineEstimatedAmount = 1_000m,
+            snapshotVersion = snapshot.GetProperty("version").GetString(),
+            expectedConditions = new[]
+            {
+                new
+                {
+                    productId = orderStore.Product.Id,
+                    expectedBaseUnitPrice = 90m,
+                    expectedMlorVersion = 2,
+                    expectedMlorRatio = 0.25m
+                }
+            },
+            lines = new[] { new { productId = orderStore.Product.Id, quantity = 10 } }
+        });
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.True(problem.GetProperty("details").GetProperty("requiresExplicitConfirmation").GetBoolean());
+        Assert.Equal(900m, problem.GetProperty("details").GetProperty("currentIndicativeAmount").GetDecimal());
+        Assert.Empty(orderStore.Orders);
+    }
+
     [Fact]
     public async Task Pricing_snapshot_rest_and_graphql_never_apply_client_batch_discount()
     {
@@ -149,6 +205,14 @@ public sealed class OrderCaptureApiTests
                 "Campaign", "KM-001", "Khuyến mãi tháng mười", 5m,
                 pricedAt.AddDays(-1), pricedAt.AddDays(10)));
         }
+    }
+
+    private sealed class TestMobileSnapshotStore : IMobileSnapshotStore
+    {
+        public Task<MobileSnapshotData> LoadAsync(Guid salesUserId, DateTimeOffset? changedAfter,
+            CancellationToken cancellationToken) => Task.FromResult(new MobileSnapshotData(
+                [], [], [], [], [], [], [], null,
+                new DateTimeOffset(2026, 10, 23, 8, 0, 0, TimeSpan.Zero)));
     }
 
     private sealed class TestQuoteStore : IPromotionStore
