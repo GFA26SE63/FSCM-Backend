@@ -1,4 +1,10 @@
+using System.Security.Cryptography;
+using System.Text;
+using System.Globalization;
+using FSCM.Application.Features.Deliveries;
+using FSCM.Application.Features.Orders;
 using FSCM.Application.Features.Payments;
+using FSCM.Application.Features.QrLabels;
 using FSCM.Domain.Authorization;
 using FSCM.Domain.Entities;
 
@@ -11,7 +17,11 @@ namespace FSCM.Application.Features.Shipments;
 /// and issue confirmation (F96) drive later transitions; partial receipt never auto-completes.
 /// Also composes the F60 retailer delivery view (shipments + payment status).
 /// </summary>
-public sealed class ShipmentService(IShipmentStore store, IPaymentStore paymentStore, TimeProvider timeProvider)
+public sealed class ShipmentService(
+    IShipmentStore store,
+    IPaymentStore paymentStore,
+    IPaymentPlanService paymentPlanService,
+    TimeProvider timeProvider)
 {
     private static readonly TimeSpan VietnamOffset = TimeSpan.FromHours(7);
 
@@ -184,6 +194,161 @@ public sealed class ShipmentService(IShipmentStore store, IPaymentStore paymentS
         return ToResult((await store.FindByIdAsync(id, false, cancellationToken))!);
     }
 
+    public async Task<ShipmentResult> ConfirmReceiptAsync(
+        Guid id,
+        ConfirmShipmentReceiptData data,
+        string operationKey,
+        Guid retailerUserId,
+        string actorRole,
+        CancellationToken cancellationToken)
+    {
+        if (actorRole != SystemRoles.Retailer)
+            throw ShipmentOperationException.Forbidden("Only the order Retailer can confirm a shipment receipt.");
+        operationKey = NormalizeOperationKey(operationKey);
+        var note = NormalizeNote(data.Note);
+        var qrCodes = NormalizeQrCodes(data.QrCodes);
+        var lines = NormalizeReceiptLines(data.Lines);
+        var requestHash = HashReceipt(id, qrCodes, lines, note);
+
+        var prior = await store.FindByReceiptOperationKeyAsync(operationKey, cancellationToken);
+        if (prior is not null)
+        {
+            if (prior.Shipment.Id != id || prior.Receipt?.Receipt.RequestHash != requestHash)
+                throw ShipmentOperationException.Conflict(
+                    "Idempotency key was already used for a different shipment receipt.");
+            if (!await store.CanViewOrderAsync(prior.Order.Id, retailerUserId, actorRole, cancellationToken))
+                throw ShipmentOperationException.Forbidden("You cannot confirm this shipment receipt.");
+            return ToResult(prior);
+        }
+
+        await store.ExecuteInTransactionAsync(async transactionCancellationToken =>
+        {
+            var view = await store.FindByIdAsync(id, true, transactionCancellationToken)
+                ?? throw ShipmentOperationException.NotFound("Shipment was not found.");
+            if (!await store.CanViewOrderAsync(view.Order.Id, retailerUserId, actorRole, transactionCancellationToken))
+                throw ShipmentOperationException.Forbidden("You cannot confirm this shipment receipt.");
+            if (view.Shipment.Status != ShipmentStatuses.Delivering)
+                throw ShipmentOperationException.Conflict("Only a dispatched shipment can be received.");
+            if (view.Receipt is not null)
+                throw ShipmentOperationException.Conflict("Shipment receipt was already confirmed.");
+            if (view.Shipment.Version != data.ExpectedVersion)
+                throw ShipmentOperationException.Conflict(
+                    $"Shipment version is {view.Shipment.Version}; refresh and retry.");
+
+            var expected = view.Lines
+                .GroupBy(line => (line.OrderLineId, line.BatchId))
+                .ToDictionary(group => group.Key, group => group.Sum(line => line.Quantity));
+            if (expected.Count != lines.Length || lines.Any(line => !expected.ContainsKey((line.OrderLineId, line.BatchId))))
+                throw ShipmentOperationException.Validation(
+                    "Receipt must contain every shipment line and batch exactly once.");
+            foreach (var line in lines)
+            {
+                var issued = expected[(line.OrderLineId, line.BatchId)];
+                if (line.ReceivedQuantity < 0 || line.ReceivedQuantity > issued ||
+                    line.DamagedQuantity < 0 || line.DamagedQuantity > line.ReceivedQuantity)
+                    throw ShipmentOperationException.Validation(
+                        "Receipt quantities must satisfy 0 <= damaged <= received <= issued.");
+            }
+
+            var labels = await store.ListLabelsAsync(id, true, transactionCancellationToken);
+            var expectedCodes = labels.Select(item => item.Label.QrCode.Trim().ToUpperInvariant())
+                .Order(StringComparer.Ordinal).ToArray();
+            if (expectedCodes.Length == 0 || !expectedCodes.SequenceEqual(qrCodes, StringComparer.Ordinal))
+                throw ShipmentOperationException.Validation(
+                    "Receipt must scan every QR label dispatched for this shipment exactly once.");
+            if (labels.Any(item => item.Label.Status != QrLabelStatuses.InTransit))
+                throw ShipmentOperationException.Conflict("Every scanned QR label must still be in transit.");
+            var expectedByBatch = expected.GroupBy(item => item.Key.BatchId)
+                .ToDictionary(group => group.Key, group => group.Sum(item => item.Value));
+            var labelByBatch = labels.GroupBy(item => item.BatchId)
+                .ToDictionary(group => group.Key, group => group.Sum(item => item.Label.Quantity));
+            if (expectedByBatch.Any(item => !labelByBatch.TryGetValue(item.Key, out var quantity) || quantity != item.Value))
+                throw ShipmentOperationException.Conflict(
+                    "Dispatched QR quantities do not match the shipment line and batch quantities.");
+
+            var now = timeProvider.GetUtcNow();
+            var hasException = lines.Any(line =>
+                line.ReceivedQuantity < expected[(line.OrderLineId, line.BatchId)] || line.DamagedQuantity > 0);
+            var receipt = new ReceiptConfirmation
+            {
+                Id = Guid.NewGuid(),
+                SalesOrderId = view.Order.Id,
+                ShipmentId = view.Shipment.Id,
+                ConfirmedByRetailerUserId = retailerUserId,
+                OperationKey = operationKey,
+                RequestHash = requestHash,
+                Status = hasException ? ReceiptConfirmationStatuses.Exception : ReceiptConfirmationStatuses.Confirmed,
+                ConfirmedAt = now,
+                Note = note,
+                CreatedAt = now
+            };
+            store.AddReceipt(receipt);
+            foreach (var line in lines)
+            {
+                var issued = expected[(line.OrderLineId, line.BatchId)];
+                var representativeLabel = labels.First(item => item.BatchId == line.BatchId).Label;
+                store.AddReceiptLine(new ReceiptConfirmationItem
+                {
+                    Id = Guid.NewGuid(), ReceiptConfirmationId = receipt.Id,
+                    SalesOrderLineId = line.OrderLineId, BatchId = line.BatchId,
+                    BatchQrLabelId = representativeLabel.Id, ExpectedQuantity = issued,
+                    ReceivedQuantity = line.ReceivedQuantity, DamagedQuantity = line.DamagedQuantity,
+                    MissingQuantity = issued - line.ReceivedQuantity, ScannedAt = now
+                });
+            }
+            for (var index = 0; index < labels.Count; index++)
+            {
+                var label = labels.ElementAt(index).Label;
+                store.AddReceiptQrLabel(new ReceiptConfirmationQrLabel
+                {
+                    Id = Guid.NewGuid(), ReceiptConfirmationId = receipt.Id,
+                    BatchQrLabelId = label.Id, ScannedAt = now
+                });
+                var fromStatus = label.Status;
+                label.Status = QrLabelStatuses.Delivered;
+                label.Version++;
+                label.UpdatedAt = now;
+                store.AddLabelEvent(NewLabelEvent(label, retailerUserId,
+                    $"shipment-receipt:{operationKey}:{index + 1}", fromStatus, view.Order.OrderCode, now));
+            }
+
+            view.Shipment.ReceivedQuantity = lines.Sum(line => line.ReceivedQuantity);
+            view.Shipment.ReceivedAt = now;
+            view.Shipment.Status = hasException ? ShipmentStatuses.Exception : ShipmentStatuses.Received;
+            view.Shipment.ExceptionReason = hasException
+                ? "Có số lượng thiếu hoặc hư hỏng khi nhà bán lẻ nhận hàng."
+                : null;
+            view.Shipment.Version++;
+            view.Shipment.UpdatedAt = now;
+
+            var siblings = await store.ListByOrderAsync(view.Order.Id, transactionCancellationToken);
+            var allReceived = !hasException && siblings.All(item =>
+                item.Id == view.Shipment.Id || item.Status == ShipmentStatuses.Received);
+            if (allReceived)
+            {
+                var order = await store.FindOrderForUpdateAsync(view.Order.Id, transactionCancellationToken)
+                    ?? throw ShipmentOperationException.NotFound("Order was not found.");
+                var fromStatus = order.Status;
+                order.Status = OrderStatuses.Delivered;
+                order.Version++;
+                order.UpdatedAt = now;
+                await paymentPlanService.CreateForDeliveredOrderAsync(
+                    order, retailerUserId, now, transactionCancellationToken);
+                store.AddOrderHistory(new OrderStatusHistory
+                {
+                    Id = Guid.NewGuid(), SalesOrderId = order.Id, FromStatus = fromStatus,
+                    ToStatus = OrderStatuses.Delivered, ChangedByUserId = retailerUserId,
+                    Reason = "Nhà bán lẻ đã nhận đủ mọi phần giao theo kho", ChangedAt = now
+                });
+            }
+            await store.SaveChangesAsync(transactionCancellationToken);
+        }, cancellationToken);
+
+        store.ClearTracking();
+        return ToResult(await store.FindByIdAsync(id, false, cancellationToken)
+            ?? throw ShipmentOperationException.Conflict("Receipt was committed but could not be reloaded."));
+    }
+
     private static ShipmentResult ToResult(ShipmentView view) => new(
         view.Shipment.Id, view.Order.Id, view.Order.OrderCode,
         view.Warehouse.Id, view.Warehouse.Code, view.Warehouse.Name,
@@ -199,7 +364,79 @@ public sealed class ShipmentService(IShipmentStore store, IPaymentStore paymentS
         view.Shipment.Version, view.Shipment.CreatedAt, view.Shipment.UpdatedAt,
         view.Lines.Select(line => new ShipmentLineResult(
             line.OrderLineId, line.LineNumber, line.ProductId, line.Sku, line.ProductName,
-            line.BatchId, line.BatchCode, line.Quantity, line.UnitPrice, line.NetAmount)).ToArray());
+            line.BatchId, line.BatchCode, line.Quantity, line.UnitPrice, line.NetAmount,
+            line.ReceivedQuantity, line.DamagedQuantity, line.MissingQuantity)).ToArray(),
+        view.Receipt is null ? null : new ShipmentReceiptResult(
+            view.Receipt.Receipt.Id, view.Receipt.Receipt.Status, view.Receipt.Receipt.ConfirmedAt,
+            view.Receipt.Receipt.Note,
+            view.Receipt.Lines.Where(line => line.SalesOrderLineId.HasValue)
+                .Select(line => new ShipmentReceiptLineResult(
+                    line.SalesOrderLineId!.Value, line.BatchId, line.ExpectedQuantity,
+                    line.ReceivedQuantity, line.DamagedQuantity, line.MissingQuantity)).ToArray()));
+
+    private static ConfirmShipmentReceiptLineData[] NormalizeReceiptLines(
+        IReadOnlyCollection<ConfirmShipmentReceiptLineData> values)
+    {
+        if (values.Count == 0)
+            throw ShipmentOperationException.Validation("At least one receipt line is required.");
+        if (values.Any(line => line.OrderLineId == Guid.Empty || line.BatchId == Guid.Empty))
+            throw ShipmentOperationException.Validation("Order line id and batch id are required.");
+        var result = values.OrderBy(line => line.OrderLineId).ThenBy(line => line.BatchId).ToArray();
+        if (result.Select(line => (line.OrderLineId, line.BatchId)).Distinct().Count() != result.Length)
+            throw ShipmentOperationException.Validation("Receipt line and batch pairs cannot be repeated.");
+        return result;
+    }
+
+    private static string[] NormalizeQrCodes(IReadOnlyCollection<string> values)
+    {
+        if (values.Count == 0)
+            throw ShipmentOperationException.Validation("At least one QR code is required.");
+        var result = values.Select(value => string.IsNullOrWhiteSpace(value)
+                ? throw ShipmentOperationException.Validation("QR code cannot be empty.")
+                : value.Trim().ToUpperInvariant())
+            .Order(StringComparer.Ordinal).ToArray();
+        if (result.Distinct(StringComparer.Ordinal).Count() != result.Length)
+            throw ShipmentOperationException.Validation("QR codes cannot be repeated.");
+        return result;
+    }
+
+    private static string NormalizeOperationKey(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            throw ShipmentOperationException.Validation("Idempotency-Key header is required.");
+        value = value.Trim();
+        if (value.Length > 80)
+            throw ShipmentOperationException.Validation("Idempotency-Key cannot exceed 80 characters.");
+        return value;
+    }
+
+    private static string? NormalizeNote(string? value)
+    {
+        if (value?.Trim().Length > 500)
+            throw ShipmentOperationException.Validation("Note cannot exceed 500 characters.");
+        return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+    }
+
+    private static string HashReceipt(
+        Guid shipmentId, IEnumerable<string> qrCodes,
+        IEnumerable<ConfirmShipmentReceiptLineData> lines, string? note)
+    {
+        var lineText = string.Join(';', lines.Select(line => string.Create(CultureInfo.InvariantCulture,
+            $"{line.OrderLineId:N}:{line.BatchId:N}:{line.ReceivedQuantity}:{line.DamagedQuantity}")));
+        var canonical = $"{shipmentId:N}|{string.Join(',', qrCodes)}|{lineText}|{note}";
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(canonical))).ToLowerInvariant();
+    }
+
+    private static QrLabelEvent NewLabelEvent(
+        BatchQrLabel label, Guid actorUserId, string operationKey,
+        string fromStatus, string orderCode, DateTimeOffset now) => new()
+        {
+            Id = Guid.NewGuid(), BatchQrLabelId = label.Id, WarehouseId = label.CurrentWarehouseId,
+            PerformedByUserId = actorUserId, OperationKey = operationKey,
+            EventType = QrLabelEventTypes.RetailerReceived, FromStatus = fromStatus,
+            ToStatus = QrLabelStatuses.Delivered, Quantity = label.Quantity,
+            ReferenceCode = orderCode, Note = "Nhà bán lẻ xác nhận tem theo phần giao", OccurredAt = now
+        };
 
     private static void EnsureOperator(string actorRole)
     {

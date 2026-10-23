@@ -26,7 +26,37 @@ public sealed record ShipmentLineResult(
     string BatchCode,
     decimal Quantity,
     decimal UnitPrice,
-    decimal NetAmount);
+    decimal NetAmount,
+    decimal? ReceivedQuantity,
+    decimal? DamagedQuantity,
+    decimal? MissingQuantity);
+
+public sealed record ConfirmShipmentReceiptLineData(
+    Guid OrderLineId,
+    Guid BatchId,
+    decimal ReceivedQuantity,
+    decimal DamagedQuantity);
+
+public sealed record ConfirmShipmentReceiptData(
+    IReadOnlyCollection<string> QrCodes,
+    IReadOnlyCollection<ConfirmShipmentReceiptLineData> Lines,
+    int ExpectedVersion,
+    string? Note);
+
+public sealed record ShipmentReceiptLineResult(
+    Guid OrderLineId,
+    Guid BatchId,
+    decimal ExpectedQuantity,
+    decimal ReceivedQuantity,
+    decimal DamagedQuantity,
+    decimal MissingQuantity);
+
+public sealed record ShipmentReceiptResult(
+    Guid Id,
+    string Status,
+    DateTimeOffset ConfirmedAt,
+    string? Note,
+    IReadOnlyCollection<ShipmentReceiptLineResult> Lines);
 
 public sealed record ShipmentResult(
     Guid Id,
@@ -58,7 +88,8 @@ public sealed record ShipmentResult(
     int Version,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,
-    IReadOnlyCollection<ShipmentLineResult> Lines);
+    IReadOnlyCollection<ShipmentLineResult> Lines,
+    ShipmentReceiptResult? Receipt);
 
 public sealed record FlagShipmentExceptionData(string Reason, int ExpectedVersion);
 

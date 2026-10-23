@@ -137,6 +137,24 @@ public sealed class IdentityAuthorizationTests : IClassFixture<IdentityAuthoriza
     }
 
     [Fact]
+    public async Task Graphql_exposes_shipment_receipt_actual_read_models()
+    {
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization = Bearer(factory.CreateToken(factory.Admin));
+        using var content = JsonContent.Create(new
+        {
+            query = "query { entities { shipments(first: 1) { totalCount } receiptConfirmations(first: 1) { totalCount nodes { shipmentId status } } receiptConfirmationItems(first: 1) { totalCount nodes { salesOrderLineId receivedQuantity damagedQuantity missingQuantity } } receiptConfirmationQrLabels(first: 1) { totalCount } } }"
+        });
+
+        var response = await client.PostAsync("/graphql", content);
+
+        var body = await response.Content.ReadAsStringAsync();
+        Assert.True(response.StatusCode == HttpStatusCode.OK, body);
+        var json = JsonDocument.Parse(body);
+        Assert.False(json.RootElement.TryGetProperty("errors", out _));
+    }
+
+    [Fact]
     public async Task Local_and_entra_login_can_run_in_parallel_for_the_same_account()
     {
         using var client = factory.CreateClient();

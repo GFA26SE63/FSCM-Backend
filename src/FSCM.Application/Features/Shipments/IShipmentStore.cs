@@ -12,14 +12,25 @@ public sealed record ShipmentLineView(
     string BatchCode,
     decimal Quantity,
     decimal UnitPrice,
-    decimal NetAmount);
+    decimal NetAmount,
+    decimal? ReceivedQuantity = null,
+    decimal? DamagedQuantity = null,
+    decimal? MissingQuantity = null);
+
+public sealed record ShipmentReceiptView(
+    ReceiptConfirmation Receipt,
+    IReadOnlyCollection<ReceiptConfirmationItem> Lines,
+    IReadOnlyCollection<string> QrCodes);
+
+public sealed record ShipmentLabelView(BatchQrLabel Label, Guid BatchId);
 
 public sealed record ShipmentView(
     Shipment Shipment,
     SalesOrder Order,
     Warehouse Warehouse,
     string PickingCode,
-    IReadOnlyCollection<ShipmentLineView> Lines);
+    IReadOnlyCollection<ShipmentLineView> Lines,
+    ShipmentReceiptView? Receipt = null);
 
 /// <summary>
 /// A Ready run picking list + one of its orders that has no shipment part yet (F92 reconciliation
@@ -39,6 +50,10 @@ public interface IShipmentStore
     Task<IReadOnlyCollection<ShipmentView>> ListAsync(
         Guid userId, string role, Guid? orderId, Guid? warehouseId, string? status, CancellationToken cancellationToken);
     Task<ShipmentView?> FindByIdAsync(Guid id, bool forUpdate, CancellationToken cancellationToken);
+    Task<ShipmentView?> FindByReceiptOperationKeyAsync(string operationKey, CancellationToken cancellationToken);
+    Task<SalesOrder?> FindOrderForUpdateAsync(Guid orderId, CancellationToken cancellationToken);
+    Task<IReadOnlyCollection<ShipmentLabelView>> ListLabelsAsync(
+        Guid shipmentId, bool forUpdate, CancellationToken cancellationToken);
 
     /// <summary>Completed picking lists (optionally for one order) that do not yet have a shipment part.</summary>
     Task<IReadOnlyCollection<PendingShipmentSource>> ListPendingSourcesAsync(
@@ -50,5 +65,12 @@ public interface IShipmentStore
     Task<Vehicle?> FindVehicleAsync(Guid id, CancellationToken cancellationToken);
 
     void AddShipment(Shipment shipment);
+    void AddReceipt(ReceiptConfirmation receipt);
+    void AddReceiptLine(ReceiptConfirmationItem line);
+    void AddReceiptQrLabel(ReceiptConfirmationQrLabel qrLabel);
+    void AddLabelEvent(QrLabelEvent labelEvent);
+    void AddOrderHistory(OrderStatusHistory history);
     Task SaveChangesAsync(CancellationToken cancellationToken);
+    Task ExecuteInTransactionAsync(Func<CancellationToken, Task> operation, CancellationToken cancellationToken);
+    void ClearTracking();
 }
