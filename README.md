@@ -236,6 +236,29 @@ to stop a tempting optimisation, so they are stated as rules rather than left to
 | Approve | `AllocationPlanApprovalService` | Reserves stock, then marks the version approved |
 | Issue picking | `RunPickingIssueService` | Gather per warehouse, then split back to order lines |
 
+### The run day
+
+One published schedule, `eta.schedule`, is the only timetable. The ETA is built from it, the cutoff
+job reads its cutoff before every wait, and the portal shows it. Recommended times:
+
+| Milestone | Default | Meaning |
+| --- | --- | --- |
+| `sales_submission_advice` | 11:00 | **Advice, not a gate.** An order accepted after it and before the cutoff is still in the run |
+| `order_review_reminder` | 11:30 | Orders still waiting for review will miss the cutoff |
+| `allocation_run` | 12:00 | The cutoff: the run takes what was accepted and reviewed before it |
+| `plan_approval_reminder` | 13:30 | A proposal is still undecided |
+| `plan_approval_deadline` | 14:00 | A decision is expected. **Nothing approves itself after it** |
+
+Reminders are validated against what they remind about: the two before the cutoff must fall before
+it, and the plan reminder must fall between the cutoff and the deadline. A schedule published before
+the reminders existed still loads, falling back to the defaults above.
+
+`BackgroundJobs:AllocationRun:CutoffLocalTime` is only a fallback for a deployment with no published
+schedule. Two independent cutoffs would let the ETA promise one time while the job keeps another.
+
+A decision taken after the deadline is still a decision someone makes, but the plan was estimated
+from the run moment, so a late approval needs its ETA re-checked.
+
 ### Rules that are easy to get wrong
 
 - **Hours, never days.** Shelf life and MLOR are compared in hours against the product's total shelf
