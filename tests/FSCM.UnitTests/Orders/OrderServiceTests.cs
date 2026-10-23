@@ -232,16 +232,51 @@ public sealed class OrderServiceTests
     }
 
     [Fact]
-    public async Task Offline_submission_flags_difference_when_server_price_changed()
+    public async Task Offline_submission_requires_explicit_confirmation_when_server_price_changed()
     {
         var fixture = new Fixture();
 
-        // Sales quoted 1,000 offline but the server re-prices to the indicative 900.
-        var result = await fixture.SubmitOfflineAsync(quantity: 10, estimate: 1_000m);
+        var exception = await Assert.ThrowsAsync<OrderOperationException>(() =>
+            fixture.SubmitOfflineAsync(quantity: 10, estimate: 1_000m));
+
+        Assert.Equal("conflict", exception.Code);
+        var details = Assert.IsType<OfflineConditionConflictResult>(exception.Details);
+        Assert.Equal(900m, details.CurrentIndicativeAmount);
+        Assert.Empty(fixture.Store.Orders);
+    }
+
+    [Fact]
+    public async Task Offline_submission_accepts_changed_conditions_only_after_sales_confirmation()
+    {
+        var fixture = new Fixture();
+        var request = fixture.OfflineRequest(10, 1_000m) with { ConfirmConditionChanges = true };
+
+        var result = await fixture.Service.SubmitOfflineAsync(request, fixture.SalesUserId, default);
 
         Assert.True(result.HasOfflineDifference);
-        Assert.Equal(1_000m, result.OfflineEstimatedAmount);
         Assert.Equal(900m, result.FinalAmount);
+        Assert.Single(fixture.Store.Orders);
+    }
+
+    [Fact]
+    public async Task Offline_submission_returns_current_price_and_mlor_line_conditions()
+    {
+        var fixture = new Fixture();
+        var request = fixture.OfflineRequest(10, 900m) with
+        {
+            SnapshotVersion = "123",
+            ExpectedConditions = [new(fixture.Store.Product.Id, 91m, 1, 0.2m)]
+        };
+
+        var exception = await Assert.ThrowsAsync<OrderOperationException>(() =>
+            fixture.Service.SubmitOfflineAsync(request, fixture.SalesUserId, default));
+
+        var details = Assert.IsType<OfflineConditionConflictResult>(exception.Details);
+        var changed = Assert.Single(details.ChangedLines);
+        Assert.Equal(90m, changed.CurrentBaseUnitPrice);
+        Assert.Equal(2, changed.CurrentMlorVersion);
+        Assert.Equal(0.25m, changed.CurrentMlorRatio);
+        Assert.Empty(fixture.Store.Orders);
     }
 
     [Fact]
@@ -295,7 +330,10 @@ public sealed class OrderServiceTests
             null,
             "Đơn nháp offline",
             estimate,
-            [new CreateOrderLineData(Store.Product.Id, quantity)]);
+            [new CreateOrderLineData(Store.Product.Id, quantity)],
+            "123",
+            false,
+            [new OfflineExpectedConditionData(Store.Product.Id, 90m, 2, 0.25m)]);
 
         public Task<OrderDetailResult> SubmitOfflineAsync(int quantity, decimal estimate) =>
             Service.SubmitOfflineAsync(OfflineRequest(quantity, estimate), SalesUserId, default);

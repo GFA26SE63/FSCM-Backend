@@ -25,7 +25,34 @@ public sealed record SubmitOfflineOrderData(
     string? DeliveryAddress,
     string? Note,
     decimal OfflineEstimatedAmount,
-    IReadOnlyCollection<CreateOrderLineData> Lines);
+    IReadOnlyCollection<CreateOrderLineData> Lines,
+    string? SnapshotVersion = null,
+    bool ConfirmConditionChanges = false,
+    IReadOnlyCollection<OfflineExpectedConditionData>? ExpectedConditions = null);
+
+public sealed record OfflineExpectedConditionData(
+    Guid ProductId,
+    decimal ExpectedBaseUnitPrice,
+    int ExpectedMlorVersion,
+    decimal ExpectedMlorRatio);
+
+public sealed record OfflineConditionDifference(
+    Guid ProductId,
+    string Sku,
+    decimal ExpectedBaseUnitPrice,
+    decimal CurrentBaseUnitPrice,
+    int ExpectedMlorVersion,
+    int CurrentMlorVersion,
+    decimal ExpectedMlorRatio,
+    decimal CurrentMlorRatio);
+
+public sealed record OfflineConditionConflictResult(
+    Guid ClientOrderKey,
+    string? SnapshotVersion,
+    decimal OfflineEstimatedAmount,
+    decimal CurrentIndicativeAmount,
+    IReadOnlyCollection<OfflineConditionDifference> ChangedLines,
+    bool RequiresExplicitConfirmation = true);
 
 public sealed record OrderAllocationResult(
     Guid Id,
