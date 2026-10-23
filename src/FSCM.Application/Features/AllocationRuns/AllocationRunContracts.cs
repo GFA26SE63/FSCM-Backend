@@ -80,6 +80,18 @@ public static class AllocationRunOrderStatuses
     public const string Short = "Short";
 }
 
+/// <summary>
+/// How a line ended. Released is the one worth spelling out: the line drew its stock, a later line
+/// of the same order fell short, and because an order is all or nothing the draw went back to the
+/// pool for the orders behind it.
+/// </summary>
+public static class AllocationLineTraceOutcomes
+{
+    public const string Allocated = "Allocated";
+    public const string Short = "Short";
+    public const string Released = "Released";
+}
+
 public sealed record AllocationRunLineResult(
     Guid Id,
     Guid SalesOrderLineId,

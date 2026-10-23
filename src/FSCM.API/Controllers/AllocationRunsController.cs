@@ -14,7 +14,8 @@ public sealed class AllocationRunsController(
     AllocationRunService runs,
     AllocationPlanApprovalService approvals,
     RunPickingIssueService picking,
-    AllocationPriceLookupService prices) : ControllerBase
+    AllocationPriceLookupService prices,
+    AllocationTraceService traces) : ControllerBase
 {
     [HttpGet("{runId:guid}")]
     public Task<AllocationRunResult> Get(Guid runId, CancellationToken cancellationToken) =>
@@ -80,6 +81,15 @@ public sealed class AllocationRunsController(
     public Task<OrderPriceLineResult> OrderLinePrice(
         Guid salesOrderLineId, CancellationToken cancellationToken) =>
         prices.GetByOrderLineAsync(salesOrderLineId, cancellationToken);
+
+    /// <summary>
+    /// Why the run chose the batches it did for one order: the MLOR it had to clear, every batch
+    /// each filter looked at, and every ranking. The price those batches ended up at is a separate
+    /// record, read through the price endpoint above.
+    /// </summary>
+    [HttpGet("orders/{salesOrderId:guid}/trace")]
+    public Task<OrderTraceDetailResult> OrderTrace(Guid salesOrderId, CancellationToken cancellationToken) =>
+        traces.GetByOrderAsync(salesOrderId, cancellationToken);
 
     private Guid ActorId() => Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var id)
         ? id : throw AllocationRunOperationException.Validation("Authenticated user identifier is invalid.");

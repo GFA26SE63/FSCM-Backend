@@ -156,7 +156,7 @@ public sealed class AllocationRunServiceTests
             var transit = new TransitTableService(new EmptyTransitTableStore(), clock);
             Service = new AllocationRunService(
                 Store,
-                new AllocationPlanner(engine, new BatchSwapResolver(engine)),
+                new AllocationPlanner(engine),
                 new AllocationPricingService(new ShelfLifeDiscountService(new EmptyDiscountStore(), clock)),
                 new DeliveryEtaService(new EmptyEtaStore(), transit, clock),
                 clock);
@@ -287,6 +287,17 @@ public sealed class AllocationRunServiceTests
         public override void AddPlanVersion(AllocationPlanVersion version) => PlanVersions.Add(version);
 
         public override void AddPlanPrices(IEnumerable<AllocationPlanPrice> prices) => PlanPrices.AddRange(prices);
+
+        public List<AllocationLineTrace> LineTraces { get; } = [];
+        public List<AllocationTraceCandidate> TraceCandidates { get; } = [];
+        public List<AllocationTraceScore> TraceScores { get; } = [];
+
+        public override void AddLineTraces(IEnumerable<AllocationLineTrace> traces) => LineTraces.AddRange(traces);
+
+        public override void AddTraceCandidates(IEnumerable<AllocationTraceCandidate> candidates) =>
+            TraceCandidates.AddRange(candidates);
+
+        public override void AddTraceScores(IEnumerable<AllocationTraceScore> scores) => TraceScores.AddRange(scores);
 
         public override Task<int> MaxPlanVersionNumberAsync(Guid runId, CancellationToken cancellationToken) =>
             Task.FromResult(PlanVersions.Where(item => item.AllocationRunId == runId)

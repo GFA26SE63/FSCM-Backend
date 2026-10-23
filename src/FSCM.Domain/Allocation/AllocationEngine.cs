@@ -258,33 +258,6 @@ public sealed class AllocationEngine
     }
 
     /// <summary>
-    /// The hard filters for one candidate, in the order they are applied. Exposed so batch
-    /// swapping can ask "would this batch be legal for that order?" without restating the rules.
-    /// </summary>
-    public AllocationFilterReason Evaluate(AllocationRequest request, BatchCandidate candidate)
-    {
-        ArgumentNullException.ThrowIfNull(request);
-        ArgumentNullException.ThrowIfNull(candidate);
-        ValidateRequest(request);
-        ValidateCandidate(candidate);
-
-        if (candidate.AvailableQuantity <= 0) return AllocationFilterReason.NoRemainingQuantity;
-        if (candidate.EstimatedArrivalAt is null) return AllocationFilterReason.RouteUnavailable;
-        if (candidate.DistanceMeters > _weights.MaximumDistanceMeters) return AllocationFilterReason.OutsideServiceRadius;
-        if (request.DeliveryDeadline is { } deadline
-            && candidate.EstimatedArrivalDate is { } arrivalDate
-            && arrivalDate > deadline)
-        {
-            return AllocationFilterReason.ArrivesAfterDeadline;
-        }
-
-        var remainingShelfLifeHours = (decimal)(candidate.ExpiresAt - candidate.EstimatedArrivalAt.Value).TotalHours;
-        return remainingShelfLifeHours < request.MlorRatio * request.TotalShelfLifeHours
-            ? AllocationFilterReason.BelowMlor
-            : AllocationFilterReason.Eligible;
-    }
-
-    /// <summary>
     /// fE rewards the shortest life that still clears MLOR at arrival, which is what makes this
     /// FEFO rather than "freshest first". fD rewards the nearer warehouse. fQ rewards covering more
     /// of what is still missing, and is recomputed every turn because the shortfall shrinks.
