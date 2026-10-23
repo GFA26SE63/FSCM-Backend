@@ -218,6 +218,59 @@ Configure `PayOS:ClientId`, `PayOS:ApiKey`, `PayOS:ChecksumKey`, `PayOS:ReturnUr
 
 Use [the HTTP request collection](src/FSCM.API/FSCM.API.http) after seeding to log in, exercise receipt and QR workflows, inspect inventory/expiry health, query the catalog, and request a historical-price suggestion.
 
+## The 12:00 allocation run
+
+Orders are not allocated when they arrive. A background job opens one run per Vietnam business date
+at the cutoff, draws every eligible order from one shared stock pool, and puts the result to an
+Admin as a proposal. Scope V10 (locked 22-23/10/2026) settles the rules below; several of them exist
+to stop a tempting optimisation, so they are stated as rules rather than left to be inferred.
+
+### Pipeline
+
+| Step | Entry point | What it settles |
+| --- | --- | --- |
+| Open the run | `AllocationRunService.StartAsync(cutoffAt)` | One run per business date, snapshotting eligible orders and a stock pool |
+| Choose batches | `AllocationPlanner` over `AllocationEngine` | Which batch serves which line, from the shared pool |
+| Price the plan | `AllocationPricingService` | One pricing moment per plan version, shelf-life reduction per part |
+| Record the working | `AllocationRunService.PersistTrace` | Why each batch was kept or ruled out, and how the survivors ranked |
+| Approve | `AllocationPlanApprovalService` | Reserves stock, then marks the version approved |
+| Issue picking | `RunPickingIssueService` | Gather per warehouse, then split back to order lines |
+
+### Rules that are easy to get wrong
+
+- **Hours, never days.** Shelf life and MLOR are compared in hours against the product's total shelf
+  life. A run arriving next morning is not the same as one arriving that evening, and rounding to
+  days hides it.
+- **An order is all or nothing.** A line that cannot be filled completely undoes every draw the
+  order already made, including the lines that succeeded, and hands the quantity back to the pool
+  for the orders behind it. There is no partial delivery for the run to decide on.
+- **Batches first, price after.** A near-expiry reduction never reaches the scoring. Letting a
+  discount raise a batch's score would let the cheaper batch win and then justify its own discount.
+- **No batch moves between orders.** An order that has been given stock is never moved aside to
+  serve a later one, so first come really is first served and a plan reads top to bottom.
+- **Approval is never automatic.** A proposal past its reminder is still a proposal. Nothing is
+  reserved until an Admin approves, and a recalculation supersedes a version rather than editing it.
+- **A snapshot is not re-resolved.** MLOR, base price and shelf life are frozen on the run line. A
+  configuration change mid-run must not restate a plan that is already being scored.
+
+### Reading a run back
+
+Two records are written per plan version and keyed alike, so they can be read side by side:
+
+| Question | Record | Endpoint |
+| --- | --- | --- |
+| What was it priced at, and why that reduction? | `ALLOCATION_PLAN_PRICE` | `GET /allocation-runs/orders/{salesOrderId}/price` |
+| Why those batches, and why not the others? | `ALLOCATION_LINE_TRACE` + `ALLOCATION_TRACE_CANDIDATE` + `ALLOCATION_TRACE_SCORE` | `GET /allocation-runs/orders/{salesOrderId}/trace` |
+
+Both carry the plan version's status. A price or a trace from a version still awaiting approval is a
+proposal, not a settled outcome, and a caller that cannot tell the two apart will eventually collect
+against a quotation.
+
+The trace keeps rejected candidates and losing scores on purpose: "why not that batch" cannot be
+answered from the chosen ones, and a score means nothing without the scores it beat. A line's
+outcome distinguishes `Released` - it drew its stock and lost it to a later line's shortfall - from
+`Short`, the line that actually failed.
+
 ## Validation
 
 ```powershell
