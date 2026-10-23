@@ -36,6 +36,7 @@ public static class DependencyInjection
         services.AddScoped<AllocationPlanner>();
         services.AddScoped<AllocationPlanApprovalService>();
         services.AddScoped<AllocationReservationService>();
+        services.AddScoped<RunPickingIssueService>();
         services.AddScoped<AllocationPricingService>();
         services.AddScoped<AllocationRunService>();
         services.AddScoped<CatalogService>();

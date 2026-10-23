@@ -59,6 +59,9 @@ public sealed class PhysicalSchemaModelTests
         "RETAILER_PRODUCT_MLOR",
         "RETAILER_SALES_ASSIGNMENT",
         "REWARD_REDEMPTION",
+        "RUN_PICKING_GATHER",
+        "RUN_PICKING_LIST",
+        "RUN_PICKING_SPLIT",
         "SALES_GROUP",
         "SALES_GROUP_MEMBER",
         "SALES_ORDER",
@@ -99,9 +102,9 @@ public sealed class PhysicalSchemaModelTests
             .ToArray();
 
         Assert.Equal(ExpectedTables, tableNames);
-        Assert.Equal(75, entityTypes.Length);
-        Assert.Equal(827, entityTypes.Sum(entityType => entityType.GetProperties().Count()));
-        Assert.Equal(169, entityTypes.Sum(entityType => entityType.GetForeignKeys().Count()));
+        Assert.Equal(78, entityTypes.Length);
+        Assert.Equal(861, entityTypes.Sum(entityType => entityType.GetProperties().Count()));
+        Assert.Equal(177, entityTypes.Sum(entityType => entityType.GetForeignKeys().Count()));
         Assert.All(
             entityTypes.SelectMany(entityType => entityType.GetForeignKeys()),
             foreignKey => Assert.Equal(DeleteBehavior.Restrict, foreignKey.DeleteBehavior));

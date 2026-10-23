@@ -2,6 +2,11 @@ using FSCM.Domain.Entities;
 
 namespace FSCM.Application.Features.AllocationRuns;
 
+public sealed record RunPickingListView(
+    RunPickingList List,
+    IReadOnlyCollection<RunPickingGather> Gathers,
+    IReadOnlyCollection<RunPickingSplit> Splits);
+
 public sealed record AllocationPlanVersionView(
     AllocationPlanVersion PlanVersion,
     string RunCode,
@@ -92,6 +97,25 @@ public interface IAllocationRunStore
     /// </summary>
     Task<IReadOnlyCollection<ReservableAllocation>> ListReservableAsync(
         Guid planVersionId, CancellationToken cancellationToken);
+
+    Task<AllocationPlanVersion?> FindApprovedPlanVersionAsync(Guid runId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Allocations of an approved version joined to the order, line and price record a picking
+    /// sheet has to name.
+    /// </summary>
+    Task<IReadOnlyCollection<PickableAllocation>> ListPickableAsync(
+        Guid planVersionId, CancellationToken cancellationToken);
+
+    Task<IReadOnlyCollection<RunPickingListView>> ListRunPickingListsAsync(
+        Guid runId, CancellationToken cancellationToken);
+    Task<IReadOnlyCollection<RunPickingListView>> ListRunPickingListsForWarehouseAsync(
+        Guid warehouseId, CancellationToken cancellationToken);
+    Task<RunPickingListView?> FindRunPickingListAsync(Guid pickingListId, CancellationToken cancellationToken);
+
+    void AddRunPickingLists(IEnumerable<RunPickingList> lists);
+    void AddRunPickingGathers(IEnumerable<RunPickingGather> gathers);
+    void AddRunPickingSplits(IEnumerable<RunPickingSplit> splits);
 
     void AddReservation(Reservation reservation);
     void AddInventoryTransaction(InventoryTransaction transaction);

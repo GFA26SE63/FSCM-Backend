@@ -12,7 +12,8 @@ namespace FSCM.API.Controllers;
 [Route("api/v1/allocation-runs")]
 public sealed class AllocationRunsController(
     AllocationRunService runs,
-    AllocationPlanApprovalService approvals) : ControllerBase
+    AllocationPlanApprovalService approvals,
+    RunPickingIssueService picking) : ControllerBase
 {
     [HttpGet("{runId:guid}")]
     public Task<AllocationRunResult> Get(Guid runId, CancellationToken cancellationToken) =>
@@ -44,6 +45,27 @@ public sealed class AllocationRunsController(
         Guid versionId, RequestRecalculationRequest request, CancellationToken cancellationToken) =>
         approvals.RequestRecalculationAsync(
             versionId, request.ExpectedVersion, request.Reason, ActorId(), cancellationToken);
+
+    /// <summary>Issues one picking sheet per warehouse for an approved run. Safe to call twice.</summary>
+    [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator}")]
+    [HttpPost("{runId:guid}/picking-lists")]
+    public Task<IReadOnlyCollection<RunPickingListResult>> IssuePickingLists(
+        Guid runId, CancellationToken cancellationToken) =>
+        picking.IssueAsync(runId, cancellationToken);
+
+    [HttpGet("{runId:guid}/picking-lists")]
+    public Task<IReadOnlyCollection<RunPickingListResult>> PickingLists(
+        Guid runId, CancellationToken cancellationToken) =>
+        picking.ListForRunAsync(runId, cancellationToken);
+
+    [HttpGet("picking-lists/{pickingListId:guid}")]
+    public Task<RunPickingListResult> PickingList(Guid pickingListId, CancellationToken cancellationToken) =>
+        picking.GetAsync(pickingListId, cancellationToken);
+
+    [HttpGet("warehouses/{warehouseId:guid}/picking-lists")]
+    public Task<IReadOnlyCollection<RunPickingListResult>> WarehousePickingLists(
+        Guid warehouseId, CancellationToken cancellationToken) =>
+        picking.ListForWarehouseAsync(warehouseId, cancellationToken);
 
     private Guid ActorId() => Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var id)
         ? id : throw AllocationRunOperationException.Validation("Authenticated user identifier is invalid.");
