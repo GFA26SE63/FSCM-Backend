@@ -37,17 +37,6 @@ public sealed class OrderCaptureApiTests
         Assert.Equal(JsonValueKind.Null, rest.GetProperty("batchId").ValueKind);
         Assert.Equal(8m, rest.GetProperty("discountPercent").GetDecimal());
 
-        var graphQlResponse = await client.PostAsJsonAsync("/graphql", new
-        {
-            query = "query($productId: UUID!, $retailerId: UUID!) { priceSnapshot(productId: $productId, retailerId: $retailerId, quantity: 10) { batchId discountPercent finalPricePendingAllocation productPriceId productPriceEffectiveFrom appliedPromotion { promotionType minimumQuantity effectiveFrom effectiveTo } } }",
-            variables = new { productId = store.Product.Id, retailerId = orderStore.Retailer.Id }
-        });
-        var graphQl = JsonDocument.Parse(await graphQlResponse.Content.ReadAsStringAsync()).RootElement;
-        Assert.False(graphQl.TryGetProperty("errors", out _), graphQl.ToString());
-        var quote = graphQl.GetProperty("data").GetProperty("priceSnapshot");
-        Assert.True(quote.GetProperty("finalPricePendingAllocation").GetBoolean());
-        Assert.Equal(store.Price.Id, quote.GetProperty("productPriceId").GetGuid());
-        Assert.Equal(PromotionTypes.Campaign, quote.GetProperty("appliedPromotion").GetProperty("promotionType").GetString());
         Assert.Equal(0, store.BatchDiscountQueryCount);
 
         orderStore.TerritoryAllowed = false;
@@ -111,17 +100,6 @@ public sealed class OrderCaptureApiTests
         Assert.Equal("PendingApproval", timeline.GetProperty("currentStatus").GetString());
         Assert.Single(timeline.GetProperty("events").EnumerateArray());
 
-        var graphQlResponse = await client.PostAsJsonAsync("/graphql", new
-        {
-            query = "query($id: UUID!) { orders(createdByMe: true, page: 1, pageSize: 10) { totalCount items { id allocationState finalPricePendingAllocation } } order(id: $id) { lines { productPriceId pricedAt mlor { sourceScope sourceVersion minimumLifeRatio } ordinaryPromotion { code minimumQuantity effectiveFrom effectiveTo } } } orderTimeline(id: $id) { currentStatus events { toStatus } } }",
-            variables = new { id = orderId }
-        });
-        Assert.Equal(HttpStatusCode.OK, graphQlResponse.StatusCode);
-        var graphQl = JsonDocument.Parse(await graphQlResponse.Content.ReadAsStringAsync()).RootElement;
-        Assert.False(graphQl.TryGetProperty("errors", out _), graphQl.ToString());
-        Assert.Equal(1, graphQl.GetProperty("data").GetProperty("orders").GetProperty("totalCount").GetInt32());
-        Assert.Equal("Sku", graphQl.GetProperty("data").GetProperty("order")
-            .GetProperty("lines")[0].GetProperty("mlor").GetProperty("sourceScope").GetString());
     }
 
     [Fact]

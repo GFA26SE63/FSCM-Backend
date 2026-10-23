@@ -35,7 +35,7 @@ public sealed class OrderServiceTests
         Assert.Empty(result.Lines.Single().Allocations);
         Assert.Equal(0m, fixture.Store.Balance.ReservedQuantity);
         Assert.Equal(50m, fixture.Store.Balance.AvailableQuantity);
-        Assert.Contains("pendingRun", fixture.Store.Orders.Single().AllocationTraceJson, StringComparison.OrdinalIgnoreCase);
+        Assert.True(fixture.Store.Orders.Single().FinalPricePendingAllocation);
         Assert.False(Assert.Single(fixture.Store.Promotions).IsServerFinal);
         Assert.Equal("KM-001", fixture.Store.Promotions.Single().PromotionCodeSnapshot);
         Assert.Equal("OrderCaptured", Assert.Single(fixture.Store.Audits).Action);

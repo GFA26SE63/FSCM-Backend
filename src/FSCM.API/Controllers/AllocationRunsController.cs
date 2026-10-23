@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using FSCM.API.Contracts.AllocationRuns;
 using FSCM.Application.Features.AllocationRuns;
+using FSCM.Application.Features.Orders;
 using FSCM.Domain.Authorization;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -15,7 +16,8 @@ public sealed class AllocationRunsController(
     AllocationPlanApprovalService approvals,
     RunPickingIssueService picking,
     AllocationPriceLookupService prices,
-    AllocationTraceService traces) : ControllerBase
+    AllocationTraceService traces,
+    OrderService orders) : ControllerBase
 {
     [HttpGet("{runId:guid}")]
     public Task<AllocationRunResult> Get(Guid runId, CancellationToken cancellationToken) =>
@@ -88,9 +90,15 @@ public sealed class AllocationRunsController(
     /// record, read through the price endpoint above.
     /// </summary>
     [HttpGet("orders/{salesOrderId:guid}/trace")]
-    public Task<OrderTraceDetailResult> OrderTrace(Guid salesOrderId, CancellationToken cancellationToken) =>
-        traces.GetByOrderAsync(salesOrderId, cancellationToken);
+    public async Task<OrderTraceDetailResult> OrderTrace(Guid salesOrderId, CancellationToken cancellationToken)
+    {
+        await orders.GetAsync(salesOrderId, ActorId(), ActorRole(), cancellationToken);
+        return await traces.GetByOrderAsync(salesOrderId, cancellationToken);
+    }
 
     private Guid ActorId() => Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var id)
         ? id : throw AllocationRunOperationException.Validation("Authenticated user identifier is invalid.");
+
+    private string ActorRole() => User.FindFirstValue(ClaimTypes.Role)
+        ?? throw AllocationRunOperationException.Validation("Authenticated user role is invalid.");
 }

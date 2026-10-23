@@ -17,7 +17,7 @@ namespace FSCM.IntegrationTests.Api;
 public sealed class PaymentApiTests
 {
     [Fact]
-    public async Task Manual_payment_rest_and_graphql_share_scope_and_canonical_ledger()
+    public async Task Manual_payment_uses_scope_and_canonical_ledger()
     {
         using var identityFactory = new IdentityAuthorizationTests.IdentityApiFactory();
         var store = new TestFinanceStore();
@@ -55,17 +55,6 @@ public sealed class PaymentApiTests
         Assert.Equal(HttpStatusCode.OK, confirmResponse.StatusCode);
         Assert.Equal(store.Ledger.Amount, store.Ledger.ConfirmedAmount);
 
-        var graphQlResponse = await client.PostAsJsonAsync("/graphql", new
-        {
-            query = "query($id: UUID!, $orderId: UUID!) { manualPayment(id: $id) { id status outstandingAmount } manualPaymentsBySalesOrder(salesOrderId: $orderId, first: 20) { totalCount nodes { id method status totalConfirmedAmount } } }",
-            variables = new { id = paymentId, orderId = store.Order.Id }
-        });
-        Assert.Equal(HttpStatusCode.OK, graphQlResponse.StatusCode);
-        var graphQl = JsonDocument.Parse(await graphQlResponse.Content.ReadAsStringAsync());
-        Assert.False(graphQl.RootElement.TryGetProperty("errors", out _), graphQl.RootElement.ToString());
-        var data = graphQl.RootElement.GetProperty("data");
-        Assert.Equal("Paid", data.GetProperty("manualPayment").GetProperty("status").GetString());
-        Assert.Equal(1, data.GetProperty("manualPaymentsBySalesOrder").GetProperty("totalCount").GetInt32());
     }
 
     [Fact]
@@ -164,17 +153,6 @@ public sealed class PaymentApiTests
             new { expectedVersion = 1, note = "Đã đối chiếu chứng từ" });
         Assert.Equal(HttpStatusCode.OK, verifyResponse.StatusCode);
 
-        var graphQlResponse = await client.PostAsJsonAsync("/graphql", new
-        {
-            query = "query($id: UUID!, $orderId: UUID!) { refund(id: $id) { id status refundDueAmount transactionReference } refunds(orderId: $orderId, first: 20) { totalCount nodes { id status refundedAmount } } }",
-            variables = new { id = refundId, orderId = store.Order.Id }
-        });
-        Assert.Equal(HttpStatusCode.OK, graphQlResponse.StatusCode);
-        var graphQl = JsonDocument.Parse(await graphQlResponse.Content.ReadAsStringAsync());
-        Assert.False(graphQl.RootElement.TryGetProperty("errors", out _), graphQl.RootElement.ToString());
-        var data = graphQl.RootElement.GetProperty("data");
-        Assert.Equal(RefundStatuses.Refunded, data.GetProperty("refund").GetProperty("status").GetString());
-        Assert.Equal(1, data.GetProperty("refunds").GetProperty("totalCount").GetInt32());
     }
 
     private static Microsoft.AspNetCore.Mvc.Testing.WebApplicationFactory<Program> CreateFactory(

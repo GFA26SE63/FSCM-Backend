@@ -36,11 +36,24 @@ public sealed class PickingListsController(PickingService service) : ControllerB
                 request.QrCode,
                 request.Quantity,
                 request.ExpectedPickingVersion,
-                request.ExpectedLabelVersion),
+                request.ExpectedLabelVersion,
+                request.Splits.Select(item => new RunPickingSplitQuantityData(
+                    item.AllocationRunAllocationId, item.Quantity)).ToArray()),
             operationKey,
             GetActorUserId(),
             GetActorRole(),
             cancellationToken);
+
+    /// <summary>Marks one warehouse portion Ready only after every approved gather/split is picked.</summary>
+    [Authorize(Roles = SystemRoles.WarehouseKeeper)]
+    [HttpPost("{pickingCode}/complete")]
+    public Task<PickingListResult> Complete(
+        string pickingCode,
+        CompleteRunPickingRequest request,
+        CancellationToken cancellationToken) =>
+        service.CompleteAsync(pickingCode,
+            new CompleteRunPickingData(request.ExpectedPickingVersion, request.ExceptionType, request.Note),
+            GetActorUserId(), GetActorRole(), cancellationToken);
 
     private Guid GetActorUserId() =>
         Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var userId)

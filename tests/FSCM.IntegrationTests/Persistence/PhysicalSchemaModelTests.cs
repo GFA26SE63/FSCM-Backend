@@ -106,8 +106,8 @@ public sealed class PhysicalSchemaModelTests
 
         Assert.Equal(ExpectedTables, tableNames);
         Assert.Equal(81, entityTypes.Length);
-        Assert.Equal(908, entityTypes.Sum(entityType => entityType.GetProperties().Count()));
-        Assert.Equal(181, entityTypes.Sum(entityType => entityType.GetForeignKeys().Count()));
+        Assert.Equal(910, entityTypes.Sum(entityType => entityType.GetProperties().Count()));
+        Assert.Equal(182, entityTypes.Sum(entityType => entityType.GetForeignKeys().Count()));
         Assert.All(
             entityTypes.SelectMany(entityType => entityType.GetForeignKeys()),
             foreignKey => Assert.Equal(DeleteBehavior.Restrict, foreignKey.DeleteBehavior));
@@ -379,7 +379,7 @@ public sealed class PhysicalSchemaModelTests
         var allocation = context.Model.FindEntityType(typeof(Allocation))!;
         var retailer = context.Model.FindEntityType(typeof(Retailer))!;
 
-        Assert.Equal("jsonb", order.FindProperty(nameof(SalesOrder.AllocationTraceJson))!.GetColumnType());
+        Assert.Null(order.FindProperty("AllocationTraceJson"));
         Assert.True(order.FindProperty(nameof(SalesOrder.Version))!.IsConcurrencyToken);
         Assert.False(order.FindProperty(nameof(SalesOrder.RetailerCodeSnapshot))!.IsNullable);
         Assert.False(order.FindProperty(nameof(SalesOrder.RetailerNameSnapshot))!.IsNullable);
