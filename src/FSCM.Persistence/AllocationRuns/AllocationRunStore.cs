@@ -256,6 +256,95 @@ public sealed class AllocationRunStore(AppDbContext dbContext) : IAllocationRunS
             .ToArray();
     }
 
+    public Task<AllocationPlanVersion?> FindApprovedPlanVersionAsync(
+        Guid runId, CancellationToken cancellationToken) =>
+        dbContext.AllocationPlanVersionRecords.AsNoTracking()
+            .SingleOrDefaultAsync(item => item.AllocationRunId == runId
+                && item.Status == AllocationPlanVersionStatuses.Approved, cancellationToken);
+
+    public async Task<IReadOnlyCollection<PickableAllocation>> ListPickableAsync(
+        Guid planVersionId, CancellationToken cancellationToken) =>
+        await dbContext.AllocationRunAllocationRecords.AsNoTracking()
+            .Where(allocation => allocation.AllocationPlanVersionId == planVersionId)
+            .Join(dbContext.AllocationRunLineRecords.AsNoTracking(),
+                allocation => allocation.AllocationRunLineId, line => line.Id,
+                (allocation, line) => new { allocation, line })
+            .Join(dbContext.AllocationRunOrderRecords.AsNoTracking(),
+                item => item.line.AllocationRunOrderId, order => order.Id,
+                (item, order) => new { item.allocation, item.line, order })
+            .Join(dbContext.BatchRecords.AsNoTracking(),
+                item => item.allocation.BatchId, batch => batch.Id,
+                (item, batch) => new { item.allocation, item.line, item.order, batch })
+            .Join(dbContext.AllocationPlanPriceRecords.AsNoTracking(),
+                item => new { Line = item.line.Id, Batch = item.allocation.BatchId },
+                price => new { Line = price.AllocationRunLineId, Batch = price.BatchId },
+                (item, price) => new PickableAllocation(
+                    item.allocation,
+                    item.line,
+                    price.Id,
+                    item.order.SalesOrderId,
+                    item.line.SalesOrderLineId,
+                    item.order.OrderCodeSnapshot,
+                    item.batch.BatchCode))
+            .ToArrayAsync(cancellationToken);
+
+    public async Task<IReadOnlyCollection<RunPickingListView>> ListRunPickingListsAsync(
+        Guid runId, CancellationToken cancellationToken) =>
+        await BuildPickingViewsAsync(
+            dbContext.RunPickingListRecords.AsNoTracking()
+                .Where(item => item.AllocationRunId == runId)
+                .OrderBy(item => item.PickingCode),
+            cancellationToken);
+
+    public async Task<IReadOnlyCollection<RunPickingListView>> ListRunPickingListsForWarehouseAsync(
+        Guid warehouseId, CancellationToken cancellationToken) =>
+        await BuildPickingViewsAsync(
+            dbContext.RunPickingListRecords.AsNoTracking()
+                .Where(item => item.WarehouseId == warehouseId)
+                .OrderByDescending(item => item.IssuedAt),
+            cancellationToken);
+
+    public async Task<RunPickingListView?> FindRunPickingListAsync(
+        Guid pickingListId, CancellationToken cancellationToken) =>
+        (await BuildPickingViewsAsync(
+            dbContext.RunPickingListRecords.AsNoTracking().Where(item => item.Id == pickingListId),
+            cancellationToken)).SingleOrDefault();
+
+    public void AddRunPickingLists(IEnumerable<RunPickingList> lists) =>
+        dbContext.RunPickingListRecords.AddRange(lists);
+
+    public void AddRunPickingGathers(IEnumerable<RunPickingGather> gathers) =>
+        dbContext.RunPickingGatherRecords.AddRange(gathers);
+
+    public void AddRunPickingSplits(IEnumerable<RunPickingSplit> splits) =>
+        dbContext.RunPickingSplitRecords.AddRange(splits);
+
+    private async Task<IReadOnlyCollection<RunPickingListView>> BuildPickingViewsAsync(
+        IQueryable<RunPickingList> lists, CancellationToken cancellationToken)
+    {
+        var rows = await lists.ToArrayAsync(cancellationToken);
+        if (rows.Length == 0) return [];
+
+        var listIds = rows.Select(item => item.Id).ToArray();
+        var gathers = await dbContext.RunPickingGatherRecords.AsNoTracking()
+            .Where(item => listIds.Contains(item.RunPickingListId))
+            .ToArrayAsync(cancellationToken);
+        var gatherIds = gathers.Select(item => item.Id).ToArray();
+        var splits = await dbContext.RunPickingSplitRecords.AsNoTracking()
+            .Where(item => gatherIds.Contains(item.RunPickingGatherId))
+            .ToArrayAsync(cancellationToken);
+
+        return rows.Select(list =>
+        {
+            var listGathers = gathers.Where(item => item.RunPickingListId == list.Id).ToArray();
+            var listGatherIds = listGathers.Select(item => item.Id).ToHashSet();
+            return new RunPickingListView(
+                list,
+                listGathers,
+                splits.Where(item => listGatherIds.Contains(item.RunPickingGatherId)).ToArray());
+        }).ToArray();
+    }
+
     public void AddReservation(Reservation reservation) => dbContext.ReservationRecords.Add(reservation);
 
     public void AddInventoryTransaction(InventoryTransaction transaction) =>

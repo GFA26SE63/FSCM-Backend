@@ -32,6 +32,14 @@ internal abstract class StubAllocationRunStore : IAllocationRunStore
     public virtual Task<IReadOnlyCollection<AllocationPlanVersionView>> ListPlanVersionsAsync(Guid runId, CancellationToken cancellationToken) => throw NotSetUp();
     public virtual Task<AllocationRun?> FindRunForUpdateAsync(Guid runId, CancellationToken cancellationToken) => throw NotSetUp();
     public virtual Task<IReadOnlyCollection<ReservableAllocation>> ListReservableAsync(Guid planVersionId, CancellationToken cancellationToken) => throw NotSetUp();
+    public virtual Task<AllocationPlanVersion?> FindApprovedPlanVersionAsync(Guid runId, CancellationToken cancellationToken) => throw NotSetUp();
+    public virtual Task<IReadOnlyCollection<PickableAllocation>> ListPickableAsync(Guid planVersionId, CancellationToken cancellationToken) => throw NotSetUp();
+    public virtual Task<IReadOnlyCollection<RunPickingListView>> ListRunPickingListsAsync(Guid runId, CancellationToken cancellationToken) => throw NotSetUp();
+    public virtual Task<IReadOnlyCollection<RunPickingListView>> ListRunPickingListsForWarehouseAsync(Guid warehouseId, CancellationToken cancellationToken) => throw NotSetUp();
+    public virtual Task<RunPickingListView?> FindRunPickingListAsync(Guid pickingListId, CancellationToken cancellationToken) => throw NotSetUp();
+    public virtual void AddRunPickingLists(IEnumerable<RunPickingList> lists) => throw NotSetUp();
+    public virtual void AddRunPickingGathers(IEnumerable<RunPickingGather> gathers) => throw NotSetUp();
+    public virtual void AddRunPickingSplits(IEnumerable<RunPickingSplit> splits) => throw NotSetUp();
     public virtual void AddReservation(Reservation reservation) => throw NotSetUp();
     public virtual void AddInventoryTransaction(InventoryTransaction transaction) => throw NotSetUp();
     public virtual Task<AllocationSettings> GetSettingsAsync(CancellationToken cancellationToken) => throw NotSetUp();

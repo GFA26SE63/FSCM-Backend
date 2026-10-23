@@ -198,7 +198,7 @@ public sealed class AllocationRunServiceTests
         public override DateTimeOffset GetUtcNow() => Cutoff;
     }
 
-    internal sealed class FakeStore : IAllocationRunStore
+    internal sealed class FakeStore : StubAllocationRunStore
     {
         public Guid RetailerId { get; } = Guid.NewGuid();
         public Guid ProductId { get; } = Guid.NewGuid();
@@ -210,22 +210,22 @@ public sealed class AllocationRunServiceTests
         public List<AllocationRunLine> Lines { get; } = [];
         public List<AllocationRunStock> Pool { get; } = [];
 
-        public Task<AllocationRun?> FindByBusinessDateAsync(DateOnly businessDate, CancellationToken cancellationToken) =>
+        public override Task<AllocationRun?> FindByBusinessDateAsync(DateOnly businessDate, CancellationToken cancellationToken) =>
             Task.FromResult(Runs.SingleOrDefault(item => item.BusinessDate == businessDate));
 
-        public Task<AllocationRunView?> FindViewAsync(Guid runId, CancellationToken cancellationToken) =>
+        public override Task<AllocationRunView?> FindViewAsync(Guid runId, CancellationToken cancellationToken) =>
             Task.FromResult(ToView(Runs.SingleOrDefault(item => item.Id == runId)));
 
-        public Task<AllocationRunView?> FindViewByBusinessDateAsync(
+        public override Task<AllocationRunView?> FindViewByBusinessDateAsync(
             DateOnly businessDate, CancellationToken cancellationToken) =>
             Task.FromResult(ToView(Runs.SingleOrDefault(item => item.BusinessDate == businessDate)));
 
-        public Task<IReadOnlyCollection<EligibleOrderView>> ListEligibleOrdersAsync(
+        public override Task<IReadOnlyCollection<EligibleOrderView>> ListEligibleOrdersAsync(
             DateTimeOffset cutoffAt, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyCollection<EligibleOrderView>>(
                 Eligible.Where(item => item.Order.ServerReceivedAt < cutoffAt).ToArray());
 
-        public Task<IReadOnlyCollection<AvailableBatchView>> ListAvailableStockAsync(
+        public override Task<IReadOnlyCollection<AvailableBatchView>> ListAvailableStockAsync(
             IReadOnlyCollection<Guid> productIds, DateOnly businessDate, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyCollection<AvailableBatchView>>(productIds.Contains(ProductId)
                 ?
@@ -242,7 +242,7 @@ public sealed class AllocationRunServiceTests
                 ]
                 : []);
 
-        public Task<IReadOnlyDictionary<(Guid RetailerId, Guid ProductId), (decimal Ratio, string Source)>>
+        public override Task<IReadOnlyDictionary<(Guid RetailerId, Guid ProductId), (decimal Ratio, string Source)>>
             ResolveMlorAsync(
                 IReadOnlyCollection<(Guid RetailerId, Guid ProductId)> pairs, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyDictionary<(Guid, Guid), (decimal, string)>>(
@@ -250,7 +250,7 @@ public sealed class AllocationRunServiceTests
 
         public List<AllocationRunAllocation> Allocations { get; } = [];
 
-        public Task<IReadOnlyCollection<PlannerBatch>> ListPlannerBatchesAsync(
+        public override Task<IReadOnlyCollection<PlannerBatch>> ListPlannerBatchesAsync(
             Guid runId, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyCollection<PlannerBatch>>(Pool
                 .Where(item => item.AllocationRunId == runId && item.RemainingQuantity > 0)
@@ -260,7 +260,7 @@ public sealed class AllocationRunServiceTests
                     item.RemainingQuantity))
                 .ToArray());
 
-        public Task<IReadOnlyDictionary<(Guid WarehouseId, Guid RetailerId), decimal>> ListDistancesAsync(
+        public override Task<IReadOnlyDictionary<(Guid WarehouseId, Guid RetailerId), decimal>> ListDistancesAsync(
             IReadOnlyCollection<Guid> warehouseIds,
             IReadOnlyCollection<Guid> retailerIds,
             CancellationToken cancellationToken) =>
@@ -268,44 +268,44 @@ public sealed class AllocationRunServiceTests
                 warehouseIds.SelectMany(warehouse => retailerIds.Select(retailer => (warehouse, retailer)))
                     .ToDictionary(pair => pair, _ => 5_000m));
 
-        public Task<IReadOnlyDictionary<Guid, Guid>> ListProductCategoriesAsync(
+        public override Task<IReadOnlyDictionary<Guid, Guid>> ListProductCategoriesAsync(
             IReadOnlyCollection<Guid> productIds, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyDictionary<Guid, Guid>>(
                 productIds.ToDictionary(item => item, _ => Guid.NewGuid()));
 
-        public Task<IReadOnlyDictionary<Guid, DateTimeOffset>> ListBatchExpiryAsync(
+        public override Task<IReadOnlyDictionary<Guid, DateTimeOffset>> ListBatchExpiryAsync(
             IReadOnlyCollection<Guid> batchIds, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyDictionary<Guid, DateTimeOffset>>(
                 batchIds.ToDictionary(item => item, _ => Cutoff.AddDays(20)));
 
-        public void AddAllocations(IEnumerable<AllocationRunAllocation> allocations) =>
+        public override void AddAllocations(IEnumerable<AllocationRunAllocation> allocations) =>
             Allocations.AddRange(allocations);
 
         public List<AllocationPlanVersion> PlanVersions { get; } = [];
         public List<AllocationPlanPrice> PlanPrices { get; } = [];
 
-        public void AddPlanVersion(AllocationPlanVersion version) => PlanVersions.Add(version);
+        public override void AddPlanVersion(AllocationPlanVersion version) => PlanVersions.Add(version);
 
-        public void AddPlanPrices(IEnumerable<AllocationPlanPrice> prices) => PlanPrices.AddRange(prices);
+        public override void AddPlanPrices(IEnumerable<AllocationPlanPrice> prices) => PlanPrices.AddRange(prices);
 
-        public Task<int> MaxPlanVersionNumberAsync(Guid runId, CancellationToken cancellationToken) =>
+        public override Task<int> MaxPlanVersionNumberAsync(Guid runId, CancellationToken cancellationToken) =>
             Task.FromResult(PlanVersions.Where(item => item.AllocationRunId == runId)
                 .Select(item => item.VersionNumber).DefaultIfEmpty(0).Max());
 
-        public Task<AllocationPlanVersion?> FindLivePlanVersionAsync(
+        public override Task<AllocationPlanVersion?> FindLivePlanVersionAsync(
             Guid runId, CancellationToken cancellationToken) =>
             Task.FromResult(PlanVersions.SingleOrDefault(item => item.AllocationRunId == runId
                 && item.Status == AllocationPlanVersionStatuses.AwaitingApproval));
 
-        public Task<AllocationPlanVersion?> FindPlanVersionForUpdateAsync(
+        public override Task<AllocationPlanVersion?> FindPlanVersionForUpdateAsync(
             Guid versionId, CancellationToken cancellationToken) =>
             Task.FromResult(PlanVersions.SingleOrDefault(item => item.Id == versionId));
 
-        public Task<AllocationPlanVersionView?> FindPlanVersionViewAsync(
+        public override Task<AllocationPlanVersionView?> FindPlanVersionViewAsync(
             Guid versionId, CancellationToken cancellationToken) =>
             Task.FromResult(ToPlanView(PlanVersions.SingleOrDefault(item => item.Id == versionId)));
 
-        public Task<IReadOnlyCollection<AllocationPlanVersionView>> ListPlanVersionsAsync(
+        public override Task<IReadOnlyCollection<AllocationPlanVersionView>> ListPlanVersionsAsync(
             Guid runId, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyCollection<AllocationPlanVersionView>>(PlanVersions
                 .Where(item => item.AllocationRunId == runId)
@@ -313,7 +313,7 @@ public sealed class AllocationRunServiceTests
                 .Select(item => ToPlanView(item)!)
                 .ToArray());
 
-        public Task<AllocationRun?> FindRunForUpdateAsync(Guid runId, CancellationToken cancellationToken) =>
+        public override Task<AllocationRun?> FindRunForUpdateAsync(Guid runId, CancellationToken cancellationToken) =>
             Task.FromResult(Runs.SingleOrDefault(item => item.Id == runId));
 
         public List<Reservation> Reservations { get; } = [];
@@ -323,7 +323,7 @@ public sealed class AllocationRunServiceTests
         public Dictionary<Guid, InventoryBalance> Balances { get; } = [];
         public Dictionary<Guid, Batch> Batches { get; } = [];
 
-        public Task<IReadOnlyCollection<ReservableAllocation>> ListReservableAsync(
+        public override Task<IReadOnlyCollection<ReservableAllocation>> ListReservableAsync(
             Guid planVersionId, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyCollection<ReservableAllocation>>(Allocations
                 .Where(item => item.AllocationPlanVersionId == planVersionId)
@@ -343,9 +343,9 @@ public sealed class AllocationRunServiceTests
                         && reservation.Status == "Active")))
                 .ToArray());
 
-        public void AddReservation(Reservation reservation) => Reservations.Add(reservation);
+        public override void AddReservation(Reservation reservation) => Reservations.Add(reservation);
 
-        public void AddInventoryTransaction(InventoryTransaction transaction) =>
+        public override void AddInventoryTransaction(InventoryTransaction transaction) =>
             InventoryTransactions.Add(transaction);
 
         private AllocationPlanVersionView? ToPlanView(AllocationPlanVersion? version) => version is null
@@ -355,27 +355,27 @@ public sealed class AllocationRunServiceTests
                 Runs.Single(item => item.Id == version.AllocationRunId).RunCode,
                 PlanPrices.Where(item => item.AllocationPlanVersionId == version.Id).ToArray());
 
-        public Task<AllocationSettings> GetSettingsAsync(CancellationToken cancellationToken) =>
+        public override Task<AllocationSettings> GetSettingsAsync(CancellationToken cancellationToken) =>
             Task.FromResult(new AllocationSettings(0.5m, 0.3m, 0.2m, 20_000));
 
-        public Task<string> NextRunCodeAsync(DateOnly businessDate, CancellationToken cancellationToken) =>
+        public override Task<string> NextRunCodeAsync(DateOnly businessDate, CancellationToken cancellationToken) =>
             Task.FromResult($"DOT-{businessDate:yyyyMMdd}-01");
 
-        public void AddRun(AllocationRun run) => Runs.Add(run);
+        public override void AddRun(AllocationRun run) => Runs.Add(run);
 
-        public void AddOrders(IEnumerable<AllocationRunOrder> orders) => Orders.AddRange(orders);
+        public override void AddOrders(IEnumerable<AllocationRunOrder> orders) => Orders.AddRange(orders);
 
-        public void AddLines(IEnumerable<AllocationRunLine> lines) => Lines.AddRange(lines);
+        public override void AddLines(IEnumerable<AllocationRunLine> lines) => Lines.AddRange(lines);
 
-        public void AddPool(IEnumerable<AllocationRunStock> pool) => Pool.AddRange(pool);
+        public override void AddPool(IEnumerable<AllocationRunStock> pool) => Pool.AddRange(pool);
 
-        public Task SaveChangesAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+        public override Task SaveChangesAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 
-        public Task ExecuteInTransactionAsync(
+        public override Task ExecuteInTransactionAsync(
             Func<CancellationToken, Task> action, CancellationToken cancellationToken) =>
             action(cancellationToken);
 
-        public void ClearTracking() { }
+        public override void ClearTracking() { }
 
         private AllocationRunView? ToView(AllocationRun? run) => run is null
             ? null
