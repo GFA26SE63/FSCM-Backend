@@ -103,7 +103,7 @@ public sealed class PhysicalSchemaModelTests
 
         Assert.Equal(ExpectedTables, tableNames);
         Assert.Equal(78, entityTypes.Length);
-        Assert.Equal(861, entityTypes.Sum(entityType => entityType.GetProperties().Count()));
+        Assert.Equal(866, entityTypes.Sum(entityType => entityType.GetProperties().Count()));
         Assert.Equal(177, entityTypes.Sum(entityType => entityType.GetForeignKeys().Count()));
         Assert.All(
             entityTypes.SelectMany(entityType => entityType.GetForeignKeys()),

@@ -130,7 +130,7 @@ public sealed class AllocationPricingServiceTests
 
     private static PricingPart Part(int remainingHours, decimal basePrice, decimal quantity) =>
         new(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Product, Category, "SKU001",
-            quantity, PricedAt.AddHours(remainingHours), 720, basePrice);
+            quantity, PricedAt.AddHours(remainingHours), 720, basePrice * 1.2m, basePrice);
 
     private sealed class Fixture
     {

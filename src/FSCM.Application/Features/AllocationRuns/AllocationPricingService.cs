@@ -13,6 +13,7 @@ public sealed record PricingPart(
     decimal Quantity,
     DateTimeOffset BatchExpiresAt,
     int TotalShelfLifeHours,
+    decimal ListUnitPrice,
     decimal BaseNetUnitPrice);
 
 public sealed record PricingOrder(
@@ -26,6 +27,9 @@ public sealed record PricedPart(
     Guid WarehouseId,
     string Sku,
     decimal Quantity,
+    DateTimeOffset BatchExpiresAt,
+    int TotalShelfLifeHours,
+    decimal ListUnitPrice,
     decimal BaseNetUnitPrice,
     decimal RemainingPercent,
     Guid? TierId,
@@ -97,6 +101,9 @@ public sealed class AllocationPricingService(ShelfLifeDiscountService discounts)
                     part.WarehouseId,
                     part.Sku,
                     part.Quantity,
+                    part.BatchExpiresAt,
+                    part.TotalShelfLifeHours,
+                    part.ListUnitPrice,
                     part.BaseNetUnitPrice,
                     remainingPercent,
                     match.Tier?.Id,

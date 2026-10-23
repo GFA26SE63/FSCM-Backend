@@ -14,9 +14,18 @@ public sealed class AllocationPlanPrice
     public Guid WarehouseId { get; set; }
     public decimal Quantity { get; set; }
 
+    /// <summary>Catalogue price before any promotion, kept so the whole ladder is readable.</summary>
+    public decimal ListUnitPrice { get; set; }
+
     /// <summary>Price after ordinary promotion, before any near-expiry reduction.</summary>
     public decimal BaseNetUnitPrice { get; set; }
 
+    /// <summary>The shared moment this version was priced from.</summary>
+    public DateTimeOffset PricedAt { get; set; }
+
+    /// <summary>Inputs the percentage was derived from, so the figure can be checked, not trusted.</summary>
+    public DateTimeOffset BatchExpiresAt { get; set; }
+    public int TotalShelfLifeHours { get; set; }
     public decimal RemainingShelfLifePercent { get; set; }
     public Guid? ShelfLifeDiscountTierId { get; set; }
     public string? DiscountType { get; set; }

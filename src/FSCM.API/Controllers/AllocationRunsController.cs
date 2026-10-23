@@ -13,7 +13,8 @@ namespace FSCM.API.Controllers;
 public sealed class AllocationRunsController(
     AllocationRunService runs,
     AllocationPlanApprovalService approvals,
-    RunPickingIssueService picking) : ControllerBase
+    RunPickingIssueService picking,
+    AllocationPriceLookupService prices) : ControllerBase
 {
     [HttpGet("{runId:guid}")]
     public Task<AllocationRunResult> Get(Guid runId, CancellationToken cancellationToken) =>
@@ -66,6 +67,19 @@ public sealed class AllocationRunsController(
     public Task<IReadOnlyCollection<RunPickingListResult>> WarehousePickingLists(
         Guid warehouseId, CancellationToken cancellationToken) =>
         picking.ListForWarehouseAsync(warehouseId, cancellationToken);
+
+    /// <summary>
+    /// The price a run settled on for one order, component by component. Trace, collection,
+    /// complaints and loyalty all read this rather than recomputing.
+    /// </summary>
+    [HttpGet("orders/{salesOrderId:guid}/price")]
+    public Task<OrderPriceResult> OrderPrice(Guid salesOrderId, CancellationToken cancellationToken) =>
+        prices.GetByOrderAsync(salesOrderId, cancellationToken);
+
+    [HttpGet("order-lines/{salesOrderLineId:guid}/price")]
+    public Task<OrderPriceLineResult> OrderLinePrice(
+        Guid salesOrderLineId, CancellationToken cancellationToken) =>
+        prices.GetByOrderLineAsync(salesOrderLineId, cancellationToken);
 
     private Guid ActorId() => Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var id)
         ? id : throw AllocationRunOperationException.Validation("Authenticated user identifier is invalid.");

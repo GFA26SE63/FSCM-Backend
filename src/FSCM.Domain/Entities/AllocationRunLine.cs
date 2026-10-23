@@ -16,6 +16,7 @@ public sealed class AllocationRunLine
     public int TotalShelfLifeHours { get; set; }
     public decimal EffectiveMlorRatio { get; set; }
     public string MlorSource { get; set; } = string.Empty;
+    public decimal ListUnitPrice { get; set; }
     public decimal BaseNetUnitPrice { get; set; }
     public decimal AllocatedQuantity { get; set; }
     public DateTimeOffset CreatedAt { get; set; }

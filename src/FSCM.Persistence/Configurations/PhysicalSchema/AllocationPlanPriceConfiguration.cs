@@ -16,7 +16,11 @@ public sealed class AllocationPlanPriceConfiguration : IEntityTypeConfiguration<
         builder.Property(entity => entity.BatchId).HasColumnType("uuid").IsRequired();
         builder.Property(entity => entity.WarehouseId).HasColumnType("uuid").IsRequired();
         builder.Property(entity => entity.Quantity).HasPrecision(18, 3).IsRequired();
+        builder.Property(entity => entity.ListUnitPrice).HasPrecision(18, 2).IsRequired();
         builder.Property(entity => entity.BaseNetUnitPrice).HasPrecision(18, 2).IsRequired();
+        builder.Property(entity => entity.PricedAt).HasColumnType("timestamp with time zone").IsRequired();
+        builder.Property(entity => entity.BatchExpiresAt).HasColumnType("timestamp with time zone").IsRequired();
+        builder.Property(entity => entity.TotalShelfLifeHours).IsRequired();
         builder.Property(entity => entity.RemainingShelfLifePercent).HasPrecision(5, 2).IsRequired();
         builder.Property(entity => entity.ShelfLifeDiscountTierId).HasColumnType("uuid").IsRequired(false);
         builder.Property(entity => entity.DiscountType).HasMaxLength(30).IsRequired(false);
