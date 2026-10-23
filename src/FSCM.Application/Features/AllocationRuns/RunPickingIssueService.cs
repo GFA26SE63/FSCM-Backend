@@ -6,7 +6,9 @@ public static class RunPickingListStatuses
 {
     public const string Issued = "Issued";
     public const string Picking = "Picking";
-    public const string Completed = "Completed";
+    public const string Ready = "Ready";
+    public const string NeedsHandling = "NeedsHandling";
+    public const string Completed = Ready;
 }
 
 public static class RunPickingGatherStatuses
@@ -54,7 +56,12 @@ public sealed record RunPickingListResult(
     string Status,
     DateTimeOffset IssuedAt,
     int Version,
-    IReadOnlyCollection<RunPickingGatherResult> Gathers);
+    IReadOnlyCollection<RunPickingGatherResult> Gathers,
+    DateTimeOffset? StartedAt = null,
+    DateTimeOffset? CompletedAt = null,
+    Guid? CompletedByUserId = null,
+    string? ExceptionType = null,
+    string? ExceptionNote = null);
 
 /// <summary>
 /// Issues the picking sheets for an approved plan, one per warehouse.
@@ -232,5 +239,10 @@ public sealed class RunPickingIssueService(IAllocationRunStore store, TimeProvid
                         split.Quantity,
                         split.PickedQuantity))
                     .ToArray()))
-            .ToArray());
+            .ToArray(),
+        view.List.StartedAt,
+        view.List.CompletedAt,
+        view.List.CompletedByUserId,
+        view.List.ExceptionType,
+        view.List.ExceptionNote);
 }

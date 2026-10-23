@@ -80,6 +80,7 @@ public static class DependencyInjection
         services.AddScoped<IOrderStore, OrderStore>();
         services.AddScoped<IPaymentStore, PaymentStore>();
         services.AddScoped<IPickingStore, PickingStore>();
+        services.AddScoped<IRunPickingStore, RunPickingStore>();
         services.AddScoped<IQrLabelStore, QrLabelStore>();
         services.AddScoped<IPromotionStore, PromotionStore>();
         services.AddScoped<IRetailerStore, RetailerStore>();

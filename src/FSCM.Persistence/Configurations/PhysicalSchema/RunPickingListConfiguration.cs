@@ -20,7 +20,10 @@ public sealed class RunPickingListConfiguration : IEntityTypeConfiguration<RunPi
         builder.Property(entity => entity.IssuedAt).HasColumnType("timestamp with time zone").IsRequired();
         builder.Property(entity => entity.StartedAt).HasColumnType("timestamp with time zone").IsRequired(false);
         builder.Property(entity => entity.CompletedAt).HasColumnType("timestamp with time zone").IsRequired(false);
-        builder.Property(entity => entity.Version).IsRequired();
+        builder.Property(entity => entity.ExceptionType).HasMaxLength(30).IsRequired(false);
+        builder.Property(entity => entity.ExceptionNote).HasMaxLength(500).IsRequired(false);
+        builder.Property(entity => entity.CompletedByUserId).HasColumnType("uuid").IsRequired(false);
+        builder.Property(entity => entity.Version).IsRequired().IsConcurrencyToken();
         builder.Property(entity => entity.CreatedAt).HasColumnType("timestamp with time zone").IsRequired();
         builder.Property(entity => entity.UpdatedAt).HasColumnType("timestamp with time zone").IsRequired();
         builder.HasIndex(entity => entity.PickingCode).IsUnique();
@@ -38,6 +41,10 @@ public sealed class RunPickingListConfiguration : IEntityTypeConfiguration<RunPi
         builder.HasOne<Warehouse>()
             .WithMany()
             .HasForeignKey(entity => entity.WarehouseId)
+            .OnDelete(DeleteBehavior.Restrict);
+        builder.HasOne<UserAccount>()
+            .WithMany()
+            .HasForeignKey(entity => entity.CompletedByUserId)
             .OnDelete(DeleteBehavior.Restrict);
     }
 }

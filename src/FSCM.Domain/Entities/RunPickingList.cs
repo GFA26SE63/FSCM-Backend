@@ -16,6 +16,9 @@ public sealed class RunPickingList
     public DateTimeOffset IssuedAt { get; set; }
     public DateTimeOffset? StartedAt { get; set; }
     public DateTimeOffset? CompletedAt { get; set; }
+    public string? ExceptionType { get; set; }
+    public string? ExceptionNote { get; set; }
+    public Guid? CompletedByUserId { get; set; }
     public int Version { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
