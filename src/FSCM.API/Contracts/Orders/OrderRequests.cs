@@ -11,6 +11,16 @@ public sealed record CreateAssistedOrderRequest(
 
 public sealed record CreateAssistedOrderLineRequest(Guid ProductId, int Quantity);
 
+public sealed record SubmitOfflineOrderRequest(
+    Guid ClientOrderKey,
+    Guid RetailerId,
+    string PaymentMethod,
+    DateOnly? RequestedDeliveryDate,
+    string? DeliveryAddress,
+    string? Note,
+    decimal OfflineEstimatedAmount,
+    IReadOnlyCollection<CreateAssistedOrderLineRequest> Lines);
+
 public sealed record OrderDecisionRequest(int ExpectedVersion);
 
 public sealed record RejectOrderRequest(int ExpectedVersion, string Reason);

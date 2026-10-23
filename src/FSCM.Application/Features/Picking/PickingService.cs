@@ -1,5 +1,6 @@
 using FSCM.Application.Features.AllocationRuns;
 using FSCM.Application.Features.QrLabels;
+using FSCM.Application.Features.Shipments;
 using FSCM.Domain.Authorization;
 using FSCM.Domain.Entities;
 
@@ -157,6 +158,7 @@ public sealed class PickingService(IRunPickingStore store, TimeProvider timeProv
                     view.Splits.Any(x => x.PickedQuantity != x.Quantity))
                     throw PickingOperationException.Conflict("Every approved gather and allocation split must be fully picked.");
                 view.List.Status = RunPickingListStatuses.Ready;
+                await CreateShipmentsAsync(view, now, txCt);
             }
             else
             {
@@ -187,6 +189,36 @@ public sealed class PickingService(IRunPickingStore store, TimeProvider timeProv
         if (!await store.CanAccessWarehouseAsync(actorId, role, view.List.WarehouseId, ct))
             throw PickingOperationException.Forbidden("User is not assigned to this picking warehouse.");
         return view;
+    }
+
+    // F92: once a warehouse's run picking portion is Ready, create one shipment part per distinct
+    // order in it, keyed on (order, warehouse). A run picking list spans several orders, so a Ready
+    // list yields one shipment per order; creation is idempotent (skips an order that already has a
+    // shipment for this warehouse).
+    private async Task CreateShipmentsAsync(RunPickingWorkflowView view, DateTimeOffset now, CancellationToken ct)
+    {
+        var perOrder = view.Splits
+            .GroupBy(split => split.SalesOrderId)
+            .Select(group => new { OrderId = group.Key, Quantity = group.Sum(split => split.PickedQuantity) });
+        foreach (var order in perOrder)
+        {
+            if (await store.ShipmentExistsAsync(order.OrderId, view.List.WarehouseId, ct)) continue;
+            store.AddShipment(new Shipment
+            {
+                Id = Guid.NewGuid(),
+                SalesOrderId = order.OrderId,
+                WarehouseId = view.List.WarehouseId,
+                RunPickingListId = view.List.Id,
+                ShipmentCode = await store.NextShipmentCodeAsync(ct),
+                Status = ShipmentStatuses.Ready,
+                TotalQuantity = order.Quantity,
+                ReceivedQuantity = 0,
+                ReadyAt = now,
+                Version = 0,
+                CreatedAt = now,
+                UpdatedAt = now
+            });
+        }
     }
 
     private static PickingListResult ToResult(RunPickingWorkflowView view) => new(

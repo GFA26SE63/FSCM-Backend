@@ -348,13 +348,21 @@ public sealed class InventoryService(IInventoryStore store, TimeProvider timePro
             item.Sku, item.ProductName, item.Line.SourceLotCode, item.Line.ReceivedQuantity,
             item.Line.ProductionDate, item.Line.ExpirationDate, item.BatchId, item.BatchCode)).ToArray());
 
-    private static BatchInventoryResult ToInventoryResult(BatchInventoryView view, DateOnly today) => new(
-        view.Batch.Id, view.Batch.BatchCode, view.Batch.WarehouseId, view.WarehouseCode, view.WarehouseName,
-        view.Batch.ProductId, view.Sku, view.ProductName, view.Batch.ExpirationDate,
-        CalculateExpiryStatus(view.Batch.ExpirationDate, view.NearDateThresholdHours, today),
-        view.Balance.PhysicalQuantity == 0 ? BatchStockStatuses.Depleted : BatchStockStatuses.InStock,
-        view.Balance.PhysicalQuantity, view.Balance.ReservedQuantity,
-        view.Balance.AvailableQuantity, view.Balance.Version, view.Balance.UpdatedAt);
+    private static BatchInventoryResult ToInventoryResult(BatchInventoryView view, DateOnly today)
+    {
+        var expiryStatus = CalculateExpiryStatus(view.Batch.ExpirationDate, view.NearDateThresholdHours, today);
+        // F41: issuable = on-hand − reserved − active locked, and nothing issuable once expired.
+        // Lock only withholds the not-yet-reserved portion, so cap it at the free (unreserved) stock.
+        var freeUnreserved = Math.Max(0, view.Balance.PhysicalQuantity - view.Balance.ReservedQuantity);
+        var lockedAgainstFree = Math.Min(view.ActiveLockedQuantity, freeUnreserved);
+        var available = expiryStatus == BatchExpiryStatuses.Expired ? 0 : Math.Max(0, freeUnreserved - lockedAgainstFree);
+        return new BatchInventoryResult(
+            view.Batch.Id, view.Batch.BatchCode, view.Batch.WarehouseId, view.WarehouseCode, view.WarehouseName,
+            view.Batch.ProductId, view.Sku, view.ProductName, view.Batch.ExpirationDate, expiryStatus,
+            view.Balance.PhysicalQuantity == 0 ? BatchStockStatuses.Depleted : BatchStockStatuses.InStock,
+            view.Balance.PhysicalQuantity, view.Balance.ReservedQuantity, view.ActiveLockedQuantity,
+            available, view.HasLockRequiringResolution, view.Balance.Version, view.Balance.UpdatedAt);
+    }
 
     private static InventoryHistoryResult ToHistoryResult(InventoryHistoryView view) => new(
         view.Transaction.Id, view.Transaction.BatchId, view.BatchCode, view.WarehouseCode, view.Sku,

@@ -8,6 +8,11 @@ public sealed record CollectPaymentRequest(
 
 public sealed record CreatePayOsCheckoutRequest(int ExpectedVersion);
 
+public sealed record AdjustReceivableRequest(
+    decimal Amount,
+    string Reason,
+    int ExpectedVersion);
+
 public sealed record PayOsWebhookRequest(
     string Code,
     string Desc,

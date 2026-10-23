@@ -76,8 +76,28 @@ public sealed class RunPickingStore(AppDbContext dbContext) : IRunPickingStore
         finally { if (openedHere) await connection.CloseAsync(); }
     }
 
+    public async Task<string> NextShipmentCodeAsync(CancellationToken ct)
+    {
+        var connection = dbContext.Database.GetDbConnection();
+        var openedHere = connection.State != ConnectionState.Open;
+        if (openedHere) await connection.OpenAsync(ct);
+        try
+        {
+            await using var command = connection.CreateCommand();
+            command.CommandText = "SELECT nextval('\"ShipmentCodeSequence\"');";
+            command.Transaction = dbContext.Database.CurrentTransaction?.GetDbTransaction();
+            return $"SHIP-{Convert.ToInt64(await command.ExecuteScalarAsync(ct)):000000}";
+        }
+        finally { if (openedHere) await connection.CloseAsync(); }
+    }
+
+    public Task<bool> ShipmentExistsAsync(Guid salesOrderId, Guid warehouseId, CancellationToken ct) =>
+        dbContext.ShipmentRecords.AsNoTracking()
+            .AnyAsync(x => x.SalesOrderId == salesOrderId && x.WarehouseId == warehouseId, ct);
+
     public void AddLabel(BatchQrLabel label) => dbContext.BatchQrLabelRecords.Add(label);
     public void AddLabelEvent(QrLabelEvent labelEvent) => dbContext.QrLabelEventRecords.Add(labelEvent);
+    public void AddShipment(Shipment shipment) => dbContext.ShipmentRecords.Add(shipment);
     public async Task SaveChangesAsync(CancellationToken ct)
     {
         try { await dbContext.SaveChangesAsync(ct); }

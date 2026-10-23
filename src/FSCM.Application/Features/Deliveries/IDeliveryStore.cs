@@ -27,6 +27,14 @@ public interface IDeliveryStore
     Task<IReadOnlyCollection<Vehicle>> ListVehiclesAsync(bool includeInactive, CancellationToken cancellationToken);
     Task<Driver?> FindDriverAsync(Guid id, CancellationToken cancellationToken);
     Task<Vehicle?> FindVehicleAsync(Guid id, CancellationToken cancellationToken);
+    Task<bool> WarehouseExistsAsync(Guid warehouseId, CancellationToken cancellationToken);
+    Task<bool> DriverCodeExistsAsync(string code, Guid? excludeId, CancellationToken cancellationToken);
+    Task<bool> VehiclePlateExistsAsync(string plateNumber, Guid? excludeId, CancellationToken cancellationToken);
+    Task<string> NextDriverCodeAsync(CancellationToken cancellationToken);
+    Task<Driver?> FindDriverForUpdateAsync(Guid id, CancellationToken cancellationToken);
+    Task<Vehicle?> FindVehicleForUpdateAsync(Guid id, CancellationToken cancellationToken);
+    void AddDriver(Driver driver);
+    void AddVehicle(Vehicle vehicle);
     Task<DeliveryOrderView?> FindOrderAsync(Guid orderId, bool forUpdate, CancellationToken cancellationToken);
     Task<IReadOnlyCollection<DeliveryLabelView>> ListOrderLabelsAsync(
         Guid orderId, bool forUpdate, CancellationToken cancellationToken);

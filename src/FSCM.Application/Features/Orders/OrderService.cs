@@ -79,6 +79,71 @@ public sealed class OrderService(
         return await GetAsync(plan.Order.Id, salesUserId, SystemRoles.Sales, cancellationToken);
     }
 
+    /// <summary>
+    /// F30: accepts an offline-drafted order a Sales rep submits once back online. Resubmission with
+    /// the same client key is idempotent (no duplicate order). Permission, MLOR and base price are
+    /// re-checked; a gap between the offline estimate and the server total is flagged for Sales to
+    /// confirm. The server-accept time is stamped as the cutoff; momentary stock is not reserved or
+    /// used to reject the order.
+    /// </summary>
+    public async Task<OrderDetailResult> SubmitOfflineAsync(
+        SubmitOfflineOrderData data,
+        Guid salesUserId,
+        CancellationToken cancellationToken)
+    {
+        if (data.OfflineEstimatedAmount < 0)
+            throw OrderOperationException.Validation("Offline estimated amount cannot be negative.");
+        var assisted = new CreateAssistedOrderData(
+            data.ClientOrderKey, data.RetailerId, data.PaymentMethod, data.RequestedDeliveryDate,
+            data.DeliveryAddress, data.Note, data.Lines);
+        var normalized = Normalize(assisted);
+        var requestHash = ComputeRequestHash(normalized, salesUserId);
+        var existing = await store.FindByClientOrderKeyAsync(normalized.ClientOrderKey, cancellationToken);
+        if (existing is not null)
+        {
+            if (existing.CreatedByUserId != salesUserId || existing.RequestHash != requestHash)
+                throw OrderOperationException.Conflict("Client order key was already used for a different request.");
+            return await GetAsync(existing.Id, salesUserId, SystemRoles.Sales, cancellationToken);
+        }
+
+        var retailerContext = await store.FindRetailerContextAsync(
+            salesUserId, normalized.RetailerId, cancellationToken)
+            ?? throw OrderOperationException.Forbidden(
+                "Sales can only create orders for an active retailer in the assigned territory.");
+        if (retailerContext.Retailer.Status != "Active")
+            throw OrderOperationException.Conflict("Retailer is not active.");
+
+        ValidatePayment(normalized.PaymentMethod, retailerContext.Retailer.CreditTermDays);
+        var now = timeProvider.GetUtcNow();
+        var today = GetVietnamDate(now);
+        if (normalized.RequestedDeliveryDate < today)
+            throw OrderOperationException.Validation("Requested delivery date cannot be in the past.");
+
+        var orderCode = await store.NextOrderCodeAsync(cancellationToken);
+        var plan = await BuildCaptureAsync(
+            normalized, retailerContext, salesUserId, orderCode, requestHash, now, cancellationToken,
+            OrderSources.Offline, data.OfflineEstimatedAmount);
+        try
+        {
+            await store.ExecuteInTransactionAsync(async transactionCancellationToken =>
+            {
+                Persist(plan);
+                await store.SaveChangesAsync(transactionCancellationToken);
+            }, cancellationToken);
+        }
+        catch (OrderOperationException exception) when (exception.Code == "conflict")
+        {
+            store.ClearTracking();
+            var concurrent = await store.FindByClientOrderKeyAsync(normalized.ClientOrderKey, cancellationToken);
+            if (concurrent is null || concurrent.CreatedByUserId != salesUserId || concurrent.RequestHash != requestHash)
+                throw;
+            return await GetAsync(concurrent.Id, salesUserId, SystemRoles.Sales, cancellationToken);
+        }
+
+        store.ClearTracking();
+        return await GetAsync(plan.Order.Id, salesUserId, SystemRoles.Sales, cancellationToken);
+    }
+
     public async Task<PagedOrderResult> ListAsync(
         Guid actorUserId,
         string actorRole,
@@ -282,7 +347,9 @@ public sealed class OrderService(
         string orderCode,
         string requestHash,
         DateTimeOffset now,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string source = OrderSources.Assisted,
+        decimal? offlineEstimatedAmount = null)
     {
         var orderStep = await GetPositiveConfigurationAsync(OrderStepKey, 1, allowZero: false, cancellationToken);
         var deliveryAddress = data.DeliveryAddress ?? CleanOptional(retailerContext.Retailer.Address, 1_000)
@@ -299,7 +366,7 @@ public sealed class OrderService(
             CreatedByUserId = salesUserId,
             ClientOrderKey = data.ClientOrderKey,
             RequestHash = requestHash,
-            Source = OrderSources.Assisted,
+            Source = source,
             Status = OrderStatuses.PendingApproval,
             PaymentMethod = data.PaymentMethod,
             CreditTermDays = data.PaymentMethod == OrderPaymentMethods.Credit
@@ -390,8 +457,17 @@ public sealed class OrderService(
         order.SubtotalAmount = lines.Sum(item => item.GrossAmount);
         order.DiscountAmount = lines.Sum(item => item.DiscountAmount);
         order.FinalAmount = lines.Sum(item => item.NetAmount);
+        if (source == OrderSources.Offline)
+        {
+            // F30: keep the offline quote and flag any gap vs the server-repriced indicative total,
+            // so Sales confirms the condition change. The indicative amount is pre-allocation; the
+            // final HSD-adjusted price is still computed later at allocation, so this is only a hint.
+            order.OfflineEstimatedAmount = offlineEstimatedAmount;
+            order.HasOfflineDifference =
+                offlineEstimatedAmount.HasValue && offlineEstimatedAmount.Value != order.FinalAmount;
+        }
         var history = NewHistory(order.Id, null, OrderStatuses.PendingApproval,
-            salesUserId, "Sales tạo đơn hỗ trợ", now);
+            salesUserId, source == OrderSources.Offline ? "Sales gửi đơn nháp offline" : "Sales tạo đơn hỗ trợ", now);
         var audit = new AuditLog
         {
             Id = Guid.NewGuid(),
@@ -613,6 +689,8 @@ public sealed class OrderService(
         null,
         null,
         view.Order.RejectionReason,
+        view.Order.OfflineEstimatedAmount,
+        view.Order.HasOfflineDifference,
         view.Order.Version,
         view.Order.ServerReceivedAt,
         view.Order.CreatedAt,

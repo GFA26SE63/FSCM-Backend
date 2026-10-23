@@ -13,6 +13,7 @@ public sealed class BatchQrLabelConfiguration : IEntityTypeConfiguration<BatchQr
         builder.Property(entity => entity.Id).HasColumnType("uuid").IsRequired();
         builder.Property(entity => entity.BatchId).HasColumnType("uuid").IsRequired();
         builder.Property(entity => entity.CurrentWarehouseId).HasColumnType("uuid").IsRequired();
+        builder.Property(entity => entity.GoodsReceiptId).HasColumnType("uuid").IsRequired(false);
         builder.Property(entity => entity.ParentLabelId).HasColumnType("uuid").IsRequired(false);
         builder.Property(entity => entity.RootLabelId).HasColumnType("uuid").IsRequired(false);
         builder.Property(entity => entity.QrCode).HasMaxLength(120).IsRequired();
@@ -24,9 +25,14 @@ public sealed class BatchQrLabelConfiguration : IEntityTypeConfiguration<BatchQr
         builder.Property(entity => entity.UpdatedAt).HasColumnType("timestamp with time zone").IsRequired();
         builder.Property(entity => entity.InvalidatedAt).HasColumnType("timestamp with time zone").IsRequired(false);
         builder.HasIndex(entity => entity.QrCode).IsUnique();
+        builder.HasIndex(entity => entity.GoodsReceiptId);
         builder.HasOne<Batch>()
             .WithMany()
             .HasForeignKey(entity => entity.BatchId)
+            .OnDelete(DeleteBehavior.Restrict);
+        builder.HasOne<GoodsReceipt>()
+            .WithMany()
+            .HasForeignKey(entity => entity.GoodsReceiptId)
             .OnDelete(DeleteBehavior.Restrict);
         builder.HasOne<Warehouse>()
             .WithMany()

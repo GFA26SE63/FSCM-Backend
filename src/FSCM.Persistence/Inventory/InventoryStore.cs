@@ -170,13 +170,20 @@ public sealed class InventoryStore(AppDbContext dbContext) : IInventoryStore, II
         await (
             from batch in dbContext.BatchRecords
             join product in dbContext.ProductRecords.AsNoTracking() on batch.ProductId equals product.Id
+            join balance in dbContext.InventoryBalanceRecords.AsNoTracking() on batch.Id equals balance.BatchId
             where batch.ExpiryStatus != BatchExpiryStatuses.Expired
-            select new BatchExpiryCandidate(batch, product.NearDateThresholdHours))
+            select new BatchExpiryCandidate(batch, product.NearDateThresholdHours,
+                balance.PhysicalQuantity, balance.ReservedQuantity,
+                dbContext.InventoryLockRecords.AsNoTracking()
+                    .Where(item => item.BatchId == batch.Id && item.Status == "Active")
+                    .Sum(item => (decimal?)item.LockedQuantity) ?? 0m))
             .ToArrayAsync(cancellationToken);
 
     public void AddSweepRun(ExpirySweepRun run) => dbContext.ExpirySweepRunRecords.Add(run);
 
     public void AddOutboxMessage(OutboxMessage message) => dbContext.OutboxMessageRecords.Add(message);
+
+    public void AddInventoryLock(InventoryLock inventoryLock) => dbContext.InventoryLockRecords.Add(inventoryLock);
 
     public Task<ExpirySweepRun?> FindLatestExpirySweepRunAsync(CancellationToken cancellationToken) =>
         dbContext.ExpirySweepRunRecords.AsNoTracking()
@@ -229,5 +236,10 @@ public sealed class InventoryStore(AppDbContext dbContext) : IInventoryStore, II
         join warehouse in dbContext.WarehouseRecords.AsNoTracking() on batch.WarehouseId equals warehouse.Id
         join product in dbContext.ProductRecords.AsNoTracking() on batch.ProductId equals product.Id
         select new BatchInventoryView(batch, balance, warehouse.Code, warehouse.Name,
-            product.Sku, product.Name, product.NearDateThresholdHours);
+            product.Sku, product.Name, product.NearDateThresholdHours,
+            dbContext.InventoryLockRecords.AsNoTracking()
+                .Where(item => item.BatchId == batch.Id && item.Status == "Active")
+                .Sum(item => (decimal?)item.LockedQuantity) ?? 0m,
+            dbContext.InventoryLockRecords.AsNoTracking()
+                .Any(item => item.BatchId == batch.Id && item.Status == "Active" && item.RequiresResolution));
 }

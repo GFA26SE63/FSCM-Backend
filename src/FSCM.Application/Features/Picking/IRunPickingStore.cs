@@ -20,8 +20,16 @@ public interface IRunPickingStore
     Task<QrLabelEvent?> FindOperationAsync(string operationKey, CancellationToken cancellationToken);
     Task<BatchQrLabel?> FindLabelForUpdateAsync(string qrCode, CancellationToken cancellationToken);
     Task<string> NextQrCodeAsync(CancellationToken cancellationToken);
+
+    /// <summary>F92: next shipment code from the shared sequence.</summary>
+    Task<string> NextShipmentCodeAsync(CancellationToken cancellationToken);
+
+    /// <summary>F92: whether a shipment already exists for this (order, warehouse) pair.</summary>
+    Task<bool> ShipmentExistsAsync(Guid salesOrderId, Guid warehouseId, CancellationToken cancellationToken);
+
     void AddLabel(BatchQrLabel label);
     void AddLabelEvent(QrLabelEvent labelEvent);
+    void AddShipment(Shipment shipment);
     Task SaveChangesAsync(CancellationToken cancellationToken);
     Task ExecuteInTransactionAsync(Func<CancellationToken, Task> operation, CancellationToken cancellationToken);
     void ClearTracking();

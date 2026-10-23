@@ -171,6 +171,136 @@ public sealed class DeliveryServiceTests
         Assert.Equal("conflict", exception.Code);
     }
 
+    [Fact]
+    public async Task Create_driver_auto_generates_code_when_omitted()
+    {
+        var fixture = new Fixture();
+
+        var result = await fixture.Service.CreateDriverAsync(
+            new(fixture.Warehouse.Id, null, "Lê Văn Giao", "0912000022", "GPLX-C-022"),
+            SystemRoles.Operator, default);
+
+        Assert.Equal("DRV-10", result.Code);
+        Assert.True(result.IsActive);
+        Assert.Equal("Lê Văn Giao", result.FullName);
+        Assert.Contains(fixture.Store.Drivers, item => item.Id == result.Id);
+    }
+
+    [Fact]
+    public async Task Create_driver_rejects_duplicate_code()
+    {
+        var fixture = new Fixture();
+
+        var exception = await Assert.ThrowsAsync<DeliveryOperationException>(() =>
+            fixture.Service.CreateDriverAsync(
+                new(fixture.Warehouse.Id, fixture.Driver.Code, "Người trùng mã", "0912000033", "GPLX-C-033"),
+                SystemRoles.Operator, default));
+
+        Assert.Equal("conflict", exception.Code);
+    }
+
+    [Fact]
+    public async Task Create_driver_rejects_unknown_warehouse()
+    {
+        var fixture = new Fixture();
+
+        var exception = await Assert.ThrowsAsync<DeliveryOperationException>(() =>
+            fixture.Service.CreateDriverAsync(
+                new(Guid.NewGuid(), null, "Người lạ kho", "0912000044", "GPLX-C-044"),
+                SystemRoles.Operator, default));
+
+        Assert.Equal("validation_error", exception.Code);
+    }
+
+    [Fact]
+    public async Task Create_driver_requires_operator_role()
+    {
+        var fixture = new Fixture();
+
+        var exception = await Assert.ThrowsAsync<DeliveryOperationException>(() =>
+            fixture.Service.CreateDriverAsync(
+                new(fixture.Warehouse.Id, null, "Không đủ quyền", "0912000055", "GPLX-C-055"),
+                SystemRoles.Sales, default));
+
+        Assert.Equal("forbidden", exception.Code);
+    }
+
+    [Fact]
+    public async Task Update_driver_changes_contact_fields()
+    {
+        var fixture = new Fixture();
+
+        var result = await fixture.Service.UpdateDriverAsync(
+            fixture.Driver.Id, new("Trần Quốc Bảo", "0909999999", "GPLX-C-999"),
+            SystemRoles.Operator, default);
+
+        Assert.Equal("0909999999", result.Phone);
+        Assert.Equal("GPLX-C-999", result.LicenseNumber);
+    }
+
+    [Fact]
+    public async Task Set_driver_inactive_toggles_status()
+    {
+        var fixture = new Fixture();
+
+        var result = await fixture.Service.SetDriverActiveAsync(
+            fixture.Driver.Id, false, SystemRoles.Operator, default);
+
+        Assert.False(result.IsActive);
+    }
+
+    [Fact]
+    public async Task Create_vehicle_rejects_duplicate_plate()
+    {
+        var fixture = new Fixture();
+
+        var exception = await Assert.ThrowsAsync<DeliveryOperationException>(() =>
+            fixture.Service.CreateVehicleAsync(
+                new(fixture.Warehouse.Id, fixture.Vehicle.PlateNumber, "Xe tải 2 tấn", 25),
+                SystemRoles.Operator, default));
+
+        Assert.Equal("conflict", exception.Code);
+    }
+
+    [Fact]
+    public async Task Create_vehicle_rejects_nonpositive_capacity()
+    {
+        var fixture = new Fixture();
+
+        var exception = await Assert.ThrowsAsync<DeliveryOperationException>(() =>
+            fixture.Service.CreateVehicleAsync(
+                new(fixture.Warehouse.Id, "51D-999.99", "Xe tải 2 tấn", 0),
+                SystemRoles.Operator, default));
+
+        Assert.Equal("validation_error", exception.Code);
+    }
+
+    [Fact]
+    public async Task Create_vehicle_persists_and_normalizes_plate()
+    {
+        var fixture = new Fixture();
+
+        var result = await fixture.Service.CreateVehicleAsync(
+            new(fixture.Warehouse.Id, "51d-777.77", "Xe tải 3 tấn", 30),
+            SystemRoles.Operator, default);
+
+        Assert.Equal("51D-777.77", result.PlateNumber);
+        Assert.Equal(30, result.Capacity);
+        Assert.True(result.IsActive);
+        Assert.Contains(fixture.Store.Vehicles, item => item.Id == result.Id);
+    }
+
+    [Fact]
+    public async Task Set_vehicle_inactive_toggles_status()
+    {
+        var fixture = new Fixture();
+
+        var result = await fixture.Service.SetVehicleActiveAsync(
+            fixture.Vehicle.Id, false, SystemRoles.Operator, default);
+
+        Assert.False(result.IsActive);
+    }
+
     private sealed class Fixture
     {
         private static readonly DateTimeOffset Now = new(2026, 10, 15, 4, 0, 0, TimeSpan.Zero);
@@ -246,6 +376,7 @@ public sealed class DeliveryServiceTests
             };
             Labels = [CreateLabel("TEM-001010", 5, batchId), CreateLabel("TEM-001011", 5, batchId)];
             Store = new FakeDeliveryStore(this);
+            Store.Warehouses.Add(Warehouse.Id);
             PaymentStore = new FakePaymentStore(this);
             Inventory = new FakeInventoryLifecycle(this);
             Service = new DeliveryService(
@@ -299,6 +430,36 @@ public sealed class DeliveryServiceTests
 
         public Task<Vehicle?> FindVehicleAsync(Guid id, CancellationToken cancellationToken) =>
             Task.FromResult<Vehicle?>(id == fixture.Vehicle.Id ? fixture.Vehicle : null);
+
+        public List<Driver> Drivers { get; } = [];
+        public List<Vehicle> Vehicles { get; } = [];
+        public HashSet<Guid> Warehouses { get; } = [];
+        public int NextDriverSequence { get; set; } = 10;
+
+        public Task<bool> WarehouseExistsAsync(Guid warehouseId, CancellationToken cancellationToken) =>
+            Task.FromResult(Warehouses.Contains(warehouseId));
+
+        public Task<bool> DriverCodeExistsAsync(string code, Guid? excludeId, CancellationToken cancellationToken) =>
+            Task.FromResult(Drivers.Any(item => item.Code == code && (!excludeId.HasValue || item.Id != excludeId.Value)) ||
+                            (fixture.Driver.Code == code && (!excludeId.HasValue || fixture.Driver.Id != excludeId.Value)));
+
+        public Task<bool> VehiclePlateExistsAsync(string plateNumber, Guid? excludeId, CancellationToken cancellationToken) =>
+            Task.FromResult(Vehicles.Any(item => item.PlateNumber == plateNumber && (!excludeId.HasValue || item.Id != excludeId.Value)) ||
+                            (fixture.Vehicle.PlateNumber == plateNumber && (!excludeId.HasValue || fixture.Vehicle.Id != excludeId.Value)));
+
+        public Task<string> NextDriverCodeAsync(CancellationToken cancellationToken) =>
+            Task.FromResult($"DRV-{NextDriverSequence++:00}");
+
+        public Task<Driver?> FindDriverForUpdateAsync(Guid id, CancellationToken cancellationToken) =>
+            Task.FromResult(Drivers.SingleOrDefault(item => item.Id == id) ??
+                (id == fixture.Driver.Id ? fixture.Driver : null));
+
+        public Task<Vehicle?> FindVehicleForUpdateAsync(Guid id, CancellationToken cancellationToken) =>
+            Task.FromResult(Vehicles.SingleOrDefault(item => item.Id == id) ??
+                (id == fixture.Vehicle.Id ? fixture.Vehicle : null));
+
+        public void AddDriver(Driver driver) => Drivers.Add(driver);
+        public void AddVehicle(Vehicle vehicle) => Vehicles.Add(vehicle);
 
         public Task<DeliveryOrderView?> FindOrderAsync(Guid orderId, bool forUpdate,
             CancellationToken cancellationToken) => Task.FromResult<DeliveryOrderView?>(

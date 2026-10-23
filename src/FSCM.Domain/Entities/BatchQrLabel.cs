@@ -7,6 +7,10 @@ public sealed class BatchQrLabel
     public Guid Id { get; set; }
     public Guid BatchId { get; set; }
     public Guid CurrentWarehouseId { get; set; }
+
+    /// <summary>The goods receipt this label traces back to (F40). Null for labels whose batch has no linked receipt line.</summary>
+    public Guid? GoodsReceiptId { get; set; }
+
     public Guid? ParentLabelId { get; set; }
     public Guid? RootLabelId { get; set; }
     public string QrCode { get; set; } = string.Empty;

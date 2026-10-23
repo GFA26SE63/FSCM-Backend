@@ -213,6 +213,50 @@ public sealed class OrderServiceTests
         Assert.Equal(OrderStatuses.PendingApproval, fixture.Store.Orders.Single().Status);
     }
 
+    [Fact]
+    public async Task Offline_submission_stamps_source_and_server_cutoff_without_touching_stock()
+    {
+        var fixture = new Fixture();
+
+        var result = await fixture.SubmitOfflineAsync(quantity: 10, estimate: 900m);
+
+        Assert.Equal(OrderSources.Offline, result.Source);
+        Assert.Equal(OrderStatuses.PendingApproval, result.Status);
+        Assert.Equal(900m, result.FinalAmount);
+        Assert.Equal(900m, result.OfflineEstimatedAmount);
+        Assert.False(result.HasOfflineDifference);
+        Assert.Equal(Now, result.ServerReceivedAt);
+        // Momentary stock is not reserved by capture.
+        Assert.Equal(0m, fixture.Store.Balance.ReservedQuantity);
+        Assert.Equal(50m, fixture.Store.Balance.AvailableQuantity);
+    }
+
+    [Fact]
+    public async Task Offline_submission_flags_difference_when_server_price_changed()
+    {
+        var fixture = new Fixture();
+
+        // Sales quoted 1,000 offline but the server re-prices to the indicative 900.
+        var result = await fixture.SubmitOfflineAsync(quantity: 10, estimate: 1_000m);
+
+        Assert.True(result.HasOfflineDifference);
+        Assert.Equal(1_000m, result.OfflineEstimatedAmount);
+        Assert.Equal(900m, result.FinalAmount);
+    }
+
+    [Fact]
+    public async Task Offline_resubmission_with_same_client_key_is_idempotent()
+    {
+        var fixture = new Fixture();
+        var request = fixture.OfflineRequest(10, 900m);
+
+        var first = await fixture.Service.SubmitOfflineAsync(request, fixture.SalesUserId, default);
+        var second = await fixture.Service.SubmitOfflineAsync(request, fixture.SalesUserId, default);
+
+        Assert.Equal(first.Id, second.Id);
+        Assert.Single(fixture.Store.Orders);
+    }
+
     private sealed class Fixture
     {
         public Guid SalesUserId { get; } = Guid.NewGuid();
@@ -242,6 +286,19 @@ public sealed class OrderServiceTests
 
         public Task<OrderDetailResult> CreateAsync(int quantity) =>
             Service.CreateAsync(Request(quantity), SalesUserId, default);
+
+        public SubmitOfflineOrderData OfflineRequest(int quantity, decimal estimate) => new(
+            Guid.Parse("10000000-0000-0000-0000-000000000002"),
+            Store.Retailer.Id,
+            OrderPaymentMethods.Cod,
+            new DateOnly(2026, 10, 20),
+            null,
+            "Đơn nháp offline",
+            estimate,
+            [new CreateOrderLineData(Store.Product.Id, quantity)]);
+
+        public Task<OrderDetailResult> SubmitOfflineAsync(int quantity, decimal estimate) =>
+            Service.SubmitOfflineAsync(OfflineRequest(quantity, estimate), SalesUserId, default);
     }
 
     private sealed class FakePickingPlan : IPickingPlanService

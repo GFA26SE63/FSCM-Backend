@@ -11,6 +11,22 @@ public sealed record CreateAssistedOrderData(
     string? Note,
     IReadOnlyCollection<CreateOrderLineData> Lines);
 
+/// <summary>
+/// F30: an offline draft a Sales rep captured without connectivity and submits once back online.
+/// <see cref="ClientOrderKey"/> makes resubmission after a connection error idempotent (no duplicate
+/// order). <see cref="OfflineEstimatedAmount"/> is the amount Sales quoted offline; the server
+/// re-prices against current base price/MLOR and flags a difference for Sales to confirm.
+/// </summary>
+public sealed record SubmitOfflineOrderData(
+    Guid ClientOrderKey,
+    Guid RetailerId,
+    string PaymentMethod,
+    DateOnly? RequestedDeliveryDate,
+    string? DeliveryAddress,
+    string? Note,
+    decimal OfflineEstimatedAmount,
+    IReadOnlyCollection<CreateOrderLineData> Lines);
+
 public sealed record OrderAllocationResult(
     Guid Id,
     Guid BatchId,
@@ -166,6 +182,8 @@ public sealed record OrderDetailResult(
     string? AllocationProposalStatus,
     string? AllocationResult,
     string? RejectionReason,
+    decimal? OfflineEstimatedAmount,
+    bool HasOfflineDifference,
     int Version,
     DateTimeOffset ServerReceivedAt,
     DateTimeOffset CreatedAt,

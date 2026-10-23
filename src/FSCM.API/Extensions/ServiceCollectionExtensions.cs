@@ -34,7 +34,10 @@ public static class ServiceCollectionExtensions
         services.AddExceptionHandler<AllocationRunExceptionHandler>();
         services.AddExceptionHandler<CatalogExceptionHandler>();
         services.AddExceptionHandler<DeliveryExceptionHandler>();
+        services.AddExceptionHandler<ShipmentExceptionHandler>();
+        services.AddExceptionHandler<ReportExceptionHandler>();
         services.AddExceptionHandler<InventoryExceptionHandler>();
+        services.AddExceptionHandler<InventoryLockExceptionHandler>();
         services.AddExceptionHandler<InternalTransferExceptionHandler>();
         services.AddExceptionHandler<ManualPaymentExceptionHandler>();
         services.AddExceptionHandler<MapExceptionHandler>();

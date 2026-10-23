@@ -18,8 +18,8 @@ public sealed record GoodsReceiptResult(
 public sealed record BatchInventoryResult(
     Guid BatchId, string BatchCode, Guid WarehouseId, string WarehouseCode, string WarehouseName,
     Guid ProductId, string Sku, string ProductName, DateOnly ExpirationDate, string ExpiryStatus,
-    string StockStatus, decimal OnHandQuantity, decimal ReservedQuantity,
-    decimal AvailableQuantity, int Version, DateTimeOffset UpdatedAt);
+    string StockStatus, decimal OnHandQuantity, decimal ReservedQuantity, decimal LockedQuantity,
+    decimal AvailableQuantity, bool HasLockRequiringResolution, int Version, DateTimeOffset UpdatedAt);
 
 public sealed record InventoryHistoryResult(
     Guid Id, Guid BatchId, string BatchCode, string WarehouseCode, string Sku,

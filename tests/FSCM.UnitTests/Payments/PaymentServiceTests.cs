@@ -197,6 +197,76 @@ public sealed class PaymentServiceTests
         Assert.Equal("conflict", exception.Code);
     }
 
+    [Fact]
+    public async Task Approved_claim_reduces_credit_receivable_outstanding()
+    {
+        var fixture = new Fixture();
+
+        var result = await fixture.Service.AdjustReceivableAsync(
+            fixture.Order.Id, new AdjustReceivableData(300_000, "Khiếu nại thiếu 2 thùng được duyệt", 0),
+            "adjust-test-001", Guid.NewGuid(), SystemRoles.Operator, default);
+
+        Assert.Equal(fixture.Order.FinalAmount - 300_000, result.AdjustedAmount);
+        Assert.Equal(fixture.Order.FinalAmount - 300_000, result.OutstandingAmount);
+        Assert.Equal("ReceivableAdjusted", Assert.Single(fixture.Store.Audits).Action);
+    }
+
+    [Fact]
+    public async Task Rejected_claim_restores_a_prior_reduction()
+    {
+        var fixture = new Fixture();
+        var reduced = await fixture.Service.AdjustReceivableAsync(
+            fixture.Order.Id, new AdjustReceivableData(300_000, "Duyệt tạm", 0),
+            "adjust-reduce", Guid.NewGuid(), SystemRoles.Operator, default);
+
+        var restored = await fixture.Service.AdjustReceivableAsync(
+            fixture.Order.Id, new AdjustReceivableData(-300_000, "Khiếu nại bị từ chối, khôi phục", reduced.Version),
+            "adjust-restore", Guid.NewGuid(), SystemRoles.Operator, default);
+
+        Assert.Equal(fixture.Order.FinalAmount, restored.AdjustedAmount);
+    }
+
+    [Fact]
+    public async Task Adjustment_cannot_restore_above_approved_total()
+    {
+        var fixture = new Fixture();
+
+        var exception = await Assert.ThrowsAsync<PaymentOperationException>(() =>
+            fixture.Service.AdjustReceivableAsync(
+                fixture.Order.Id, new AdjustReceivableData(-100_000, "Khôi phục quá mức", 0),
+                "adjust-over", Guid.NewGuid(), SystemRoles.Operator, default));
+
+        Assert.Equal("conflict", exception.Code);
+    }
+
+    [Fact]
+    public async Task Adjustment_cannot_reduce_below_collected_amount()
+    {
+        var fixture = new Fixture();
+        // Collect in full first so ConfirmedAmount == AdjustedAmount.
+        await fixture.CollectAsync(fixture.SalesUserId, SystemRoles.Sales, PaymentCollectionMethods.Cash);
+
+        var exception = await Assert.ThrowsAsync<PaymentOperationException>(() =>
+            fixture.Service.AdjustReceivableAsync(
+                fixture.Order.Id, new AdjustReceivableData(100_000, "Giảm sau khi đã thu đủ", 1),
+                "adjust-below", Guid.NewGuid(), SystemRoles.Operator, default));
+
+        Assert.Equal("conflict", exception.Code);
+    }
+
+    [Fact]
+    public async Task Adjustment_requires_admin_or_operator()
+    {
+        var fixture = new Fixture();
+
+        var exception = await Assert.ThrowsAsync<PaymentOperationException>(() =>
+            fixture.Service.AdjustReceivableAsync(
+                fixture.Order.Id, new AdjustReceivableData(100_000, "Không đủ quyền", 0),
+                "adjust-forbidden", fixture.SalesUserId, SystemRoles.Sales, default));
+
+        Assert.Equal("forbidden", exception.Code);
+    }
+
     private sealed class Fixture
     {
         public Guid SalesUserId { get; } = Guid.NewGuid();

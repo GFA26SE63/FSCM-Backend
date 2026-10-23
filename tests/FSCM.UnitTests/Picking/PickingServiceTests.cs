@@ -1,6 +1,7 @@
 using FSCM.Application.Features.AllocationRuns;
 using FSCM.Application.Features.Picking;
 using FSCM.Application.Features.QrLabels;
+using FSCM.Application.Features.Shipments;
 using FSCM.Domain.Authorization;
 using FSCM.Domain.Entities;
 
@@ -66,6 +67,35 @@ public sealed class PickingServiceTests
         Assert.Equal(0, f.Gather.PickedQuantity);
     }
 
+    [Fact]
+    public async Task Complete_ready_creates_one_shipment_per_order_in_the_run_picking_list()
+    {
+        // F92: the list spans two orders (First + Second splits). A fully-picked, Ready list creates
+        // one (order, warehouse) shipment each, with the picked quantity of that order.
+        var f = new Fixture();
+        await f.ScanAsync(10, [(f.First.AllocationRunAllocationId, 6), (f.Second.AllocationRunAllocationId, 4)]);
+
+        var result = await f.CompleteAsync(1);
+
+        Assert.Equal(RunPickingListStatuses.Ready, result.Status);
+        Assert.Equal(2, f.Store.Shipments.Count);
+        Assert.All(f.Store.Shipments, s => Assert.Equal(ShipmentStatuses.Ready, s.Status));
+        Assert.All(f.Store.Shipments, s => Assert.Equal(f.List.Id, s.RunPickingListId));
+        Assert.All(f.Store.Shipments, s => Assert.Equal(f.List.WarehouseId, s.WarehouseId));
+        Assert.Contains(f.Store.Shipments, s => s.SalesOrderId == f.First.SalesOrderId && s.TotalQuantity == 6);
+        Assert.Contains(f.Store.Shipments, s => s.SalesOrderId == f.Second.SalesOrderId && s.TotalQuantity == 4);
+    }
+
+    [Fact]
+    public async Task Complete_with_exception_creates_no_shipment()
+    {
+        var f = new Fixture();
+        await f.Service.CompleteAsync(f.List.PickingCode,
+            new CompleteRunPickingData(0, "Shortage", "Thiếu hàng"),
+            f.ActorId, SystemRoles.WarehouseKeeper, default);
+        Assert.Empty(f.Store.Shipments);
+    }
+
     private sealed class Fixture
     {
         public Guid ActorId { get; } = Guid.NewGuid();
@@ -127,6 +157,8 @@ public sealed class PickingServiceTests
 
     private sealed class FakeStore(Fixture f) : IRunPickingStore
     {
+        public List<Shipment> Shipments { get; } = [];
+
         public Task<bool> CanAccessWarehouseAsync(Guid userId, string role, Guid warehouseId, CancellationToken ct) =>
             Task.FromResult(true);
         public Task<IReadOnlyCollection<RunPickingWorkflowView>> ListAsync(Guid userId, string role,
@@ -139,8 +171,13 @@ public sealed class PickingServiceTests
         public Task<BatchQrLabel?> FindLabelForUpdateAsync(string code, CancellationToken ct) =>
             Task.FromResult<BatchQrLabel?>(code == f.Label.QrCode ? f.Label : null);
         public Task<string> NextQrCodeAsync(CancellationToken ct) => Task.FromResult("TEM-000124");
+        public Task<string> NextShipmentCodeAsync(CancellationToken ct) =>
+            Task.FromResult($"SHIP-{1000 + Shipments.Count:000000}");
+        public Task<bool> ShipmentExistsAsync(Guid salesOrderId, Guid warehouseId, CancellationToken ct) =>
+            Task.FromResult(Shipments.Any(s => s.SalesOrderId == salesOrderId && s.WarehouseId == warehouseId));
         public void AddLabel(BatchQrLabel label) { }
         public void AddLabelEvent(QrLabelEvent labelEvent) => f.Events.Add(labelEvent);
+        public void AddShipment(Shipment shipment) => Shipments.Add(shipment);
         public Task SaveChangesAsync(CancellationToken ct) => Task.CompletedTask;
         public Task ExecuteInTransactionAsync(Func<CancellationToken, Task> operation, CancellationToken ct) => operation(ct);
         public void ClearTracking() { }
