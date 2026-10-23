@@ -253,6 +253,12 @@ Reminders are validated against what they remind about: the two before the cutof
 it, and the plan reminder must fall between the cutoff and the deadline. A schedule published before
 the reminders existed still loads, falling back to the defaults above.
 
+The run job is **on unless switched off**: `AllocationRunOptions.Enabled` defaults to true, so a
+configuration file that omits `BackgroundJobs:AllocationRun` entirely still runs the job at 12:00.
+Anyone whose local `appsettings.json` predates that key should copy it across from the example, and
+disable it in `appsettings.Development.json` while pointing at a shared database - otherwise simply
+leaving the API running past noon opens a run and writes to it.
+
 `BackgroundJobs:AllocationRun:CutoffLocalTime` is only a fallback for a deployment with no published
 schedule. Two independent cutoffs would let the ETA promise one time while the job keeps another.
 
