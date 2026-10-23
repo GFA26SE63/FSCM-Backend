@@ -49,9 +49,7 @@ public sealed record PlannedAllocation(
     int Sequence,
     DateTimeOffset EstimatedArrivalAt,
     decimal RemainingShelfLifeHours,
-    decimal WeightedScore,
-    /// <summary>Set when a later order's swap moved this quantity here after it was first chosen.</summary>
-    Guid? SwappedFromBatchId);
+    decimal WeightedScore);
 
 public sealed record PlannedOrder(
     Guid RunOrderId,
@@ -59,9 +57,7 @@ public sealed record PlannedOrder(
     bool IsFullyAllocated,
     string? ShortageReason,
     IReadOnlyList<PlannedAllocation> Allocations,
-    IReadOnlyList<AllocationResult> LineResults,
-    IReadOnlyList<SwapAttempt> SwapAttempts,
-    string? SwapStopReason);
+    IReadOnlyList<AllocationResult> LineResults);
 
 public sealed record AllocationPlan(
     IReadOnlyList<PlannedOrder> Orders,
@@ -75,79 +71,48 @@ public sealed record AllocationPlan(
 /// Runs the scoring engine over the whole run: orders in priority order, each line drawing from one
 /// shared pool, so an earlier order genuinely takes stock away from a later one.
 ///
-/// When a line falls short, one-level batch swapping is tried before the order is given up: an
-/// earlier order may be moved onto stock nobody has claimed so it can hand its batch over. A move
-/// is judged against the holder's own route and deadline, not the short order's, because the holder
-/// is the one that has to keep working afterwards.
+/// What an order has been given is never taken back to serve a later one. Scope V10 cut batch
+/// swapping, so first come really is first served and a plan can be read top to bottom.
 ///
-/// An order is all or nothing. A line that still cannot be filled undoes every tentative draw the
+/// An order is still all or nothing. A line that cannot be filled undoes every tentative draw the
 /// order already made, including the lines that succeeded, and hands the quantity back to the pool
-/// for the orders behind it.
-///
-/// The holdings ledger is the single source of truth: a swap can move an order that was already
-/// planned, so each order's committed allocations are read back from the ledger at the end.
+/// for the orders behind it. Keeping a partly served order would break "no partial delivery" and
+/// quietly starve the queue.
 /// </summary>
-public sealed class AllocationPlanner(AllocationEngine engine, BatchSwapResolver swapResolver)
+public sealed class AllocationPlanner(AllocationEngine engine)
 {
     public AllocationPlan Plan(
         IReadOnlyList<PlannerOrder> orders,
         IReadOnlyCollection<PlannerBatch> pool,
-        Func<Guid, Guid, PlannerRoute?> route,
-        int swapAttemptLimit = BatchSwapResolver.DefaultAttemptLimit)
+        Func<Guid, Guid, PlannerRoute?> route)
     {
         ArgumentNullException.ThrowIfNull(orders);
         ArgumentNullException.ThrowIfNull(pool);
         ArgumentNullException.ThrowIfNull(route);
 
+        // The pool is drawn down as we go; this is the only state shared across orders.
         var remaining = pool.ToDictionary(item => item.BatchId, item => item.RemainingQuantity);
-        var holdings = new List<BatchHolding>();
-        var requestByLine = new Dictionary<Guid, AllocationRequest>();
-        var retailerByLine = new Dictionary<Guid, Guid>();
         var byProduct = pool.GroupBy(item => item.ProductId)
             .ToDictionary(group => group.Key, group => group.ToArray());
         var planned = new List<PlannedOrder>();
 
         foreach (var order in orders.OrderBy(item => item.PriorityRank))
         {
+            var orderAllocations = new List<PlannedAllocation>();
             var lineResults = new List<AllocationResult>();
-            var swapAttempts = new List<SwapAttempt>();
+            // Draws this order has made but not yet earned: released in full if any line falls short.
+            var tentative = new Dictionary<Guid, decimal>();
             string? shortageReason = null;
-            string? swapStopReason = null;
 
             foreach (var line in order.Lines.OrderBy(item => item.LineNumber))
             {
                 var request = new AllocationRequest(
                     line.Sku, line.OrderedQuantity, line.TotalShelfLifeHours,
                     line.EffectiveMlorRatio, order.DeliveryDeadline);
-                requestByLine[line.RunLineId] = request;
-                retailerByLine[line.RunLineId] = order.RetailerId;
-
                 var batches = byProduct.TryGetValue(line.ProductId, out var found) ? found : [];
                 var result = engine.Allocate(request, Candidates(batches, remaining, order.RetailerId, route));
-
-                if (!result.IsFullyAllocated)
-                {
-                    var outcome = swapResolver.Resolve(
-                        request,
-                        order.RetailerId,
-                        order.PriorityRank,
-                        batches,
-                        holderLine => requestByLine[holderLine],
-                        holderLine => retailerByLine[holderLine],
-                        route,
-                        remaining,
-                        holdings,
-                        result.ShortageQuantity,
-                        swapAttemptLimit);
-                    swapAttempts.AddRange(outcome.Attempts);
-                    swapStopReason = outcome.StopReason;
-                    if (outcome.ReleasedQuantity > 0)
-                    {
-                        result = engine.Allocate(request, Candidates(batches, remaining, order.RetailerId, route));
-                    }
-                }
-
                 lineResults.Add(result);
+
                 if (!result.IsFullyAllocated)
                 {
                     shortageReason =
@@ -158,45 +123,36 @@ public sealed class AllocationPlanner(AllocationEngine engine, BatchSwapResolver
                 foreach (var decision in result.Allocations)
                 {
                     remaining[decision.BatchId] = remaining.GetValueOrDefault(decision.BatchId) - decision.Quantity;
-                    holdings.Add(new BatchHolding(
-                        order.RunOrderId, order.OrderCode, order.PriorityRank, line.RunLineId,
-                        decision.BatchId, decision.WarehouseId, decision.Quantity, decision.Sequence,
-                        decision.EstimatedArrivalAt, decision.RemainingShelfLifeHours,
-                        decision.WeightedScore, null));
+                    tentative[decision.BatchId] = tentative.GetValueOrDefault(decision.BatchId) + decision.Quantity;
+                    orderAllocations.Add(new PlannedAllocation(
+                        line.RunLineId,
+                        decision.BatchId,
+                        decision.WarehouseId,
+                        decision.Quantity,
+                        decision.Sequence,
+                        decision.EstimatedArrivalAt,
+                        decision.RemainingShelfLifeHours,
+                        decision.WeightedScore));
                 }
             }
 
             if (shortageReason is not null)
             {
-                foreach (var holding in holdings.Where(item => item.RunOrderId == order.RunOrderId).ToArray())
+                foreach (var (batchId, quantity) in tentative)
                 {
-                    remaining[holding.BatchId] = remaining.GetValueOrDefault(holding.BatchId) + holding.Quantity;
-                    holdings.Remove(holding);
+                    remaining[batchId] = remaining.GetValueOrDefault(batchId) + quantity;
                 }
 
-                planned.Add(new PlannedOrder(order.RunOrderId, order.OrderCode, false, shortageReason,
-                    [], lineResults, swapAttempts, swapStopReason));
+                planned.Add(new PlannedOrder(
+                    order.RunOrderId, order.OrderCode, false, shortageReason, [], lineResults));
                 continue;
             }
 
-            planned.Add(new PlannedOrder(order.RunOrderId, order.OrderCode, true, null,
-                [], lineResults, swapAttempts, swapStopReason));
+            planned.Add(new PlannedOrder(
+                order.RunOrderId, order.OrderCode, true, null, orderAllocations, lineResults));
         }
 
-        var byOrder = holdings.GroupBy(item => item.RunOrderId)
-            .ToDictionary(group => group.Key, group => group
-                .OrderBy(item => item.Sequence)
-                .Select(item => new PlannedAllocation(
-                    item.RunLineId, item.BatchId, item.WarehouseId, item.Quantity, item.Sequence,
-                    item.EstimatedArrivalAt, item.RemainingShelfLifeHours, item.WeightedScore,
-                    item.SwappedFromBatchId))
-                .ToArray());
-
-        return new AllocationPlan(
-            planned.Select(order => order.IsFullyAllocated && byOrder.TryGetValue(order.RunOrderId, out var rows)
-                ? order with { Allocations = rows }
-                : order).ToArray(),
-            remaining);
+        return new AllocationPlan(planned, remaining);
     }
 
     private static BatchCandidate[] Candidates(
@@ -204,6 +160,20 @@ public sealed class AllocationPlanner(AllocationEngine engine, BatchSwapResolver
         IReadOnlyDictionary<Guid, decimal> remaining,
         Guid retailerId,
         Func<Guid, Guid, PlannerRoute?> route) =>
-        batches.Select(batch => BatchSwapResolver.ToCandidate(
-            batch, remaining.GetValueOrDefault(batch.BatchId), route(batch.WarehouseId, retailerId))).ToArray();
+        batches.Select(batch =>
+        {
+            var leg = route(batch.WarehouseId, retailerId);
+            return new BatchCandidate(
+                batch.BatchId,
+                batch.BatchCode,
+                batch.WarehouseId,
+                batch.WarehouseCode,
+                batch.ExpiresAt,
+                remaining.GetValueOrDefault(batch.BatchId),
+                // A missing leg leaves the arrival null, which the engine reports as
+                // RouteUnavailable rather than guessing a distance.
+                leg?.DistanceMeters ?? 0m,
+                leg?.EstimatedArrivalAt,
+                leg?.EstimatedArrivalDate);
+        }).ToArray();
 }

@@ -435,9 +435,6 @@ namespace FSCM.Persistence.Migrations
                     b.Property<int>("Sequence")
                         .HasColumnType("integer");
 
-                    b.Property<Guid?>("SwappedFromBatchId")
-                        .HasColumnType("uuid");
-
                     b.Property<Guid>("WarehouseId")
                         .HasColumnType("uuid");
 
