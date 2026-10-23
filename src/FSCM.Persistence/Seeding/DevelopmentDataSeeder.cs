@@ -856,10 +856,13 @@ public sealed class DevelopmentDataSeeder(
             new ConfigurationSeed(BusinessConfigurationKeys.OrderStepCartons, "1", "integer",
                 "Bước số lượng đặt hàng mặc định là một thùng"),
             new ConfigurationSeed(BusinessConfigurationKeys.EtaSchedule,
-                "{\"timeZone\":\"Asia/Ho_Chi_Minh\",\"allocationRunLocalTime\":\"12:00\"," +
+                "{\"timeZone\":\"Asia/Ho_Chi_Minh\",\"salesSubmissionAdviceLocalTime\":\"11:00\"," +
+                "\"orderReviewReminderLocalTime\":\"11:30\",\"allocationRunLocalTime\":\"12:00\"," +
+                "\"planApprovalReminderLocalTime\":\"13:30\"," +
                 "\"planApprovalDeadlineLocalTime\":\"14:00\",\"preparationMinutes\":240," +
                 "\"bufferMinutes\":60,\"dispatchSlotsLocalTime\":[\"06:00\",\"14:00\"]}", "object",
-                "Lịch tính ETA: chạy đợt 12:00, hạn duyệt 14:00, soạn 4 giờ, đệm 1 giờ, xuất 06:00 và 14:00")
+                "Lịch ngày chạy đợt: khuyến nghị gửi đơn trước 11:00, nhắc duyệt đơn 11:30, chốt đợt 12:00, " +
+                "nhắc duyệt phương án 13:30, hạn duyệt 14:00, soạn 4 giờ, đệm 1 giờ, xuất 06:00 và 14:00")
         };
         foreach (var definition in configurations)
         {

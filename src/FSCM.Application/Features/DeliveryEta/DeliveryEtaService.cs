@@ -24,6 +24,49 @@ public sealed class DeliveryEtaService(
     private const string Disclaimer =
         "ETA chỉ là thời gian ước tính, không phải cam kết thời điểm giao hàng.";
 
+    /// <summary>
+    /// The run-day timetable for one business date.
+    ///
+    /// The cutoff and the approval deadline already lived here because the ETA is built from them;
+    /// the reminders join them rather than going into a configuration of their own, so the portal,
+    /// the ETA and the job cannot end up disagreeing about when the day runs.
+    ///
+    /// The sales advice is marked advisory on purpose. An order accepted after it and before the
+    /// cutoff is still in the run, and a caller that reads it as a deadline would drop valid orders.
+    /// </summary>
+    public async Task<AllocationScheduleResult> GetScheduleAsync(
+        DateOnly? businessDate, CancellationToken cancellationToken)
+    {
+        var view = await LoadScheduleAsync(cancellationToken);
+        var schedule = view.Schedule;
+        var zone = ResolveTimeZone(schedule.TimeZone);
+        var date = businessDate ?? DateOnly.FromDateTime(
+            TimeZoneInfo.ConvertTime(timeProvider.GetUtcNow(), zone).DateTime);
+
+        ScheduleMilestone Milestone(string key, string label, TimeOnly at, bool advisory) =>
+            new(key, label, at, ToOffset(date, at, zone), advisory);
+
+        return new AllocationScheduleResult(
+            date,
+            schedule.TimeZone,
+            view.Version,
+            [
+                Milestone("sales_submission_advice", "Khuyến nghị Sales gửi đơn trước",
+                    schedule.SalesSubmissionAdviceLocalTime, true),
+                Milestone("order_review_reminder", "Nhắc duyệt đơn còn chờ",
+                    schedule.OrderReviewReminderLocalTime, false),
+                Milestone("allocation_run", "Giờ chốt đợt",
+                    schedule.AllocationRunLocalTime, false),
+                Milestone("plan_approval_reminder", "Nhắc duyệt phương án",
+                    schedule.PlanApprovalReminderLocalTime, false),
+                Milestone("plan_approval_deadline", "Hạn duyệt phương án",
+                    schedule.PlanApprovalDeadlineLocalTime, false)
+            ],
+            schedule.PreparationMinutes,
+            schedule.BufferMinutes,
+            schedule.DispatchSlotsLocalTime);
+    }
+
     public async Task<EtaResult> EstimateAsync(EtaRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
@@ -158,12 +201,21 @@ public sealed class DeliveryEtaService(
 
     private sealed record EtaScheduleDocument(
         string? TimeZone,
+        string? SalesSubmissionAdviceLocalTime,
+        string? OrderReviewReminderLocalTime,
         string? AllocationRunLocalTime,
+        string? PlanApprovalReminderLocalTime,
         string? PlanApprovalDeadlineLocalTime,
         int PreparationMinutes,
         int BufferMinutes,
         IReadOnlyList<string>? DispatchSlotsLocalTime)
     {
+        // The reminders were added after the schedule was first published, so a document without
+        // them is still valid and falls back to the recommended times rather than failing to load.
+        private static readonly TimeOnly DefaultSalesAdvice = new(11, 0);
+        private static readonly TimeOnly DefaultOrderReviewReminder = new(11, 30);
+        private static readonly TimeOnly DefaultPlanApprovalReminder = new(13, 30);
+
         public EtaSchedule ToSchedule()
         {
             if (string.IsNullOrWhiteSpace(TimeZone))
@@ -179,6 +231,26 @@ public sealed class DeliveryEtaService(
                     "The plan approval deadline must be later in the day than the allocation run.");
             }
 
+            var salesAdvice = OptionalTime(
+                SalesSubmissionAdviceLocalTime, nameof(SalesSubmissionAdviceLocalTime), DefaultSalesAdvice);
+            var orderReminder = OptionalTime(
+                OrderReviewReminderLocalTime, nameof(OrderReviewReminderLocalTime), DefaultOrderReviewReminder);
+            var planReminder = OptionalTime(
+                PlanApprovalReminderLocalTime, nameof(PlanApprovalReminderLocalTime), DefaultPlanApprovalReminder);
+
+            // A reminder is only useful before the thing it is reminding about.
+            if (salesAdvice >= run || orderReminder >= run)
+            {
+                throw DeliveryEtaOperationException.Validation(
+                    "The sales advice and the order review reminder must both fall before the cutoff.");
+            }
+
+            if (planReminder <= run || planReminder >= deadline)
+            {
+                throw DeliveryEtaOperationException.Validation(
+                    "The plan approval reminder must fall between the cutoff and the approval deadline.");
+            }
+
             if (PreparationMinutes < 0 || BufferMinutes < 0)
             {
                 throw DeliveryEtaOperationException.Validation(
@@ -192,7 +264,10 @@ public sealed class DeliveryEtaService(
 
             return new EtaSchedule(
                 TimeZone,
+                salesAdvice,
+                orderReminder,
                 run,
+                planReminder,
                 deadline,
                 PreparationMinutes,
                 BufferMinutes,
@@ -201,6 +276,9 @@ public sealed class DeliveryEtaService(
                     .Order()
                     .ToArray());
         }
+
+        private static TimeOnly OptionalTime(string? value, string field, TimeOnly fallback) =>
+            string.IsNullOrWhiteSpace(value) ? fallback : ParseTime(value, field);
 
         private static TimeOnly ParseTime(string? value, string field) =>
             TimeOnly.TryParse(value, out var parsed)

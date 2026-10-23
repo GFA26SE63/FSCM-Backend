@@ -6,8 +6,45 @@ namespace FSCM.Application.Features.DeliveryEta;
 /// </summary>
 public sealed record EtaSchedule(
     string TimeZone,
+
+    /// <summary>Advice to Sales, not a gate. An order accepted after it and before the cutoff is
+    /// still in the run; treating it as a deadline would drop valid orders.</summary>
+    TimeOnly SalesSubmissionAdviceLocalTime,
+
+    /// <summary>Reminder that orders still waiting for review will miss the cutoff.</summary>
+    TimeOnly OrderReviewReminderLocalTime,
+
+    /// <summary>The cutoff itself: the run takes the orders accepted and reviewed before it.</summary>
     TimeOnly AllocationRunLocalTime,
+
+    /// <summary>Reminder that a proposal is still undecided.</summary>
+    TimeOnly PlanApprovalReminderLocalTime,
+
+    /// <summary>When a decision is expected. Nothing approves itself after it; a late decision has
+    /// to be re-checked against the ETA, because the plan was estimated from the run moment.</summary>
     TimeOnly PlanApprovalDeadlineLocalTime,
+
+    int PreparationMinutes,
+    int BufferMinutes,
+    IReadOnlyList<TimeOnly> DispatchSlotsLocalTime);
+
+/// <summary>One point in the run day, resolved to an instant for a given business date.</summary>
+public sealed record ScheduleMilestone(
+    string Key,
+    string Label,
+    TimeOnly LocalTime,
+    DateTimeOffset At,
+    bool IsAdvisory);
+
+/// <summary>
+/// The published run-day timetable, with each milestone resolved for one business date so a portal
+/// does not have to re-derive the time zone.
+/// </summary>
+public sealed record AllocationScheduleResult(
+    DateOnly BusinessDate,
+    string TimeZone,
+    int ScheduleVersion,
+    IReadOnlyList<ScheduleMilestone> Milestones,
     int PreparationMinutes,
     int BufferMinutes,
     IReadOnlyList<TimeOnly> DispatchSlotsLocalTime);
