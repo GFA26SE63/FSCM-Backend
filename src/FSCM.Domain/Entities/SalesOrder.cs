@@ -30,7 +30,6 @@ public sealed class SalesOrder
     public DateTimeOffset ServerReceivedAt { get; set; }
     public DateTimeOffset? ReviewedAt { get; set; }
     public string? RejectionReason { get; set; }
-    public string AllocationTraceJson { get; set; } = "{}";
     public int Version { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }

@@ -251,14 +251,7 @@ public sealed class ShipmentServiceTests
 
         public void AddCompletedPickingList(Guid warehouseId, decimal totalPicked) =>
             Store.PendingLists.Add(new PendingShipmentSource(
-                new PickingList
-                {
-                    Id = Guid.NewGuid(),
-                    SalesOrderId = Order.Id,
-                    WarehouseId = warehouseId,
-                    PickingCode = $"PK-{warehouseId:N}"[..10]
-                },
-                Order.Id, warehouseId, totalPicked));
+                Guid.NewGuid(), Order.Id, warehouseId, totalPicked));
     }
 
     private sealed class FakeStore(SalesOrder order) : IShipmentStore
@@ -290,9 +283,10 @@ public sealed class ShipmentServiceTests
         public Task<IReadOnlyCollection<PendingShipmentSource>> ListPendingSourcesAsync(
             Guid? orderId, CancellationToken cancellationToken)
         {
-            var created = Shipments.Select(item => item.PickingListId).ToHashSet();
+            // A (order, warehouse) already covered by a shipment is no longer pending.
             var pending = PendingLists
-                .Where(source => !created.Contains(source.PickingList.Id) &&
+                .Where(source => !Shipments.Any(s =>
+                                     s.SalesOrderId == source.SalesOrderId && s.WarehouseId == source.WarehouseId) &&
                                  (!orderId.HasValue || source.SalesOrderId == orderId.Value))
                 .ToArray();
             return Task.FromResult<IReadOnlyCollection<PendingShipmentSource>>(pending);
@@ -321,9 +315,7 @@ public sealed class ShipmentServiceTests
         private ShipmentView ToView(Shipment shipment)
         {
             var warehouse = new Warehouse { Id = shipment.WarehouseId, Code = "WH", Name = "Kho" };
-            var pickingList = PendingLists.SingleOrDefault(source => source.PickingList.Id == shipment.PickingListId)?.PickingList
-                ?? new PickingList { Id = shipment.PickingListId, PickingCode = "PK-UNKNOWN" };
-            return new ShipmentView(shipment, order, warehouse, pickingList, []);
+            return new ShipmentView(shipment, order, warehouse, "PS-UNKNOWN", []);
         }
     }
 

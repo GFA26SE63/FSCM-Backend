@@ -8,6 +8,7 @@ using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
+using HotChocolate.Types.Descriptors;
 
 namespace FSCM.API.Extensions;
 
@@ -91,11 +92,11 @@ public static class ServiceCollectionExtensions
             });
         });
         services.AddHttpContextAccessor();
-        services.AddFscmGraphQlDataLoaders();
-
-        services
+        var graphQl = services
             .AddGraphQLServer()
             .AddAuthorization()
+            .AddConvention<INamingConventions, EntityNamingConventions>()
+            .AddProjections()
             .AddFiltering()
             .AddSorting()
             .AddMaxExecutionDepthRule(12)
@@ -103,18 +104,20 @@ public static class ServiceCollectionExtensions
             .ModifyPagingOptions(options =>
             {
                 options.DefaultPageSize = 20;
-                options.MaxPageSize = 100;
+                options.MaxPageSize = int.MaxValue;
                 options.IncludeTotalCount = true;
-                options.RequirePagingBoundaries = true;
+                options.RequirePagingBoundaries = false;
             })
-            .AddQueryType<SystemQuery>()
-            .AddTypeExtension<ProductGraphQlExtensions>()
-            .AddTypeExtension<WarehouseGraphQlExtensions>()
-            .AddTypeExtension<RetailerGraphQlExtensions>()
-            .AddTypeExtension<InventoryGraphQlExtensions>()
-            .AddTypeExtension<GoodsReceiptGraphQlExtensions>()
-            .AddTypeExtension<GoodsReceiptLineGraphQlExtensions>()
-            .AddTypeExtension<QrLabelGraphQlExtensions>();
+            .AddQueryType<SystemQuery>();
+
+        foreach (var method in typeof(EntityQuery).GetMethods(
+                     System.Reflection.BindingFlags.Instance |
+                     System.Reflection.BindingFlags.Public |
+                     System.Reflection.BindingFlags.DeclaredOnly))
+        {
+            var entityType = method.ReturnType.GetGenericArguments().Single();
+            graphQl.AddType(typeof(DomainEntityObjectType<>).MakeGenericType(entityType));
+        }
 
         return services;
     }

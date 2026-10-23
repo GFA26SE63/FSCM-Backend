@@ -1,5 +1,6 @@
 namespace FSCM.Application.Features.Picking;
 
+// Legacy aggregate statuses remain while cancellation/dispatch consumers are migrated in F93/F96.
 public static class PickingListStatuses
 {
     public const string Open = "Open";
@@ -16,50 +17,21 @@ public static class PickingItemStatuses
     public const string Cancelled = "Cancelled";
 }
 
-public sealed record ScanPickingLabelData(
-    string QrCode,
-    decimal? Quantity,
-    int ExpectedPickingVersion,
-    int ExpectedLabelVersion);
-
-public sealed record PickingScanResult(
-    string OperationKey,
-    string QrCode,
-    decimal Quantity,
-    Guid PerformedByUserId,
-    DateTimeOffset OccurredAt);
-
-public sealed record PickingItemResult(
-    Guid Id,
-    Guid AllocationId,
-    Guid ProductId,
-    string Sku,
-    string ProductName,
-    Guid BatchId,
-    string BatchCode,
-    decimal RequestedQuantity,
-    decimal PickedQuantity,
-    decimal RemainingQuantity,
-    string Status,
-    DateTimeOffset? ScannedAt,
-    DateTimeOffset? CompletedAt);
-
-public sealed record PickingListResult(
-    Guid Id,
-    string PickingCode,
-    Guid OrderId,
-    string OrderCode,
-    Guid WarehouseId,
-    string WarehouseCode,
-    string WarehouseName,
-    Guid? AssignedToUserId,
-    string Status,
-    int Version,
-    DateTimeOffset? StartedAt,
-    DateTimeOffset? ConfirmedAt,
-    Guid? ConfirmedByUserId,
-    DateTimeOffset CreatedAt,
-    DateTimeOffset UpdatedAt,
-    IReadOnlyCollection<PickingItemResult> Items,
+public sealed record RunPickingSplitQuantityData(Guid AllocationRunAllocationId, decimal Quantity);
+public sealed record ScanPickingLabelData(string QrCode, decimal? Quantity, int ExpectedPickingVersion,
+    int ExpectedLabelVersion, IReadOnlyCollection<RunPickingSplitQuantityData> Splits);
+public sealed record CompleteRunPickingData(int ExpectedPickingVersion, string? ExceptionType, string? Note);
+public sealed record PickingScanResult(string OperationKey, string QrCode, decimal Quantity,
+    Guid PerformedByUserId, DateTimeOffset OccurredAt);
+public sealed record RunPickingSplitWorkflowResult(Guid Id, Guid AllocationRunAllocationId,
+    Guid AllocationPlanPriceId, Guid SalesOrderId, Guid SalesOrderLineId, string OrderCode,
+    decimal RequiredQuantity, decimal PickedQuantity, decimal RemainingQuantity);
+public sealed record RunPickingGatherWorkflowResult(Guid Id, Guid ProductId, string Sku, Guid BatchId,
+    string BatchCode, decimal RequiredQuantity, decimal PickedQuantity, decimal RemainingQuantity,
+    string Status, IReadOnlyCollection<RunPickingSplitWorkflowResult> Splits);
+public sealed record PickingListResult(Guid Id, string PickingCode, Guid AllocationRunId,
+    Guid AllocationPlanVersionId, Guid WarehouseId, Guid? AssignedToUserId, string Status, int Version,
+    DateTimeOffset IssuedAt, DateTimeOffset? StartedAt, DateTimeOffset? CompletedAt,
+    Guid? CompletedByUserId, string? ExceptionType, string? ExceptionNote,
+    IReadOnlyCollection<RunPickingGatherWorkflowResult> Gathers,
     IReadOnlyCollection<PickingScanResult> Scans);
-

@@ -459,6 +459,16 @@ public sealed class AllocationRunStore(AppDbContext dbContext) : IAllocationRunS
                 run.RunCode,
                 dbContext.AllocationPlanPriceRecords.AsNoTracking()
                     .Where(price => price.AllocationPlanVersionId == version.Id)
+                    .ToArray(),
+                dbContext.AllocationRunAllocationRecords.AsNoTracking()
+                    .Where(allocation => allocation.AllocationPlanVersionId == version.Id)
+                    .Join(dbContext.BatchRecords.AsNoTracking(),
+                        allocation => allocation.BatchId, batch => batch.Id,
+                        (allocation, batch) => new { allocation, batch })
+                    .Join(dbContext.WarehouseRecords.AsNoTracking(),
+                        item => item.allocation.WarehouseId, warehouse => warehouse.Id,
+                        (item, warehouse) => new AllocationPlanAllocationView(
+                            item.allocation, item.batch.BatchCode, warehouse.Code))
                     .ToArray()));
 
     public async Task<AllocationSettings> GetSettingsAsync(CancellationToken cancellationToken)

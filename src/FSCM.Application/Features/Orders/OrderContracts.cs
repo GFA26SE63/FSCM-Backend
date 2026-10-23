@@ -206,8 +206,6 @@ public sealed record OrderTimelineResult(
     IReadOnlyCollection<OrderStatusHistoryResult> Events,
     IReadOnlyCollection<OrderShipmentLinkResult> Shipments);
 
-public sealed record OrderTraceResult(Guid OrderId, string OrderCode, string AllocationTraceJson);
-
 public static class OrderStatuses
 {
     public const string PendingApproval = "PendingApproval";

@@ -106,10 +106,10 @@ public sealed class PhysicalSchemaModelTests
 
         Assert.Equal(ExpectedTables, tableNames);
         Assert.Equal(81, entityTypes.Length);
-        // +1 property and +1 FK vs the original shape: BATCH_QR_LABEL.GoodsReceiptId links a label
-        // to its goods receipt for traceability (F40).
-        Assert.Equal(909, entityTypes.Sum(entityType => entityType.GetProperties().Count()));
-        Assert.Equal(182, entityTypes.Sum(entityType => entityType.GetForeignKeys().Count()));
+        // Develop's run-picking shape (910) plus BATCH_QR_LABEL.GoodsReceiptId (F40, +1 property
+        // and +1 FK) → 911 properties / 183 FKs across the listed tables.
+        Assert.Equal(911, entityTypes.Sum(entityType => entityType.GetProperties().Count()));
+        Assert.Equal(183, entityTypes.Sum(entityType => entityType.GetForeignKeys().Count()));
         Assert.All(
             entityTypes.SelectMany(entityType => entityType.GetForeignKeys()),
             foreignKey => Assert.Equal(DeleteBehavior.Restrict, foreignKey.DeleteBehavior));
@@ -381,7 +381,7 @@ public sealed class PhysicalSchemaModelTests
         var allocation = context.Model.FindEntityType(typeof(Allocation))!;
         var retailer = context.Model.FindEntityType(typeof(Retailer))!;
 
-        Assert.Equal("jsonb", order.FindProperty(nameof(SalesOrder.AllocationTraceJson))!.GetColumnType());
+        Assert.Null(order.FindProperty("AllocationTraceJson"));
         Assert.True(order.FindProperty(nameof(SalesOrder.Version))!.IsConcurrencyToken);
         Assert.False(order.FindProperty(nameof(SalesOrder.RetailerCodeSnapshot))!.IsNullable);
         Assert.False(order.FindProperty(nameof(SalesOrder.RetailerNameSnapshot))!.IsNullable);

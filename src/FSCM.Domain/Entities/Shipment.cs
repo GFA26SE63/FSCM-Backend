@@ -3,18 +3,22 @@
 namespace FSCM.Domain.Entities;
 
 /// <summary>
-/// A delivery part (F92) for one (sales order, warehouse) pair. Created after the warehouse
-/// picking list is issued, it tracks that slice of the order through its own lifecycle and
-/// aggregates the picked quantity/line-batch-price linkage. Driver/vehicle assignment (F58)
-/// and actual issue/receipt are layered on top; the owning order is only "Delivered" when every
-/// shipment part is fully received.
+/// A delivery part (F92) for one (sales order, warehouse) pair. Created once the warehouse's run
+/// picking list is Ready; since a run picking list spans several orders, each list produces one
+/// shipment per order. It tracks that slice of the order through its own lifecycle and aggregates
+/// the picked quantity/line-batch-price linkage. Driver/vehicle assignment (F58) and actual
+/// issue/receipt are layered on top; the owning order is only "Delivered" when every shipment part
+/// is fully received.
 /// </summary>
 public sealed class Shipment
 {
     public Guid Id { get; set; }
     public Guid SalesOrderId { get; set; }
     public Guid WarehouseId { get; set; }
-    public Guid PickingListId { get; set; }
+
+    /// <summary>The warehouse run picking list (F92/run-picking) this part was created from.</summary>
+    public Guid RunPickingListId { get; set; }
+
     public string ShipmentCode { get; set; } = string.Empty;
     public string Status { get; set; } = string.Empty;
 

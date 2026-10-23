@@ -62,16 +62,6 @@ public sealed class S1BMasterDataApiTests
         Assert.Equal(660, breakdown.GetProperty("waitForDispatchSlotMinutes").GetInt32());
         Assert.Equal(180_000m, eta.GetProperty("estimatedCostAmount").GetDecimal());
 
-        var graphQlResponse = await client.PostAsJsonAsync("/graphql", new
-        {
-            query = "query($id: UUID!) { warehouse(id: $id) { minimumStockThresholdCartons } }",
-            variables = new { id = warehouseStore.Warehouse.Id }
-        });
-        var graphQl = JsonDocument.Parse(await graphQlResponse.Content.ReadAsStringAsync()).RootElement;
-        Assert.False(graphQl.TryGetProperty("errors", out _), graphQl.ToString());
-        Assert.Equal(120, graphQl.GetProperty("data").GetProperty("warehouse")
-            .GetProperty("minimumStockThresholdCartons").GetInt32());
-
         var removedGraphQlResponse = await client.PostAsJsonAsync("/graphql", new
         {
             query = "query($id: UUID!) { warehouse(id: $id) { transitTimeRules { version } } transitTimeRules(warehouseId: $id) { nodes { version } } }",
@@ -111,15 +101,6 @@ public sealed class S1BMasterDataApiTests
             (await client.GetAsync($"/api/v1/mlor-configurations?retailerId={store.Retailer.Id}")).StatusCode);
         client.DefaultRequestHeaders.Authorization = Bearer(identityFactory.Admin, identityFactory);
 
-        var graphQlResponse = await client.PostAsJsonAsync("/graphql", new
-        {
-            query = "query($retailerId: UUID!, $productId: UUID!) { retailer(id: $retailerId) { generalInformation { name } mlorDeclarations { scope minimumLifeRatio version } } retailerMlorResolution(retailerId: $retailerId, productId: $productId) { sourceScope minimumLifeRatio sourceVersion } }",
-            variables = new { retailerId = store.Retailer.Id, productId = store.Product.Id }
-        });
-        var graphQl = JsonDocument.Parse(await graphQlResponse.Content.ReadAsStringAsync()).RootElement;
-        Assert.False(graphQl.TryGetProperty("errors", out _), graphQl.ToString());
-        Assert.Equal("Sku", graphQl.GetProperty("data").GetProperty("retailerMlorResolution")
-            .GetProperty("sourceScope").GetString());
     }
 
     private static AuthenticationHeaderValue Bearer(

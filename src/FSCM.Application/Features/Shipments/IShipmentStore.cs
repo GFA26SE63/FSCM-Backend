@@ -18,12 +18,15 @@ public sealed record ShipmentView(
     Shipment Shipment,
     SalesOrder Order,
     Warehouse Warehouse,
-    PickingList PickingList,
+    string PickingCode,
     IReadOnlyCollection<ShipmentLineView> Lines);
 
-/// <summary>A completed per-warehouse picking list that has no shipment part yet (F92 source).</summary>
+/// <summary>
+/// A Ready run picking list + one of its orders that has no shipment part yet (F92 reconciliation
+/// source). A run picking list spans many orders, so each (list, order) pair is one source.
+/// </summary>
 public sealed record PendingShipmentSource(
-    PickingList PickingList,
+    Guid RunPickingListId,
     Guid SalesOrderId,
     Guid WarehouseId,
     decimal TotalQuantity);

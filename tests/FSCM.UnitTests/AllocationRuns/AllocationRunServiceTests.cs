@@ -364,7 +364,11 @@ public sealed class AllocationRunServiceTests
             : new AllocationPlanVersionView(
                 version,
                 Runs.Single(item => item.Id == version.AllocationRunId).RunCode,
-                PlanPrices.Where(item => item.AllocationPlanVersionId == version.Id).ToArray());
+                PlanPrices.Where(item => item.AllocationPlanVersionId == version.Id).ToArray(),
+                Allocations
+                    .Where(item => item.AllocationPlanVersionId == version.Id)
+                    .Select(item => new AllocationPlanAllocationView(item, "LO-TEST", "KHO-TEST"))
+                    .ToArray());
 
         public override Task<AllocationSettings> GetSettingsAsync(CancellationToken cancellationToken) =>
             Task.FromResult(new AllocationSettings(0.5m, 0.3m, 0.2m, 20_000));

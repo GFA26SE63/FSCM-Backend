@@ -127,7 +127,7 @@ public sealed class ShipmentService(IShipmentStore store, IPaymentStore paymentS
                 Id = Guid.NewGuid(),
                 SalesOrderId = source.SalesOrderId,
                 WarehouseId = source.WarehouseId,
-                PickingListId = source.PickingList.Id,
+                RunPickingListId = source.RunPickingListId,
                 ShipmentCode = await store.NextShipmentCodeAsync(cancellationToken),
                 Status = ShipmentStatuses.Ready,
                 TotalQuantity = source.TotalQuantity,
@@ -187,7 +187,7 @@ public sealed class ShipmentService(IShipmentStore store, IPaymentStore paymentS
     private static ShipmentResult ToResult(ShipmentView view) => new(
         view.Shipment.Id, view.Order.Id, view.Order.OrderCode,
         view.Warehouse.Id, view.Warehouse.Code, view.Warehouse.Name,
-        view.PickingList.Id, view.PickingList.PickingCode,
+        view.Shipment.RunPickingListId, view.PickingCode,
         view.Shipment.ShipmentCode, view.Shipment.Status,
         view.Shipment.TotalQuantity, view.Shipment.ReceivedQuantity,
         view.Shipment.DriverId, view.Shipment.DriverCodeSnapshot, view.Shipment.DriverNameSnapshot,

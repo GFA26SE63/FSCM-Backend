@@ -181,16 +181,6 @@ public sealed class OrderService(
         return ToDetail(view);
     }
 
-    public async Task<OrderTraceResult> GetTraceAsync(
-        Guid orderId,
-        Guid actorUserId,
-        string actorRole,
-        CancellationToken cancellationToken)
-    {
-        var order = await GetViewableAsync(orderId, actorUserId, actorRole, cancellationToken);
-        return new(order.Order.Id, order.Order.OrderCode, order.Order.AllocationTraceJson);
-    }
-
     public async Task<OrderTimelineResult> GetTimelineAsync(
         Guid orderId,
         Guid actorUserId,
@@ -386,12 +376,6 @@ public sealed class OrderService(
             RequestedDeliveryDate = data.RequestedDeliveryDate,
             Note = data.Note,
             FinalPricePendingAllocation = true,
-            AllocationTraceJson = JsonSerializer.Serialize(new
-            {
-                state = "PendingRun",
-                finalPricePendingAllocation = true,
-                message = "Đơn hàng chưa chọn lô; giá HSD cuối cùng sẽ được tính sau phân bổ."
-            }, TraceJsonOptions),
             ServerReceivedAt = now,
             CreatedAt = now,
             UpdatedAt = now

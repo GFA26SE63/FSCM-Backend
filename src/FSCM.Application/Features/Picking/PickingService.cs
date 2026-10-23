@@ -1,4 +1,4 @@
-using FSCM.Application.Features.Orders;
+using FSCM.Application.Features.AllocationRuns;
 using FSCM.Application.Features.QrLabels;
 using FSCM.Application.Features.Shipments;
 using FSCM.Domain.Authorization;
@@ -6,356 +6,267 @@ using FSCM.Domain.Entities;
 
 namespace FSCM.Application.Features.Picking;
 
-public sealed class PickingService(
-    IPickingStore store,
-    TimeProvider timeProvider)
+public sealed class PickingService(IRunPickingStore store, TimeProvider timeProvider)
 {
-    public async Task<IReadOnlyCollection<PickingListResult>> ListAsync(
-        Guid actorUserId,
-        string actorRole,
-        Guid? warehouseId,
-        string? status,
-        CancellationToken cancellationToken)
+    private static readonly HashSet<string> Statuses =
+    [RunPickingListStatuses.Issued, RunPickingListStatuses.Picking,
+        RunPickingListStatuses.Ready, RunPickingListStatuses.NeedsHandling];
+    private static readonly HashSet<string> ExceptionTypes =
+    ["Shortage", "Damaged", "Expired", "QrMismatch"];
+
+    public async Task<IReadOnlyCollection<PickingListResult>> ListAsync(Guid actorId, string role,
+        Guid? warehouseId, string? status, CancellationToken ct)
     {
-        ValidateReadRole(actorRole);
-        if (!string.IsNullOrWhiteSpace(status) && !PickingStatusSet.Contains(status))
+        ValidateReadRole(role);
+        if (!string.IsNullOrWhiteSpace(status) && !Statuses.Contains(status))
             throw PickingOperationException.Validation("Picking status filter is invalid.");
-        var lists = await store.ListAsync(actorUserId, actorRole, warehouseId, status, cancellationToken);
-        return lists.Select(ToResult).ToArray();
+        return (await store.ListAsync(actorId, role, warehouseId, status, ct)).Select(ToResult).ToArray();
     }
 
-    public async Task<PickingListResult> GetAsync(
-        string pickingCode,
-        Guid actorUserId,
-        string actorRole,
-        CancellationToken cancellationToken)
+    public async Task<PickingListResult> GetAsync(string code, Guid actorId, string role, CancellationToken ct)
     {
-        ValidateReadRole(actorRole);
-        var view = await FindAccessibleAsync(pickingCode, actorUserId, actorRole, false, cancellationToken);
-        return ToResult(view);
+        ValidateReadRole(role);
+        return ToResult(await FindAccessibleAsync(code, actorId, role, false, ct));
     }
 
-    public async Task<PickingListResult> ScanAsync(
-        string pickingCode,
-        ScanPickingLabelData data,
-        string operationKey,
-        Guid warehouseKeeperUserId,
-        string actorRole,
-        CancellationToken cancellationToken)
+    public async Task<PickingListResult> ScanAsync(string code, ScanPickingLabelData data,
+        string operationKey, Guid actorId, string role, CancellationToken ct)
     {
-        if (actorRole != SystemRoles.WarehouseKeeper)
-            throw PickingOperationException.Forbidden("Only Warehouse Keeper can scan order picking labels.");
+        EnsureWarehouseKeeper(role);
+        code = NormalizeCode(code, "Picking code");
         operationKey = NormalizeOperationKey(operationKey);
-        pickingCode = NormalizeCode(pickingCode, "Picking code");
         var qrCode = NormalizeCode(data.QrCode, "QR code");
         ValidateQuantity(data.Quantity);
+        if (data.Splits is null || data.Splits.Count == 0)
+            throw PickingOperationException.Validation("At least one allocation split is required.");
+        if (data.Splits.GroupBy(x => x.AllocationRunAllocationId).Any(x => x.Count() > 1))
+            throw PickingOperationException.Validation("An allocation can appear only once in a scan.");
+        foreach (var split in data.Splits) ValidateQuantity(split.Quantity);
+        var requestQuantity = data.Quantity ?? data.Splits.Sum(x => x.Quantity);
+        if (data.Splits.Sum(x => x.Quantity) != requestQuantity)
+            throw PickingOperationException.Validation("Split quantities must equal the scanned quantity.");
 
-        var priorOperation = await store.FindOperationAsync(operationKey, cancellationToken);
-        if (priorOperation is not null)
+        var prior = await store.FindOperationAsync(operationKey, ct);
+        if (prior is not null)
         {
-            if (priorOperation.EventType != QrLabelEventTypes.Picked ||
-                !string.Equals(priorOperation.ReferenceCode, pickingCode, StringComparison.Ordinal) ||
-                !string.Equals(priorOperation.Note, ScanNote(qrCode), StringComparison.Ordinal) ||
-                data.Quantity.HasValue && priorOperation.Quantity != data.Quantity.Value)
-            {
-                throw PickingOperationException.Conflict(
-                    "Operation key was already used for a different picking scan.");
-            }
-
-            return await GetAsync(
-                pickingCode, warehouseKeeperUserId, actorRole, cancellationToken);
+            if (prior.EventType != QrLabelEventTypes.Picked || prior.ReferenceCode != code ||
+                prior.Note != ScanNote(qrCode) || prior.Quantity != requestQuantity)
+                throw PickingOperationException.Conflict("Operation key was already used for another picking command.");
+            return await GetAsync(code, actorId, role, ct);
         }
 
-        await store.ExecuteInTransactionAsync(async transactionCancellationToken =>
+        await store.ExecuteInTransactionAsync(async txCt =>
         {
-            var view = await FindAccessibleAsync(
-                pickingCode, warehouseKeeperUserId, actorRole, true, transactionCancellationToken);
-            if (view.List.Status is PickingListStatuses.Completed or PickingListStatuses.Cancelled)
-                throw PickingOperationException.Conflict("Closed picking lists cannot accept more scans.");
-            if (view.Order.Status is not (OrderStatuses.Approved or OrderStatuses.Picking))
-                throw PickingOperationException.Conflict("Order must be approved or in picking before scanning.");
-            if (view.List.AssignedToUserId.HasValue && view.List.AssignedToUserId != warehouseKeeperUserId)
+            var view = await FindAccessibleAsync(code, actorId, role, true, txCt);
+            if (view.List.Status is RunPickingListStatuses.Ready or RunPickingListStatuses.NeedsHandling)
+                throw PickingOperationException.Conflict("Closed warehouse picking portions cannot accept scans.");
+            if (view.List.AssignedToUserId.HasValue && view.List.AssignedToUserId != actorId)
                 throw PickingOperationException.Conflict("Picking list is assigned to another Warehouse Keeper.");
             if (view.List.Version != data.ExpectedPickingVersion)
-                throw PickingOperationException.Conflict(
-                    $"Picking version is {view.List.Version}; refresh and retry.");
+                throw PickingOperationException.Conflict($"Picking version is {view.List.Version}; refresh and retry.");
 
-            var label = await store.FindLabelForUpdateAsync(qrCode, transactionCancellationToken)
+            var label = await store.FindLabelForUpdateAsync(qrCode, txCt)
                 ?? throw PickingOperationException.NotFound("QR label was not found.");
             if (label.Version != data.ExpectedLabelVersion)
-                throw PickingOperationException.Conflict(
-                    $"QR label version is {label.Version}; refresh and retry.");
+                throw PickingOperationException.Conflict($"QR label version is {label.Version}; refresh and retry.");
             if (label.Status != QrLabelStatuses.Available)
                 throw PickingOperationException.Conflict("Only an available QR label can be picked.");
             if (label.CurrentWarehouseId != view.List.WarehouseId)
-                throw PickingOperationException.Conflict("QR label belongs to a different warehouse.");
+                throw PickingOperationException.Conflict("QR label belongs to another warehouse.");
 
-            var item = view.Items.SingleOrDefault(candidate =>
-                candidate.Item.SourceBatchId == label.BatchId &&
-                candidate.Item.PickedQuantity < candidate.Item.RequestedQuantity)
-                ?? throw PickingOperationException.Conflict(
-                    "QR label batch is not required by this picking list or is already complete.");
-            if (item.Batch.ProductId != item.OrderLine.ProductId ||
-                item.Allocation.BatchId != label.BatchId ||
-                item.Allocation.WarehouseId != view.List.WarehouseId)
-            {
-                throw PickingOperationException.Conflict(
-                    "QR label does not match the allocated SKU, batch, and warehouse.");
-            }
-
-            var remaining = item.Item.RequestedQuantity - item.Item.PickedQuantity;
-            var quantity = data.Quantity ?? Math.Min(label.Quantity, remaining);
-            ValidateQuantity(quantity);
-            if (quantity > remaining)
-                throw PickingOperationException.Conflict($"Picking item only needs {remaining:0.###} more cartons.");
+            var gather = view.Gathers.SingleOrDefault(x => x.BatchId == label.BatchId)
+                ?? throw PickingOperationException.Conflict("QR label batch is not approved on this picking sheet.");
+            var requested = data.Splits.ToDictionary(x => x.AllocationRunAllocationId);
+            var targets = view.Splits.Where(x => x.RunPickingGatherId == gather.Id &&
+                                                 requested.ContainsKey(x.AllocationRunAllocationId)).ToArray();
+            if (targets.Length != requested.Count)
+                throw PickingOperationException.Conflict("An allocation split is not part of the approved batch gather.");
+            var quantity = requestQuantity;
             if (quantity > label.Quantity)
-                throw PickingOperationException.Conflict($"QR label only contains {label.Quantity:0.###} cartons.");
+                throw PickingOperationException.Conflict($"QR label contains only {label.Quantity:0.###} cartons.");
+            if (quantity > gather.RequiredQuantity - gather.PickedQuantity)
+                throw PickingOperationException.Conflict("Scanned quantity exceeds the remaining approved gather quantity.");
+            foreach (var split in targets)
+                if (requested[split.AllocationRunAllocationId].Quantity > split.Quantity - split.PickedQuantity)
+                    throw PickingOperationException.Conflict(
+                        $"Allocation {split.AllocationRunAllocationId} does not need that many cartons.");
 
             var now = timeProvider.GetUtcNow();
             BatchQrLabel pickedLabel;
             if (quantity < label.Quantity)
             {
-                var originalStatus = label.Status;
-                label.Quantity -= quantity;
-                label.Version++;
-                label.UpdatedAt = now;
-                var childId = Guid.NewGuid();
+                label.Quantity -= quantity; label.Version++; label.UpdatedAt = now;
                 pickedLabel = new BatchQrLabel
                 {
-                    Id = childId,
-                    BatchId = label.BatchId,
-                    CurrentWarehouseId = label.CurrentWarehouseId,
-                    ParentLabelId = label.Id,
-                    RootLabelId = label.RootLabelId ?? label.Id,
-                    QrCode = await store.NextQrCodeAsync(transactionCancellationToken),
-                    Quantity = quantity,
-                    Status = QrLabelStatuses.Picked,
-                    Version = 1,
-                    GeneratedAt = now,
-                    UpdatedAt = now
+                    Id = Guid.NewGuid(), BatchId = label.BatchId, CurrentWarehouseId = label.CurrentWarehouseId,
+                    ParentLabelId = label.Id, RootLabelId = label.RootLabelId ?? label.Id,
+                    QrCode = await store.NextQrCodeAsync(txCt), Quantity = quantity,
+                    Status = QrLabelStatuses.Picked, Version = 1, GeneratedAt = now, UpdatedAt = now
                 };
                 store.AddLabel(pickedLabel);
-                store.AddLabelEvent(NewLabelEvent(
-                    pickedLabel, warehouseKeeperUserId, $"{operationKey}:split", QrLabelEventTypes.Split,
-                    originalStatus, QrLabelStatuses.Available, label.QrCode,
-                    $"Tách {quantity:0.###} thùng từ tem {label.QrCode} để soạn hàng", now));
+                store.AddLabelEvent(NewEvent(pickedLabel, actorId, $"{operationKey}:split", QrLabelEventTypes.Split,
+                    QrLabelStatuses.Available, QrLabelStatuses.Available, label.QrCode,
+                    $"Tách {quantity:0.###} thùng để soạn phiếu {code}", now));
             }
             else
             {
-                pickedLabel = label;
-                pickedLabel.Status = QrLabelStatuses.Picked;
-                pickedLabel.Version++;
-                pickedLabel.UpdatedAt = now;
+                pickedLabel = label; label.Status = QrLabelStatuses.Picked; label.Version++; label.UpdatedAt = now;
             }
 
-            store.AddLabelEvent(NewLabelEvent(
-                pickedLabel, warehouseKeeperUserId, operationKey, QrLabelEventTypes.Picked,
-                QrLabelStatuses.Available, QrLabelStatuses.Picked, view.List.PickingCode,
-                ScanNote(qrCode), now));
-            item.Item.PickedQuantity += quantity;
-            item.Item.StockOutBatchId = item.Item.SourceBatchId;
-            item.Item.ScannedAt ??= now;
-            item.Item.Status = item.Item.PickedQuantity == item.Item.RequestedQuantity
-                ? PickingItemStatuses.Completed
-                : PickingItemStatuses.InProgress;
-            if (item.Item.Status == PickingItemStatuses.Completed) item.Item.CompletedAt = now;
-
-            view.List.AssignedToUserId ??= warehouseKeeperUserId;
+            foreach (var split in targets)
+                split.PickedQuantity += requested[split.AllocationRunAllocationId].Quantity;
+            gather.PickedQuantity += quantity;
+            gather.Status = gather.PickedQuantity == gather.RequiredQuantity
+                ? RunPickingGatherStatuses.Picked : RunPickingGatherStatuses.Pending;
+            view.List.AssignedToUserId ??= actorId;
             view.List.StartedAt ??= now;
-            view.List.Status = view.Items.All(candidate =>
-                candidate.Item.PickedQuantity == candidate.Item.RequestedQuantity)
-                ? PickingListStatuses.Completed
-                : PickingListStatuses.InProgress;
-            if (view.List.Status == PickingListStatuses.Completed)
-            {
-                view.List.ConfirmedAt = now;
-                view.List.ConfirmedByUserId = warehouseKeeperUserId;
-                store.AddShipment(new Shipment
-                {
-                    Id = Guid.NewGuid(),
-                    SalesOrderId = view.List.SalesOrderId,
-                    WarehouseId = view.List.WarehouseId,
-                    PickingListId = view.List.Id,
-                    ShipmentCode = await store.NextShipmentCodeAsync(transactionCancellationToken),
-                    Status = ShipmentStatuses.Ready,
-                    TotalQuantity = view.Items.Sum(candidate => candidate.Item.PickedQuantity),
-                    ReceivedQuantity = 0,
-                    ReadyAt = now,
-                    Version = 0,
-                    CreatedAt = now,
-                    UpdatedAt = now
-                });
-            }
+            view.List.Status = RunPickingListStatuses.Picking;
             view.List.Version++;
             view.List.UpdatedAt = now;
-
-            if (view.Order.Status == OrderStatuses.Approved)
-            {
-                TransitionOrder(view.Order, OrderStatuses.Picking, now);
-                store.AddOrderHistory(NewOrderHistory(
-                    view.Order.Id, OrderStatuses.Approved, OrderStatuses.Picking,
-                    warehouseKeeperUserId, "Bắt đầu soạn hàng", now));
-            }
-
-            if (view.List.Status == PickingListStatuses.Completed)
-            {
-                var orderLists = await store.ListByOrderAsync(view.Order.Id, transactionCancellationToken);
-                if (orderLists.All(candidate => candidate.Status == PickingListStatuses.Completed))
-                {
-                    TransitionOrder(view.Order, OrderStatuses.Issued, now);
-                    store.AddOrderHistory(NewOrderHistory(
-                        view.Order.Id, OrderStatuses.Picking, OrderStatuses.Issued,
-                        warehouseKeeperUserId, "Hoàn tất soạn hàng; tồn kho chỉ xuất khi dispatch", now));
-                }
-            }
-
-            await store.SaveChangesAsync(transactionCancellationToken);
-        }, cancellationToken);
-
+            store.AddLabelEvent(NewEvent(pickedLabel, actorId, operationKey, QrLabelEventTypes.Picked,
+                QrLabelStatuses.Available, QrLabelStatuses.Picked, code, ScanNote(qrCode), now));
+            await store.SaveChangesAsync(txCt);
+        }, ct);
         store.ClearTracking();
-        return await GetAsync(pickingCode, warehouseKeeperUserId, actorRole, cancellationToken);
+        return await GetAsync(code, actorId, role, ct);
     }
 
-    private async Task<PickingView> FindAccessibleAsync(
-        string pickingCode,
-        Guid actorUserId,
-        string actorRole,
-        bool forUpdate,
-        CancellationToken cancellationToken)
+    public async Task<PickingListResult> CompleteAsync(string code, CompleteRunPickingData data,
+        Guid actorId, string role, CancellationToken ct)
     {
-        var view = await store.FindAsync(
-            NormalizeCode(pickingCode, "Picking code"), forUpdate, cancellationToken)
-            ?? throw PickingOperationException.NotFound("Picking list was not found.");
-        if (!await store.CanAccessWarehouseAsync(
-                actorUserId, actorRole, view.List.WarehouseId, cancellationToken))
+        EnsureWarehouseKeeper(role);
+        code = NormalizeCode(code, "Picking code");
+        await store.ExecuteInTransactionAsync(async txCt =>
         {
+            var view = await FindAccessibleAsync(code, actorId, role, true, txCt);
+            if (view.List.AssignedToUserId.HasValue && view.List.AssignedToUserId != actorId)
+                throw PickingOperationException.Conflict("Picking list is assigned to another Warehouse Keeper.");
+            var exceptionType = NormalizeOptional(data.ExceptionType);
+            var note = NormalizeOptional(data.Note);
+            if (view.List.Status == RunPickingListStatuses.Ready) return;
+            if (view.List.Status == RunPickingListStatuses.NeedsHandling)
+            {
+                if (view.List.ExceptionType == exceptionType && view.List.ExceptionNote == note) return;
+                throw PickingOperationException.Conflict("Picking exception was already recorded.");
+            }
+            if (view.List.Version != data.ExpectedPickingVersion)
+                throw PickingOperationException.Conflict($"Picking version is {view.List.Version}; refresh and retry.");
+            var now = timeProvider.GetUtcNow();
+            if (exceptionType is null)
+            {
+                if (view.Gathers.Any(x => x.PickedQuantity != x.RequiredQuantity) ||
+                    view.Splits.Any(x => x.PickedQuantity != x.Quantity))
+                    throw PickingOperationException.Conflict("Every approved gather and allocation split must be fully picked.");
+                view.List.Status = RunPickingListStatuses.Ready;
+                await CreateShipmentsAsync(view, now, txCt);
+            }
+            else
+            {
+                if (!ExceptionTypes.Contains(exceptionType))
+                    throw PickingOperationException.Validation("Picking exception type is invalid.");
+                if (note is null) throw PickingOperationException.Validation("A picking exception note is required.");
+                if (note.Length > 500)
+                    throw PickingOperationException.Validation("Picking exception note must not exceed 500 characters.");
+                view.List.Status = RunPickingListStatuses.NeedsHandling;
+                view.List.ExceptionType = exceptionType;
+                view.List.ExceptionNote = note;
+            }
+            view.List.CompletedAt = now;
+            view.List.CompletedByUserId = actorId;
+            view.List.Version++;
+            view.List.UpdatedAt = now;
+            await store.SaveChangesAsync(txCt);
+        }, ct);
+        store.ClearTracking();
+        return await GetAsync(code, actorId, role, ct);
+    }
+
+    private async Task<RunPickingWorkflowView> FindAccessibleAsync(string code, Guid actorId,
+        string role, bool update, CancellationToken ct)
+    {
+        var view = await store.FindAsync(NormalizeCode(code, "Picking code"), update, ct)
+            ?? throw PickingOperationException.NotFound("Picking list was not found.");
+        if (!await store.CanAccessWarehouseAsync(actorId, role, view.List.WarehouseId, ct))
             throw PickingOperationException.Forbidden("User is not assigned to this picking warehouse.");
-        }
         return view;
     }
 
-    private static PickingListResult ToResult(PickingView view) => new(
-        view.List.Id,
-        view.List.PickingCode,
-        view.Order.Id,
-        view.Order.OrderCode,
-        view.Warehouse.Id,
-        view.Warehouse.Code,
-        view.Warehouse.Name,
-        view.List.AssignedToUserId,
-        view.List.Status,
-        view.List.Version,
-        view.List.StartedAt,
-        view.List.ConfirmedAt,
-        view.List.ConfirmedByUserId,
-        view.List.CreatedAt,
-        view.List.UpdatedAt,
-        view.Items.OrderBy(item => item.OrderLine.LineNumber)
-            .ThenBy(item => item.Allocation.AllocationSequence)
-            .Select(item => new PickingItemResult(
-                item.Item.Id,
-                item.Item.AllocationId,
-                item.OrderLine.ProductId,
-                item.OrderLine.SkuSnapshot,
-                item.OrderLine.ProductNameSnapshot,
-                item.Batch.Id,
-                item.Batch.BatchCode,
-                item.Item.RequestedQuantity,
-                item.Item.PickedQuantity,
-                item.Item.RequestedQuantity - item.Item.PickedQuantity,
-                item.Item.Status,
-                item.Item.ScannedAt,
-                item.Item.CompletedAt)).ToArray(),
-        view.Scans.Select(scan => new PickingScanResult(
-            scan.Event.OperationKey,
-            scan.QrCode,
-            scan.Event.Quantity,
-            scan.Event.PerformedByUserId,
-            scan.Event.OccurredAt)).ToArray());
-
-    private static QrLabelEvent NewLabelEvent(
-        BatchQrLabel label,
-        Guid actorUserId,
-        string operationKey,
-        string eventType,
-        string fromStatus,
-        string toStatus,
-        string? referenceCode,
-        string? note,
-        DateTimeOffset now) => new()
-        {
-            Id = Guid.NewGuid(),
-            BatchQrLabelId = label.Id,
-            WarehouseId = label.CurrentWarehouseId,
-            PerformedByUserId = actorUserId,
-            OperationKey = operationKey,
-            EventType = eventType,
-            FromStatus = fromStatus,
-            ToStatus = toStatus,
-            Quantity = label.Quantity,
-            ReferenceCode = referenceCode,
-            Note = note,
-            OccurredAt = now
-        };
-
-    private static OrderStatusHistory NewOrderHistory(
-        Guid orderId,
-        string fromStatus,
-        string toStatus,
-        Guid actorUserId,
-        string reason,
-        DateTimeOffset now) => new()
-        {
-            Id = Guid.NewGuid(),
-            SalesOrderId = orderId,
-            ChangedByUserId = actorUserId,
-            FromStatus = fromStatus,
-            ToStatus = toStatus,
-            Reason = reason,
-            ChangedAt = now
-        };
-
-    private static void TransitionOrder(SalesOrder order, string status, DateTimeOffset now)
+    // F92: once a warehouse's run picking portion is Ready, create one shipment part per distinct
+    // order in it, keyed on (order, warehouse). A run picking list spans several orders, so a Ready
+    // list yields one shipment per order; creation is idempotent (skips an order that already has a
+    // shipment for this warehouse).
+    private async Task CreateShipmentsAsync(RunPickingWorkflowView view, DateTimeOffset now, CancellationToken ct)
     {
-        order.Status = status;
-        order.Version++;
-        order.UpdatedAt = now;
+        var perOrder = view.Splits
+            .GroupBy(split => split.SalesOrderId)
+            .Select(group => new { OrderId = group.Key, Quantity = group.Sum(split => split.PickedQuantity) });
+        foreach (var order in perOrder)
+        {
+            if (await store.ShipmentExistsAsync(order.OrderId, view.List.WarehouseId, ct)) continue;
+            store.AddShipment(new Shipment
+            {
+                Id = Guid.NewGuid(),
+                SalesOrderId = order.OrderId,
+                WarehouseId = view.List.WarehouseId,
+                RunPickingListId = view.List.Id,
+                ShipmentCode = await store.NextShipmentCodeAsync(ct),
+                Status = ShipmentStatuses.Ready,
+                TotalQuantity = order.Quantity,
+                ReceivedQuantity = 0,
+                ReadyAt = now,
+                Version = 0,
+                CreatedAt = now,
+                UpdatedAt = now
+            });
+        }
     }
 
+    private static PickingListResult ToResult(RunPickingWorkflowView view) => new(
+        view.List.Id, view.List.PickingCode, view.List.AllocationRunId, view.List.AllocationPlanVersionId,
+        view.List.WarehouseId, view.List.AssignedToUserId, view.List.Status, view.List.Version,
+        view.List.IssuedAt, view.List.StartedAt, view.List.CompletedAt, view.List.CompletedByUserId,
+        view.List.ExceptionType, view.List.ExceptionNote,
+        view.Gathers.OrderBy(x => x.BatchCodeSnapshot).Select(g => new RunPickingGatherWorkflowResult(
+            g.Id, g.ProductId, g.SkuSnapshot, g.BatchId, g.BatchCodeSnapshot, g.RequiredQuantity,
+            g.PickedQuantity, g.RequiredQuantity - g.PickedQuantity, g.Status,
+            view.Splits.Where(x => x.RunPickingGatherId == g.Id).OrderBy(x => x.OrderCodeSnapshot)
+                .Select(x => new RunPickingSplitWorkflowResult(x.Id, x.AllocationRunAllocationId,
+                    x.AllocationPlanPriceId, x.SalesOrderId, x.SalesOrderLineId, x.OrderCodeSnapshot,
+                    x.Quantity, x.PickedQuantity, x.Quantity - x.PickedQuantity)).ToArray())).ToArray(),
+        view.Scans.Select(x => new PickingScanResult(x.Event.OperationKey, x.QrCode,
+            x.Event.Quantity, x.Event.PerformedByUserId, x.Event.OccurredAt)).ToArray());
+
+    private static QrLabelEvent NewEvent(BatchQrLabel label, Guid actorId, string key, string type,
+        string from, string to, string reference, string note, DateTimeOffset now) => new()
+    {
+        Id = Guid.NewGuid(), BatchQrLabelId = label.Id, WarehouseId = label.CurrentWarehouseId,
+        PerformedByUserId = actorId, OperationKey = key, EventType = type, FromStatus = from,
+        ToStatus = to, Quantity = label.Quantity, ReferenceCode = reference, Note = note, OccurredAt = now
+    };
     private static void ValidateReadRole(string role)
     {
         if (role is not (SystemRoles.Admin or SystemRoles.Operator or SystemRoles.WarehouseKeeper))
             throw PickingOperationException.Forbidden("Role cannot read picking lists.");
     }
-
+    private static void EnsureWarehouseKeeper(string role)
+    {
+        if (role != SystemRoles.WarehouseKeeper)
+            throw PickingOperationException.Forbidden("Only Warehouse Keeper can change picking work.");
+    }
     private static void ValidateQuantity(decimal? quantity)
     {
-        if (!quantity.HasValue) return;
-        if (quantity <= 0 || decimal.Truncate(quantity.Value) != quantity.Value)
+        if (!quantity.HasValue || quantity <= 0 || decimal.Truncate(quantity.Value) != quantity.Value)
             throw PickingOperationException.Validation("Picking quantity must be a positive whole number of cartons.");
     }
-
-    private static string NormalizeCode(string value, string field) =>
-        string.IsNullOrWhiteSpace(value)
-            ? throw PickingOperationException.Validation($"{field} is required.")
-            : value.Trim().ToUpperInvariant();
-
+    private static string NormalizeCode(string value, string field) => string.IsNullOrWhiteSpace(value)
+        ? throw PickingOperationException.Validation($"{field} is required.") : value.Trim().ToUpperInvariant();
     private static string NormalizeOperationKey(string value)
     {
-        value = string.IsNullOrWhiteSpace(value) ? string.Empty : value.Trim();
+        value = value?.Trim() ?? string.Empty;
         if (value.Length is < 1 or > 90)
-            throw PickingOperationException.Validation(
-                "Idempotency-Key is required and must not exceed 90 characters.");
+            throw PickingOperationException.Validation("Idempotency-Key is required and must not exceed 90 characters.");
         return value;
     }
-
-    private static string ScanNote(string qrCode) => $"Quét tem {qrCode} để soạn đơn";
-
-    private static readonly HashSet<string> PickingStatusSet =
-    [
-        PickingListStatuses.Open,
-        PickingListStatuses.InProgress,
-        PickingListStatuses.Completed,
-        PickingListStatuses.Cancelled
-    ];
+    private static string? NormalizeOptional(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+    private static string ScanNote(string qrCode) => $"Quét tem {qrCode} để soạn gom";
 }
