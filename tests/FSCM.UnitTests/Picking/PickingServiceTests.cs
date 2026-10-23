@@ -79,6 +79,11 @@ public sealed class PickingServiceTests
         Assert.Equal(QrLabelStatuses.Picked, fixture.Label.Status);
         Assert.Contains(fixture.Store.History, item => item.ToStatus == OrderStatuses.Picking);
         Assert.Contains(fixture.Store.History, item => item.ToStatus == OrderStatuses.Issued);
+        // F92: completing the warehouse picking list creates the (order, warehouse) shipment part.
+        var shipment = Assert.Single(fixture.Store.Shipments);
+        Assert.Equal(fixture.List.Id, shipment.PickingListId);
+        Assert.Equal(fixture.Warehouse.Id, shipment.WarehouseId);
+        Assert.Equal(10, shipment.TotalQuantity);
     }
 
     [Fact]
@@ -259,6 +264,7 @@ public sealed class PickingServiceTests
         public List<BatchQrLabel> Labels { get; } = [fixture.Label];
         public List<QrLabelEvent> Events { get; } = [];
         public List<OrderStatusHistory> History { get; } = [];
+        public List<Shipment> Shipments { get; } = [];
 
         public Task<bool> CanAccessWarehouseAsync(Guid userId, string role, Guid warehouseId,
             CancellationToken cancellationToken) => Task.FromResult(HasWarehouseAccess);
@@ -298,11 +304,15 @@ public sealed class PickingServiceTests
         public Task<string> NextQrCodeAsync(CancellationToken cancellationToken) =>
             Task.FromResult($"TEM-{300 + Labels.Count:000000}");
 
+        public Task<string> NextShipmentCodeAsync(CancellationToken cancellationToken) =>
+            Task.FromResult($"SHIP-{1000 + Shipments.Count:000000}");
+
         public void AddList(PickingList list) => Lists.Add(list);
         public void AddItem(PickingItem item) => Items.Add(item);
         public void AddLabel(BatchQrLabel label) => Labels.Add(label);
         public void AddLabelEvent(QrLabelEvent labelEvent) => Events.Add(labelEvent);
         public void AddOrderHistory(OrderStatusHistory history) => History.Add(history);
+        public void AddShipment(Shipment shipment) => Shipments.Add(shipment);
         public Task SaveChangesAsync(CancellationToken cancellationToken) => Task.CompletedTask;
         public Task ExecuteInTransactionAsync(Func<CancellationToken, Task> operation,
             CancellationToken cancellationToken) => operation(cancellationToken);

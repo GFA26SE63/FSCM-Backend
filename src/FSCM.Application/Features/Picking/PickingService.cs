@@ -1,5 +1,6 @@
 using FSCM.Application.Features.Orders;
 using FSCM.Application.Features.QrLabels;
+using FSCM.Application.Features.Shipments;
 using FSCM.Domain.Authorization;
 using FSCM.Domain.Entities;
 
@@ -169,6 +170,21 @@ public sealed class PickingService(
             {
                 view.List.ConfirmedAt = now;
                 view.List.ConfirmedByUserId = warehouseKeeperUserId;
+                store.AddShipment(new Shipment
+                {
+                    Id = Guid.NewGuid(),
+                    SalesOrderId = view.List.SalesOrderId,
+                    WarehouseId = view.List.WarehouseId,
+                    PickingListId = view.List.Id,
+                    ShipmentCode = await store.NextShipmentCodeAsync(transactionCancellationToken),
+                    Status = ShipmentStatuses.Ready,
+                    TotalQuantity = view.Items.Sum(candidate => candidate.Item.PickedQuantity),
+                    ReceivedQuantity = 0,
+                    ReadyAt = now,
+                    Version = 0,
+                    CreatedAt = now,
+                    UpdatedAt = now
+                });
             }
             view.List.Version++;
             view.List.UpdatedAt = now;

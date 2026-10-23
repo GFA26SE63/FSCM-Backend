@@ -122,6 +122,56 @@ public sealed class CatalogServiceTests
         Assert.Contains(product, fixture.Store.Products);
     }
 
+    [Fact]
+    public async Task Create_category_auto_generates_code_when_omitted()
+    {
+        var fixture = new CatalogFixture();
+
+        var result = await fixture.Service.CreateCategoryAsync(null, null, "Sữa", null, CancellationToken.None);
+
+        Assert.Matches("^CAT-[0-9]{2}$", result.Code);
+    }
+
+    [Fact]
+    public async Task Create_category_rejects_duplicate_name()
+    {
+        var fixture = new CatalogFixture();
+        await fixture.Service.CreateCategoryAsync(null, null, "Sữa", null, CancellationToken.None);
+
+        var exception = await Assert.ThrowsAsync<CatalogOperationException>(() =>
+            fixture.Service.CreateCategoryAsync(null, null, "sữa", null, CancellationToken.None));
+
+        Assert.Equal("conflict", exception.Code);
+    }
+
+    [Fact]
+    public async Task Delete_category_hard_deletes_when_unused()
+    {
+        var fixture = new CatalogFixture();
+        var created = await fixture.Service.CreateCategoryAsync(null, null, "Sữa", null, CancellationToken.None);
+
+        var result = await fixture.Service.DeleteCategoryAsync(created.Id, CancellationToken.None);
+
+        Assert.True(result.Deleted);
+        Assert.False(result.Inactivated);
+        Assert.Empty(fixture.Store.Categories);
+    }
+
+    [Fact]
+    public async Task Delete_category_inactivates_when_in_use()
+    {
+        var fixture = new CatalogFixture();
+        var category = fixture.AddCategory("CAT-20");
+        fixture.AddProduct(category.Id, "SKU001", ProductStatuses.Published);
+
+        var result = await fixture.Service.DeleteCategoryAsync(category.Id, CancellationToken.None);
+
+        Assert.False(result.Deleted);
+        Assert.True(result.Inactivated);
+        Assert.False(category.IsActive);
+        Assert.Single(fixture.Store.Categories);
+    }
+
     private sealed class CatalogFixture
     {
         public CatalogFixture()
@@ -211,6 +261,10 @@ public sealed class CatalogServiceTests
         public Task<ProductCategory?> FindCategoryByCodeAsync(string code, CancellationToken cancellationToken) =>
             Task.FromResult(Categories.SingleOrDefault(category => category.Code == code));
 
+        public Task<ProductCategory?> FindCategoryByNameAsync(string name, CancellationToken cancellationToken) =>
+            Task.FromResult(Categories.FirstOrDefault(category =>
+                string.Equals(category.Name, name, StringComparison.OrdinalIgnoreCase)));
+
         public Task<bool> CategoryHasActiveChildrenAsync(Guid categoryId, CancellationToken cancellationToken) =>
             Task.FromResult(Categories.Any(category =>
                 category.ParentCategoryId == categoryId && category.IsActive));
@@ -219,7 +273,19 @@ public sealed class CatalogServiceTests
             Task.FromResult(Products.Any(product =>
                 product.ProductCategoryId == categoryId && product.Status != ProductStatuses.Inactive));
 
+        public Task<bool> CategoryHasAnyChildrenAsync(Guid categoryId, CancellationToken cancellationToken) =>
+            Task.FromResult(Categories.Any(category => category.ParentCategoryId == categoryId));
+
+        public Task<bool> CategoryHasAnyProductsAsync(Guid categoryId, CancellationToken cancellationToken) =>
+            Task.FromResult(Products.Any(product => product.ProductCategoryId == categoryId));
+
+        private int categoryCodeCounter = 10;
+        public Task<string> NextCategoryCodeAsync(CancellationToken cancellationToken) =>
+            Task.FromResult($"CAT-{categoryCodeCounter++:00}");
+
         public void AddCategory(ProductCategory category) => Categories.Add(category);
+
+        public void RemoveCategory(ProductCategory category) => Categories.Remove(category);
 
         public Task<(IReadOnlyCollection<ProductView> Items, int TotalCount)> ListProductsAsync(
             ProductSearch search,

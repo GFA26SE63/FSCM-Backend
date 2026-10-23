@@ -18,7 +18,10 @@ public sealed class IdentityExceptionHandler(IProblemDetailsService problemDetai
 
         var statusCode = identityException.Code switch
         {
-            "invalid_credentials" or "account_locked" or "invalid_token" => StatusCodes.Status401Unauthorized,
+            // F08: expired/invalid token vs locked account return distinct HTTP statuses so clients
+            // can react differently (re-authenticate vs account locked).
+            "invalid_credentials" or "invalid_token" => StatusCodes.Status401Unauthorized,
+            "account_locked" => StatusCodes.Status423Locked,
             "forbidden" => StatusCodes.Status403Forbidden,
             "not_found" => StatusCodes.Status404NotFound,
             "conflict" => StatusCodes.Status409Conflict,

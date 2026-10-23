@@ -20,6 +20,18 @@ public sealed record CollectPaymentData(
     int ExpectedVersion,
     string? Note);
 
+/// <summary>
+/// F64 credit-receivable adjustment from an approved/rejected claim. A positive
+/// <see cref="Amount"/> reduces the receivable (approved claim against the final price of the
+/// affected goods); a negative amount restores a prior reduction (claim rejected). The reduction
+/// is bounded so the adjusted amount never drops below what was already collected nor rises above
+/// the original approved total. Disputed money stays out of the collectable/reminder base.
+/// </summary>
+public sealed record AdjustReceivableData(
+    decimal Amount,
+    string Reason,
+    int ExpectedVersion);
+
 public sealed record CreatePayOsCheckoutData(int ExpectedVersion);
 
 public sealed record PayOsCreateLinkData(

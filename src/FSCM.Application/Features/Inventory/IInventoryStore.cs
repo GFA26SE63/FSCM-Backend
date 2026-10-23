@@ -12,7 +12,8 @@ public sealed record GoodsReceiptApprovalView(
     GoodsReceipt Receipt, Warehouse Warehouse, IReadOnlyCollection<GoodsReceiptApprovalLine> Lines);
 public sealed record BatchInventoryView(
     Batch Batch, InventoryBalance Balance, string WarehouseCode, string WarehouseName,
-    string Sku, string ProductName, int NearDateThresholdHours);
+    string Sku, string ProductName, int NearDateThresholdHours,
+    decimal ActiveLockedQuantity, bool HasLockRequiringResolution);
 public sealed record InventoryHistoryView(
     InventoryTransaction Transaction, string BatchCode, string WarehouseCode, string Sku);
 

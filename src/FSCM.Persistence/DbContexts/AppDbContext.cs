@@ -47,6 +47,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<QrLabelEvent> QrLabelEventRecords => Set<QrLabelEvent>();
     public DbSet<InventoryBalance> InventoryBalanceRecords => Set<InventoryBalance>();
     public DbSet<InventoryTransaction> InventoryTransactionRecords => Set<InventoryTransaction>();
+    public DbSet<InventoryLock> InventoryLockRecords => Set<InventoryLock>();
     public DbSet<ExpirySweepRun> ExpirySweepRunRecords => Set<ExpirySweepRun>();
     public DbSet<BusinessDocumentSequence> BusinessDocumentSequenceRecords => Set<BusinessDocumentSequence>();
     public DbSet<Promotion> PromotionRecords => Set<Promotion>();
@@ -79,6 +80,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<Driver> DriverRecords => Set<Driver>();
     public DbSet<Vehicle> VehicleRecords => Set<Vehicle>();
     public DbSet<Delivery> DeliveryRecords => Set<Delivery>();
+    public DbSet<Shipment> ShipmentRecords => Set<Shipment>();
     public DbSet<WriteOff> WriteOffRecords => Set<WriteOff>();
     public DbSet<WriteOffItem> WriteOffItemRecords => Set<WriteOffItem>();
     public DbSet<WriteOffAttachment> WriteOffAttachmentRecords => Set<WriteOffAttachment>();
@@ -100,8 +102,11 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
         modelBuilder.HasSequence<long>("RetailerDeclarationCodeSequence").StartsAt(100);
         modelBuilder.HasSequence<long>("RetailerBusinessCodeSequence").StartsAt(10005000);
         modelBuilder.HasSequence<long>("QrLabelCodeSequence").StartsAt(1000);
+        modelBuilder.HasSequence<long>("CategoryCodeSequence").StartsAt(10);
         modelBuilder.HasSequence<long>("PromotionCodeSequence").StartsAt(4);
         modelBuilder.HasSequence<long>("SalesOrderCodeSequence").StartsAt(1030);
+        modelBuilder.HasSequence<long>("DriverCodeSequence").StartsAt(10);
+        modelBuilder.HasSequence<long>("ShipmentCodeSequence").StartsAt(1000);
         modelBuilder.ApplyConfigurationsFromAssembly(typeof(AppDbContext).Assembly);
     }
 }

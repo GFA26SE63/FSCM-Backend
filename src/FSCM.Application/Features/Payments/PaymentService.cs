@@ -148,6 +148,107 @@ public sealed class PaymentService(
                 "Payment was committed but could not be reloaded."), Today());
     }
 
+    /// <summary>
+    /// F64: adjusts a credit receivable from an approved claim (positive amount reduces the
+    /// collectable total against the final price of the affected goods) or a rejected claim
+    /// (negative amount restores a prior reduction). Never recomputes shelf-life discounts; the
+    /// change applies to the adjusted collectable base only and keeps disputed money separate.
+    /// </summary>
+    public async Task<PaymentResult> AdjustReceivableAsync(
+        Guid orderId,
+        AdjustReceivableData data,
+        string operationKey,
+        Guid actorUserId,
+        string actorRole,
+        CancellationToken cancellationToken)
+    {
+        if (actorRole is not (SystemRoles.Admin or SystemRoles.Operator))
+            throw PaymentOperationException.Forbidden("Only Admin or Operator can adjust a receivable.");
+        operationKey = NormalizeOperationKey(operationKey);
+        var reason = string.IsNullOrWhiteSpace(data.Reason)
+            ? throw PaymentOperationException.Validation("Adjustment reason is required.")
+            : data.Reason.Trim();
+        if (reason.Length > 500)
+            throw PaymentOperationException.Validation("Adjustment reason cannot exceed 500 characters.");
+        if (data.Amount == 0 || decimal.Round(data.Amount, 2) != data.Amount)
+            throw PaymentOperationException.Validation(
+                "Adjustment amount must be a non-zero value with at most two decimal places.");
+        var requestHash = Hash(orderId, data.Amount, "adjust", reason);
+
+        var prior = await store.FindByOperationKeyAsync(operationKey, cancellationToken);
+        if (prior is not null)
+        {
+            if (prior.Order.Id != orderId || prior.Payment.RequestHash != requestHash)
+                throw PaymentOperationException.Conflict(
+                    "Operation key was already used for a different adjustment request.");
+            if (!await store.CanViewAsync(prior, actorUserId, actorRole, cancellationToken))
+                throw PaymentOperationException.Forbidden("You cannot adjust this receivable.");
+            return ToResult(prior, Today());
+        }
+
+        await store.ExecuteInTransactionAsync(async transactionCancellationToken =>
+        {
+            var view = await store.FindByOrderAsync(orderId, true, transactionCancellationToken)
+                ?? throw PaymentOperationException.NotFound("Payment was not found.");
+            if (view.Payment.Method != OrderPaymentMethods.Credit)
+                throw PaymentOperationException.Conflict("Only a credit receivable can be adjusted.");
+            if (!view.Payment.DeliveredDate.HasValue)
+                throw PaymentOperationException.Conflict(
+                    "A receivable can only be adjusted after complete receipt.");
+            if (view.Payment.Version != data.ExpectedVersion)
+                throw PaymentOperationException.Conflict(
+                    $"Payment version is {view.Payment.Version}; refresh and retry.");
+
+            // Positive amount reduces the collectable base (approved claim); negative restores it.
+            var adjusted = view.Payment.AdjustedAmount - data.Amount;
+            if (adjusted < view.Payment.ConfirmedAmount)
+                throw PaymentOperationException.Conflict(
+                    "Adjustment cannot reduce the receivable below the amount already collected.");
+            if (adjusted > view.Payment.Amount)
+                throw PaymentOperationException.Conflict(
+                    "Adjustment cannot restore the receivable above the approved final total.");
+
+            var now = timeProvider.GetUtcNow();
+            var oldValues = new { view.Payment.AdjustedAmount, view.Payment.Status, view.Payment.Version };
+            view.Payment.AdjustedAmount = adjusted;
+            // If the remaining collectable is fully covered by collections, the receivable is settled.
+            if (view.Payment.Status != PaymentStatuses.Paid &&
+                view.Payment.ConfirmedAmount >= adjusted && adjusted >= 0 && view.Payment.ConfirmedAmount > 0)
+            {
+                view.Payment.Status = PaymentStatuses.Paid;
+                view.Payment.PaidDate ??= DateOnly.FromDateTime(now.ToOffset(VietnamOffset).DateTime);
+            }
+            view.Payment.OperationKey = operationKey;
+            view.Payment.RequestHash = requestHash;
+            view.Payment.Note = reason;
+            view.Payment.Version++;
+            view.Payment.UpdatedAt = now;
+            store.AddAuditLog(new AuditLog
+            {
+                Id = Guid.NewGuid(),
+                UserAccountId = actorUserId,
+                EntityName = nameof(Payment),
+                EntityId = view.Payment.Id,
+                Action = "ReceivableAdjusted",
+                OldValues = JsonSerializer.Serialize(oldValues),
+                NewValues = JsonSerializer.Serialize(new
+                {
+                    view.Payment.AdjustedAmount,
+                    view.Payment.Status,
+                    view.Payment.Version
+                }),
+                Reason = reason,
+                CreatedAt = now
+            });
+            await store.SaveChangesAsync(transactionCancellationToken);
+        }, cancellationToken);
+
+        store.ClearTracking();
+        return ToResult(await store.FindByOrderAsync(orderId, false, cancellationToken)
+            ?? throw PaymentOperationException.Conflict(
+                "Payment was committed but could not be reloaded."), Today());
+    }
+
     public async Task<PayOsCheckoutResult> CreatePayOsCheckoutAsync(
         Guid orderId,
         CreatePayOsCheckoutData data,

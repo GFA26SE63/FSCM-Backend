@@ -34,6 +34,17 @@ public sealed class PaymentsController(PaymentService service) : ControllerBase
             new(request.Amount, request.CollectionMethod, request.ExpectedVersion, request.Note),
             operationKey, GetActorUserId(), GetActorRole(), cancellationToken);
 
+    [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator}")]
+    [HttpPost("orders/{orderId:guid}/adjust")]
+    public Task<PaymentResult> Adjust(
+        Guid orderId,
+        AdjustReceivableRequest request,
+        [FromHeader(Name = "Idempotency-Key")] string operationKey,
+        CancellationToken cancellationToken) =>
+        service.AdjustReceivableAsync(orderId,
+            new(request.Amount, request.Reason, request.ExpectedVersion),
+            operationKey, GetActorUserId(), GetActorRole(), cancellationToken);
+
     [HttpPost("orders/{orderId:guid}/payos-checkout")]
     public Task<PayOsCheckoutResult> CreatePayOsCheckout(
         Guid orderId,

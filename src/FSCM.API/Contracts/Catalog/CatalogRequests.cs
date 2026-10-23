@@ -2,7 +2,7 @@ namespace FSCM.API.Contracts.Catalog;
 
 public sealed record CreateCategoryRequest(
     Guid? ParentCategoryId,
-    string Code,
+    string? Code,
     string Name,
     string? Description);
 

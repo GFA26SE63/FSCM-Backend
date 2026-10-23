@@ -106,8 +106,10 @@ public sealed class PhysicalSchemaModelTests
 
         Assert.Equal(ExpectedTables, tableNames);
         Assert.Equal(81, entityTypes.Length);
-        Assert.Equal(908, entityTypes.Sum(entityType => entityType.GetProperties().Count()));
-        Assert.Equal(181, entityTypes.Sum(entityType => entityType.GetForeignKeys().Count()));
+        // +1 property and +1 FK vs the original shape: BATCH_QR_LABEL.GoodsReceiptId links a label
+        // to its goods receipt for traceability (F40).
+        Assert.Equal(909, entityTypes.Sum(entityType => entityType.GetProperties().Count()));
+        Assert.Equal(182, entityTypes.Sum(entityType => entityType.GetForeignKeys().Count()));
         Assert.All(
             entityTypes.SelectMany(entityType => entityType.GetForeignKeys()),
             foreignKey => Assert.Equal(DeleteBehavior.Restrict, foreignKey.DeleteBehavior));

@@ -216,6 +216,7 @@ public sealed class QrLabelServiceTests
         public Task<QrLabelEvent?> FindLatestEventAsync(Guid labelId, CancellationToken cancellationToken) =>
             Task.FromResult(Events.Where(item => item.BatchQrLabelId == labelId).OrderByDescending(item => item.OccurredAt).FirstOrDefault());
         public Task<Batch?> FindBatchAsync(Guid batchId, CancellationToken cancellationToken) => Task.FromResult(_batches.SingleOrDefault(item => item.Id == batchId));
+        public Task<Guid?> FindGoodsReceiptIdForBatchAsync(Guid batchId, CancellationToken cancellationToken) => Task.FromResult<Guid?>(null);
         public Task<InventoryBalance?> FindBalanceAsync(Guid batchId, CancellationToken cancellationToken) => Task.FromResult<InventoryBalance?>(new() { BatchId = batchId, PhysicalQuantity = 100m });
         public Task<decimal> SumActiveQuantityAsync(Guid batchId, CancellationToken cancellationToken) =>
             Task.FromResult(Labels.Where(item => item.BatchId == batchId &&
@@ -232,7 +233,7 @@ public sealed class QrLabelServiceTests
             var warehouse = _warehouses.Single(item => item.Id == label.CurrentWarehouseId);
             var parent = Labels.SingleOrDefault(item => item.Id == label.ParentLabelId)?.QrCode;
             var root = Labels.SingleOrDefault(item => item.Id == label.RootLabelId)?.QrCode ?? label.QrCode;
-            return new(label, batch, warehouse, product, parent, root);
+            return new(label, batch, warehouse, product, parent, root, null);
         }
     }
 }

@@ -62,6 +62,26 @@ public sealed class OrdersController(OrderService service, DeliveryService deliv
         return CreatedAtAction(nameof(Get), new { id = result.Id }, result);
     }
 
+    [Authorize(Roles = SystemRoles.Sales)]
+    [HttpPost("offline")]
+    public async Task<IActionResult> SubmitOffline(
+        SubmitOfflineOrderRequest request,
+        CancellationToken cancellationToken)
+    {
+        var result = await service.SubmitOfflineAsync(new(
+            request.ClientOrderKey,
+            request.RetailerId,
+            request.PaymentMethod,
+            request.RequestedDeliveryDate,
+            request.DeliveryAddress,
+            request.Note,
+            request.OfflineEstimatedAmount,
+            request.Lines.Select(item => new CreateOrderLineData(item.ProductId, item.Quantity)).ToArray()),
+            GetActorUserId(),
+            cancellationToken);
+        return CreatedAtAction(nameof(Get), new { id = result.Id }, result);
+    }
+
     [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator}")]
     [HttpPost("{id:guid}/approve")]
     public Task<OrderDetailResult> Approve(

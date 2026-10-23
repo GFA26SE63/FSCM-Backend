@@ -1,3 +1,4 @@
+using System.Data;
 using FSCM.Application.Features.Deliveries;
 using FSCM.Application.Features.QrLabels;
 using FSCM.Domain.Authorization;
@@ -32,6 +33,44 @@ public sealed class DeliveryStore(AppDbContext dbContext) : IDeliveryStore
 
     public Task<Vehicle?> FindVehicleAsync(Guid id, CancellationToken cancellationToken) =>
         dbContext.VehicleRecords.AsNoTracking().SingleOrDefaultAsync(item => item.Id == id, cancellationToken);
+
+    public Task<bool> WarehouseExistsAsync(Guid warehouseId, CancellationToken cancellationToken) =>
+        dbContext.WarehouseRecords.AsNoTracking().AnyAsync(item => item.Id == warehouseId, cancellationToken);
+
+    public Task<bool> DriverCodeExistsAsync(string code, Guid? excludeId, CancellationToken cancellationToken) =>
+        dbContext.DriverRecords.AsNoTracking()
+            .AnyAsync(item => item.Code == code && (!excludeId.HasValue || item.Id != excludeId.Value), cancellationToken);
+
+    public Task<bool> VehiclePlateExistsAsync(string plateNumber, Guid? excludeId, CancellationToken cancellationToken) =>
+        dbContext.VehicleRecords.AsNoTracking()
+            .AnyAsync(item => item.PlateNumber == plateNumber && (!excludeId.HasValue || item.Id != excludeId.Value), cancellationToken);
+
+    public async Task<string> NextDriverCodeAsync(CancellationToken cancellationToken)
+    {
+        var connection = dbContext.Database.GetDbConnection();
+        var openedHere = connection.State != ConnectionState.Open;
+        if (openedHere) await connection.OpenAsync(cancellationToken);
+        try
+        {
+            await using var command = connection.CreateCommand();
+            command.CommandText = "SELECT nextval('\"DriverCodeSequence\"');";
+            var number = Convert.ToInt64(await command.ExecuteScalarAsync(cancellationToken));
+            return $"DRV-{number:00}";
+        }
+        finally
+        {
+            if (openedHere) await connection.CloseAsync();
+        }
+    }
+
+    public Task<Driver?> FindDriverForUpdateAsync(Guid id, CancellationToken cancellationToken) =>
+        dbContext.DriverRecords.SingleOrDefaultAsync(item => item.Id == id, cancellationToken);
+
+    public Task<Vehicle?> FindVehicleForUpdateAsync(Guid id, CancellationToken cancellationToken) =>
+        dbContext.VehicleRecords.SingleOrDefaultAsync(item => item.Id == id, cancellationToken);
+
+    public void AddDriver(Driver driver) => dbContext.DriverRecords.Add(driver);
+    public void AddVehicle(Vehicle vehicle) => dbContext.VehicleRecords.Add(vehicle);
 
     public async Task<DeliveryOrderView?> FindOrderAsync(
         Guid orderId, bool forUpdate, CancellationToken cancellationToken)

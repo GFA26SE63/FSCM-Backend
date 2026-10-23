@@ -44,7 +44,7 @@ public sealed class QrLabelService(IQrLabelStore store, IQrCodeRenderer qrCodeRe
 
     private QrLabelPrintResult BuildPrintLabel(QrLabelView view) => new(
         view.Label.QrCode, view.Batch.BatchCode, view.Product.Sku, view.Product.Name,
-        view.Warehouse.Code, view.Warehouse.Name, view.Label.Quantity,
+        view.Warehouse.Code, view.Warehouse.Name, view.ReceiptCode, view.Label.Quantity,
         view.Batch.ExpirationDate, qrCodeRenderer.RenderSvg(view.Label.QrCode));
 
     private static string BuildPrintHtml(IReadOnlyCollection<QrLabelPrintResult> labels)
@@ -68,8 +68,10 @@ public sealed class QrLabelService(IQrLabelStore store, IQrCodeRenderer qrCodeRe
                 .Append("<div>SKU: ").Append(Encode(label.Sku)).Append("</div>")
                 .Append("<div>").Append(Encode(label.ProductName)).Append("</div>")
                 .Append("<div>Lô: ").Append(Encode(label.BatchCode)).Append("</div>")
-                .Append("<div>Kho: ").Append(Encode(label.WarehouseCode)).Append("</div>")
-                .Append("<div>SL: ").Append(label.Quantity.ToString("0.###")).Append(" thùng</div>")
+                .Append("<div>Kho: ").Append(Encode(label.WarehouseCode)).Append("</div>");
+            if (!string.IsNullOrWhiteSpace(label.ReceiptCode))
+                builder.Append("<div>Phiếu nhập: ").Append(Encode(label.ReceiptCode)).Append("</div>");
+            builder.Append("<div>SL: ").Append(label.Quantity.ToString("0.###")).Append(" thùng</div>")
                 .Append("<div class=\"exp\">HSD: ").Append(label.ExpirationDate.ToString("dd/MM/yyyy")).Append("</div>")
                 .Append("</div></div>");
         }
@@ -125,6 +127,7 @@ public sealed class QrLabelService(IQrLabelStore store, IQrCodeRenderer qrCodeRe
             Id = id,
             BatchId = batch.Id,
             CurrentWarehouseId = batch.WarehouseId,
+            GoodsReceiptId = await store.FindGoodsReceiptIdForBatchAsync(batch.Id, cancellationToken),
             RootLabelId = id,
             QrCode = await store.NextQrCodeAsync(cancellationToken),
             Quantity = data.Quantity,
@@ -179,6 +182,7 @@ public sealed class QrLabelService(IQrLabelStore store, IQrCodeRenderer qrCodeRe
             Id = childId,
             BatchId = parent.BatchId,
             CurrentWarehouseId = parent.CurrentWarehouseId,
+            GoodsReceiptId = parent.GoodsReceiptId,
             ParentLabelId = parent.Id,
             RootLabelId = parent.RootLabelId ?? parent.Id,
             QrCode = await store.NextQrCodeAsync(cancellationToken),
@@ -289,6 +293,7 @@ public sealed class QrLabelService(IQrLabelStore store, IQrCodeRenderer qrCodeRe
     private static QrLabelResult ToResult(QrLabelView view) => new(
         view.Label.Id, view.Label.QrCode, view.Label.QrCode, view.Label.BatchId, view.Batch.BatchCode,
         view.Label.CurrentWarehouseId, view.Warehouse.Code, view.Batch.ProductId, view.Product.Sku,
+        view.Label.GoodsReceiptId, view.ReceiptCode,
         view.Label.Quantity, view.Label.Status, view.Label.ParentLabelId, view.ParentQrCode,
         view.Label.RootLabelId ?? view.Label.Id, view.RootQrCode, view.Label.BlobUrl,
         view.Label.Version, view.Label.GeneratedAt, view.Label.UpdatedAt, view.Label.InvalidatedAt);

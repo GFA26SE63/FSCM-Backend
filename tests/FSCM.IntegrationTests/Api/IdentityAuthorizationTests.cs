@@ -306,6 +306,7 @@ public sealed class IdentityAuthorizationTests : IClassFixture<IdentityAuthoriza
         public Task<RefreshToken?> FindRefreshTokenAsync(string tokenHash, CancellationToken cancellationToken) => Task.FromResult<RefreshToken?>(null);
         public Task<AccountToken?> FindAccountTokenAsync(string tokenHash, string purpose, CancellationToken cancellationToken) => Task.FromResult<AccountToken?>(null);
         public Task<IdentityScope> GetScopeAsync(Guid userId, CancellationToken cancellationToken) => Task.FromResult(IdentityScope.Empty);
+        public Task<IdentityScopeLabels> GetScopeLabelsAsync(IdentityScope scope, CancellationToken cancellationToken) => Task.FromResult(IdentityScopeLabels.Empty);
         public Task<bool> WarehouseExistsAsync(Guid warehouseId, CancellationToken cancellationToken) => Task.FromResult(false);
         public Task<bool> SalesGroupExistsAsync(Guid salesGroupId, CancellationToken cancellationToken) => Task.FromResult(false);
         public Task<bool> RegionExistsAsync(Guid regionId, CancellationToken cancellationToken) => Task.FromResult(false);

@@ -4,7 +4,7 @@ namespace FSCM.Application.Features.QrLabels;
 
 public sealed record QrLabelView(
     BatchQrLabel Label, Batch Batch, Warehouse Warehouse, Product Product,
-    string? ParentQrCode, string RootQrCode);
+    string? ParentQrCode, string RootQrCode, string? ReceiptCode);
 public sealed record QrLabelEventView(QrLabelEvent Event, string WarehouseCode);
 
 public interface IQrLabelStore
@@ -19,6 +19,7 @@ public interface IQrLabelStore
     Task<QrLabelEvent?> FindEventAsync(string operationKey, CancellationToken cancellationToken);
     Task<QrLabelEvent?> FindLatestEventAsync(Guid labelId, CancellationToken cancellationToken);
     Task<Batch?> FindBatchAsync(Guid batchId, CancellationToken cancellationToken);
+    Task<Guid?> FindGoodsReceiptIdForBatchAsync(Guid batchId, CancellationToken cancellationToken);
     Task<InventoryBalance?> FindBalanceAsync(Guid batchId, CancellationToken cancellationToken);
     Task<decimal> SumActiveQuantityAsync(Guid batchId, CancellationToken cancellationToken);
     Task<string> NextQrCodeAsync(CancellationToken cancellationToken);

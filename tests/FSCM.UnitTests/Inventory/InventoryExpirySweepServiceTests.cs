@@ -1,4 +1,5 @@
 using FSCM.Application.Features.Inventory;
+using FSCM.Application.Features.InventoryLocks;
 using FSCM.Domain.Entities;
 
 namespace FSCM.UnitTests.Inventory;
@@ -12,7 +13,7 @@ public sealed class InventoryExpirySweepServiceTests
     public async Task Sweep_marks_past_dated_batch_expired_and_emits_outbox_event()
     {
         var batch = NewBatch(new DateOnly(2026, 10, 12), BatchExpiryStatuses.Valid);
-        var store = new FakeStore([new BatchExpiryCandidate(batch, NearDateThresholdHours: 48)]);
+        var store = new FakeStore([Candidate(batch, physical: 10, reserved: 0, locked: 0)]);
         var service = new InventoryExpirySweepService(store, new FixedTimeProvider(Now));
 
         var result = await service.RunAsync(default);
@@ -31,11 +32,42 @@ public sealed class InventoryExpirySweepServiceTests
     }
 
     [Fact]
-    public async Task Sweep_marks_near_expiry_without_emitting_event()
+    public async Task Sweep_locks_expired_unreserved_stock_without_resolution()
     {
-        // Expires in 1 day with a 48h threshold -> NearExpiry.
+        var batch = NewBatch(new DateOnly(2026, 10, 12), BatchExpiryStatuses.Valid);
+        var store = new FakeStore([Candidate(batch, physical: 10, reserved: 0, locked: 0)]);
+        var service = new InventoryExpirySweepService(store, new FixedTimeProvider(Now));
+
+        await service.RunAsync(default);
+
+        var inventoryLock = Assert.Single(store.Locks);
+        Assert.Equal(InventoryLockStatuses.Active, inventoryLock.Status);
+        Assert.Equal(InventoryLockReasons.Expired, inventoryLock.Reason);
+        Assert.Equal(10, inventoryLock.LockedQuantity);
+        Assert.False(inventoryLock.RequiresResolution);
+        Assert.Null(inventoryLock.LockedByUserId);
+    }
+
+    [Fact]
+    public async Task Sweep_locks_expired_reserved_stock_and_flags_resolution()
+    {
+        // 10 on-hand, 6 reserved -> locking the full 10 overlaps reserved -> needs resolution.
+        var batch = NewBatch(new DateOnly(2026, 10, 12), BatchExpiryStatuses.Valid);
+        var store = new FakeStore([Candidate(batch, physical: 10, reserved: 6, locked: 0)]);
+        var service = new InventoryExpirySweepService(store, new FixedTimeProvider(Now));
+
+        await service.RunAsync(default);
+
+        var inventoryLock = Assert.Single(store.Locks);
+        Assert.Equal(10, inventoryLock.LockedQuantity);
+        Assert.True(inventoryLock.RequiresResolution);
+    }
+
+    [Fact]
+    public async Task Sweep_marks_near_expiry_without_emitting_event_or_lock()
+    {
         var batch = NewBatch(new DateOnly(2026, 10, 14), BatchExpiryStatuses.Valid);
-        var store = new FakeStore([new BatchExpiryCandidate(batch, NearDateThresholdHours: 48)]);
+        var store = new FakeStore([Candidate(batch, physical: 10, reserved: 0, locked: 0)]);
         var service = new InventoryExpirySweepService(store, new FixedTimeProvider(Now));
 
         var result = await service.RunAsync(default);
@@ -43,13 +75,14 @@ public sealed class InventoryExpirySweepServiceTests
         Assert.Equal(BatchExpiryStatuses.NearExpiry, batch.ExpiryStatus);
         Assert.Equal(0, result.BatchesExpired);
         Assert.Empty(store.Outbox);
+        Assert.Empty(store.Locks);
     }
 
     [Fact]
     public async Task Sweep_records_completed_run_without_duplicate_event_when_nothing_changes()
     {
         var batch = NewBatch(new DateOnly(2027, 1, 1), BatchExpiryStatuses.Valid);
-        var store = new FakeStore([new BatchExpiryCandidate(batch, NearDateThresholdHours: 48)]);
+        var store = new FakeStore([Candidate(batch, physical: 10, reserved: 0, locked: 0)]);
         var service = new InventoryExpirySweepService(store, new FixedTimeProvider(Now));
 
         var result = await service.RunAsync(default);
@@ -60,7 +93,11 @@ public sealed class InventoryExpirySweepServiceTests
         Assert.Equal(ExpirySweepStatuses.Completed, run.Status);
         Assert.Equal(1, run.BatchesScanned);
         Assert.Empty(store.Outbox);
+        Assert.Empty(store.Locks);
     }
+
+    private static BatchExpiryCandidate Candidate(Batch batch, decimal physical, decimal reserved, decimal locked) =>
+        new(batch, NearDateThresholdHours: 48, physical, reserved, locked);
 
     private static Batch NewBatch(DateOnly expiration, string status) => new()
     {
@@ -79,6 +116,7 @@ public sealed class InventoryExpirySweepServiceTests
     {
         public List<OutboxMessage> Outbox { get; } = [];
         public List<ExpirySweepRun> Runs { get; } = [];
+        public List<InventoryLock> Locks { get; } = [];
         public bool Saved { get; private set; }
 
         public Task<IReadOnlyCollection<BatchExpiryCandidate>> ListBatchesForExpirySweepAsync(
@@ -86,6 +124,7 @@ public sealed class InventoryExpirySweepServiceTests
 
         public void AddOutboxMessage(OutboxMessage message) => Outbox.Add(message);
         public void AddSweepRun(ExpirySweepRun run) => Runs.Add(run);
+        public void AddInventoryLock(InventoryLock inventoryLock) => Locks.Add(inventoryLock);
 
         public Task SaveChangesAsync(CancellationToken cancellationToken)
         {

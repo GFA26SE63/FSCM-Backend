@@ -177,12 +177,12 @@ public sealed class GoodsReceiptApiTests
         public Task<IReadOnlyCollection<BatchInventoryView>> ListInventoryAsync(Guid actorUserId, string actorRole, Guid? warehouseId, Guid? productId, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyCollection<BatchInventoryView>>(Balance is null ? [] : [
                 new BatchInventoryView(Batches.Single(), Balance, Warehouse.Code, Warehouse.Name,
-                    Product.Sku, Product.Name, Product.NearDateThresholdHours)
+                    Product.Sku, Product.Name, Product.NearDateThresholdHours, 0m, false)
             ]);
         public Task<BatchInventoryView?> FindBatchInventoryAsync(Guid batchId, CancellationToken cancellationToken) =>
             Task.FromResult<BatchInventoryView?>(Balance?.BatchId == batchId
                 ? new BatchInventoryView(Batches.Single(), Balance, Warehouse.Code, Warehouse.Name,
-                    Product.Sku, Product.Name, Product.NearDateThresholdHours)
+                    Product.Sku, Product.Name, Product.NearDateThresholdHours, 0m, false)
                 : null);
         public Task<IReadOnlyCollection<InventoryHistoryView>> ListHistoryAsync(Guid actorUserId, string actorRole, Guid? warehouseId, Guid? batchId, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyCollection<InventoryHistoryView>>([]);
