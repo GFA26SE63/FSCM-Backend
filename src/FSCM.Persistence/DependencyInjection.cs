@@ -2,6 +2,7 @@ using FSCM.Application.Features.AllocationRuns;
 using FSCM.Application.Features.Catalog;
 using FSCM.Application.Features.DeliveryEta;
 using FSCM.Application.Features.Deliveries;
+using FSCM.Application.Features.EntityQueries;
 using FSCM.Application.Features.Identity;
 using FSCM.Application.Features.Inventory;
 using FSCM.Application.Features.InternalTransfers;
@@ -23,6 +24,7 @@ using FSCM.Persistence.Catalog;
 using FSCM.Persistence.DeliveryEta;
 using FSCM.Persistence.DbContexts;
 using FSCM.Persistence.Deliveries;
+using FSCM.Persistence.EntityQueries;
 using FSCM.Persistence.Identity;
 using FSCM.Persistence.Inventory;
 using FSCM.Persistence.InternalTransfers;
@@ -65,6 +67,7 @@ public static class DependencyInjection
         }
 
         services.AddScoped<IAllocationRunStore, AllocationRunStore>();
+        services.AddScoped<IEntityQueryService, EntityQueryService>();
         services.AddScoped<ICatalogStore, CatalogStore>();
         services.AddScoped<IDeliveryStore, DeliveryStore>();
         services.AddScoped<IIdentityStore, IdentityStore>();
