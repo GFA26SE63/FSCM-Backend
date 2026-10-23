@@ -12,6 +12,7 @@ public sealed class ReceiptConfirmationConfiguration : IEntityTypeConfiguration<
         builder.HasKey(entity => entity.Id);
         builder.Property(entity => entity.Id).HasColumnType("uuid").IsRequired();
         builder.Property(entity => entity.SalesOrderId).HasColumnType("uuid").IsRequired();
+        builder.Property(entity => entity.ShipmentId).HasColumnType("uuid").IsRequired(false);
         builder.Property(entity => entity.ConfirmedByRetailerUserId).HasColumnType("uuid").IsRequired();
         builder.Property(entity => entity.OperationKey).HasMaxLength(80).IsRequired();
         builder.Property(entity => entity.RequestHash).HasMaxLength(64).IsRequired();
@@ -20,9 +21,15 @@ public sealed class ReceiptConfirmationConfiguration : IEntityTypeConfiguration<
         builder.Property(entity => entity.Note).HasColumnType("text").IsRequired(false);
         builder.Property(entity => entity.CreatedAt).HasColumnType("timestamp with time zone").IsRequired();
         builder.HasIndex(entity => entity.OperationKey).IsUnique();
+        builder.HasIndex(entity => entity.ShipmentId).IsUnique()
+            .HasFilter("\"ShipmentId\" IS NOT NULL");
         builder.HasOne<SalesOrder>()
-            .WithOne()
-            .HasForeignKey<ReceiptConfirmation>(entity => entity.SalesOrderId)
+            .WithMany()
+            .HasForeignKey(entity => entity.SalesOrderId)
+            .OnDelete(DeleteBehavior.Restrict);
+        builder.HasOne<Shipment>()
+            .WithMany()
+            .HasForeignKey(entity => entity.ShipmentId)
             .OnDelete(DeleteBehavior.Restrict);
         builder.HasOne<UserAccount>()
             .WithMany()

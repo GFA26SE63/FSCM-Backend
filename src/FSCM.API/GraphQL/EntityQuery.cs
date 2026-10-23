@@ -118,6 +118,8 @@ public sealed class EntityQuery(EntityQueryAccess access)
     public IQueryable<ReceiptConfirmation> ReceiptConfirmations([Service] IEntityQueryService source) => source.Query<ReceiptConfirmation>(access);
     [UsePaging(typeof(DomainEntityObjectType<ReceiptConfirmationItem>), ConnectionName = "EntityReceiptConfirmationItems", DefaultPageSize = 50, MaxPageSize = int.MaxValue, IncludeTotalCount = true, RequirePagingBoundaries = false), UseProjection, UseFiltering, UseSorting]
     public IQueryable<ReceiptConfirmationItem> ReceiptConfirmationItems([Service] IEntityQueryService source) => source.Query<ReceiptConfirmationItem>(access);
+    [UsePaging(typeof(DomainEntityObjectType<ReceiptConfirmationQrLabel>), ConnectionName = "EntityReceiptConfirmationQrLabels", DefaultPageSize = 50, MaxPageSize = int.MaxValue, IncludeTotalCount = true, RequirePagingBoundaries = false), UseProjection, UseFiltering, UseSorting]
+    public IQueryable<ReceiptConfirmationQrLabel> ReceiptConfirmationQrLabels([Service] IEntityQueryService source) => source.Query<ReceiptConfirmationQrLabel>(access);
     [UsePaging(typeof(DomainEntityObjectType<ReceiptDiscrepancy>), ConnectionName = "EntityReceiptDiscrepancies", DefaultPageSize = 50, MaxPageSize = int.MaxValue, IncludeTotalCount = true, RequirePagingBoundaries = false), UseProjection, UseFiltering, UseSorting]
     public IQueryable<ReceiptDiscrepancy> ReceiptDiscrepancies([Service] IEntityQueryService source) => source.Query<ReceiptDiscrepancy>(access);
     [UsePaging(typeof(DomainEntityObjectType<ReceiptDiscrepancyItem>), ConnectionName = "EntityReceiptDiscrepancyItems", DefaultPageSize = 50, MaxPageSize = int.MaxValue, IncludeTotalCount = true, RequirePagingBoundaries = false), UseProjection, UseFiltering, UseSorting]
@@ -131,6 +133,8 @@ public sealed class EntityQuery(EntityQueryAccess access)
     public IQueryable<ManualRefund> ManualRefunds([Service] IEntityQueryService source) => source.Query<ManualRefund>(access);
     [UsePaging(typeof(DomainEntityObjectType<Delivery>), ConnectionName = "EntityDeliveries", DefaultPageSize = 50, MaxPageSize = int.MaxValue, IncludeTotalCount = true, RequirePagingBoundaries = false), UseProjection, UseFiltering, UseSorting]
     public IQueryable<Delivery> Deliveries([Service] IEntityQueryService source) => source.Query<Delivery>(access);
+    [UsePaging(typeof(DomainEntityObjectType<Shipment>), ConnectionName = "EntityShipments", DefaultPageSize = 50, MaxPageSize = int.MaxValue, IncludeTotalCount = true, RequirePagingBoundaries = false), UseProjection, UseFiltering, UseSorting]
+    public IQueryable<Shipment> Shipments([Service] IEntityQueryService source) => source.Query<Shipment>(access);
     [UsePaging(typeof(DomainEntityObjectType<Driver>), ConnectionName = "EntityDrivers", DefaultPageSize = 50, MaxPageSize = int.MaxValue, IncludeTotalCount = true, RequirePagingBoundaries = false), UseProjection, UseFiltering, UseSorting]
     public IQueryable<Driver> Drivers([Service] IEntityQueryService source) => source.Query<Driver>(access);
     [UsePaging(typeof(DomainEntityObjectType<Vehicle>), ConnectionName = "EntityVehicles", DefaultPageSize = 50, MaxPageSize = int.MaxValue, IncludeTotalCount = true, RequirePagingBoundaries = false), UseProjection, UseFiltering, UseSorting]

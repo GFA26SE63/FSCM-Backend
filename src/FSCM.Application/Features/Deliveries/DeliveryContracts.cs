@@ -9,6 +9,7 @@ public static class DeliveryStatuses
 public static class ReceiptConfirmationStatuses
 {
     public const string Confirmed = "Confirmed";
+    public const string Exception = "Exception";
 }
 
 public sealed record DispatchOrderData(

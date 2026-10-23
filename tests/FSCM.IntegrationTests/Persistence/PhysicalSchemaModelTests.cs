@@ -53,6 +53,7 @@ public sealed class PhysicalSchemaModelTests
         "QR_LABEL_EVENT",
         "RECEIPT_CONFIRMATION",
         "RECEIPT_CONFIRMATION_ITEM",
+        "RECEIPT_CONFIRMATION_QR_LABEL",
         "RECEIPT_DISCREPANCY",
         "RECEIPT_DISCREPANCY_ITEM",
         "REGION",
@@ -105,11 +106,11 @@ public sealed class PhysicalSchemaModelTests
             .ToArray();
 
         Assert.Equal(ExpectedTables, tableNames);
-        Assert.Equal(81, entityTypes.Length);
-        // Develop's run-picking shape (910) plus BATCH_QR_LABEL.GoodsReceiptId (F40, +1 property
-        // and +1 FK) → 911 properties / 183 FKs across the listed tables.
-        Assert.Equal(911, entityTypes.Sum(entityType => entityType.GetProperties().Count()));
-        Assert.Equal(183, entityTypes.Sum(entityType => entityType.GetForeignKeys().Count()));
+        Assert.Equal(82, entityTypes.Length);
+        // F61 adds shipment ownership and actual received/damaged/missing quantities plus
+        // immutable QR-scan evidence: 919 properties / 187 FKs across the listed tables.
+        Assert.Equal(919, entityTypes.Sum(entityType => entityType.GetProperties().Count()));
+        Assert.Equal(187, entityTypes.Sum(entityType => entityType.GetForeignKeys().Count()));
         Assert.All(
             entityTypes.SelectMany(entityType => entityType.GetForeignKeys()),
             foreignKey => Assert.Equal(DeleteBehavior.Restrict, foreignKey.DeleteBehavior));
@@ -130,6 +131,14 @@ public sealed class PhysicalSchemaModelTests
         var receipt = context.Model.FindEntityType(typeof(ReceiptConfirmation))!;
         Assert.True(receipt.GetIndexes().Single(index => index.Properties
             .Single().Name == nameof(ReceiptConfirmation.OperationKey)).IsUnique);
+        var shipmentReceiptIndex = receipt.GetIndexes().Single(index => index.Properties
+            .Single().Name == nameof(ReceiptConfirmation.ShipmentId));
+        Assert.True(shipmentReceiptIndex.IsUnique);
+        Assert.Equal("\"ShipmentId\" IS NOT NULL", shipmentReceiptIndex.GetFilter());
+
+        var receiptQr = context.Model.FindEntityType(typeof(ReceiptConfirmationQrLabel))!;
+        Assert.True(receiptQr.GetIndexes().Single(index => index.Properties.Count == 1 &&
+            index.Properties[0].Name == nameof(ReceiptConfirmationQrLabel.BatchQrLabelId)).IsUnique);
 
         var driver = context.Model.FindEntityType(typeof(Driver))!;
         Assert.True(driver.GetIndexes().Single(index => index.Properties

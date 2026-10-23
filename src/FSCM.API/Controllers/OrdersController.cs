@@ -136,6 +136,7 @@ public sealed class OrdersController(
             operationKey, GetActorUserId(), GetActorRole(), cancellationToken);
 
     [Authorize(Roles = SystemRoles.Retailer)]
+    [Obsolete("Use POST /api/v1/shipments/{id}/receipt for per-shipment actual quantities.")]
     [HttpPost("{id:guid}/confirm-receipt")]
     public Task<DeliveryResult> ConfirmReceipt(
         Guid id,

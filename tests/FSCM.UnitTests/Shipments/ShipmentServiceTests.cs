@@ -1,4 +1,7 @@
 using FSCM.Application.Features.Shipments;
+using FSCM.Application.Features.Payments;
+using FSCM.Application.Features.Orders;
+using FSCM.Application.Features.QrLabels;
 using FSCM.Domain.Authorization;
 using FSCM.Domain.Entities;
 
@@ -206,11 +209,81 @@ public sealed class ShipmentServiceTests
         Assert.Equal("forbidden", exception.Code);
     }
 
+    [Fact]
+    public async Task Receipt_records_actuals_and_completes_order_when_all_shipments_are_received()
+    {
+        var fixture = new Fixture();
+        var (shipment, line, batchId, qrCode) = fixture.AddDeliveringShipment(quantity: 8);
+
+        var result = await fixture.Service.ConfirmReceiptAsync(
+            shipment.Id,
+            new ConfirmShipmentReceiptData([qrCode],
+                [new ConfirmShipmentReceiptLineData(line.OrderLineId, batchId, 8, 0)],
+                shipment.Version, "Đã nhận đủ"),
+            "receipt-full-1", fixture.RetailerUserId, SystemRoles.Retailer, default);
+
+        Assert.Equal(ShipmentStatuses.Received, result.Status);
+        Assert.Equal(8, result.ReceivedQuantity);
+        Assert.Equal(OrderStatuses.Delivered, fixture.Order.Status);
+        Assert.NotNull(result.Receipt);
+        Assert.Equal(0, result.Receipt!.Lines.Single().MissingQuantity);
+        Assert.Equal(QrLabelStatuses.Delivered, fixture.Store.Labels.Single().Label.Status);
+
+        var retry = await fixture.Service.ConfirmReceiptAsync(
+            shipment.Id,
+            new ConfirmShipmentReceiptData([qrCode],
+                [new ConfirmShipmentReceiptLineData(line.OrderLineId, batchId, 8, 0)],
+                shipment.Version, "Đã nhận đủ"),
+            "receipt-full-1", fixture.RetailerUserId, SystemRoles.Retailer, default);
+        Assert.Equal(result.Receipt.Id, retry.Receipt!.Id);
+        Assert.Single(fixture.Store.Receipts);
+    }
+
+    [Fact]
+    public async Task Receipt_with_missing_or_damaged_quantity_creates_shipment_exception()
+    {
+        var fixture = new Fixture();
+        var (shipment, line, batchId, qrCode) = fixture.AddDeliveringShipment(quantity: 8);
+
+        var result = await fixture.Service.ConfirmReceiptAsync(
+            shipment.Id,
+            new ConfirmShipmentReceiptData([qrCode],
+                [new ConfirmShipmentReceiptLineData(line.OrderLineId, batchId, 6, 2)],
+                shipment.Version, "Thiếu hai thùng, hai thùng hư"),
+            "receipt-exception-1", fixture.RetailerUserId, SystemRoles.Retailer, default);
+
+        Assert.Equal(ShipmentStatuses.Exception, result.Status);
+        Assert.Equal(OrderStatuses.Delivering, fixture.Order.Status);
+        var actual = Assert.Single(result.Receipt!.Lines);
+        Assert.Equal(6, actual.ReceivedQuantity);
+        Assert.Equal(2, actual.DamagedQuantity);
+        Assert.Equal(2, actual.MissingQuantity);
+    }
+
+    [Fact]
+    public async Task Receipt_rejects_actual_quantity_outside_invariant()
+    {
+        var fixture = new Fixture();
+        var (shipment, line, batchId, qrCode) = fixture.AddDeliveringShipment(quantity: 8);
+
+        var exception = await Assert.ThrowsAsync<ShipmentOperationException>(() =>
+            fixture.Service.ConfirmReceiptAsync(
+                shipment.Id,
+                new ConfirmShipmentReceiptData([qrCode],
+                    [new ConfirmShipmentReceiptLineData(line.OrderLineId, batchId, 5, 6)],
+                    shipment.Version, null),
+                "receipt-invalid-1", fixture.RetailerUserId, SystemRoles.Retailer, default));
+
+        Assert.Equal("validation_error", exception.Code);
+        Assert.Empty(fixture.Store.Receipts);
+    }
+
     private sealed class Fixture
     {
         public Guid WarehouseA { get; } = Guid.NewGuid();
         public Guid WarehouseB { get; } = Guid.NewGuid();
         public SalesOrder Order { get; }
+        public Guid RetailerUserId { get; } = Guid.NewGuid();
         public FakeStore Store { get; }
         public ShipmentService Service { get; }
 
@@ -219,7 +292,11 @@ public sealed class ShipmentServiceTests
 
         public Fixture()
         {
-            Order = new SalesOrder { Id = Guid.NewGuid(), OrderCode = "DH-002001" };
+            Order = new SalesOrder
+            {
+                Id = Guid.NewGuid(), OrderCode = "DH-002001", Status = OrderStatuses.Delivering,
+                PaymentMethod = OrderPaymentMethods.Credit, CreditTermDays = 7, FinalAmount = 1_000_000
+            };
             Store = new FakeStore(Order);
             Store.ViewableOrders.Add(Order.Id);
             DriverA = new Driver
@@ -244,7 +321,14 @@ public sealed class ShipmentServiceTests
             Store.Drivers.Add(DriverA);
             Store.Vehicles.Add(VehicleA);
             PaymentStore = new FakePaymentStore(Order);
-            Service = new ShipmentService(Store, PaymentStore, new FixedTimeProvider(Now));
+            PaymentStore.Payment = new Payment
+            {
+                Id = Guid.NewGuid(), SalesOrderId = Order.Id, Method = Order.PaymentMethod,
+                Status = PaymentStatuses.Unpaid, Amount = Order.FinalAmount,
+                AdjustedAmount = Order.FinalAmount, FinalApprovalReference = "PLAN-1"
+            };
+            Service = new ShipmentService(Store, PaymentStore,
+                new PaymentPlanService(PaymentStore), new FixedTimeProvider(Now));
         }
 
         public FakePaymentStore PaymentStore { get; private set; } = null!;
@@ -252,11 +336,39 @@ public sealed class ShipmentServiceTests
         public void AddCompletedPickingList(Guid warehouseId, decimal totalPicked) =>
             Store.PendingLists.Add(new PendingShipmentSource(
                 Guid.NewGuid(), Order.Id, warehouseId, totalPicked));
+
+        public (Shipment Shipment, ShipmentLineView Line, Guid BatchId, string QrCode)
+            AddDeliveringShipment(decimal quantity)
+        {
+            var shipment = new Shipment
+            {
+                Id = Guid.NewGuid(), SalesOrderId = Order.Id, WarehouseId = WarehouseA,
+                RunPickingListId = Guid.NewGuid(), ShipmentCode = "SHIP-001000",
+                Status = ShipmentStatuses.Delivering, TotalQuantity = quantity, Version = 2
+            };
+            var batchId = Guid.NewGuid();
+            var line = new ShipmentLineView(Guid.NewGuid(), 1, Guid.NewGuid(), "SKU001", "Sữa chua",
+                batchId, "LO-001", quantity, 10_000, quantity * 10_000);
+            const string qrCode = "TEM-001000";
+            Store.Shipments.Add(shipment);
+            Store.Lines[shipment.Id] = [line];
+            Store.Labels.Add(new ShipmentLabelView(new BatchQrLabel
+            {
+                Id = Guid.NewGuid(), BatchId = batchId, CurrentWarehouseId = WarehouseA,
+                QrCode = qrCode, Quantity = quantity, Status = QrLabelStatuses.InTransit
+            }, batchId));
+            return (shipment, line, batchId, qrCode);
+        }
     }
 
     private sealed class FakeStore(SalesOrder order) : IShipmentStore
     {
         public List<Shipment> Shipments { get; } = [];
+        public List<ReceiptConfirmation> Receipts { get; } = [];
+        public List<ReceiptConfirmationItem> ReceiptLines { get; } = [];
+        public List<ReceiptConfirmationQrLabel> ReceiptLabels { get; } = [];
+        public List<ShipmentLabelView> Labels { get; } = [];
+        public Dictionary<Guid, IReadOnlyCollection<ShipmentLineView>> Lines { get; } = [];
         public List<PendingShipmentSource> PendingLists { get; } = [];
         public HashSet<Guid> ViewableOrders { get; } = [];
         private int _nextCode = 1000;
@@ -279,6 +391,17 @@ public sealed class ShipmentServiceTests
 
         public Task<ShipmentView?> FindByIdAsync(Guid id, bool forUpdate, CancellationToken cancellationToken) =>
             Task.FromResult(Shipments.SingleOrDefault(item => item.Id == id) is { } shipment ? ToView(shipment) : null);
+
+        public Task<ShipmentView?> FindByReceiptOperationKeyAsync(string operationKey, CancellationToken cancellationToken) =>
+            Task.FromResult(Receipts.SingleOrDefault(item => item.OperationKey == operationKey) is { ShipmentId: { } shipmentId }
+                ? ToView(Shipments.Single(item => item.Id == shipmentId)) : null);
+
+        public Task<SalesOrder?> FindOrderForUpdateAsync(Guid orderId, CancellationToken cancellationToken) =>
+            Task.FromResult(order.Id == orderId ? order : null);
+
+        public Task<IReadOnlyCollection<ShipmentLabelView>> ListLabelsAsync(
+            Guid shipmentId, bool forUpdate, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyCollection<ShipmentLabelView>>(Labels.ToArray());
 
         public Task<IReadOnlyCollection<PendingShipmentSource>> ListPendingSourcesAsync(
             Guid? orderId, CancellationToken cancellationToken)
@@ -309,13 +432,42 @@ public sealed class ShipmentServiceTests
             Task.FromResult(Vehicles.SingleOrDefault(item => item.Id == id));
 
         public void AddShipment(Shipment shipment) => Shipments.Add(shipment);
+        public void AddReceipt(ReceiptConfirmation receipt) => Receipts.Add(receipt);
+        public void AddReceiptLine(ReceiptConfirmationItem line) => ReceiptLines.Add(line);
+        public void AddReceiptQrLabel(ReceiptConfirmationQrLabel qrLabel) => ReceiptLabels.Add(qrLabel);
+        public void AddLabelEvent(QrLabelEvent labelEvent) { }
+        public void AddOrderHistory(OrderStatusHistory history) { }
 
         public Task SaveChangesAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+        public Task ExecuteInTransactionAsync(Func<CancellationToken, Task> operation, CancellationToken cancellationToken) =>
+            operation(cancellationToken);
+        public void ClearTracking() { }
 
         private ShipmentView ToView(Shipment shipment)
         {
             var warehouse = new Warehouse { Id = shipment.WarehouseId, Code = "WH", Name = "Kho" };
-            return new ShipmentView(shipment, order, warehouse, "PS-UNKNOWN", []);
+            var receipt = Receipts.SingleOrDefault(item => item.ShipmentId == shipment.Id);
+            var receiptView = receipt is null ? null : new ShipmentReceiptView(
+                receipt,
+                ReceiptLines.Where(item => item.ReceiptConfirmationId == receipt.Id).ToArray(),
+                ReceiptLabels.Where(item => item.ReceiptConfirmationId == receipt.Id)
+                    .Select(link => Labels.Single(label => label.Label.Id == link.BatchQrLabelId).Label.QrCode)
+                    .ToArray());
+            var lines = Lines.GetValueOrDefault(shipment.Id) ?? [];
+            if (receiptView is not null)
+            {
+                var actuals = receiptView.Lines.Where(item => item.SalesOrderLineId.HasValue)
+                    .ToDictionary(item => (item.SalesOrderLineId!.Value, item.BatchId));
+                lines = lines.Select(line => actuals.TryGetValue((line.OrderLineId, line.BatchId), out var actual)
+                    ? line with
+                    {
+                        ReceivedQuantity = actual.ReceivedQuantity,
+                        DamagedQuantity = actual.DamagedQuantity,
+                        MissingQuantity = actual.MissingQuantity
+                    }
+                    : line).ToArray();
+            }
+            return new ShipmentView(shipment, order, warehouse, "PS-UNKNOWN", lines, receiptView);
         }
     }
 
