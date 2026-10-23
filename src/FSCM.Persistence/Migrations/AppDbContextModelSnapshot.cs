@@ -3588,8 +3588,19 @@ namespace FSCM.Persistence.Migrations
                     b.Property<DateTimeOffset?>("CompletedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<Guid?>("CompletedByUserId")
+                        .HasColumnType("uuid");
+
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ExceptionNote")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<string>("ExceptionType")
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)");
 
                     b.Property<DateTimeOffset>("IssuedAt")
                         .HasColumnType("timestamp with time zone");
@@ -3611,6 +3622,7 @@ namespace FSCM.Persistence.Migrations
                         .HasColumnType("timestamp with time zone");
 
                     b.Property<int>("Version")
+                        .IsConcurrencyToken()
                         .HasColumnType("integer");
 
                     b.Property<Guid>("WarehouseId")
@@ -3619,6 +3631,8 @@ namespace FSCM.Persistence.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("AllocationPlanVersionId");
+
+                    b.HasIndex("CompletedByUserId");
 
                     b.HasIndex("PickingCode")
                         .IsUnique();
@@ -3758,10 +3772,6 @@ namespace FSCM.Persistence.Migrations
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
-
-                    b.Property<string>("AllocationTraceJson")
-                        .IsRequired()
-                        .HasColumnType("jsonb");
 
                     b.Property<Guid>("ClientOrderKey")
                         .HasColumnType("uuid");
@@ -6053,6 +6063,11 @@ namespace FSCM.Persistence.Migrations
                         .HasForeignKey("AllocationRunId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
+
+                    b.HasOne("FSCM.Domain.Entities.UserAccount", null)
+                        .WithMany()
+                        .HasForeignKey("CompletedByUserId")
+                        .OnDelete(DeleteBehavior.Restrict);
 
                     b.HasOne("FSCM.Domain.Entities.Warehouse", null)
                         .WithMany()

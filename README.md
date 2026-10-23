@@ -33,7 +33,7 @@ src/
 ├─ FSCM.API/
 │  ├─ Controllers/       REST transport only: routing, authorization, request mapping
 │  ├─ Contracts/         HTTP request DTOs grouped by feature
-│  ├─ GraphQL/           read-only Query surface, type extensions and DataLoaders
+│  ├─ GraphQL/           authenticated entity-query surface
 │  ├─ Errors/            feature exception → RFC ProblemDetails mapping
 │  ├─ Extensions/        DI, middleware pipeline and configuration composition
 │  ├─ Options/           strongly typed external configuration
@@ -73,21 +73,21 @@ tests/
 ### Request flow
 
 ```text
-REST Controller / GraphQL Query
+REST Controller / GraphQL entity resolver
   → Application Feature Service
   → Application store/gateway interface
   → Persistence store or Infrastructure adapter
   → PostgreSQL / external service
 ```
 
-Controllers and GraphQL resolvers must stay thin: bind input, resolve actor identity/role, call one application use case, and map the transport result. Business validation, state transitions, idempotency, concurrency, allocation, pricing, and scope enforcement belong in Application/Domain. Persistence may optimize queries but must not become the owner of business policy.
+Controllers and GraphQL resolvers must stay thin: bind input, resolve actor identity/role, call one application service, and map the transport result. Business validation, state transitions, idempotency, concurrency, allocation, pricing, and scope enforcement belong in Application/Domain. Persistence may optimize queries but must not become the owner of business policy.
 
 ### Adding or extending a feature
 
 1. Put domain state/constants in `FSCM.Domain` only when they are independent of transport and storage.
 2. Add contracts, operation exception, store/gateway port, and service under one `Application/Features/<Feature>` folder.
 3. Implement database access under `Persistence/<Feature>` or third-party access under `Infrastructure/<Feature>`; register it in that project's `DependencyInjection.cs`.
-4. Add REST request DTOs and a controller under `API`. Reads that clients need to compose may also be added to `SystemQuery`; GraphQL remains query-only unless the architecture is deliberately changed.
+4. Add REST request DTOs and a controller under `API`. Entity reads needed by Portal/Mobile may be exposed below the single `entities` GraphQL root through `IEntityQueryService`; GraphQL remains query-only.
 5. Map feature exceptions to Problem Details in `API/Errors` and register the handler before the generic handler.
 6. Add unit tests beside the matching feature test folder; add integration tests for EF mappings, authorization, GraphQL schema, or real adapter contracts.
 7. For state-changing operations, preserve existing conventions: actor and scope checks, `expectedVersion`, `Idempotency-Key`, immutable history/audit rows, and cancellation tokens.
@@ -112,13 +112,32 @@ dotnet run --project src/FSCM.API/FSCM.API.csproj --launch-profile https
 
 The development profile exposes Swagger at `/swagger`, GraphQL at `/graphql`, and health checks at `/health`.
 
+Portal and Mobile use the authenticated `entities` GraphQL field as the only GraphQL query surface. Every exposed entity collection supports cursor pagination (`first`/`after` or `last`/`before`), `totalCount`, projection, filtering, and sorting; clients choose the page size and selected fields. Resolvers call the Application `IEntityQueryService`, whose Persistence implementation produces no-tracking `IQueryable` expressions. The API therefore never accesses `AppDbContext` directly. Role and warehouse/Sales-group/Retailer/order scope is applied by the service before client filters. Authentication credentials, token hashes, idempotency/outbox internals, retired StockHold/internal-transfer entities, and hash/operation-key fields are not exposed. Legacy feature-specific GraphQL roots, type extensions, and DataLoaders have been removed; the corresponding REST APIs are unchanged.
+
+```graphql
+query ProductsForMobile($after: String) {
+  entities {
+    products(
+      first: 50
+      after: $after
+      where: { status: { eq: "Published" }, name: { contains: "sữa" } }
+      order: [{ name: ASC }, { id: ASC }]
+    ) {
+      totalCount
+      nodes { id sku name unit shelfLifeHours }
+      pageInfo { hasNextPage endCursor }
+    }
+  }
+}
+```
+
 ### Identity, catalog, warehouse configuration, and development data
 
 BE-01 uses Entra ID to authenticate Portal sign-in. The Portal sends its Entra bearer token to `POST /api/v1/auth/entra/exchange`; the API validates tenant, audience, signature and lifetime, matches a pre-provisioned active FSCM account by immutable `oid` or links a null `EntraObjectId` by normalized email on first exchange, and returns the same FSCM JWT/refresh-token contract used by the rest of the system. Authentication methods are additive: an account that also has a password credential can continue using `POST /api/v1/auth/login` after Entra linking. Protected REST and GraphQL operations accept only the internal FSCM JWT. Google sign-in is not enabled.
 
 Configure `Entra:TenantId`, `Entra:ClientId`, `Jwt:Issuer`, `Jwt:Audience`, and a JWT secret of at least 32 UTF-8 bytes through environment variables, user secrets, or the deployment secret store. No credential is committed in `appsettings.json`. `/api/v1/auth/me` returns the current role plus warehouse, region, Sales-group, and Retailer scopes. Every request revalidates that the FSCM account is active and that the token role still matches the database, so status/role changes take effect without waiting for token expiry.
 
-Admin user management is available under `/api/v1/users`: filtered deterministic paging, detail/profile updates, role/status commands, and warehouse/region/Sales-group/Retailer scope assignment. `GET` reads have equivalent `users`, `user`, `userScope`, and `me` GraphQL fields. User creation accepts `identityProvider` as `Local` or `Entra` to select the initial provisioning flow: Entra-first accounts bind their immutable `oid` on first exchange, while Local-first accounts use activation and may later bind Entra without losing password login. Admin creation and promotion remain blocked in the public API.
+Admin user management is available under `/api/v1/users`: filtered deterministic paging, detail/profile updates, role/status commands, and warehouse/region/Sales-group/Retailer scope assignment. Entity reads are available through `entities`; the former `users`, `user`, `userScope`, and `me` GraphQL roots are removed. User creation accepts `identityProvider` as `Local` or `Entra` to select the initial provisioning flow: Entra-first accounts bind their immutable `oid` on first exchange, while Local-first accounts use activation and may later bind Entra without losing password login. Admin creation and promotion remain blocked in the public API.
 
 Create the first deployment Admin exactly once from the deployment secret store:
 
@@ -152,21 +171,21 @@ BE-02 exposes authenticated category and product reads under `/api/v1/categories
 
 BE-03 exposes warehouse master data, coordinates, and the non-negative per-warehouse minimum-stock monitoring threshold under `/api/v1/warehouses`. Warehouse records are inactivated instead of deleted. The obsolete per-warehouse `/api/v1/warehouses/{warehouseId}/transit-time-rules` API and GraphQL fields are no longer public; delivery timing and estimated cost use the shared, versioned `/api/v1/transit-tables` contract.
 
-Google Maps Platform is the server provider for address normalization and road distance. Configure `GoogleMaps:ServerApiKey` only through environment variables, user secrets, or a deployment secret store; use a separately restricted browser key for map rendering. Admin commands `POST /api/v1/map/geocode` and `POST /api/v1/map/distances/refresh` persist provider/location versions and a 24-hour distance cache. `GET /api/v1/map/locations/{entityType}/{entityId}` and `GET /api/v1/map/distances` have matching `mapLocation` and `mapDistances` GraphQL reads. `POST /api/v1/eta/estimate` uses only a current cached route plus the effective transit-rule version and calculates wait-for-run, approval, handling, preparation, next-dispatch wait, buffer, and transport components. Its result includes the distance/rule versions, estimated transport cost, and an explicit estimate disclaimer; provider failure or an unresolved route is never converted into zero kilometres.
+Google Maps Platform is the server provider for address normalization and road distance. Configure `GoogleMaps:ServerApiKey` only through environment variables, user secrets, or a deployment secret store; use a separately restricted browser key for map rendering. Admin commands `POST /api/v1/map/geocode` and `POST /api/v1/map/distances/refresh` persist provider/location versions and a 24-hour distance cache. Map location and distance-cache entities are available through the scoped `entities` GraphQL root. `POST /api/v1/eta/estimate` uses only a current cached route plus the effective transit-rule version and calculates wait-for-run, approval, handling, preparation, next-dispatch wait, buffer, and transport components. Its result includes the distance/rule versions, estimated transport cost, and an explicit estimate disclaimer; provider failure or an unresolved route is never converted into zero kilometres.
 
-BE-04 exposes region and Sales-group master data under `/api/v1/regions` and `/api/v1/sales-groups`. Admin and scoped Sales Managers can manage Sales and Retailer assignments under `/api/v1/territory-assignments`; every transfer closes the previous row and creates a new row so assignment history remains intact. `GET /api/v1/retailers?scope=mine&search=...&page=1&pageSize=20` returns only the active Sales user's territory, and list/detail responses contain the two logical declaration sections `generalInformation` and `mlorDeclarations`. MLOR entries select exactly one Category or SKU scope, require `0 < ratio < 1`, and retain effective version history. A draft is submitted with `POST /api/v1/retailers/{id}/submit-review`; submission, approval, and reactivation are blocked until at least one valid MLOR entry exists. `GET /api/v1/retailers/{id}/mlor-resolution?productId=...` and GraphQL `retailerMlorResolution` resolve SKU, then the most-specific Category ancestor, then the versioned default. Only Admin may use the standalone `/api/v1/mlor-configurations` correction/history API. Admin approval activates the eight-digit Retailer code and fixes the final `0/7/14/30` payment term.
+BE-04 exposes region and Sales-group master data under `/api/v1/regions` and `/api/v1/sales-groups`. Admin and scoped Sales Managers can manage Sales and Retailer assignments under `/api/v1/territory-assignments`; every transfer closes the previous row and creates a new row so assignment history remains intact. `GET /api/v1/retailers?scope=mine&search=...&page=1&pageSize=20` returns only the active Sales user's territory, and list/detail responses contain the two logical declaration sections `generalInformation` and `mlorDeclarations`. MLOR entries select exactly one Category or SKU scope, require `0 < ratio < 1`, and retain effective version history. A draft is submitted with `POST /api/v1/retailers/{id}/submit-review`; submission, approval, and reactivation are blocked until at least one valid MLOR entry exists. `GET /api/v1/retailers/{id}/mlor-resolution?productId=...` resolves SKU, then the most-specific Category ancestor, then the versioned default. Only Admin may use the standalone `/api/v1/mlor-configurations` correction/history API. Admin approval activates the eight-digit Retailer code and fixes the final `0/7/14/30` payment term.
 
-BE-09 exposes campaign management under `/api/v1/promotions`, shelf-life suggestions and batch assignments under `/api/v1/batch-discounts`, and the pre-allocation quote under `/api/v1/pricing/snapshot`. The public quote uses base price plus an eligible ordinary campaign only and returns `finalPricePendingAllocation=true`; it never accepts a client-selected batch or applies a batch/HSD discount. The response identifies the exact product-price record and effective window and includes the applied campaign's quantity/effective conditions. Batch-derived final pricing remains an internal post-allocation concern. Every REST GET has an equivalent GraphQL query at `/graphql`.
+BE-09 exposes campaign management under `/api/v1/promotions`, shelf-life suggestions and batch assignments under `/api/v1/batch-discounts`, and the pre-allocation quote under `/api/v1/pricing/snapshot`. The public quote uses base price plus an eligible ordinary campaign only and returns `finalPricePendingAllocation=true`; it never accepts a client-selected batch or applies a batch/HSD discount. The response identifies the exact product-price record and effective window and includes the applied campaign's quantity/effective conditions. Batch-derived final pricing remains an internal post-allocation concern. GraphQL exposes entity reads only; calculated use-case results remain REST contracts.
 
-Assisted ordering is exposed under `/api/v1/orders`. Sales can create an order only for an active retailer in their current territory; the server snapshots the exact base-price record/effective window, ordinary-campaign conditions, and the resolved Retailer MLOR source/scope/version for every line, then marks pricing pending the final batch-derived HSD calculation. Capture does not query or select inventory, create an allocation, hold/reserve stock, or collect payment. `GET /api/v1/orders` supports scoped `createdByMe`, status, retailer, search, and deterministic paging; REST detail and GraphQL `order` expose the immutable pricing and MLOR snapshots alongside workflow state, history, and shipment links. The legacy approve/reject contract remains pending the separately tracked F36 rewrite.
+Assisted ordering is exposed under `/api/v1/orders`. Sales can create an order only for an active retailer in their current territory; the server snapshots the exact base-price record/effective window, ordinary-campaign conditions, and the resolved Retailer MLOR source/scope/version for every line, then marks pricing pending the final batch-derived HSD calculation. Capture does not query or select inventory, create an allocation, hold/reserve stock, or collect payment. `GET /api/v1/orders` supports scoped `createdByMe`, status, retailer, search, and deterministic paging; scoped order entities, lines, history, and shipment links are available below GraphQL `entities`. The legacy approve/reject contract remains pending the separately tracked F36 rewrite.
 
-Order picking is exposed under `/api/v1/picking-lists`. Approval creates one immutable-code list per allocated warehouse (`{OrderCode}A`, `{OrderCode}B`, ...). An assigned Warehouse Keeper scans only available QR labels for the exact allocated warehouse, batch, and SKU. Partial scans create child labels while preserving lineage; every scan is idempotent and version checked. Completing all warehouse lists prepares the order for dispatch without changing stock. Dispatch atomically issues the reservation (`OnHand -= quantity`, `Reserved -= quantity`), records the delivery snapshot, and moves the order into delivery. REST GET operations have equivalent scoped GraphQL queries.
+Run picking is exposed under `/api/v1/picking-lists`. An approved allocation run issues one immutable-code list per warehouse. Each list gathers by SKU/batch across orders, then splits the picked quantity back to the approved `AllocationRunAllocationId`; every split retains its `AllocationPlanPriceId` and is never repriced. An assigned Warehouse Keeper scans only available QR labels for the exact warehouse and approved batch. Partial scans create child labels while preserving lineage; every scan is idempotent and version checked. `POST /api/v1/picking-lists/{code}/complete` marks the warehouse portion `Ready` only when every gather and split is full, or records `NeedsHandling` with a shortage/damage/expiry/QR exception. Scanning and readiness never change `OnHand` or `Reserved`. Scoped run-picking list/gather/split entities are queryable below GraphQL `entities`.
 
 Goods receipt is exposed under `/api/v1/goods-receipts`. Admin and Warehouse Keeper create an idempotent `Pending` receipt with production and expiry dates; creation never changes inventory. `POST /api/v1/goods-receipts/{receiptId}/approve` is the only transition to `Received`: it idempotently creates or merges batches by warehouse, SKU, and expiry date, increases stock once, and records approval and inventory-source audit data. Inventory exposes only `physicalQuantity`, `reservedQuantity`, and the enforced invariant `availableQuantity = physicalQuantity - reservedQuantity`.
 
 QR lookup and printable HTML labels are exposed under `/api/v1/qr-labels`. Single-label and batch print artifacts include QR payload, SKU, batch, warehouse, quantity, and expiry information. Splits require whole-carton quantities and preserve parent/root lineage and quantity conservation. The generic scan endpoint accepts inspection only; stock movement must go through the corresponding receipt, picking, transfer, or dispatch workflow.
 
-The inventory expiry sweep runs daily at 01:30 in `Asia/Ho_Chi_Minh`, updates expired batches, writes `BatchExpired` outbox events, and dispatches idempotent notifications to active Admin and assigned Warehouse Keeper accounts. Admin can inspect the latest run through `GET /api/v1/inventory/expiry/health` or the `inventoryExpiryHealth` GraphQL field. Configure the outbox worker with `BackgroundJobs:InventoryOutbox`.
+The inventory expiry sweep runs daily at 01:30 in `Asia/Ho_Chi_Minh`, updates expired batches, writes `BatchExpired` outbox events, and dispatches idempotent notifications to active Admin and assigned Warehouse Keeper accounts. Admin can inspect operational health through `GET /api/v1/inventory/expiry/health`; expiry-run entities are queryable below GraphQL `entities`. Configure the outbox worker with `BackgroundJobs:InventoryOutbox`.
 
 Internal warehouse transfers are outside the registered MVP. Their legacy persistence/application code is retained for migration compatibility, but REST and GraphQL contracts are disabled and the development seeder no longer creates transfer data.
 
@@ -193,7 +212,7 @@ Approved orders create warehouse picking lists. Completing every list prepares t
 
 Final allocation approval creates one canonical payment ledger from the approved amount. It records confirmed and outstanding values for PayOS, manual prepaid, COD, and deferred collection under the same database lock and cap. Prepaid PayOS checkout is unavailable before that final snapshot, and dispatch remains blocked until the ledger is fully paid. A signed, amount/order/link/currency-validated PayOS webhook confirms the effect once; browser return URLs never mark an order paid. COD is confirmed by Admin or Operator only after complete delivery, while a deferred due date is set from the Vietnam complete-receipt date plus the snapshotted 7, 14, or 30-day term. Receipt never auto-settles COD or prepaid orders. Only full collection is supported.
 
-`GET /api/v1/manual-payments/{id}` and `GET /api/v1/manual-payments?salesOrderId=...` share their scoped application read service with GraphQL `manualPayment` and `manualPaymentsBySalesOrder`. Manual writes require Admin or Operator; creation requires `Idempotency-Key`, while confirm/cancel commands require the current manual-payment version. Payment reads expose `amount`, `confirmedAmount`, and `outstandingAmount` without exposing provider secrets or raw webhook payloads.
+`GET /api/v1/manual-payments/{id}` and `GET /api/v1/manual-payments?salesOrderId=...` provide use-case-shaped reads; scoped payment entities are also available below GraphQL `entities`. Manual writes require Admin or Operator; creation requires `Idempotency-Key`, while confirm/cancel commands require the current manual-payment version. Payment reads expose `amount`, `confirmedAmount`, and `outstandingAmount` without exposing provider secrets or raw webhook payloads.
 
 Configure `PayOS:ClientId`, `PayOS:ApiKey`, `PayOS:ChecksumKey`, `PayOS:ReturnUrl`, and `PayOS:CancelUrl` through user secrets or environment variables. Register the public `POST /api/v1/payments/payos/webhook` URL in the payOS dashboard; the endpoint accepts anonymous delivery but verifies every payload signature before changing payment state.
 

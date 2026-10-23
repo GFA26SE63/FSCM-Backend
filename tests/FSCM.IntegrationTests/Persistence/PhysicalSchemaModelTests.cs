@@ -381,7 +381,7 @@ public sealed class PhysicalSchemaModelTests
         var allocation = context.Model.FindEntityType(typeof(Allocation))!;
         var retailer = context.Model.FindEntityType(typeof(Retailer))!;
 
-        Assert.Equal("jsonb", order.FindProperty(nameof(SalesOrder.AllocationTraceJson))!.GetColumnType());
+        Assert.Null(order.FindProperty("AllocationTraceJson"));
         Assert.True(order.FindProperty(nameof(SalesOrder.Version))!.IsConcurrencyToken);
         Assert.False(order.FindProperty(nameof(SalesOrder.RetailerCodeSnapshot))!.IsNullable);
         Assert.False(order.FindProperty(nameof(SalesOrder.RetailerNameSnapshot))!.IsNullable);

@@ -42,10 +42,20 @@ public sealed record RunPickingListView(
     IReadOnlyCollection<RunPickingGather> Gathers,
     IReadOnlyCollection<RunPickingSplit> Splits);
 
+/// <summary>
+/// One allocated part with the codes a reader needs. The identifiers alone are no use on a screen
+/// where an Admin has to recognise the batch they are approving.
+/// </summary>
+public sealed record AllocationPlanAllocationView(
+    AllocationRunAllocation Allocation,
+    string BatchCode,
+    string WarehouseCode);
+
 public sealed record AllocationPlanVersionView(
     AllocationPlanVersion PlanVersion,
     string RunCode,
-    IReadOnlyCollection<AllocationPlanPrice> Prices);
+    IReadOnlyCollection<AllocationPlanPrice> Prices,
+    IReadOnlyCollection<AllocationPlanAllocationView> Allocations);
 
 public sealed record AllocationRunView(
     AllocationRun Run,

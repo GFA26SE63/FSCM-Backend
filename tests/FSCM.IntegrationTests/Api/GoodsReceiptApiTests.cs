@@ -13,7 +13,7 @@ namespace FSCM.IntegrationTests.Api;
 public sealed class GoodsReceiptApiTests
 {
     [Fact]
-    public async Task Receipt_create_and_approval_are_authorized_idempotent_and_available_through_graphQl()
+    public async Task Receipt_create_and_approval_are_authorized_and_idempotent()
     {
         using var identityFactory = new IdentityAuthorizationTests.IdentityApiFactory();
         var store = new TestInventoryStore();
@@ -79,37 +79,8 @@ public sealed class GoodsReceiptApiTests
         Assert.Equal(20m, inventoryItem.GetProperty("onHandQuantity").GetDecimal());
         Assert.Equal(20m, inventoryItem.GetProperty("availableQuantity").GetDecimal());
 
-        var graphQl = await client.PostAsJsonAsync("/graphql", new
-        {
-            query = "query($id: UUID!) { goodsReceipt(id: $id) { id receiptCode status approvedByUserId receivedAt lines { receivedQuantity productionDate batchCode } } }",
-            variables = new { id = receiptId }
-        });
-        Assert.Equal(HttpStatusCode.OK, graphQl.StatusCode);
-        var graphQlJson = JsonDocument.Parse(await graphQl.Content.ReadAsStringAsync());
-        Assert.False(graphQlJson.RootElement.TryGetProperty("errors", out _), graphQlJson.RootElement.ToString());
-        Assert.Equal(20m, graphQlJson.RootElement.GetProperty("data").GetProperty("goodsReceipt")
-            .GetProperty("lines")[0].GetProperty("receivedQuantity").GetDecimal());
-
-        var inventoryGraphQl = await client.PostAsJsonAsync("/graphql", new
-        {
-            query = "query { inventory(first: 10) { nodes { onHandQuantity reservedQuantity availableQuantity } } }"
-        });
-        var inventoryGraphQlJson = JsonDocument.Parse(await inventoryGraphQl.Content.ReadAsStringAsync());
-        Assert.False(inventoryGraphQlJson.RootElement.TryGetProperty("errors", out _), inventoryGraphQlJson.RootElement.ToString());
-        Assert.Equal(20m, inventoryGraphQlJson.RootElement.GetProperty("data").GetProperty("inventory")
-            .GetProperty("nodes")[0].GetProperty("availableQuantity").GetDecimal());
-
         var health = await client.GetAsync("/api/v1/inventory/expiry/health");
         Assert.Equal(HttpStatusCode.OK, health.StatusCode);
-        var healthGraphQl = await client.PostAsJsonAsync("/graphql", new
-        {
-            query = "query { inventoryExpiryHealth { schedulerEnabled scheduleTimeZone scheduleLocalTime pendingOutboxMessages failedOutboxMessages } }"
-        });
-        Assert.Equal(HttpStatusCode.OK, healthGraphQl.StatusCode);
-        var healthJson = JsonDocument.Parse(await healthGraphQl.Content.ReadAsStringAsync());
-        Assert.False(healthJson.RootElement.TryGetProperty("errors", out _), healthJson.RootElement.ToString());
-        Assert.Equal("Asia/Ho_Chi_Minh", healthJson.RootElement.GetProperty("data")
-            .GetProperty("inventoryExpiryHealth").GetProperty("scheduleTimeZone").GetString());
 
         client.DefaultRequestHeaders.Remove("Idempotency-Key");
         client.DefaultRequestHeaders.Authorization = Bearer(identityFactory.WarehouseKeeper, identityFactory);

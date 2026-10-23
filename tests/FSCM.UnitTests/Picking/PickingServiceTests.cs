@@ -1,73 +1,29 @@
-using FSCM.Application.Features.Inventory;
-using FSCM.Application.Features.Orders;
+using FSCM.Application.Features.AllocationRuns;
 using FSCM.Application.Features.Picking;
 using FSCM.Application.Features.QrLabels;
 using FSCM.Domain.Authorization;
 using FSCM.Domain.Entities;
-using DomainAllocation = FSCM.Domain.Entities.Allocation;
 
 namespace FSCM.UnitTests.Picking;
 
 public sealed class PickingServiceTests
 {
-    private static readonly DateTimeOffset Now = new(2026, 10, 15, 2, 0, 0, TimeSpan.Zero);
-
     [Fact]
-    public async Task Approval_plan_creates_one_deterministic_list_per_warehouse()
+    public async Task Scan_updates_gather_and_named_allocation_splits_without_issuing_stock()
     {
-        var fixture = new Fixture();
-        fixture.Store.Lists.Clear();
-        fixture.Store.Items.Clear();
-        var secondWarehouse = new Warehouse { Id = Guid.NewGuid(), Code = "WH-Q7", Name = "Kho Quận 7" };
-        var secondBatch = new Batch
-        {
-            Id = Guid.NewGuid(),
-            WarehouseId = secondWarehouse.Id,
-            ProductId = fixture.Product.Id,
-            BatchCode = "WH-Q7-SKU001-31032027"
-        };
-        var secondAllocation = new DomainAllocation
-        {
-            Id = Guid.NewGuid(),
-            SalesOrderLineId = fixture.Line.Id,
-            BatchId = secondBatch.Id,
-            WarehouseId = secondWarehouse.Id,
-            AllocatedQuantity = 3,
-            AllocationSequence = 2,
-            Status = AllocationInventoryStatuses.Reserved
-        };
-        var view = new OrderView(
-            fixture.Order,
-            [new OrderLineView(fixture.Line, [fixture.Allocation, secondAllocation], null)],
-            [],
-            [],
-            new Dictionary<Guid, string>
-            {
-                [fixture.Batch.Id] = fixture.Batch.BatchCode,
-                [secondBatch.Id] = secondBatch.BatchCode
-            },
-            new Dictionary<Guid, string>
-            {
-                [fixture.Warehouse.Id] = fixture.Warehouse.Code,
-                [secondWarehouse.Id] = secondWarehouse.Code
-            },
-            new Dictionary<Guid, int>());
+        var f = new Fixture();
+        var result = await f.ScanAsync(10, [(f.First.AllocationRunAllocationId, 6), (f.Second.AllocationRunAllocationId, 4)]);
 
-        var planner = new PickingPlanService(fixture.Store);
-        await planner.CreateForApprovedOrderAsync(view, Now, default);
-
-        Assert.Equal(2, fixture.Store.Lists.Count);
-        Assert.Equal(["DH-001030A", "DH-001030B"],
-            fixture.Store.Lists.OrderBy(item => item.PickingCode).Select(item => item.PickingCode));
-        Assert.Equal(2, fixture.Store.Items.Count);
-
-        await planner.CancelForOrderAsync(fixture.Order.Id, Now.AddMinutes(1), default);
-        Assert.All(fixture.Store.Lists, item => Assert.Equal(PickingListStatuses.Cancelled, item.Status));
-        Assert.All(fixture.Store.Items, item => Assert.Equal(PickingItemStatuses.Cancelled, item.Status));
+        Assert.Equal(RunPickingListStatuses.Picking, result.Status);
+        Assert.Equal(10, Assert.Single(result.Gathers).PickedQuantity);
+        Assert.Equal([4m, 6m], result.Gathers.Single().Splits.Select(x => x.PickedQuantity).Order());
+        Assert.Equal(QrLabelStatuses.Picked, f.Label.Status);
+        Assert.Equal(f.FirstPriceId, result.Gathers.Single().Splits
+            .Single(x => x.AllocationRunAllocationId == f.First.AllocationRunAllocationId).AllocationPlanPriceId);
     }
 
     [Fact]
-    public async Task Full_label_scan_completes_list_without_issuing_inventory()
+    public async Task Scan_rejects_wrong_warehouse_batch_and_duplicate_allocation()
     {
         var fixture = new Fixture(labelQuantity: 10);
 
@@ -87,159 +43,74 @@ public sealed class PickingServiceTests
     }
 
     [Fact]
-    public async Task Partial_scan_splits_child_label_and_preserves_parent_lineage()
+    public async Task Scan_is_idempotent_by_operation_key()
     {
-        var fixture = new Fixture(labelQuantity: 20);
-
-        var result = await fixture.ScanAsync(quantity: 4);
-
-        Assert.Equal(PickingListStatuses.InProgress, result.Status);
-        Assert.Equal(4m, Assert.Single(result.Items).PickedQuantity);
-        Assert.Equal(16m, fixture.Label.Quantity);
-        var child = Assert.Single(fixture.Store.Labels, item => item.Id != fixture.Label.Id);
-        Assert.Equal(fixture.Label.Id, child.ParentLabelId);
-        Assert.Equal(fixture.Label.RootLabelId, child.RootLabelId);
-        Assert.Equal(QrLabelStatuses.Picked, child.Status);
+        var f = new Fixture();
+        await f.ScanAsync(10, [(f.First.AllocationRunAllocationId, 6), (f.Second.AllocationRunAllocationId, 4)]);
+        var repeated = await f.ScanAsync(10, [(f.First.AllocationRunAllocationId, 6), (f.Second.AllocationRunAllocationId, 4)]);
+        Assert.Equal(10, repeated.Gathers.Single().PickedQuantity);
+        Assert.Single(f.Events, x => x.EventType == QrLabelEventTypes.Picked);
     }
 
     [Fact]
-    public async Task Repeated_operation_key_is_idempotent()
+    public async Task Complete_requires_every_gather_and_split_then_marks_warehouse_ready()
     {
-        var fixture = new Fixture(labelQuantity: 10);
-        await fixture.ScanAsync(quantity: null);
-
-        var repeated = await fixture.ScanAsync(quantity: null);
-
-        Assert.Equal(PickingListStatuses.Completed, repeated.Status);
-        Assert.Single(fixture.Store.Events, item => item.EventType == QrLabelEventTypes.Picked);
+        var f = new Fixture();
+        var error = await Assert.ThrowsAsync<PickingOperationException>(() => f.CompleteAsync(0));
+        Assert.Equal("conflict", error.Code);
+        await f.ScanAsync(10, [(f.First.AllocationRunAllocationId, 6), (f.Second.AllocationRunAllocationId, 4)]);
+        var ready = await f.CompleteAsync(1);
+        Assert.Equal(RunPickingListStatuses.Ready, ready.Status);
+        Assert.Equal(f.ActorId, ready.CompletedByUserId);
     }
 
     [Fact]
-    public async Task Scan_rejects_label_from_another_batch()
+    public async Task Complete_records_shortage_as_needs_handling_without_faking_readiness()
     {
-        var fixture = new Fixture(labelQuantity: 10);
-        fixture.Label.BatchId = Guid.NewGuid();
-
-        var exception = await Assert.ThrowsAsync<PickingOperationException>(() => fixture.ScanAsync(null));
-
-        Assert.Equal("conflict", exception.Code);
-    }
-
-    [Fact]
-    public async Task Scan_rejects_stale_picking_version()
-    {
-        var fixture = new Fixture(labelQuantity: 10);
-
-        var exception = await Assert.ThrowsAsync<PickingOperationException>(() =>
-            fixture.Service.ScanAsync(
-                fixture.List.PickingCode,
-                new ScanPickingLabelData(fixture.Label.QrCode, null, 9, fixture.Label.Version),
-                fixture.OperationKey,
-                fixture.WarehouseKeeperUserId,
-                SystemRoles.WarehouseKeeper,
-                default));
-
-        Assert.Equal("conflict", exception.Code);
-    }
-
-    [Fact]
-    public async Task Warehouse_keeper_cannot_scan_unassigned_warehouse()
-    {
-        var fixture = new Fixture(labelQuantity: 10) { HasWarehouseAccess = false };
-
-        var exception = await Assert.ThrowsAsync<PickingOperationException>(() => fixture.ScanAsync(null));
-
-        Assert.Equal("forbidden", exception.Code);
+        var f = new Fixture();
+        var result = await f.Service.CompleteAsync(f.List.PickingCode,
+            new CompleteRunPickingData(0, "Shortage", "Thiếu hai thùng tại vị trí lấy hàng"),
+            f.ActorId, SystemRoles.WarehouseKeeper, default);
+        Assert.Equal(RunPickingListStatuses.NeedsHandling, result.Status);
+        Assert.Equal("Shortage", result.ExceptionType);
+        Assert.Equal(0, f.Gather.PickedQuantity);
     }
 
     private sealed class Fixture
     {
-        public Guid WarehouseKeeperUserId { get; } = Guid.NewGuid();
-        public string OperationKey { get; } = "pick-operation-001";
-        public Product Product { get; }
-        public Warehouse Warehouse { get; }
-        public Batch Batch { get; }
-        public SalesOrder Order { get; }
-        public SalesOrderLine Line { get; }
-        public DomainAllocation Allocation { get; }
-        public PickingList List { get; }
-        public PickingItem Item { get; }
+        public Guid ActorId { get; } = Guid.NewGuid();
+        public Guid FirstPriceId { get; } = Guid.NewGuid();
+        public RunPickingList List { get; }
+        public RunPickingGather Gather { get; }
+        public RunPickingSplit First { get; }
+        public RunPickingSplit Second { get; }
         public BatchQrLabel Label { get; }
-        public FakePickingStore Store { get; }
+        public List<QrLabelEvent> Events { get; } = [];
+        public FakeStore Store { get; }
         public PickingService Service { get; }
-        public bool HasWarehouseAccess { set => Store.HasWarehouseAccess = value; }
 
-        public Fixture(decimal labelQuantity = 10)
+        public Fixture()
         {
-            Product = new Product { Id = Guid.NewGuid(), Sku = "SKU001", Name = "Sữa tươi 1 lít" };
-            Warehouse = new Warehouse { Id = Guid.NewGuid(), Code = "WH-TD", Name = "Kho Thủ Đức" };
-            Batch = new Batch
+            var warehouseId = Guid.NewGuid();
+            var batchId = Guid.NewGuid();
+            List = new RunPickingList
             {
-                Id = Guid.NewGuid(),
-                WarehouseId = Warehouse.Id,
-                ProductId = Product.Id,
-                BatchCode = "WH-TD-SKU001-31032027",
-                Quantity = 50,
-                Version = 1
+                Id = Guid.NewGuid(), PickingCode = "PS-DOT-20261023-01-01", AllocationRunId = Guid.NewGuid(),
+                AllocationPlanVersionId = Guid.NewGuid(), WarehouseId = warehouseId,
+                Status = RunPickingListStatuses.Issued, IssuedAt = Now, CreatedAt = Now, UpdatedAt = Now
             };
-            Order = new SalesOrder
+            Gather = new RunPickingGather
             {
-                Id = Guid.NewGuid(),
-                OrderCode = "DH-001030",
-                Status = OrderStatuses.Approved,
-                Version = 1,
-                UpdatedAt = Now
+                Id = Guid.NewGuid(), RunPickingListId = List.Id, ProductId = Guid.NewGuid(), SkuSnapshot = "SKU001",
+                BatchId = batchId, BatchCodeSnapshot = "WH-TD-SKU001-31122026", RequiredQuantity = 10,
+                Status = RunPickingGatherStatuses.Pending, CreatedAt = Now
             };
-            Line = new SalesOrderLine
-            {
-                Id = Guid.NewGuid(),
-                SalesOrderId = Order.Id,
-                ProductId = Product.Id,
-                LineNumber = 1,
-                SkuSnapshot = Product.Sku,
-                ProductNameSnapshot = Product.Name
-            };
-            Allocation = new DomainAllocation
-            {
-                Id = Guid.NewGuid(),
-                SalesOrderLineId = Line.Id,
-                BatchId = Batch.Id,
-                WarehouseId = Warehouse.Id,
-                AllocatedQuantity = 10,
-                AllocationSequence = 1,
-                Status = AllocationInventoryStatuses.Reserved
-            };
-            List = new PickingList
-            {
-                Id = Guid.NewGuid(),
-                PickingCode = "DH-001030A",
-                SalesOrderId = Order.Id,
-                WarehouseId = Warehouse.Id,
-                Status = PickingListStatuses.Open,
-                Version = 0,
-                CreatedAt = Now,
-                UpdatedAt = Now
-            };
-            Item = new PickingItem
-            {
-                Id = Guid.NewGuid(),
-                PickingListId = List.Id,
-                AllocationId = Allocation.Id,
-                SourceBatchId = Batch.Id,
-                RequestedQuantity = 10,
-                Status = PickingItemStatuses.Pending
-            };
+            First = NewSplit(6, FirstPriceId);
+            Second = NewSplit(4, Guid.NewGuid());
             Label = new BatchQrLabel
             {
-                Id = Guid.NewGuid(),
-                BatchId = Batch.Id,
-                CurrentWarehouseId = Warehouse.Id,
-                QrCode = "TEM-000300",
-                Quantity = labelQuantity,
-                Status = QrLabelStatuses.Available,
-                Version = 1,
-                GeneratedAt = Now,
-                UpdatedAt = Now
+                Id = Guid.NewGuid(), BatchId = batchId, CurrentWarehouseId = warehouseId, QrCode = "TEM-000123",
+                Quantity = 10, Status = QrLabelStatuses.Available, Version = 1, GeneratedAt = Now, UpdatedAt = Now
             };
             Label.RootLabelId = Label.Id;
             Store = new FakePickingStore(this);
@@ -320,21 +191,37 @@ public sealed class PickingServiceTests
 
         private PickingView ToView(PickingList list)
         {
-            var itemViews = Items.Where(item => item.PickingListId == list.Id)
-                .Select(item => new PickingItemView(item, fixture.Allocation, fixture.Line, fixture.Batch))
-                .ToArray();
-            var scans = Events.Where(item => item.EventType == QrLabelEventTypes.Picked &&
-                                             item.ReferenceCode == list.PickingCode)
-                .Select(item => new PickingScanView(item,
-                    Labels.Single(label => label.Id == item.BatchQrLabelId).QrCode)).ToArray();
-            return new PickingView(
-                list, fixture.Order, fixture.Warehouse, itemViews, scans,
-                new Dictionary<Guid, int> { [fixture.Batch.Id] = 3 });
-        }
+            Id = Guid.NewGuid(), RunPickingGatherId = Gather.Id, AllocationRunAllocationId = Guid.NewGuid(),
+            AllocationRunLineId = Guid.NewGuid(), AllocationPlanPriceId = priceId, SalesOrderId = Guid.NewGuid(),
+            SalesOrderLineId = Guid.NewGuid(), OrderCodeSnapshot = $"DH-{Guid.NewGuid():N}"[..9],
+            Quantity = quantity, CreatedAt = Now
+        };
     }
 
-    private sealed class FixedTimeProvider(DateTimeOffset now) : TimeProvider
+    private static readonly DateTimeOffset Now = new(2026, 10, 23, 3, 0, 0, TimeSpan.Zero);
+    private sealed class Clock : TimeProvider { public override DateTimeOffset GetUtcNow() => Now; }
+
+    private sealed class FakeStore(Fixture f) : IRunPickingStore
     {
-        public override DateTimeOffset GetUtcNow() => now;
+        public Task<bool> CanAccessWarehouseAsync(Guid userId, string role, Guid warehouseId, CancellationToken ct) =>
+            Task.FromResult(true);
+        public Task<IReadOnlyCollection<RunPickingWorkflowView>> ListAsync(Guid userId, string role,
+            Guid? warehouseId, string? status, CancellationToken ct) =>
+            Task.FromResult<IReadOnlyCollection<RunPickingWorkflowView>>([View]);
+        public Task<RunPickingWorkflowView?> FindAsync(string code, bool update, CancellationToken ct) =>
+            Task.FromResult<RunPickingWorkflowView?>(code == f.List.PickingCode ? View : null);
+        public Task<QrLabelEvent?> FindOperationAsync(string key, CancellationToken ct) =>
+            Task.FromResult(f.Events.SingleOrDefault(x => x.OperationKey == key));
+        public Task<BatchQrLabel?> FindLabelForUpdateAsync(string code, CancellationToken ct) =>
+            Task.FromResult<BatchQrLabel?>(code == f.Label.QrCode ? f.Label : null);
+        public Task<string> NextQrCodeAsync(CancellationToken ct) => Task.FromResult("TEM-000124");
+        public void AddLabel(BatchQrLabel label) { }
+        public void AddLabelEvent(QrLabelEvent labelEvent) => f.Events.Add(labelEvent);
+        public Task SaveChangesAsync(CancellationToken ct) => Task.CompletedTask;
+        public Task ExecuteInTransactionAsync(Func<CancellationToken, Task> operation, CancellationToken ct) => operation(ct);
+        public void ClearTracking() { }
+        private RunPickingWorkflowView View => new(f.List, [f.Gather], [f.First, f.Second],
+            f.Events.Where(x => x.EventType == QrLabelEventTypes.Picked)
+                .Select(x => new RunPickingScanView(x, f.Label.QrCode)).ToArray());
     }
 }

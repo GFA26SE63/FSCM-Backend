@@ -41,6 +41,22 @@ public static class AllocationPlanVersionStatuses
     public const string Superseded = "Superseded";
 }
 
+/// <summary>
+/// One allocated part as the plan settled it: which batch, when it would arrive, and how much life
+/// it still has then. Approval reads this beside the price of the same part.
+/// </summary>
+public sealed record AllocationPlanAllocationResult(
+    Guid AllocationRunLineId,
+    Guid BatchId,
+    string BatchCode,
+    Guid WarehouseId,
+    string WarehouseCode,
+    decimal Quantity,
+    int Sequence,
+    DateTimeOffset EstimatedArrivalAt,
+    decimal RemainingShelfLifeHours,
+    decimal WeightedScore);
+
 public sealed record AllocationPlanPriceResult(
     Guid AllocationRunLineId,
     Guid BatchId,
@@ -71,7 +87,8 @@ public sealed record AllocationPlanVersionResult(
     DateTimeOffset? ApprovedAt,
     string? RecalculationReason,
     int Version,
-    IReadOnlyCollection<AllocationPlanPriceResult> Prices);
+    IReadOnlyCollection<AllocationPlanPriceResult> Prices,
+    IReadOnlyCollection<AllocationPlanAllocationResult> Allocations);
 
 public static class AllocationRunOrderStatuses
 {

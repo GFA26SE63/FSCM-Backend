@@ -2,6 +2,7 @@ using System.Security.Claims;
 using FSCM.API.Contracts.Deliveries;
 using FSCM.API.Contracts.Orders;
 using FSCM.Application.Features.Deliveries;
+using FSCM.Application.Features.AllocationRuns;
 using FSCM.Application.Features.Orders;
 using FSCM.Domain.Authorization;
 using Microsoft.AspNetCore.Authorization;
@@ -12,7 +13,10 @@ namespace FSCM.API.Controllers;
 [ApiController]
 [Authorize]
 [Route("api/v1/orders")]
-public sealed class OrdersController(OrderService service, DeliveryService deliveryService) : ControllerBase
+public sealed class OrdersController(
+    OrderService service,
+    DeliveryService deliveryService,
+    AllocationTraceService allocationTraceService) : ControllerBase
 {
     [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator},{SystemRoles.SalesManager},{SystemRoles.Sales},{SystemRoles.WarehouseKeeper},{SystemRoles.Retailer}")]
     [HttpGet]
@@ -35,8 +39,12 @@ public sealed class OrdersController(OrderService service, DeliveryService deliv
 
     [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator},{SystemRoles.SalesManager},{SystemRoles.Sales},{SystemRoles.WarehouseKeeper},{SystemRoles.Retailer}")]
     [HttpGet("{id:guid}/allocation-trace")]
-    public Task<OrderTraceResult> Trace(Guid id, CancellationToken cancellationToken) =>
-        service.GetTraceAsync(id, GetActorUserId(), GetActorRole(), cancellationToken);
+    [Obsolete("Use GET /api/v1/allocation-runs/orders/{salesOrderId}/trace.")]
+    public async Task<OrderTraceDetailResult> Trace(Guid id, CancellationToken cancellationToken)
+    {
+        await service.GetAsync(id, GetActorUserId(), GetActorRole(), cancellationToken);
+        return await allocationTraceService.GetByOrderAsync(id, cancellationToken);
+    }
 
     [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator},{SystemRoles.SalesManager},{SystemRoles.Sales},{SystemRoles.WarehouseKeeper},{SystemRoles.Retailer}")]
     [HttpGet("{id:guid}/timeline")]
