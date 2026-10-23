@@ -12,6 +12,7 @@ public sealed class AllocationRunAllocationConfiguration : IEntityTypeConfigurat
         builder.HasKey(entity => entity.Id);
         builder.Property(entity => entity.Id).HasColumnType("uuid").IsRequired();
         builder.Property(entity => entity.AllocationRunId).HasColumnType("uuid").IsRequired();
+        builder.Property(entity => entity.AllocationPlanVersionId).HasColumnType("uuid").IsRequired();
         builder.Property(entity => entity.AllocationRunLineId).HasColumnType("uuid").IsRequired();
         builder.Property(entity => entity.BatchId).HasColumnType("uuid").IsRequired();
         builder.Property(entity => entity.WarehouseId).HasColumnType("uuid").IsRequired();
@@ -22,8 +23,12 @@ public sealed class AllocationRunAllocationConfiguration : IEntityTypeConfigurat
         builder.Property(entity => entity.WeightedScore).HasPrecision(18, 6).IsRequired();
         builder.Property(entity => entity.SwappedFromBatchId).HasColumnType("uuid").IsRequired(false);
         builder.Property(entity => entity.CreatedAt).HasColumnType("timestamp with time zone").IsRequired();
-        builder.HasIndex(entity => new { entity.AllocationRunLineId, entity.BatchId }).IsUnique();
+        builder.HasIndex(entity => new { entity.AllocationPlanVersionId, entity.AllocationRunLineId, entity.BatchId }).IsUnique();
         builder.HasIndex(entity => new { entity.AllocationRunId, entity.BatchId });
+        builder.HasOne<AllocationPlanVersion>()
+            .WithMany()
+            .HasForeignKey(entity => entity.AllocationPlanVersionId)
+            .OnDelete(DeleteBehavior.Restrict);
         builder.HasOne<AllocationRun>()
             .WithMany()
             .HasForeignKey(entity => entity.AllocationRunId)

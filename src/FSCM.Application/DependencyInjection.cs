@@ -34,6 +34,7 @@ public static class DependencyInjection
         services.AddSingleton<AllocationEngine>();
         services.AddScoped<BatchSwapResolver>();
         services.AddScoped<AllocationPlanner>();
+        services.AddScoped<AllocationPlanApprovalService>();
         services.AddScoped<AllocationPricingService>();
         services.AddScoped<AllocationRunService>();
         services.AddScoped<CatalogService>();

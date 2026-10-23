@@ -281,6 +281,48 @@ public sealed class AllocationRunServiceTests
         public void AddAllocations(IEnumerable<AllocationRunAllocation> allocations) =>
             Allocations.AddRange(allocations);
 
+        public List<AllocationPlanVersion> PlanVersions { get; } = [];
+        public List<AllocationPlanPrice> PlanPrices { get; } = [];
+
+        public void AddPlanVersion(AllocationPlanVersion version) => PlanVersions.Add(version);
+
+        public void AddPlanPrices(IEnumerable<AllocationPlanPrice> prices) => PlanPrices.AddRange(prices);
+
+        public Task<int> MaxPlanVersionNumberAsync(Guid runId, CancellationToken cancellationToken) =>
+            Task.FromResult(PlanVersions.Where(item => item.AllocationRunId == runId)
+                .Select(item => item.VersionNumber).DefaultIfEmpty(0).Max());
+
+        public Task<AllocationPlanVersion?> FindLivePlanVersionAsync(
+            Guid runId, CancellationToken cancellationToken) =>
+            Task.FromResult(PlanVersions.SingleOrDefault(item => item.AllocationRunId == runId
+                && item.Status == AllocationPlanVersionStatuses.AwaitingApproval));
+
+        public Task<AllocationPlanVersion?> FindPlanVersionForUpdateAsync(
+            Guid versionId, CancellationToken cancellationToken) =>
+            Task.FromResult(PlanVersions.SingleOrDefault(item => item.Id == versionId));
+
+        public Task<AllocationPlanVersionView?> FindPlanVersionViewAsync(
+            Guid versionId, CancellationToken cancellationToken) =>
+            Task.FromResult(ToPlanView(PlanVersions.SingleOrDefault(item => item.Id == versionId)));
+
+        public Task<IReadOnlyCollection<AllocationPlanVersionView>> ListPlanVersionsAsync(
+            Guid runId, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyCollection<AllocationPlanVersionView>>(PlanVersions
+                .Where(item => item.AllocationRunId == runId)
+                .OrderByDescending(item => item.VersionNumber)
+                .Select(item => ToPlanView(item)!)
+                .ToArray());
+
+        public Task<AllocationRun?> FindRunForUpdateAsync(Guid runId, CancellationToken cancellationToken) =>
+            Task.FromResult(Runs.SingleOrDefault(item => item.Id == runId));
+
+        private AllocationPlanVersionView? ToPlanView(AllocationPlanVersion? version) => version is null
+            ? null
+            : new AllocationPlanVersionView(
+                version,
+                Runs.Single(item => item.Id == version.AllocationRunId).RunCode,
+                PlanPrices.Where(item => item.AllocationPlanVersionId == version.Id).ToArray());
+
         public Task<AllocationSettings> GetSettingsAsync(CancellationToken cancellationToken) =>
             Task.FromResult(new AllocationSettings(0.5m, 0.3m, 0.2m, 20_000));
 

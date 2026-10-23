@@ -2,6 +2,11 @@ using FSCM.Domain.Entities;
 
 namespace FSCM.Application.Features.AllocationRuns;
 
+public sealed record AllocationPlanVersionView(
+    AllocationPlanVersion PlanVersion,
+    string RunCode,
+    IReadOnlyCollection<AllocationPlanPrice> Prices);
+
 public sealed record AllocationRunView(
     AllocationRun Run,
     IReadOnlyCollection<AllocationRunOrder> Orders,
@@ -67,6 +72,19 @@ public interface IAllocationRunStore
         IReadOnlyCollection<Guid> batchIds, CancellationToken cancellationToken);
 
     void AddAllocations(IEnumerable<AllocationRunAllocation> allocations);
+    void AddPlanVersion(AllocationPlanVersion version);
+    void AddPlanPrices(IEnumerable<AllocationPlanPrice> prices);
+
+    Task<int> MaxPlanVersionNumberAsync(Guid runId, CancellationToken cancellationToken);
+
+    /// <summary>The version still awaiting a decision, if any. At most one exists per run.</summary>
+    Task<AllocationPlanVersion?> FindLivePlanVersionAsync(Guid runId, CancellationToken cancellationToken);
+
+    Task<AllocationPlanVersion?> FindPlanVersionForUpdateAsync(Guid versionId, CancellationToken cancellationToken);
+    Task<AllocationPlanVersionView?> FindPlanVersionViewAsync(Guid versionId, CancellationToken cancellationToken);
+    Task<IReadOnlyCollection<AllocationPlanVersionView>> ListPlanVersionsAsync(
+        Guid runId, CancellationToken cancellationToken);
+    Task<AllocationRun?> FindRunForUpdateAsync(Guid runId, CancellationToken cancellationToken);
 
     Task<AllocationSettings> GetSettingsAsync(CancellationToken cancellationToken);
     Task<string> NextRunCodeAsync(DateOnly businessDate, CancellationToken cancellationToken);

@@ -176,6 +176,149 @@ namespace FSCM.Persistence.Migrations
                     b.ToTable("ALLOCATION", (string)null);
                 });
 
+            modelBuilder.Entity("FSCM.Domain.Entities.AllocationPlanPrice", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("AllocationPlanVersionId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("AllocationRunLineId")
+                        .HasColumnType("uuid");
+
+                    b.Property<decimal>("Amount")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<decimal>("BaseNetUnitPrice")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<Guid>("BatchId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("DiscountTableVersion")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("DiscountType")
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)");
+
+                    b.Property<decimal?>("DiscountValue")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<string>("Explanation")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<decimal>("FinalNetUnitPrice")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<decimal>("Quantity")
+                        .HasPrecision(18, 3)
+                        .HasColumnType("numeric(18,3)");
+
+                    b.Property<decimal>("RemainingShelfLifePercent")
+                        .HasPrecision(5, 2)
+                        .HasColumnType("numeric(5,2)");
+
+                    b.Property<decimal>("ShelfLifeDiscountPerUnit")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<Guid?>("ShelfLifeDiscountTierId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("WarehouseId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AllocationRunLineId");
+
+                    b.HasIndex("AllocationPlanVersionId", "AllocationRunLineId", "BatchId")
+                        .IsUnique();
+
+                    b.ToTable("ALLOCATION_PLAN_PRICE", (string)null);
+                });
+
+            modelBuilder.Entity("FSCM.Domain.Entities.AllocationPlanVersion", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("AllocationRunId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset?>("ApprovedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("ApprovedByUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("FulfilledOrderCount")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTimeOffset>("PricedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("RecalculationReason")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<DateTimeOffset?>("RecalculationRequestedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("RecalculationRequestedByUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("ShortOrderCount")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)");
+
+                    b.Property<decimal>("TotalFinalAmount")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("Version")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("VersionNumber")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AllocationRunId")
+                        .IsUnique()
+                        .HasFilter("\"Status\" = 'AwaitingApproval'");
+
+                    b.HasIndex("ApprovedByUserId");
+
+                    b.HasIndex("AllocationRunId", "VersionNumber")
+                        .IsUnique();
+
+                    b.ToTable("ALLOCATION_PLAN_VERSION", (string)null);
+                });
+
             modelBuilder.Entity("FSCM.Domain.Entities.AllocationRun", b =>
                 {
                     b.Property<Guid>("Id")
@@ -250,6 +393,9 @@ namespace FSCM.Persistence.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
+                    b.Property<Guid>("AllocationPlanVersionId")
+                        .HasColumnType("uuid");
+
                     b.Property<Guid>("AllocationRunId")
                         .HasColumnType("uuid");
 
@@ -288,11 +434,13 @@ namespace FSCM.Persistence.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("AllocationRunLineId");
+
                     b.HasIndex("BatchId");
 
                     b.HasIndex("AllocationRunId", "BatchId");
 
-                    b.HasIndex("AllocationRunLineId", "BatchId")
+                    b.HasIndex("AllocationPlanVersionId", "AllocationRunLineId", "BatchId")
                         .IsUnique();
 
                     b.ToTable("ALLOCATION_RUN_ALLOCATION", (string)null);
@@ -4358,8 +4506,43 @@ namespace FSCM.Persistence.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("FSCM.Domain.Entities.AllocationPlanPrice", b =>
+                {
+                    b.HasOne("FSCM.Domain.Entities.AllocationPlanVersion", null)
+                        .WithMany()
+                        .HasForeignKey("AllocationPlanVersionId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("FSCM.Domain.Entities.AllocationRunLine", null)
+                        .WithMany()
+                        .HasForeignKey("AllocationRunLineId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("FSCM.Domain.Entities.AllocationPlanVersion", b =>
+                {
+                    b.HasOne("FSCM.Domain.Entities.AllocationRun", null)
+                        .WithMany()
+                        .HasForeignKey("AllocationRunId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("FSCM.Domain.Entities.UserAccount", null)
+                        .WithMany()
+                        .HasForeignKey("ApprovedByUserId")
+                        .OnDelete(DeleteBehavior.Restrict);
+                });
+
             modelBuilder.Entity("FSCM.Domain.Entities.AllocationRunAllocation", b =>
                 {
+                    b.HasOne("FSCM.Domain.Entities.AllocationPlanVersion", null)
+                        .WithMany()
+                        .HasForeignKey("AllocationPlanVersionId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
                     b.HasOne("FSCM.Domain.Entities.AllocationRun", null)
                         .WithMany()
                         .HasForeignKey("AllocationRunId")
