@@ -207,7 +207,7 @@ public sealed class AllocationRunService(
             (warehouseId, retailerId) => routes.GetValueOrDefault((warehouseId, retailerId)));
 
         var priced = await PriceAsync(plan, view, now, cancellationToken);
-        await PersistAsync(view.Run.Id, plan, now, cancellationToken);
+        await PersistAsync(view.Run.Id, plan, priced, now, cancellationToken);
         store.ClearTracking();
         return priced;
     }
@@ -293,6 +293,7 @@ public sealed class AllocationRunService(
     private async Task PersistAsync(
         Guid runId,
         AllocationPlan plan,
+        AllocationPricing priced,
         DateTimeOffset now,
         CancellationToken cancellationToken) =>
         await store.ExecuteInTransactionAsync(async transactionCancellationToken =>
@@ -302,6 +303,51 @@ public sealed class AllocationRunService(
             var orderById = tracked.Orders.ToDictionary(item => item.Id);
             var lineById = tracked.Lines.ToDictionary(item => item.Id);
             var allocations = new List<AllocationRunAllocation>();
+
+            // A recalculation supersedes the proposal it replaces instead of editing it, so what an
+            // Admin saw stays readable even after a new version is built.
+            if (await store.FindLivePlanVersionAsync(runId, transactionCancellationToken) is { } live)
+            {
+                live.Status = AllocationPlanVersionStatuses.Superseded;
+                live.Version++;
+                live.UpdatedAt = now;
+            }
+
+            var planVersion = new AllocationPlanVersion
+            {
+                Id = Guid.NewGuid(),
+                AllocationRunId = runId,
+                VersionNumber = await store.MaxPlanVersionNumberAsync(runId, transactionCancellationToken) + 1,
+                Status = AllocationPlanVersionStatuses.AwaitingApproval,
+                PricedAt = priced.PricedAt,
+                FulfilledOrderCount = plan.Fulfilled.Count(),
+                ShortOrderCount = plan.Short.Count(),
+                TotalFinalAmount = priced.Orders.Sum(item => item.FinalAmount),
+                Version = 0,
+                CreatedAt = now,
+                UpdatedAt = now
+            };
+            store.AddPlanVersion(planVersion);
+            store.AddPlanPrices(priced.Orders.SelectMany(order => order.Parts).Select(part => new AllocationPlanPrice
+            {
+                Id = Guid.NewGuid(),
+                AllocationPlanVersionId = planVersion.Id,
+                AllocationRunLineId = part.RunLineId,
+                BatchId = part.BatchId,
+                WarehouseId = part.WarehouseId,
+                Quantity = part.Quantity,
+                BaseNetUnitPrice = part.BaseNetUnitPrice,
+                RemainingShelfLifePercent = part.RemainingPercent,
+                ShelfLifeDiscountTierId = part.TierId,
+                DiscountType = part.DiscountType,
+                DiscountValue = part.DiscountValue,
+                ShelfLifeDiscountPerUnit = part.ShelfLifeDiscountPerUnit,
+                FinalNetUnitPrice = part.FinalNetUnitPrice,
+                Amount = part.Amount,
+                DiscountTableVersion = part.DiscountTableVersion,
+                Explanation = part.Explanation,
+                CreatedAt = now
+            }));
 
             foreach (var planned in plan.Orders)
             {
@@ -318,6 +364,7 @@ public sealed class AllocationRunService(
                     {
                         Id = Guid.NewGuid(),
                         AllocationRunId = runId,
+                        AllocationPlanVersionId = planVersion.Id,
                         AllocationRunLineId = item.RunLineId,
                         BatchId = item.BatchId,
                         WarehouseId = item.WarehouseId,

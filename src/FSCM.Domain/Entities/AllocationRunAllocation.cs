@@ -8,6 +8,7 @@ public sealed class AllocationRunAllocation
 {
     public Guid Id { get; set; }
     public Guid AllocationRunId { get; set; }
+    public Guid AllocationPlanVersionId { get; set; }
     public Guid AllocationRunLineId { get; set; }
     public Guid BatchId { get; set; }
     public Guid WarehouseId { get; set; }

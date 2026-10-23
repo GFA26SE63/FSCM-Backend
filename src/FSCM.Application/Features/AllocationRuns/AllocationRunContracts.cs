@@ -27,6 +27,52 @@ public static class MlorSources
     public const string ProductDefault = "ProductDefault";
 }
 
+public static class AllocationPlanVersionStatuses
+{
+    /// <summary>Put to Admin and waiting. Never leaves this state on its own.</summary>
+    public const string AwaitingApproval = "AwaitingApproval";
+
+    public const string Approved = "Approved";
+
+    /// <summary>Admin asked for a recalculation; a later version replaces this one.</summary>
+    public const string RecalculationRequested = "RecalculationRequested";
+
+    /// <summary>Replaced by a later version without being decided.</summary>
+    public const string Superseded = "Superseded";
+}
+
+public sealed record AllocationPlanPriceResult(
+    Guid AllocationRunLineId,
+    Guid BatchId,
+    Guid WarehouseId,
+    decimal Quantity,
+    decimal BaseNetUnitPrice,
+    decimal RemainingShelfLifePercent,
+    Guid? ShelfLifeDiscountTierId,
+    string? DiscountType,
+    decimal? DiscountValue,
+    decimal ShelfLifeDiscountPerUnit,
+    decimal FinalNetUnitPrice,
+    decimal Amount,
+    int DiscountTableVersion,
+    string Explanation);
+
+public sealed record AllocationPlanVersionResult(
+    Guid Id,
+    Guid AllocationRunId,
+    string RunCode,
+    int VersionNumber,
+    string Status,
+    DateTimeOffset PricedAt,
+    int FulfilledOrderCount,
+    int ShortOrderCount,
+    decimal TotalFinalAmount,
+    Guid? ApprovedByUserId,
+    DateTimeOffset? ApprovedAt,
+    string? RecalculationReason,
+    int Version,
+    IReadOnlyCollection<AllocationPlanPriceResult> Prices);
+
 public static class AllocationRunOrderStatuses
 {
     public const string Pending = "Pending";

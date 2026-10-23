@@ -30,6 +30,7 @@ public static class ServiceCollectionExtensions
         services.AddOpenApi();
         services.AddHealthChecks();
         services.AddProblemDetails();
+        services.AddExceptionHandler<AllocationRunExceptionHandler>();
         services.AddExceptionHandler<CatalogExceptionHandler>();
         services.AddExceptionHandler<DeliveryExceptionHandler>();
         services.AddExceptionHandler<InventoryExceptionHandler>();

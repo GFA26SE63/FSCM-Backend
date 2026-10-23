@@ -190,6 +190,88 @@ public sealed class AllocationRunStore(AppDbContext dbContext) : IAllocationRunS
     public void AddAllocations(IEnumerable<AllocationRunAllocation> allocations) =>
         dbContext.AllocationRunAllocationRecords.AddRange(allocations);
 
+    public void AddPlanVersion(AllocationPlanVersion version) => dbContext.AllocationPlanVersionRecords.Add(version);
+
+    public void AddPlanPrices(IEnumerable<AllocationPlanPrice> prices) =>
+        dbContext.AllocationPlanPriceRecords.AddRange(prices);
+
+    public async Task<int> MaxPlanVersionNumberAsync(Guid runId, CancellationToken cancellationToken) =>
+        await dbContext.AllocationPlanVersionRecords.AsNoTracking()
+            .Where(item => item.AllocationRunId == runId)
+            .AnyAsync(cancellationToken)
+            ? await dbContext.AllocationPlanVersionRecords.AsNoTracking()
+                .Where(item => item.AllocationRunId == runId)
+                .MaxAsync(item => item.VersionNumber, cancellationToken)
+            : 0;
+
+    public Task<AllocationPlanVersion?> FindLivePlanVersionAsync(Guid runId, CancellationToken cancellationToken) =>
+        dbContext.AllocationPlanVersionRecords.SingleOrDefaultAsync(
+            item => item.AllocationRunId == runId
+                && item.Status == AllocationPlanVersionStatuses.AwaitingApproval,
+            cancellationToken);
+
+    public Task<AllocationPlanVersion?> FindPlanVersionForUpdateAsync(
+        Guid versionId, CancellationToken cancellationToken) =>
+        dbContext.AllocationPlanVersionRecords.SingleOrDefaultAsync(item => item.Id == versionId, cancellationToken);
+
+    public Task<AllocationPlanVersionView?> FindPlanVersionViewAsync(
+        Guid versionId, CancellationToken cancellationToken) =>
+        CreatePlanVersionQuery(dbContext.AllocationPlanVersionRecords.AsNoTracking()
+            .Where(item => item.Id == versionId)).SingleOrDefaultAsync(cancellationToken);
+
+    public async Task<IReadOnlyCollection<AllocationPlanVersionView>> ListPlanVersionsAsync(
+        Guid runId, CancellationToken cancellationToken) =>
+        await CreatePlanVersionQuery(dbContext.AllocationPlanVersionRecords.AsNoTracking()
+                .Where(item => item.AllocationRunId == runId)
+                .OrderByDescending(item => item.VersionNumber))
+            .ToArrayAsync(cancellationToken);
+
+    public Task<AllocationRun?> FindRunForUpdateAsync(Guid runId, CancellationToken cancellationToken) =>
+        dbContext.AllocationRunRecords.SingleOrDefaultAsync(item => item.Id == runId, cancellationToken);
+
+    public async Task<IReadOnlyCollection<ReservableAllocation>> ListReservableAsync(
+        Guid planVersionId, CancellationToken cancellationToken)
+    {
+        var rows = await dbContext.AllocationRunAllocationRecords
+            .Where(allocation => allocation.AllocationPlanVersionId == planVersionId)
+            .Join(dbContext.BatchRecords, allocation => allocation.BatchId, batch => batch.Id,
+                (allocation, batch) => new { allocation, batch })
+            .Join(dbContext.InventoryBalanceRecords, item => item.batch.Id, balance => balance.BatchId,
+                (item, balance) => new { item.allocation, item.batch, balance })
+            .ToArrayAsync(cancellationToken);
+        if (rows.Length == 0) return [];
+
+        var allocationIds = rows.Select(item => item.allocation.Id).ToArray();
+        var held = await dbContext.ReservationRecords.AsNoTracking()
+            .Where(item => item.AllocationRunAllocationId != null
+                && allocationIds.Contains(item.AllocationRunAllocationId.Value)
+                && item.Status == "Active")
+            .Select(item => item.AllocationRunAllocationId!.Value)
+            .ToArrayAsync(cancellationToken);
+        var heldSet = held.ToHashSet();
+
+        return rows
+            .Select(item => new ReservableAllocation(
+                item.allocation, item.batch, item.balance, heldSet.Contains(item.allocation.Id)))
+            .ToArray();
+    }
+
+    public void AddReservation(Reservation reservation) => dbContext.ReservationRecords.Add(reservation);
+
+    public void AddInventoryTransaction(InventoryTransaction transaction) =>
+        dbContext.InventoryTransactionRecords.Add(transaction);
+
+    private IQueryable<AllocationPlanVersionView> CreatePlanVersionQuery(
+        IQueryable<AllocationPlanVersion> versions) =>
+        versions.Join(dbContext.AllocationRunRecords.AsNoTracking(),
+            version => version.AllocationRunId, run => run.Id,
+            (version, run) => new AllocationPlanVersionView(
+                version,
+                run.RunCode,
+                dbContext.AllocationPlanPriceRecords.AsNoTracking()
+                    .Where(price => price.AllocationPlanVersionId == version.Id)
+                    .ToArray()));
+
     public async Task<AllocationSettings> GetSettingsAsync(CancellationToken cancellationToken)
     {
         var weights = await ReadConfigurationAsync(BusinessConfigurationKeys.AllocationWeights, cancellationToken);

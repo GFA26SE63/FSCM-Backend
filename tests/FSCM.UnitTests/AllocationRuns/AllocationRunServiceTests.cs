@@ -281,6 +281,80 @@ public sealed class AllocationRunServiceTests
         public void AddAllocations(IEnumerable<AllocationRunAllocation> allocations) =>
             Allocations.AddRange(allocations);
 
+        public List<AllocationPlanVersion> PlanVersions { get; } = [];
+        public List<AllocationPlanPrice> PlanPrices { get; } = [];
+
+        public void AddPlanVersion(AllocationPlanVersion version) => PlanVersions.Add(version);
+
+        public void AddPlanPrices(IEnumerable<AllocationPlanPrice> prices) => PlanPrices.AddRange(prices);
+
+        public Task<int> MaxPlanVersionNumberAsync(Guid runId, CancellationToken cancellationToken) =>
+            Task.FromResult(PlanVersions.Where(item => item.AllocationRunId == runId)
+                .Select(item => item.VersionNumber).DefaultIfEmpty(0).Max());
+
+        public Task<AllocationPlanVersion?> FindLivePlanVersionAsync(
+            Guid runId, CancellationToken cancellationToken) =>
+            Task.FromResult(PlanVersions.SingleOrDefault(item => item.AllocationRunId == runId
+                && item.Status == AllocationPlanVersionStatuses.AwaitingApproval));
+
+        public Task<AllocationPlanVersion?> FindPlanVersionForUpdateAsync(
+            Guid versionId, CancellationToken cancellationToken) =>
+            Task.FromResult(PlanVersions.SingleOrDefault(item => item.Id == versionId));
+
+        public Task<AllocationPlanVersionView?> FindPlanVersionViewAsync(
+            Guid versionId, CancellationToken cancellationToken) =>
+            Task.FromResult(ToPlanView(PlanVersions.SingleOrDefault(item => item.Id == versionId)));
+
+        public Task<IReadOnlyCollection<AllocationPlanVersionView>> ListPlanVersionsAsync(
+            Guid runId, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyCollection<AllocationPlanVersionView>>(PlanVersions
+                .Where(item => item.AllocationRunId == runId)
+                .OrderByDescending(item => item.VersionNumber)
+                .Select(item => ToPlanView(item)!)
+                .ToArray());
+
+        public Task<AllocationRun?> FindRunForUpdateAsync(Guid runId, CancellationToken cancellationToken) =>
+            Task.FromResult(Runs.SingleOrDefault(item => item.Id == runId));
+
+        public List<Reservation> Reservations { get; } = [];
+        public List<InventoryTransaction> InventoryTransactions { get; } = [];
+
+        /// <summary>Live stock per batch, so a test can move it between planning and approval.</summary>
+        public Dictionary<Guid, InventoryBalance> Balances { get; } = [];
+        public Dictionary<Guid, Batch> Batches { get; } = [];
+
+        public Task<IReadOnlyCollection<ReservableAllocation>> ListReservableAsync(
+            Guid planVersionId, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyCollection<ReservableAllocation>>(Allocations
+                .Where(item => item.AllocationPlanVersionId == planVersionId)
+                .Select(item => new ReservableAllocation(
+                    item,
+                    Batches.GetValueOrDefault(item.BatchId)
+                        ?? new Batch { Id = item.BatchId, BatchCode = "B-001", ExpiryStatus = "Valid" },
+                    Balances.TryGetValue(item.BatchId, out var balance)
+                        ? balance
+                        : Balances[item.BatchId] = new InventoryBalance
+                        {
+                            BatchId = item.BatchId,
+                            PhysicalQuantity = AvailableQuantity,
+                            AvailableQuantity = AvailableQuantity
+                        },
+                    Reservations.Any(reservation => reservation.AllocationRunAllocationId == item.Id
+                        && reservation.Status == "Active")))
+                .ToArray());
+
+        public void AddReservation(Reservation reservation) => Reservations.Add(reservation);
+
+        public void AddInventoryTransaction(InventoryTransaction transaction) =>
+            InventoryTransactions.Add(transaction);
+
+        private AllocationPlanVersionView? ToPlanView(AllocationPlanVersion? version) => version is null
+            ? null
+            : new AllocationPlanVersionView(
+                version,
+                Runs.Single(item => item.Id == version.AllocationRunId).RunCode,
+                PlanPrices.Where(item => item.AllocationPlanVersionId == version.Id).ToArray());
+
         public Task<AllocationSettings> GetSettingsAsync(CancellationToken cancellationToken) =>
             Task.FromResult(new AllocationSettings(0.5m, 0.3m, 0.2m, 20_000));
 
