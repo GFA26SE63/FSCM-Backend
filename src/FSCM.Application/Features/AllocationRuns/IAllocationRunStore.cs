@@ -2,6 +2,23 @@ using FSCM.Domain.Entities;
 
 namespace FSCM.Application.Features.AllocationRuns;
 
+public sealed record OrderPriceLineView(AllocationRunLine Line);
+
+public sealed record OrderPricePartView(AllocationPlanPrice Price, string BatchCode);
+
+/// <summary>
+/// An order's priced allocation: the plan version it belongs to, its lines, and the price of every
+/// part. Read from the newest version the order appears in, so a superseded proposal is not served
+/// once a later one exists.
+/// </summary>
+public sealed record OrderPriceView(
+    string OrderCode,
+    Guid AllocationRunId,
+    string RunCode,
+    AllocationPlanVersion PlanVersion,
+    IReadOnlyCollection<OrderPriceLineView> Lines,
+    IReadOnlyCollection<OrderPricePartView> Prices);
+
 public sealed record RunPickingListView(
     RunPickingList List,
     IReadOnlyCollection<RunPickingGather> Gathers,
@@ -112,6 +129,9 @@ public interface IAllocationRunStore
     Task<IReadOnlyCollection<RunPickingListView>> ListRunPickingListsForWarehouseAsync(
         Guid warehouseId, CancellationToken cancellationToken);
     Task<RunPickingListView?> FindRunPickingListAsync(Guid pickingListId, CancellationToken cancellationToken);
+
+    Task<OrderPriceView?> FindOrderPriceAsync(Guid salesOrderId, CancellationToken cancellationToken);
+    Task<Guid?> FindOrderIdForLineAsync(Guid salesOrderLineId, CancellationToken cancellationToken);
 
     void AddRunPickingLists(IEnumerable<RunPickingList> lists);
     void AddRunPickingGathers(IEnumerable<RunPickingGather> gathers);

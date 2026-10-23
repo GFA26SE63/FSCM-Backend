@@ -310,6 +310,51 @@ public sealed class AllocationRunStore(AppDbContext dbContext) : IAllocationRunS
             dbContext.RunPickingListRecords.AsNoTracking().Where(item => item.Id == pickingListId),
             cancellationToken)).SingleOrDefault();
 
+    public async Task<OrderPriceView?> FindOrderPriceAsync(Guid salesOrderId, CancellationToken cancellationToken)
+    {
+        // The newest version the order appears in: a superseded proposal must not be served once a
+        // later one exists.
+        var header = await dbContext.AllocationRunOrderRecords.AsNoTracking()
+            .Where(order => order.SalesOrderId == salesOrderId)
+            .Join(dbContext.AllocationRunRecords.AsNoTracking(),
+                order => order.AllocationRunId, run => run.Id, (order, run) => new { order, run })
+            .Join(dbContext.AllocationPlanVersionRecords.AsNoTracking(),
+                item => item.run.Id, version => version.AllocationRunId,
+                (item, version) => new { item.order, item.run, version })
+            .OrderByDescending(item => item.version.VersionNumber)
+            .FirstOrDefaultAsync(cancellationToken);
+        if (header is null) return null;
+
+        var lines = await dbContext.AllocationRunLineRecords.AsNoTracking()
+            .Where(line => line.AllocationRunOrderId == header.order.Id)
+            .ToArrayAsync(cancellationToken);
+        if (lines.Length == 0) return null;
+
+        var lineIds = lines.Select(line => line.Id).ToArray();
+        var prices = await dbContext.AllocationPlanPriceRecords.AsNoTracking()
+            .Where(price => price.AllocationPlanVersionId == header.version.Id
+                && lineIds.Contains(price.AllocationRunLineId))
+            .Join(dbContext.BatchRecords.AsNoTracking(),
+                price => price.BatchId, batch => batch.Id,
+                (price, batch) => new OrderPricePartView(price, batch.BatchCode))
+            .ToArrayAsync(cancellationToken);
+
+        return new OrderPriceView(
+            header.order.OrderCodeSnapshot,
+            header.run.Id,
+            header.run.RunCode,
+            header.version,
+            lines.Select(line => new OrderPriceLineView(line)).ToArray(),
+            prices);
+    }
+
+    public async Task<Guid?> FindOrderIdForLineAsync(Guid salesOrderLineId, CancellationToken cancellationToken) =>
+        await dbContext.AllocationRunLineRecords.AsNoTracking()
+            .Where(line => line.SalesOrderLineId == salesOrderLineId)
+            .Join(dbContext.AllocationRunOrderRecords.AsNoTracking(),
+                line => line.AllocationRunOrderId, order => order.Id, (line, order) => (Guid?)order.SalesOrderId)
+            .FirstOrDefaultAsync(cancellationToken);
+
     public void AddRunPickingLists(IEnumerable<RunPickingList> lists) =>
         dbContext.RunPickingListRecords.AddRange(lists);
 

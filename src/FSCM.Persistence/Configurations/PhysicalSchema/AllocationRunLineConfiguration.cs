@@ -20,6 +20,7 @@ public sealed class AllocationRunLineConfiguration : IEntityTypeConfiguration<Al
         builder.Property(entity => entity.TotalShelfLifeHours).IsRequired();
         builder.Property(entity => entity.EffectiveMlorRatio).HasPrecision(5, 4).IsRequired();
         builder.Property(entity => entity.MlorSource).HasMaxLength(30).IsRequired();
+        builder.Property(entity => entity.ListUnitPrice).HasPrecision(18, 2).IsRequired();
         builder.Property(entity => entity.BaseNetUnitPrice).HasPrecision(18, 2).IsRequired();
         builder.Property(entity => entity.AllocatedQuantity).HasPrecision(18, 3).IsRequired();
         builder.Property(entity => entity.CreatedAt).HasColumnType("timestamp with time zone").IsRequired();

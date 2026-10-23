@@ -196,6 +196,9 @@ namespace FSCM.Persistence.Migrations
                         .HasPrecision(18, 2)
                         .HasColumnType("numeric(18,2)");
 
+                    b.Property<DateTimeOffset>("BatchExpiresAt")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<Guid>("BatchId")
                         .HasColumnType("uuid");
 
@@ -222,6 +225,13 @@ namespace FSCM.Persistence.Migrations
                         .HasPrecision(18, 2)
                         .HasColumnType("numeric(18,2)");
 
+                    b.Property<decimal>("ListUnitPrice")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<DateTimeOffset>("PricedAt")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<decimal>("Quantity")
                         .HasPrecision(18, 3)
                         .HasColumnType("numeric(18,3)");
@@ -236,6 +246,9 @@ namespace FSCM.Persistence.Migrations
 
                     b.Property<Guid?>("ShelfLifeDiscountTierId")
                         .HasColumnType("uuid");
+
+                    b.Property<int>("TotalShelfLifeHours")
+                        .HasColumnType("integer");
 
                     b.Property<Guid>("WarehouseId")
                         .HasColumnType("uuid");
@@ -472,6 +485,10 @@ namespace FSCM.Persistence.Migrations
 
                     b.Property<int>("LineNumber")
                         .HasColumnType("integer");
+
+                    b.Property<decimal>("ListUnitPrice")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
 
                     b.Property<string>("MlorSource")
                         .IsRequired()

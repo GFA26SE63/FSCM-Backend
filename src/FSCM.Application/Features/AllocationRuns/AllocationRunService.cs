@@ -125,6 +125,7 @@ public sealed class AllocationRunService(
                         MlorSource = resolved.Source,
                         // Base price after ordinary promotion; the near-expiry reduction is applied
                         // after batch selection (F89), never here.
+                        ListUnitPrice = line.Line.UnitPrice,
                         BaseNetUnitPrice = line.Line.OrderedQuantity == 0
                             ? 0m
                             : line.Line.NetAmount / line.Line.OrderedQuantity,
@@ -284,6 +285,7 @@ public sealed class AllocationRunService(
                     allocation.Quantity,
                     expiry.GetValueOrDefault(allocation.BatchId, pricedAt),
                     line.TotalShelfLifeHours,
+                    line.ListUnitPrice,
                     line.BaseNetUnitPrice);
             }).ToArray())).ToArray();
 
@@ -336,7 +338,11 @@ public sealed class AllocationRunService(
                 BatchId = part.BatchId,
                 WarehouseId = part.WarehouseId,
                 Quantity = part.Quantity,
+                ListUnitPrice = part.ListUnitPrice,
                 BaseNetUnitPrice = part.BaseNetUnitPrice,
+                PricedAt = priced.PricedAt,
+                BatchExpiresAt = part.BatchExpiresAt,
+                TotalShelfLifeHours = part.TotalShelfLifeHours,
                 RemainingShelfLifePercent = part.RemainingPercent,
                 ShelfLifeDiscountTierId = part.TierId,
                 DiscountType = part.DiscountType,
