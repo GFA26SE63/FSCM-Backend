@@ -1,4 +1,5 @@
 using FSCM.Application.Features.AllocationRuns;
+using FSCM.Application.Features.DeliveryEta;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -14,6 +15,11 @@ namespace FSCM.Infrastructure.BackgroundJobs;
 /// joins the run that already exists instead of splitting one day's orders across two plans. A
 /// failure is logged and left for the next cutoff: the run is a proposal, and quietly retrying a
 /// half-built plan would be worse than not having one.
+///
+/// The cutoff comes from the published run-day schedule, the same one the ETA is built from. It is
+/// re-read before every wait, so changing it takes effect the next day without a restart. The
+/// configured time is only a fallback for a deployment where no schedule has been published yet:
+/// two independent cutoffs would let the ETA promise one time and the job keep another.
 /// </summary>
 public sealed class AllocationRunHostedService(
     IServiceScopeFactory scopeFactory,
@@ -30,27 +36,28 @@ public sealed class AllocationRunHostedService(
             return;
         }
 
-        TimeZoneInfo timeZone;
-        TimeSpan cutoff;
+        TimeZoneInfo fallbackZone;
+        TimeSpan fallbackCutoff;
         try
         {
-            timeZone = TimeZoneInfo.FindSystemTimeZoneById(settings.TimeZone);
-            cutoff = TimeSpan.ParseExact(settings.CutoffLocalTime, @"hh\:mm", null);
+            fallbackZone = TimeZoneInfo.FindSystemTimeZoneById(settings.TimeZone);
+            fallbackCutoff = TimeSpan.ParseExact(settings.CutoffLocalTime, @"hh\:mm", null);
         }
         catch (Exception exception) when (exception is TimeZoneNotFoundException or FormatException)
         {
             logger.LogError(exception,
-                "Invalid allocation run configuration (TimeZone='{TimeZone}', CutoffLocalTime='{Cutoff}'); job will not run.",
+                "Invalid allocation run fallback configuration (TimeZone='{TimeZone}', CutoffLocalTime='{Cutoff}'); job will not run.",
                 settings.TimeZone, settings.CutoffLocalTime);
             return;
         }
 
-        logger.LogInformation(
-            "Allocation run scheduled daily at {Cutoff} ({TimeZone}).", settings.CutoffLocalTime, timeZone.Id);
-
         while (!stoppingToken.IsCancellationRequested)
         {
+            var (timeZone, cutoff) = await ResolveCutoffAsync(fallbackZone, fallbackCutoff, stoppingToken);
             var delay = GetDelayUntilNextCutoff(timeZone, cutoff);
+            logger.LogInformation(
+                "Next allocation run at {Cutoff} ({TimeZone}), in {Delay}.", cutoff, timeZone.Id, delay);
+
             try
             {
                 await Task.Delay(delay, timeProvider, stoppingToken);
@@ -61,6 +68,35 @@ public sealed class AllocationRunHostedService(
             }
 
             await RunAsync(timeZone, cutoff, stoppingToken);
+        }
+    }
+
+    /// <summary>
+    /// The cutoff the Admin published, or the configured one if no schedule exists yet. A schedule
+    /// that cannot be read is reported and the fallback used: a run at the wrong hour is recoverable,
+    /// a day with no run at all is not.
+    /// </summary>
+    private async Task<(TimeZoneInfo Zone, TimeSpan Cutoff)> ResolveCutoffAsync(
+        TimeZoneInfo fallbackZone, TimeSpan fallbackCutoff, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await using var scope = scopeFactory.CreateAsyncScope();
+            var eta = scope.ServiceProvider.GetRequiredService<DeliveryEtaService>();
+            var schedule = await eta.GetScheduleAsync(null, cancellationToken);
+            var cutoff = schedule.Milestones.Single(item => item.Key == "allocation_run").LocalTime;
+            return (TimeZoneInfo.FindSystemTimeZoneById(schedule.TimeZone), cutoff.ToTimeSpan());
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            logger.LogWarning(exception,
+                "Could not read the published run schedule; falling back to {Cutoff} ({TimeZone}).",
+                fallbackCutoff, fallbackZone.Id);
+            return (fallbackZone, fallbackCutoff);
         }
     }
 

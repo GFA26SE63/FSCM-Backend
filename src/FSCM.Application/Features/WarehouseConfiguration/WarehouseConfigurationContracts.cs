@@ -98,7 +98,7 @@ public static class BusinessConfigurationKeys
             [AllocationWeights] = new("object", "Trọng số chấm điểm phân bổ theo hạn sử dụng, khoảng cách và độ phủ"),
             [ServiceRadiusMeters] = new("integer", "Bán kính phục vụ tối đa mặc định, tính bằng mét"),
             [DefaultMlorRatio] = new("decimal", "Tỷ lệ hạn sử dụng còn lại tối thiểu mặc định"),
-            [EtaSchedule] = new("object", "Lịch dùng để tính ETA: giờ chạy đợt, hạn duyệt, thời gian soạn, đệm và mốc xuất"),
+            [EtaSchedule] = new("object", "Lịch ngày chạy đợt: khuyến nghị gửi đơn, nhắc duyệt đơn, giờ chốt, nhắc duyệt phương án, hạn duyệt, thời gian soạn, đệm và mốc xuất"),
             [OrderBufferStockCartons] = new("integer", "Số thùng tồn kho đệm không dùng để phân bổ đơn hàng"),
             [OrderStepCartons] = new("integer", "Bước số lượng thùng hợp lệ khi tạo đơn hàng")
         };
