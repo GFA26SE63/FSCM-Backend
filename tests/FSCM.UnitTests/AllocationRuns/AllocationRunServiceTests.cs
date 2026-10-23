@@ -156,7 +156,7 @@ public sealed class AllocationRunServiceTests
             var transit = new TransitTableService(new EmptyTransitTableStore(), clock);
             Service = new AllocationRunService(
                 Store,
-                new AllocationPlanner(engine, new BatchSwapResolver(engine)),
+                new AllocationPlanner(engine),
                 new AllocationPricingService(new ShelfLifeDiscountService(new EmptyDiscountStore(), clock)),
                 new DeliveryEtaService(new EmptyEtaStore(), transit, clock),
                 clock);

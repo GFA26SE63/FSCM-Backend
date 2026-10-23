@@ -7,7 +7,7 @@ namespace FSCM.Application.Features.AllocationRuns;
 /// <summary>
 /// Drives the daily allocation run: it locks the orders that may compete at the cutoff, freezes the
 /// stock pool and the settings they will be scored against, then builds the plan by choosing
-/// batches (F33), swapping where that frees a short line (F86) and pricing what survives (F89).
+/// batches (F33) and pricing the orders that come out whole (F89).
 ///
 /// Nothing here touches a real inventory balance. The pool is the run's own copy, so a plan can be
 /// built, discarded and rebuilt without ever committing stock; only run approval reserves (F88).
@@ -166,7 +166,7 @@ public sealed class AllocationRunService(
     }
 
     /// <summary>
-    /// Builds the plan for a snapshotted run: batches are chosen and swapped, the surviving orders
+    /// Builds the plan for a snapshotted run: batches are chosen, the orders that come out whole
     /// are priced, and the run moves to AwaitingApproval. Nothing is reserved here; the plan stays
     /// a proposal until Admin approves it (F87, F88).
     ///
@@ -326,7 +326,6 @@ public sealed class AllocationRunService(
                         EstimatedArrivalAt = item.EstimatedArrivalAt,
                         RemainingShelfLifeHours = item.RemainingShelfLifeHours,
                         WeightedScore = item.WeightedScore,
-                        SwappedFromBatchId = item.SwappedFromBatchId,
                         CreatedAt = now
                     }));
                 }

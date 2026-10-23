@@ -32,7 +32,6 @@ public static class DependencyInjection
         services.AddValidatorsFromAssembly(typeof(DependencyInjection).Assembly);
         services.AddSingleton(TimeProvider.System);
         services.AddSingleton<AllocationEngine>();
-        services.AddScoped<BatchSwapResolver>();
         services.AddScoped<AllocationPlanner>();
         services.AddScoped<AllocationPricingService>();
         services.AddScoped<AllocationRunService>();

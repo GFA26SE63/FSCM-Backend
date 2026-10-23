@@ -20,7 +20,6 @@ public sealed class AllocationRunAllocationConfiguration : IEntityTypeConfigurat
         builder.Property(entity => entity.EstimatedArrivalAt).HasColumnType("timestamp with time zone").IsRequired();
         builder.Property(entity => entity.RemainingShelfLifeHours).HasPrecision(18, 2).IsRequired();
         builder.Property(entity => entity.WeightedScore).HasPrecision(18, 6).IsRequired();
-        builder.Property(entity => entity.SwappedFromBatchId).HasColumnType("uuid").IsRequired(false);
         builder.Property(entity => entity.CreatedAt).HasColumnType("timestamp with time zone").IsRequired();
         builder.HasIndex(entity => new { entity.AllocationRunLineId, entity.BatchId }).IsUnique();
         builder.HasIndex(entity => new { entity.AllocationRunId, entity.BatchId });

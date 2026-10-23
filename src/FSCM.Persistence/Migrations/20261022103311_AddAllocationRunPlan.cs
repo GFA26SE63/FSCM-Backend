@@ -25,7 +25,6 @@ namespace FSCM.Persistence.Migrations
                     EstimatedArrivalAt = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false),
                     RemainingShelfLifeHours = table.Column<decimal>(type: "numeric(18,2)", precision: 18, scale: 2, nullable: false),
                     WeightedScore = table.Column<decimal>(type: "numeric(18,6)", precision: 18, scale: 6, nullable: false),
-                    SwappedFromBatchId = table.Column<Guid>(type: "uuid", nullable: true),
                     CreatedAt = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false)
                 },
                 constraints: table =>

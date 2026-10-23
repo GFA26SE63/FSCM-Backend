@@ -28,6 +28,26 @@ public sealed class AllocationPlannerTests
     }
 
     [Fact]
+    public void An_earlier_orders_allocation_is_never_taken_back_for_a_later_one()
+    {
+        var planner = NewPlanner();
+        var only = Batch("B-001", ProductA, quantity: 10m);
+
+        var plan = planner.Plan(
+            [Order("DH-EARLY", 1, Line(ProductA, "SKU-A", 10m)),
+             Order("DH-LATE", 2, Line(ProductA, "SKU-A", 10m))],
+            [only],
+            Route);
+
+        // Scope V10 cut batch swapping: the later order goes short rather than the earlier one
+        // being moved aside to make room.
+        Assert.True(plan.Orders[0].IsFullyAllocated);
+        Assert.Equal(only.BatchId, Assert.Single(plan.Orders[0].Allocations).BatchId);
+        Assert.False(plan.Orders[1].IsFullyAllocated);
+        Assert.Equal(0m, plan.RemainingPool[only.BatchId]);
+    }
+
+    [Fact]
     public void A_short_line_hands_back_every_draw_the_order_already_made()
     {
         var planner = NewPlanner();
@@ -130,11 +150,7 @@ public sealed class AllocationPlannerTests
         Assert.False(plan.Orders[1].IsFullyAllocated);
     }
 
-    private static AllocationPlanner NewPlanner()
-    {
-        var engine = new AllocationEngine();
-        return new AllocationPlanner(engine, new BatchSwapResolver(engine));
-    }
+    private static AllocationPlanner NewPlanner() => new(new AllocationEngine());
 
     private static PlannerOrder Order(string code, int rank, params PlannerLine[] lines) =>
         new(Guid.NewGuid(), code, Guid.NewGuid(), rank, ArrivalDate.AddDays(7), lines);

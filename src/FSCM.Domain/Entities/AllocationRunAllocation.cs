@@ -17,8 +17,5 @@ public sealed class AllocationRunAllocation
     public decimal RemainingShelfLifeHours { get; set; }
     public decimal WeightedScore { get; set; }
 
-    /// <summary>Set when a later order's one-level swap moved this quantity here.</summary>
-    public Guid? SwappedFromBatchId { get; set; }
-
     public DateTimeOffset CreatedAt { get; set; }
 }

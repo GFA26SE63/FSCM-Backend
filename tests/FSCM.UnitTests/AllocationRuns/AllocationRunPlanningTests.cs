@@ -4,7 +4,7 @@ namespace FSCM.UnitTests.AllocationRuns;
 
 /// <summary>
 /// The orchestration side of F85: a snapshotted run is planned once, and only once.
-/// Batch choice, swapping and pricing have their own tests; this covers the wiring and the guard.
+/// Batch choice and pricing have their own tests; this covers the wiring and the guard.
 /// </summary>
 public sealed class AllocationRunPlanningTests
 {
