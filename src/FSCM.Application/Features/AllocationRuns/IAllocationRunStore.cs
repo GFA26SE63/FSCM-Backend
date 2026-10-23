@@ -86,6 +86,16 @@ public interface IAllocationRunStore
         Guid runId, CancellationToken cancellationToken);
     Task<AllocationRun?> FindRunForUpdateAsync(Guid runId, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// The allocations of a plan version joined to live batch and balance rows, tracked so the hold
+    /// can be written, and flagged when one already holds stock.
+    /// </summary>
+    Task<IReadOnlyCollection<ReservableAllocation>> ListReservableAsync(
+        Guid planVersionId, CancellationToken cancellationToken);
+
+    void AddReservation(Reservation reservation);
+    void AddInventoryTransaction(InventoryTransaction transaction);
+
     Task<AllocationSettings> GetSettingsAsync(CancellationToken cancellationToken);
     Task<string> NextRunCodeAsync(DateOnly businessDate, CancellationToken cancellationToken);
 

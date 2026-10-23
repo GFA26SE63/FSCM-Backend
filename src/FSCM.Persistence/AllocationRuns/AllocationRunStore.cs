@@ -229,6 +229,38 @@ public sealed class AllocationRunStore(AppDbContext dbContext) : IAllocationRunS
     public Task<AllocationRun?> FindRunForUpdateAsync(Guid runId, CancellationToken cancellationToken) =>
         dbContext.AllocationRunRecords.SingleOrDefaultAsync(item => item.Id == runId, cancellationToken);
 
+    public async Task<IReadOnlyCollection<ReservableAllocation>> ListReservableAsync(
+        Guid planVersionId, CancellationToken cancellationToken)
+    {
+        var rows = await dbContext.AllocationRunAllocationRecords
+            .Where(allocation => allocation.AllocationPlanVersionId == planVersionId)
+            .Join(dbContext.BatchRecords, allocation => allocation.BatchId, batch => batch.Id,
+                (allocation, batch) => new { allocation, batch })
+            .Join(dbContext.InventoryBalanceRecords, item => item.batch.Id, balance => balance.BatchId,
+                (item, balance) => new { item.allocation, item.batch, balance })
+            .ToArrayAsync(cancellationToken);
+        if (rows.Length == 0) return [];
+
+        var allocationIds = rows.Select(item => item.allocation.Id).ToArray();
+        var held = await dbContext.ReservationRecords.AsNoTracking()
+            .Where(item => item.AllocationRunAllocationId != null
+                && allocationIds.Contains(item.AllocationRunAllocationId.Value)
+                && item.Status == "Active")
+            .Select(item => item.AllocationRunAllocationId!.Value)
+            .ToArrayAsync(cancellationToken);
+        var heldSet = held.ToHashSet();
+
+        return rows
+            .Select(item => new ReservableAllocation(
+                item.allocation, item.batch, item.balance, heldSet.Contains(item.allocation.Id)))
+            .ToArray();
+    }
+
+    public void AddReservation(Reservation reservation) => dbContext.ReservationRecords.Add(reservation);
+
+    public void AddInventoryTransaction(InventoryTransaction transaction) =>
+        dbContext.InventoryTransactionRecords.Add(transaction);
+
     private IQueryable<AllocationPlanVersionView> CreatePlanVersionQuery(
         IQueryable<AllocationPlanVersion> versions) =>
         versions.Join(dbContext.AllocationRunRecords.AsNoTracking(),

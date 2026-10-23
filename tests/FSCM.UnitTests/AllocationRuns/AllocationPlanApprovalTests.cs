@@ -138,7 +138,15 @@ public sealed class AllocationPlanApprovalTests
     {
         public AllocationPlanApprovalService Approvals { get; }
 
-        public ApprovalFixture() => Approvals = new AllocationPlanApprovalService(Store, new FixedClock());
+
+        public ApprovalFixture()
+        {
+            var clock = new FixedClock();
+            Reservations = new AllocationReservationService(Store, clock);
+            Approvals = new AllocationPlanApprovalService(Store, Reservations, clock);
+        }
+
+        public AllocationReservationService Reservations { get; }
 
         public async Task<AllocationRunResult> PlanAsync()
         {

@@ -316,6 +316,38 @@ public sealed class AllocationRunServiceTests
         public Task<AllocationRun?> FindRunForUpdateAsync(Guid runId, CancellationToken cancellationToken) =>
             Task.FromResult(Runs.SingleOrDefault(item => item.Id == runId));
 
+        public List<Reservation> Reservations { get; } = [];
+        public List<InventoryTransaction> InventoryTransactions { get; } = [];
+
+        /// <summary>Live stock per batch, so a test can move it between planning and approval.</summary>
+        public Dictionary<Guid, InventoryBalance> Balances { get; } = [];
+        public Dictionary<Guid, Batch> Batches { get; } = [];
+
+        public Task<IReadOnlyCollection<ReservableAllocation>> ListReservableAsync(
+            Guid planVersionId, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyCollection<ReservableAllocation>>(Allocations
+                .Where(item => item.AllocationPlanVersionId == planVersionId)
+                .Select(item => new ReservableAllocation(
+                    item,
+                    Batches.GetValueOrDefault(item.BatchId)
+                        ?? new Batch { Id = item.BatchId, BatchCode = "B-001", ExpiryStatus = "Valid" },
+                    Balances.TryGetValue(item.BatchId, out var balance)
+                        ? balance
+                        : Balances[item.BatchId] = new InventoryBalance
+                        {
+                            BatchId = item.BatchId,
+                            PhysicalQuantity = AvailableQuantity,
+                            AvailableQuantity = AvailableQuantity
+                        },
+                    Reservations.Any(reservation => reservation.AllocationRunAllocationId == item.Id
+                        && reservation.Status == "Active")))
+                .ToArray());
+
+        public void AddReservation(Reservation reservation) => Reservations.Add(reservation);
+
+        public void AddInventoryTransaction(InventoryTransaction transaction) =>
+            InventoryTransactions.Add(transaction);
+
         private AllocationPlanVersionView? ToPlanView(AllocationPlanVersion? version) => version is null
             ? null
             : new AllocationPlanVersionView(

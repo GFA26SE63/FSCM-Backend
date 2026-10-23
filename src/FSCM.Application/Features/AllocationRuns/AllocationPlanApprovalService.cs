@@ -10,7 +10,10 @@ namespace FSCM.Application.Features.AllocationRuns;
 /// Nothing here decides on its own. A deadline passing leaves the version waiting rather than
 /// approving it, because an unattended approval would commit stock and money nobody looked at.
 /// </summary>
-public sealed class AllocationPlanApprovalService(IAllocationRunStore store, TimeProvider timeProvider)
+public sealed class AllocationPlanApprovalService(
+    IAllocationRunStore store,
+    AllocationReservationService reservations,
+    TimeProvider timeProvider)
 {
     public async Task<AllocationPlanVersionResult> GetAsync(Guid versionId, CancellationToken cancellationToken) =>
         ToResult(await store.FindPlanVersionViewAsync(versionId, cancellationToken)
@@ -28,6 +31,25 @@ public sealed class AllocationPlanApprovalService(IAllocationRunStore store, Tim
     public async Task<AllocationPlanVersionResult> ApproveAsync(
         Guid versionId, int expectedVersion, Guid adminUserId, CancellationToken cancellationToken)
     {
+        var view = await store.FindPlanVersionViewAsync(versionId, cancellationToken)
+            ?? throw AllocationRunOperationException.NotFound("Plan version was not found.");
+
+        // Hours can pass between building the plan and deciding on it, so the hold happens first:
+        // if live stock no longer supports the plan it is sent back to be rebuilt, and the version
+        // is never marked approved on numbers that stopped being true.
+        try
+        {
+            await reservations.ReserveAsync(
+                versionId, adminUserId, view.RunCode, cancellationToken: cancellationToken);
+        }
+        catch (AllocationRunOperationException exception) when (exception.Code == "conflict")
+        {
+            await ReopenForRecalculationAsync(
+                versionId, adminUserId, $"Giữ tồn thất bại: {exception.Message}", cancellationToken);
+            throw AllocationRunOperationException.Conflict(
+                $"{exception.Message} Phương án đã được trả về để tính lại.");
+        }
+
         await store.ExecuteInTransactionAsync(async transactionCancellationToken =>
         {
             var version = await RequireLiveVersionAsync(versionId, expectedVersion, transactionCancellationToken);
@@ -71,27 +93,43 @@ public sealed class AllocationPlanApprovalService(IAllocationRunStore store, Tim
 
         await store.ExecuteInTransactionAsync(async transactionCancellationToken =>
         {
-            var version = await RequireLiveVersionAsync(versionId, expectedVersion, transactionCancellationToken);
-            var now = timeProvider.GetUtcNow();
-            version.Status = AllocationPlanVersionStatuses.RecalculationRequested;
-            version.RecalculationRequestedByUserId = adminUserId;
-            version.RecalculationRequestedAt = now;
-            version.RecalculationReason = reason;
-            version.Version++;
-            version.UpdatedAt = now;
-
-            var run = await store.FindRunForUpdateAsync(version.AllocationRunId, transactionCancellationToken)
-                ?? throw AllocationRunOperationException.NotFound("Allocation run was not found.");
-            // Back to the snapshot so planning can run again over the same locked orders and pool.
-            run.Status = AllocationRunStatuses.Snapshotted;
-            run.CompletedAt = null;
-            run.Version++;
-            run.UpdatedAt = now;
-            await store.SaveChangesAsync(transactionCancellationToken);
+            await RequireLiveVersionAsync(versionId, expectedVersion, transactionCancellationToken);
+            await MarkForRecalculationAsync(versionId, adminUserId, reason, transactionCancellationToken);
         }, cancellationToken);
 
         store.ClearTracking();
         return await GetAsync(versionId, cancellationToken);
+    }
+
+    /// <summary>Sends a version back without the expected-version check, for a failure we detected.</summary>
+    private Task ReopenForRecalculationAsync(
+        Guid versionId, Guid actorUserId, string reason, CancellationToken cancellationToken) =>
+        store.ExecuteInTransactionAsync(
+            token => MarkForRecalculationAsync(versionId, actorUserId, reason, token), cancellationToken);
+
+    private async Task MarkForRecalculationAsync(
+        Guid versionId, Guid actorUserId, string reason, CancellationToken cancellationToken)
+    {
+        var version = await store.FindPlanVersionForUpdateAsync(versionId, cancellationToken)
+            ?? throw AllocationRunOperationException.NotFound("Plan version was not found.");
+        if (version.Status != AllocationPlanVersionStatuses.AwaitingApproval) return;
+
+        var now = timeProvider.GetUtcNow();
+        version.Status = AllocationPlanVersionStatuses.RecalculationRequested;
+        version.RecalculationRequestedByUserId = actorUserId;
+        version.RecalculationRequestedAt = now;
+        version.RecalculationReason = reason.Length > 1_000 ? reason[..1_000] : reason;
+        version.Version++;
+        version.UpdatedAt = now;
+
+        var run = await store.FindRunForUpdateAsync(version.AllocationRunId, cancellationToken)
+            ?? throw AllocationRunOperationException.NotFound("Allocation run was not found.");
+        // Back to the snapshot so planning can run again over the same locked orders and pool.
+        run.Status = AllocationRunStatuses.Snapshotted;
+        run.CompletedAt = null;
+        run.Version++;
+        run.UpdatedAt = now;
+        await store.SaveChangesAsync(cancellationToken);
     }
 
     private async Task<AllocationPlanVersion> RequireLiveVersionAsync(

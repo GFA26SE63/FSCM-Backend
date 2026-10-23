@@ -2856,7 +2856,10 @@ namespace FSCM.Persistence.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
-                    b.Property<Guid>("AllocationId")
+                    b.Property<Guid?>("AllocationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("AllocationRunAllocationId")
                         .HasColumnType("uuid");
 
                     b.Property<Guid>("BatchId")
@@ -2883,7 +2886,12 @@ namespace FSCM.Persistence.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("AllocationId")
-                        .IsUnique();
+                        .IsUnique()
+                        .HasFilter("\"AllocationId\" IS NOT NULL");
+
+                    b.HasIndex("AllocationRunAllocationId")
+                        .IsUnique()
+                        .HasFilter("\"AllocationRunAllocationId\" IS NOT NULL");
 
                     b.HasIndex("BatchId");
 
@@ -5259,8 +5267,12 @@ namespace FSCM.Persistence.Migrations
                     b.HasOne("FSCM.Domain.Entities.Allocation", null)
                         .WithMany()
                         .HasForeignKey("AllocationId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("FSCM.Domain.Entities.AllocationRunAllocation", null)
+                        .WithMany()
+                        .HasForeignKey("AllocationRunAllocationId")
+                        .OnDelete(DeleteBehavior.Restrict);
 
                     b.HasOne("FSCM.Domain.Entities.Batch", null)
                         .WithMany()
