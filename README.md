@@ -267,6 +267,43 @@ schedule. Two independent cutoffs would let the ETA promise one time while the j
 A decision taken after the deadline is still a decision someone makes, but the plan was estimated
 from the run moment, so a late approval needs its ETA re-checked.
 
+### Running the run by hand
+
+`POST /allocation-runs` (Admin) closes and plans today's run on demand. The clock is the normal
+path; it was also the only one, which means a deployment that was down at noon could not produce
+the day's plan at all - the orders wait for tomorrow and queue behind a day of newer ones.
+
+The cutoff is not a parameter by default: it is read from the published schedule, so pressing the
+button cannot quietly change which orders belong to the run. An Admin may pass a later moment on
+the same business date, for the case where the run was down while orders kept arriving, and the
+moment actually used is stored on the run - the boundary that was applied stays readable instead of
+being inferred from when someone pressed it. A cutoff still in the future is refused (`conflict`),
+and one earlier than the published time is refused (`validation_error`), because moving it back
+would drop orders that belong to this run.
+
+Opening is idempotent on the business date, so pressing twice joins the run that already exists
+rather than splitting the day across two plans. That also means the button cannot repair a run that
+already closed on the wrong orders: the snapshot is taken once, and a later cutoff does not re-take
+it.
+
+Two traps live under this, both found by running the chain against PostgreSQL and both invisible to
+the unit tests:
+
+- **The cutoff must reach the database in UTC.** Npgsql binds only a `DateTimeOffset` whose offset
+  is zero, and every caller builds the cutoff in Vietnam time - the job from the local clock, the
+  endpoint from the schedule. `StartAsync` normalises to UTC, the same instant, before anything
+  reaches a query; the business date is still read in Vietnam, where the day is defined. A
+  Vietnam-offset value throws on the first real run, which is why a dev database can sit with an
+  empty `ALLOCATION_RUN` while every test passes.
+- **The persist step needs a tracked view.** Planning does not only insert rows: it moves the run to
+  `AwaitingApproval`, marks each order fulfilled or short, records what each line drew and draws the
+  pool down, all by assigning to the objects in the view it loaded. Read that view with
+  `AsNoTracking` and the inserts land while every update is silently discarded, leaving the run at
+  `Snapshotted` with its plan version already written. `FindViewForUpdateAsync` exists for this.
+
+Neither is reachable from a unit test: the fake store returns live in-memory objects, which mutate
+perfectly well, and holds no opinion about what Npgsql will bind.
+
 ### Rules that are easy to get wrong
 
 - **Hours, never days.** Shelf life and MLOR are compared in hours against the product's total shelf
