@@ -395,6 +395,52 @@ public sealed partial class CatalogService(ICatalogStore store, TimeProvider tim
         return await GetProductAsync(replacement.Id, cancellationToken);
     }
 
+    public async Task<ProductResult> CloneProductAsync(
+        Guid productId,
+        CloneProductData data,
+        CancellationToken cancellationToken)
+    {
+        var source = await RequireProductAsync(productId, cancellationToken);
+        var sku = NormalizeSku(data.Sku);
+        var categoryId = data.ProductCategoryId ?? source.ProductCategoryId;
+        var name = data.Name ?? source.Name;
+        var unit = data.Unit ?? source.Unit;
+        var shelfLifeHours = data.ShelfLifeHours ?? source.ShelfLifeHours;
+        var nearDateThresholdHours = data.NearDateThresholdHours ?? source.NearDateThresholdHours;
+
+        ValidateProductFields(sku, name, unit, shelfLifeHours, nearDateThresholdHours);
+        ValidatePrice(data.InitialUnitPrice);
+        await EnsureSkuAvailableAsync(sku, cancellationToken);
+        await RequireActiveCategoryAsync(categoryId, cancellationToken);
+
+        var now = timeProvider.GetUtcNow();
+        var clone = new Product
+        {
+            Id = Guid.NewGuid(),
+            ProductCategoryId = categoryId,
+            ReplacesProductId = null,
+            Sku = sku,
+            Name = name.Trim(),
+            Unit = unit.Trim(),
+            ShelfLifeHours = shelfLifeHours,
+            NearDateThresholdHours = nearDateThresholdHours,
+            Status = ProductStatuses.Draft,
+            CreatedAt = now,
+            UpdatedAt = now
+        };
+        store.AddProduct(clone);
+
+        var initialPrice = data.InitialUnitPrice ??
+            (await store.FindActivePriceAsync(source.Id, cancellationToken))?.UnitPrice;
+        if (initialPrice.HasValue)
+        {
+            store.AddPrice(CreatePrice(clone.Id, initialPrice.Value, now));
+        }
+
+        await store.SaveChangesAsync(cancellationToken);
+        return await GetProductAsync(clone.Id, cancellationToken);
+    }
+
     public async Task<ProductPriceResult> SetPriceAsync(
         Guid productId,
         decimal unitPrice,
