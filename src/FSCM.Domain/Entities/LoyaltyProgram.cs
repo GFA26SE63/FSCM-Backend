@@ -12,6 +12,7 @@ public sealed class LoyaltyProgram
     public int MinimumRedeemPoints { get; set; }
     public DateTimeOffset StartAt { get; set; }
     public DateTimeOffset EndAt { get; set; }
+    public DateTimeOffset? PointsExpireAt { get; set; }
     public bool IsActive { get; set; }
     public Guid CreatedByUserId { get; set; }
     public DateTimeOffset CreatedAt { get; set; }

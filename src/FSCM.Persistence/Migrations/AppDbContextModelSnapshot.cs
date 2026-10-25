@@ -1643,6 +1643,9 @@ namespace FSCM.Persistence.Migrations
                         .HasMaxLength(200)
                         .HasColumnType("character varying(200)");
 
+                    b.Property<DateTimeOffset?>("PointsExpireAt")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<decimal>("SpendAmountPerPoint")
                         .HasPrecision(18, 2)
                         .HasColumnType("numeric(18,2)");
@@ -1661,6 +1664,28 @@ namespace FSCM.Persistence.Migrations
                     b.HasIndex("CreatedByUserId");
 
                     b.ToTable("LOYALTY_PROGRAM", (string)null);
+                });
+
+            modelBuilder.Entity("FSCM.Domain.Entities.LoyaltyProgramRetailer", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("LoyaltyProgramId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("RetailerId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("RetailerId");
+
+                    b.HasIndex("LoyaltyProgramId", "RetailerId")
+                        .IsUnique();
+
+                    b.ToTable("LOYALTY_PROGRAM_RETAILER", (string)null);
                 });
 
             modelBuilder.Entity("FSCM.Domain.Entities.LoyaltyReward", b =>
@@ -1690,6 +1715,10 @@ namespace FSCM.Persistence.Migrations
                     b.Property<decimal?>("DiscountPercent")
                         .HasPrecision(5, 2)
                         .HasColumnType("numeric(5,2)");
+
+                    b.Property<string>("ImageUrl")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
 
                     b.Property<bool>("IsActive")
                         .HasColumnType("boolean");
@@ -3391,6 +3420,9 @@ namespace FSCM.Persistence.Migrations
                     b.Property<int>("CurrentPoints")
                         .HasColumnType("integer");
 
+                    b.Property<int>("HeldPoints")
+                        .HasColumnType("integer");
+
                     b.Property<int>("LifetimeEarnedPoints")
                         .HasColumnType("integer");
 
@@ -3515,6 +3547,11 @@ namespace FSCM.Persistence.Migrations
                     b.Property<DateTimeOffset?>("CancelledAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<string>("ClientRequestId")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -3562,9 +3599,10 @@ namespace FSCM.Persistence.Migrations
 
                     b.HasIndex("RedeemedByUserId");
 
-                    b.HasIndex("RetailerId");
-
                     b.HasIndex("SalesOrderId");
+
+                    b.HasIndex("RetailerId", "ClientRequestId")
+                        .IsUnique();
 
                     b.ToTable("REWARD_REDEMPTION", (string)null);
                 });
@@ -5522,6 +5560,21 @@ namespace FSCM.Persistence.Migrations
                     b.HasOne("FSCM.Domain.Entities.UserAccount", null)
                         .WithMany()
                         .HasForeignKey("CreatedByUserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("FSCM.Domain.Entities.LoyaltyProgramRetailer", b =>
+                {
+                    b.HasOne("FSCM.Domain.Entities.LoyaltyProgram", null)
+                        .WithMany()
+                        .HasForeignKey("LoyaltyProgramId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("FSCM.Domain.Entities.Retailer", null)
+                        .WithMany()
+                        .HasForeignKey("RetailerId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
                 });
