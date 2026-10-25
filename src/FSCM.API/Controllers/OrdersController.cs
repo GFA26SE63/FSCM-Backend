@@ -53,6 +53,11 @@ public sealed class OrdersController(
 
     [Authorize(Roles = SystemRoles.Sales)]
     [HttpPost]
+    [ProducesResponseType<OrderDetailResult>(StatusCodes.Status201Created)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
     public async Task<IActionResult> Create(
         CreateAssistedOrderRequest request,
         CancellationToken cancellationToken)
@@ -74,6 +79,9 @@ public sealed class OrdersController(
     [HttpPost("offline")]
     [HttpPost("sync")]
     [ProducesResponseType<OrderDetailResult>(StatusCodes.Status201Created)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
     public async Task<IActionResult> SubmitOffline(
         SubmitOfflineOrderRequest request,

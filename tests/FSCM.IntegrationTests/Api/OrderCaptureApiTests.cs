@@ -71,7 +71,7 @@ public sealed class OrderCaptureApiTests
     }
 
     [Fact]
-    public async Task Pricing_snapshot_rest_and_graphql_never_apply_client_batch_discount()
+    public async Task Pricing_snapshot_rest_and_graphql_share_the_guid_contract_without_batch_pricing()
     {
         using var identityFactory = new IdentityAuthorizationTests.IdentityApiFactory();
         var store = new TestQuoteStore();
@@ -95,10 +95,46 @@ public sealed class OrderCaptureApiTests
 
         Assert.Equal(0, store.BatchDiscountQueryCount);
 
+        var graphQlResponse = await client.PostAsJsonAsync("/graphql", new
+        {
+            query = $$"""
+                query {
+                  entities {
+                    pricingSnapshot(
+                      productId: "{{store.Product.Id}}"
+                      quantity: 10
+                      retailerId: "{{orderStore.Retailer.Id}}") {
+                      productId sku quantity unitPrice grossAmount discountPercent
+                      discountAmount baseUnitPrice indicativeNetAmount
+                      finalPricePendingAllocation batchId productPriceId
+                      appliedPromotion { code minimumQuantity discountPercent }
+                    }
+                  }
+                }
+                """
+        });
+        var graphQlBody = await graphQlResponse.Content.ReadAsStringAsync();
+        Assert.True(graphQlResponse.StatusCode == HttpStatusCode.OK, graphQlBody);
+        var graphQl = JsonDocument.Parse(graphQlBody).RootElement;
+        Assert.False(graphQl.TryGetProperty("errors", out _), graphQlBody);
+        var graphQlSnapshot = graphQl.GetProperty("data").GetProperty("entities")
+            .GetProperty("pricingSnapshot");
+        Assert.Equal(store.Product.Id, graphQlSnapshot.GetProperty("productId").GetGuid());
+        Assert.True(graphQlSnapshot.GetProperty("finalPricePendingAllocation").GetBoolean());
+        Assert.Equal(JsonValueKind.Null, graphQlSnapshot.GetProperty("batchId").ValueKind);
+        Assert.Equal(rest.GetProperty("productPriceId").GetGuid(),
+            graphQlSnapshot.GetProperty("productPriceId").GetGuid());
+        Assert.Equal(rest.GetProperty("indicativeNetAmount").GetDecimal(),
+            graphQlSnapshot.GetProperty("indicativeNetAmount").GetDecimal());
+
         orderStore.TerritoryAllowed = false;
         var denied = await client.GetAsync(
             $"/api/v1/pricing/snapshot?productId={store.Product.Id}&quantity=10&retailerId={orderStore.Retailer.Id}");
         Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
+
+        var deniedProblem = await denied.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("forbidden", deniedProblem.GetProperty("code").GetString());
+        Assert.Contains("assigned territory", deniedProblem.GetProperty("title").GetString());
     }
 
     [Fact]
@@ -184,7 +220,88 @@ public sealed class OrderCaptureApiTests
         });
 
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("forbidden", problem.GetProperty("code").GetString());
+        Assert.Contains("assigned territory", problem.GetProperty("title").GetString());
         Assert.Empty(store.Orders);
+    }
+
+    [Fact]
+    public async Task Direct_and_synced_order_contracts_require_resource_guids_and_reject_inactive_retailers()
+    {
+        using var identityFactory = new IdentityAuthorizationTests.IdentityApiFactory();
+        var store = new TestOrderStore(identityFactory.Sales.Id);
+        using var factory = identityFactory.WithWebHostBuilder(builder =>
+            builder.ConfigureTestServices(services =>
+            {
+                services.RemoveAll<IOrderStore>();
+                services.AddSingleton<IOrderStore>(store);
+                services.RemoveAll<IOrderPricingService>();
+                services.AddSingleton<IOrderPricingService, TestPricingService>();
+            }));
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization = Bearer(identityFactory.Sales, identityFactory);
+
+        var businessCodePayload = new
+        {
+            clientOrderKey = Guid.NewGuid(),
+            retailerId = store.Retailer.Code,
+            paymentMethod = OrderPaymentMethods.Cod,
+            requestedDeliveryDate = "2027-01-10",
+            lines = new[] { new { productId = store.Product.Sku, quantity = 10 } }
+        };
+        var invalidGuid = await client.PostAsJsonAsync("/api/v1/orders", businessCodePayload);
+        Assert.Equal(HttpStatusCode.BadRequest, invalidGuid.StatusCode);
+        Assert.Empty(store.Orders);
+
+        store.Retailer.Status = "Inactive";
+        var canonicalPayload = new
+        {
+            clientOrderKey = Guid.NewGuid(),
+            retailerId = store.Retailer.Id,
+            paymentMethod = OrderPaymentMethods.Cod,
+            requestedDeliveryDate = "2027-01-10",
+            lines = new[] { new { productId = store.Product.Id, quantity = 10 } }
+        };
+        var inactive = await client.PostAsJsonAsync("/api/v1/orders", canonicalPayload);
+        Assert.Equal(HttpStatusCode.Conflict, inactive.StatusCode);
+        var inactiveProblem = await inactive.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("conflict", inactiveProblem.GetProperty("code").GetString());
+        Assert.Contains("not active", inactiveProblem.GetProperty("title").GetString());
+        Assert.Empty(store.Orders);
+
+        store.Retailer.Status = "Active";
+        var syncPayload = new
+        {
+            clientOrderKey = Guid.NewGuid(),
+            retailerId = store.Retailer.Id,
+            paymentMethod = OrderPaymentMethods.Prepaid,
+            requestedDeliveryDate = "2027-01-10",
+            offlineEstimatedAmount = 900m,
+            snapshotVersion = "mobile-contract-v1",
+            confirmConditionChanges = false,
+            expectedConditions = new[]
+            {
+                new
+                {
+                    productId = store.Product.Id,
+                    expectedBaseUnitPrice = 90m,
+                    expectedMlorVersion = 2,
+                    expectedMlorRatio = 0.25m
+                }
+            },
+            lines = new[] { new { productId = store.Product.Id, quantity = 10 } }
+        };
+        var synced = await client.PostAsJsonAsync("/api/v1/orders/sync", syncPayload);
+        Assert.Equal(HttpStatusCode.Created, synced.StatusCode);
+        var syncedOrder = await synced.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(store.Retailer.Id, syncedOrder.GetProperty("retailerId").GetGuid());
+        Assert.Equal(OrderPaymentMethods.Prepaid,
+            syncedOrder.GetProperty("paymentMethod").GetString());
+        Assert.Equal(OrderStatuses.PendingApproval, syncedOrder.GetProperty("status").GetString());
+        Assert.True(syncedOrder.GetProperty("finalPricePendingAllocation").GetBoolean());
+        Assert.Equal(900m, syncedOrder.GetProperty("finalAmount").GetDecimal());
+        Assert.Empty(syncedOrder.GetProperty("lines")[0].GetProperty("allocations").EnumerateArray());
     }
 
     private static AuthenticationHeaderValue Bearer(
