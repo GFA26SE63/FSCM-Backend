@@ -94,3 +94,12 @@ public sealed record CreateReplacementProductData(
     int ShelfLifeHours,
     int NearDateThresholdHours,
     decimal? InitialUnitPrice);
+
+public sealed record CloneProductData(
+    string Sku,
+    Guid? ProductCategoryId,
+    string? Name,
+    string? Unit,
+    int? ShelfLifeHours,
+    int? NearDateThresholdHours,
+    decimal? InitialUnitPrice);
