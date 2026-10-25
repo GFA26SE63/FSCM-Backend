@@ -42,16 +42,13 @@ public sealed record MobileSnapshotData(
     IReadOnlyCollection<MobileSnapshotPromotion> Promotions,
     IReadOnlyCollection<MobileSnapshotMlor> Mlors,
     IReadOnlyCollection<MobileSnapshotStock> IndicativeStock,
-    MobileSnapshotDefaultMlor? DefaultMlor,
-    DateTimeOffset LatestChangedAt);
+    MobileSnapshotDefaultMlor? DefaultMlor);
 
 public sealed record MobileSnapshotResult(
     string Version,
     string Checksum,
     string DeltaMode,
-    bool NotModified,
     DateTimeOffset GeneratedAt,
-    DateTimeOffset? ChangesSince,
     IReadOnlyCollection<MobileSnapshotRetailer> Retailers,
     IReadOnlyCollection<MobileSnapshotCategory> Categories,
     IReadOnlyCollection<MobileSnapshotProduct> Products,
@@ -65,6 +62,6 @@ public sealed record MobileSnapshotResult(
 
 public interface IMobileSnapshotStore
 {
-    Task<MobileSnapshotData> LoadAsync(Guid salesUserId, DateTimeOffset? changedAfter,
+    Task<MobileSnapshotData> LoadAsync(Guid salesUserId, DateTimeOffset effectiveAt,
         CancellationToken cancellationToken);
 }

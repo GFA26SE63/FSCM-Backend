@@ -12,54 +12,58 @@ public sealed class MobileSnapshotServiceTests
     {
         var retailer = new MobileSnapshotRetailer(Guid.NewGuid(), "10000001", "Cửa hàng An Khang",
             "Quận 1", "Active", 14, Now.AddMinutes(-1));
-        var store = new FakeStore(new([retailer], [], [], [], [], [], [], null, retailer.UpdatedAt));
+        var store = new FakeStore(new([retailer], [], [], [], [], [], [], null));
         var service = new MobileSnapshotService(store, new FixedTimeProvider(Now));
 
-        var result = await service.GetAsync(Guid.NewGuid(), null, default);
+        var result = await service.GetAsync(Guid.NewGuid(), default);
 
         Assert.Equal("Full", result.DeltaMode);
-        Assert.False(result.NotModified);
-        Assert.NotEmpty(result.Version);
+        Assert.StartsWith("f29-v1-", result.Version);
         Assert.Equal(64, result.Checksum.Length);
         Assert.Contains("tham khảo", result.StockDisclaimer);
         Assert.Contains("sau khi phân bổ", result.PriceDisclaimer);
     }
 
     [Fact]
-    public async Task Delta_without_changes_is_marked_not_modified()
+    public async Task Same_content_has_stable_version_for_http_cache_revalidation()
     {
-        var store = new FakeStore(new([], [], [], [], [], [], [], null, Now));
+        var store = new FakeStore(new([], [], [], [], [], [], [], null));
         var service = new MobileSnapshotService(store, new FixedTimeProvider(Now));
 
-        var result = await service.GetAsync(Guid.NewGuid(), Now.UtcTicks.ToString(), default);
+        var first = await service.GetAsync(Guid.NewGuid(), default);
+        var second = await service.GetAsync(Guid.NewGuid(), default);
 
-        Assert.Equal("Delta", result.DeltaMode);
-        Assert.True(result.NotModified);
-        Assert.Single(store.RequestedChangesAfter);
-        Assert.Null(store.RequestedChangesAfter[0]);
+        Assert.Equal("Full", first.DeltaMode);
+        Assert.Equal(first.Version, second.Version);
+        Assert.Equal(first.Checksum, second.Checksum);
+        Assert.Equal(2, store.EffectiveAt.Count);
+        Assert.All(store.EffectiveAt, value => Assert.Equal(Now, value));
     }
 
-    [Theory]
-    [InlineData("not-a-version")]
-    [InlineData("-1")]
-    public async Task Invalid_since_version_is_rejected(string version)
+    [Fact]
+    public async Task Scoped_content_change_produces_a_new_version()
     {
-        var service = new MobileSnapshotService(new FakeStore(new([], [], [], [], [], [], [], null, Now)),
-            new FixedTimeProvider(Now));
+        var retailer = new MobileSnapshotRetailer(Guid.NewGuid(), "10000001", "Cửa hàng An Khang",
+            "Quận 1", "Active", 14, Now.AddMinutes(-1));
+        var withRetailer = new MobileSnapshotService(
+            new FakeStore(new([retailer], [], [], [], [], [], [], null)), new FixedTimeProvider(Now));
+        var withoutRetailer = new MobileSnapshotService(
+            new FakeStore(new([], [], [], [], [], [], [], null)), new FixedTimeProvider(Now));
 
-        var exception = await Assert.ThrowsAsync<OrderOperationException>(() =>
-            service.GetAsync(Guid.NewGuid(), version, default));
+        var beforeScopeRemoval = await withRetailer.GetAsync(Guid.NewGuid(), default);
+        var afterScopeRemoval = await withoutRetailer.GetAsync(Guid.NewGuid(), default);
 
-        Assert.Equal("validation_error", exception.Code);
+        Assert.NotEqual(beforeScopeRemoval.Version, afterScopeRemoval.Version);
+        Assert.NotEqual(beforeScopeRemoval.Checksum, afterScopeRemoval.Checksum);
     }
 
     private sealed class FakeStore(MobileSnapshotData data) : IMobileSnapshotStore
     {
-        public List<DateTimeOffset?> RequestedChangesAfter { get; } = [];
-        public Task<MobileSnapshotData> LoadAsync(Guid salesUserId, DateTimeOffset? changedAfter,
+        public List<DateTimeOffset> EffectiveAt { get; } = [];
+        public Task<MobileSnapshotData> LoadAsync(Guid salesUserId, DateTimeOffset effectiveAt,
             CancellationToken cancellationToken)
         {
-            RequestedChangesAfter.Add(changedAfter);
+            EffectiveAt.Add(effectiveAt);
             return Task.FromResult(data);
         }
     }
