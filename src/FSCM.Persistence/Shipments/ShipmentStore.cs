@@ -1,5 +1,6 @@
 using System.Data;
 using FSCM.Application.Features.AllocationRuns;
+using FSCM.Application.Features.Inventory;
 using FSCM.Application.Features.QrLabels;
 using FSCM.Application.Features.Shipments;
 using FSCM.Domain.Authorization;
@@ -170,6 +171,69 @@ public sealed class ShipmentStore(AppDbContext dbContext) : IShipmentStore
 
     public Task<Vehicle?> FindVehicleAsync(Guid id, CancellationToken cancellationToken) =>
         dbContext.VehicleRecords.AsNoTracking().SingleOrDefaultAsync(item => item.Id == id, cancellationToken);
+
+    /// <summary>
+    /// What one shipment takes out of stock, traced back from the picking split to the hold that
+    /// paid for it: split -> plan price -> run allocation -> reservation.
+    ///
+    /// The chain matters. Deducting a reserved total by batch would happily consume a hold placed
+    /// for a different order that happens to share the batch; following the allocation row means
+    /// the quantity that leaves is the quantity this order was granted.
+    ///
+    /// Balances and holds are tracked, because the caller is about to change them.
+    /// </summary>
+    public async Task<IReadOnlyCollection<ShipmentIssueRow>> ListIssuableAsync(
+        Guid shipmentId, CancellationToken cancellationToken)
+    {
+        var shipment = await dbContext.ShipmentRecords.AsNoTracking()
+            .SingleOrDefaultAsync(item => item.Id == shipmentId, cancellationToken);
+        if (shipment is null) return [];
+
+        var parts = await (
+            from split in dbContext.RunPickingSplitRecords.AsNoTracking()
+            join gather in dbContext.RunPickingGatherRecords.AsNoTracking()
+                on split.RunPickingGatherId equals gather.Id
+            where gather.RunPickingListId == shipment.RunPickingListId
+                  && split.SalesOrderId == shipment.SalesOrderId
+            join price in dbContext.AllocationPlanPriceRecords.AsNoTracking()
+                on split.AllocationPlanPriceId equals price.Id
+            join allocation in dbContext.AllocationRunAllocationRecords.AsNoTracking()
+                on new { price.AllocationPlanVersionId, price.AllocationRunLineId, price.BatchId }
+                equals new { allocation.AllocationPlanVersionId, allocation.AllocationRunLineId, allocation.BatchId }
+            select new { gather.BatchId, split.PickedQuantity, AllocationId = allocation.Id })
+            .ToArrayAsync(cancellationToken);
+        if (parts.Length == 0) return [];
+
+        var batchIds = parts.Select(item => item.BatchId).Distinct().ToArray();
+        var allocationIds = parts.Select(item => item.AllocationId).Distinct().ToArray();
+
+        var batches = await dbContext.BatchRecords.AsNoTracking()
+            .Where(item => batchIds.Contains(item.Id))
+            .ToDictionaryAsync(item => item.Id, cancellationToken);
+        var balances = await dbContext.InventoryBalanceRecords
+            .Where(item => batchIds.Contains(item.BatchId))
+            .ToDictionaryAsync(item => item.BatchId, cancellationToken);
+        var holds = await dbContext.ReservationRecords
+            .Where(item => item.AllocationRunAllocationId != null
+                           && allocationIds.Contains(item.AllocationRunAllocationId!.Value)
+                           && item.Status == ReservationStatuses.Active)
+            .ToArrayAsync(cancellationToken);
+
+        return parts
+            .GroupBy(item => item.BatchId)
+            .Where(group => batches.ContainsKey(group.Key) && balances.ContainsKey(group.Key))
+            .Select(group => new ShipmentIssueRow(
+                group.Key,
+                group.Sum(item => item.PickedQuantity),
+                batches[group.Key],
+                balances[group.Key],
+                holds.Where(hold => group.Select(item => item.AllocationId)
+                    .Contains(hold.AllocationRunAllocationId!.Value)).ToArray()))
+            .ToArray();
+    }
+
+    public void AddInventoryTransaction(InventoryTransaction transaction) =>
+        dbContext.InventoryTransactionRecords.Add(transaction);
 
     public void AddShipment(Shipment shipment) => dbContext.ShipmentRecords.Add(shipment);
     public void AddReceipt(ReceiptConfirmation receipt) => dbContext.ReceiptConfirmationRecords.Add(receipt);

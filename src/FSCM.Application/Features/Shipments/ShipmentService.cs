@@ -3,6 +3,7 @@ using System.Text;
 using System.Globalization;
 using FSCM.Application.Features.Deliveries;
 using FSCM.Application.Features.Orders;
+using FSCM.Application.Features.Inventory;
 using FSCM.Application.Features.Payments;
 using FSCM.Application.Features.QrLabels;
 using FSCM.Domain.Authorization;
@@ -123,6 +124,225 @@ public sealed class ShipmentService(
         view.Shipment.UpdatedAt = now;
         await store.SaveChangesAsync(cancellationToken);
         return ToResult((await store.FindByIdAsync(id, false, cancellationToken))!);
+    }
+
+    /// <summary>
+    /// F93: whether an order may leave the warehouses at all, and what is holding it if not.
+    ///
+    /// The run already refuses to split an order across days; the door refuses to split it across
+    /// warehouses. Every part must be picked and the payment condition met before any part moves,
+    /// so one warehouse short or damaged stops the whole order rather than sending what happens to
+    /// be ready and leaving the retailer to chase the rest.
+    ///
+    /// Parts that have already left are not re-checked. They are gone, and counting them as
+    /// blockers would make a half-dispatched order permanently unready.
+    /// </summary>
+    public async Task<OrderShipmentReadinessResult> GetOrderReadinessAsync(
+        Guid orderId, Guid actorUserId, string actorRole, CancellationToken cancellationToken)
+    {
+        if (!await store.CanViewOrderAsync(orderId, actorUserId, actorRole, cancellationToken))
+            throw ShipmentOperationException.Forbidden("You cannot view this order deliveries.");
+        await ReconcileAsync(orderId, cancellationToken);
+        var views = await store.ListAsync(actorUserId, actorRole, orderId, null, null, cancellationToken);
+        if (views.Count == 0)
+            throw ShipmentOperationException.NotFound("This order has no delivery parts yet.");
+        return await BuildReadinessAsync(views, cancellationToken);
+    }
+
+    private async Task<OrderShipmentReadinessResult> BuildReadinessAsync(
+        IReadOnlyCollection<ShipmentView> views, CancellationToken cancellationToken)
+    {
+        var order = views.First().Order;
+        var parts = views
+            .OrderBy(item => item.Warehouse.Code, StringComparer.Ordinal)
+            .Select(item => new ShipmentReadinessPartResult(
+                item.Shipment.Id, item.Shipment.ShipmentCode, item.Warehouse.Id, item.Warehouse.Code,
+                item.Shipment.Status, item.Shipment.ExceptionReason))
+            .ToArray();
+
+        var reasons = new List<string>();
+        foreach (var part in parts.Where(item => item.Status == ShipmentStatuses.Exception))
+        {
+            var detail = part.ExceptionReason ?? "chua ghi ly do";
+            reasons.Add($"Kho {part.WarehouseCode} dang co ngoai le: {detail}.");
+        }
+
+        foreach (var part in parts.Where(item => item.Status == ShipmentStatuses.WaitingToPick))
+        {
+            reasons.Add($"Kho {part.WarehouseCode} chua soan xong phan hang cua don.");
+        }
+
+        var paymentSettled = await IsPaymentSettledAsync(order, cancellationToken);
+        if (!paymentSettled)
+        {
+            reasons.Add("Don tra truoc chua thanh toan du, chua du dieu kien xuat kho.");
+        }
+
+        return new OrderShipmentReadinessResult(
+            order.Id,
+            order.OrderCode,
+            reasons.Count == 0,
+            paymentSettled,
+            parts.Any(item => item.Status == ShipmentStatuses.Exception),
+            reasons,
+            parts);
+    }
+
+    /// <summary>
+    /// Only a prepaid order has to be paid before it moves. COD is collected on delivery and credit
+    /// is settled on terms, so demanding payment from either would stop orders that are in order.
+    /// </summary>
+    private async Task<bool> IsPaymentSettledAsync(SalesOrder order, CancellationToken cancellationToken)
+    {
+        if (order.PaymentMethod != OrderPaymentMethods.Prepaid) return true;
+        var payment = await paymentStore.FindByOrderAsync(order.Id, false, cancellationToken);
+        return payment?.Payment.Status == PaymentStatuses.Paid;
+    }
+
+    /// <summary>
+    /// F96: the warehouse confirms this part physically left.
+    ///
+    /// This is the first and only moment the stock actually moves. Approval held it, which put
+    /// Reserved up and left OnHand alone, and picking gathered it; issuing takes both down
+    /// together, so the two numbers cannot drift apart.
+    ///
+    /// Calling it again returns the part as it stands instead of deducting a second time. A
+    /// warehouse keeper whose connection dropped mid-confirmation will press the button again, and
+    /// a duplicated deduction would stay invisible until someone counted the shelf.
+    ///
+    /// The order only becomes Issued once every part has left, which is the same all-or-nothing
+    /// rule the readiness check applies before the first one does.
+    /// </summary>
+    public async Task<ShipmentResult> ConfirmIssueAsync(
+        Guid id, ConfirmShipmentIssueData data, Guid actorUserId, string actorRole,
+        CancellationToken cancellationToken)
+    {
+        if (actorRole is not (SystemRoles.Admin or SystemRoles.Operator or SystemRoles.WarehouseKeeper))
+            throw ShipmentOperationException.Forbidden(
+                "Only Admin, Operator or the warehouse keeper can confirm a shipment issue.");
+
+        await store.ExecuteInTransactionAsync(async transactionCancellationToken =>
+        {
+            var view = await store.FindByIdAsync(id, true, transactionCancellationToken)
+                ?? throw ShipmentOperationException.NotFound("Shipment was not found.");
+            if (!await store.CanAccessWarehouseAsync(
+                    actorUserId, actorRole, view.Shipment.WarehouseId, transactionCancellationToken))
+            {
+                throw ShipmentOperationException.Forbidden("You cannot issue this warehouse shipments.");
+            }
+
+            // Already gone: say so by returning it unchanged rather than deducting again.
+            if (view.Shipment.Status is ShipmentStatuses.Issued or ShipmentStatuses.Delivering
+                or ShipmentStatuses.Received)
+            {
+                return;
+            }
+
+            if (view.Shipment.Status != ShipmentStatuses.Ready)
+            {
+                throw ShipmentOperationException.Conflict(
+                    $"Shipment is {view.Shipment.Status}; only a ready part can be issued.");
+            }
+
+            if (view.Shipment.Version != data.ExpectedVersion)
+            {
+                throw ShipmentOperationException.Conflict(
+                    $"Shipment version is {view.Shipment.Version}; refresh and retry.");
+            }
+
+            var siblings = await store.ListAsync(
+                actorUserId, SystemRoles.Admin, view.Order.Id, null, null, transactionCancellationToken);
+            var readiness = await BuildReadinessAsync(siblings, transactionCancellationToken);
+            if (!readiness.IsReady)
+            {
+                throw ShipmentOperationException.Conflict(string.Join(" ", readiness.BlockingReasons));
+            }
+
+            var now = timeProvider.GetUtcNow();
+            var rows = await store.ListIssuableAsync(id, transactionCancellationToken);
+            if (rows.Count == 0)
+            {
+                throw ShipmentOperationException.Conflict(
+                    "This part has no held stock to issue; its reservation may already have been released.");
+            }
+
+            foreach (var row in rows)
+            {
+                if (row.Balance.PhysicalQuantity < row.Quantity || row.Balance.ReservedQuantity < row.Quantity)
+                {
+                    throw ShipmentOperationException.Conflict(
+                        $"Batch {row.Batch.BatchCode} holds {row.Balance.ReservedQuantity:0.###} of " +
+                        $"{row.Balance.PhysicalQuantity:0.###} on hand, which cannot cover {row.Quantity:0.###}.");
+                }
+
+                // Both sides fall together: the goods leave and the hold that paid for them ends.
+                row.Balance.PhysicalQuantity -= row.Quantity;
+                row.Balance.ReservedQuantity -= row.Quantity;
+                row.Balance.AvailableQuantity = row.Balance.PhysicalQuantity - row.Balance.ReservedQuantity;
+                row.Balance.Version++;
+                row.Balance.UpdatedAt = now;
+
+                foreach (var hold in row.Holds)
+                {
+                    hold.Status = ReservationStatuses.Consumed;
+                    hold.ConsumedAt = now;
+                }
+
+                store.AddInventoryTransaction(new InventoryTransaction
+                {
+                    Id = Guid.NewGuid(),
+                    BatchId = row.Batch.Id,
+                    WarehouseId = row.Batch.WarehouseId,
+                    ProductId = row.Batch.ProductId,
+                    CreatedByUserId = actorUserId,
+                    TransactionType = InventoryTransactionTypes.OrderIssue,
+                    SourceType = InventoryTransactionSourceTypes.Allocation,
+                    SourceId = view.Shipment.Id,
+                    ReferenceCode = view.Shipment.ShipmentCode,
+                    PhysicalQuantityDelta = -row.Quantity,
+                    ReservedQuantityDelta = -row.Quantity,
+                    PhysicalQuantityAfter = row.Balance.PhysicalQuantity,
+                    ReservedQuantityAfter = row.Balance.ReservedQuantity,
+                    AvailableQuantityAfter = row.Balance.AvailableQuantity,
+                    OccurredAt = now
+                });
+            }
+
+            view.Shipment.Status = ShipmentStatuses.Issued;
+            view.Shipment.IssuedAt = now;
+            view.Shipment.Version++;
+            view.Shipment.UpdatedAt = now;
+
+            var allIssued = siblings.All(item =>
+                item.Shipment.Id == view.Shipment.Id ||
+                item.Shipment.Status is ShipmentStatuses.Issued or ShipmentStatuses.Delivering
+                    or ShipmentStatuses.Received);
+            if (allIssued)
+            {
+                var order = await store.FindOrderForUpdateAsync(view.Order.Id, transactionCancellationToken)
+                    ?? throw ShipmentOperationException.NotFound("Order was not found.");
+                var fromStatus = order.Status;
+                order.Status = OrderStatuses.Issued;
+                order.Version++;
+                order.UpdatedAt = now;
+                store.AddOrderHistory(new OrderStatusHistory
+                {
+                    Id = Guid.NewGuid(),
+                    SalesOrderId = order.Id,
+                    FromStatus = fromStatus,
+                    ToStatus = OrderStatuses.Issued,
+                    ChangedByUserId = actorUserId,
+                    Reason = "Moi phan giao theo kho da xuat",
+                    ChangedAt = now
+                });
+            }
+
+            await store.SaveChangesAsync(transactionCancellationToken);
+        }, cancellationToken);
+
+        store.ClearTracking();
+        return ToResult(await store.FindByIdAsync(id, false, cancellationToken)
+            ?? throw ShipmentOperationException.Conflict("Issue was committed but could not be reloaded."));
     }
 
     private async Task ReconcileAsync(Guid? orderId, CancellationToken cancellationToken)
