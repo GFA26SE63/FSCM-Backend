@@ -31,6 +31,33 @@ public sealed record ShipmentLineResult(
     decimal? DamagedQuantity,
     decimal? MissingQuantity);
 
+/// <summary>F96: the warehouse confirms this part physically left, nothing more to supply.</summary>
+public sealed record ConfirmShipmentIssueData(int ExpectedVersion);
+
+/// <summary>
+/// F93: why an order may or may not be issued yet, part by part.
+///
+/// An order is all or nothing at the door as well as in the plan: every warehouse part must be
+/// picked and the payment condition met before any part leaves. Reporting the blocking parts by
+/// name is the point - "not ready" without saying which warehouse sends someone to ask.
+/// </summary>
+public sealed record ShipmentReadinessPartResult(
+    Guid ShipmentId,
+    string ShipmentCode,
+    Guid WarehouseId,
+    string WarehouseCode,
+    string Status,
+    string? ExceptionReason);
+
+public sealed record OrderShipmentReadinessResult(
+    Guid SalesOrderId,
+    string OrderCode,
+    bool IsReady,
+    bool PaymentSettled,
+    bool HasException,
+    IReadOnlyCollection<string> BlockingReasons,
+    IReadOnlyCollection<ShipmentReadinessPartResult> Parts);
+
 public sealed record ConfirmShipmentReceiptLineData(
     Guid OrderLineId,
     Guid BatchId,
