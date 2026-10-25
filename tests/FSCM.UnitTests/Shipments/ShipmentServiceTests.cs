@@ -1,3 +1,4 @@
+using FSCM.Application.Features.Inventory;
 using FSCM.Application.Features.Shipments;
 using FSCM.Application.Features.Payments;
 using FSCM.Application.Features.Orders;
@@ -278,6 +279,193 @@ public sealed class ShipmentServiceTests
         Assert.Empty(fixture.Store.Receipts);
     }
 
+    [Fact]
+    public async Task Issuing_a_part_takes_the_goods_and_the_hold_down_together()
+    {
+        var fixture = new Fixture();
+        var (shipment, balance, hold) = fixture.AddReadyShipment(fixture.WarehouseA, 12m, onHand: 50m);
+
+        await fixture.Service.ConfirmIssueAsync(
+            shipment.Id, new ConfirmShipmentIssueData(shipment.Version),
+            Guid.NewGuid(), SystemRoles.WarehouseKeeper, CancellationToken.None);
+
+        // Approval raised Reserved and left OnHand alone; issuing is where both fall.
+        Assert.Equal(38m, balance.PhysicalQuantity);
+        Assert.Equal(0m, balance.ReservedQuantity);
+        Assert.Equal(38m, balance.AvailableQuantity);
+        Assert.Equal(ReservationStatuses.Consumed, hold.Status);
+        Assert.Equal(ShipmentStatuses.Issued, shipment.Status);
+    }
+
+    [Fact]
+    public async Task Issuing_writes_one_stock_movement_naming_the_shipment()
+    {
+        var fixture = new Fixture();
+        var (shipment, _, _) = fixture.AddReadyShipment(fixture.WarehouseA, 12m, onHand: 50m);
+
+        await fixture.Service.ConfirmIssueAsync(
+            shipment.Id, new ConfirmShipmentIssueData(shipment.Version),
+            Guid.NewGuid(), SystemRoles.WarehouseKeeper, CancellationToken.None);
+
+        var movement = Assert.Single(fixture.Store.InventoryTransactions);
+        Assert.Equal(InventoryTransactionTypes.OrderIssue, movement.TransactionType);
+        Assert.Equal(-12m, movement.PhysicalQuantityDelta);
+        Assert.Equal(-12m, movement.ReservedQuantityDelta);
+        Assert.Equal(shipment.ShipmentCode, movement.ReferenceCode);
+    }
+
+    [Fact]
+    public async Task Confirming_twice_does_not_deduct_twice()
+    {
+        var fixture = new Fixture();
+        var (shipment, balance, _) = fixture.AddReadyShipment(fixture.WarehouseA, 12m, onHand: 50m);
+        var actor = Guid.NewGuid();
+
+        await fixture.Service.ConfirmIssueAsync(
+            shipment.Id, new ConfirmShipmentIssueData(shipment.Version), actor,
+            SystemRoles.WarehouseKeeper, CancellationToken.None);
+        // A keeper whose connection dropped presses the button again.
+        await fixture.Service.ConfirmIssueAsync(
+            shipment.Id, new ConfirmShipmentIssueData(shipment.Version), actor,
+            SystemRoles.WarehouseKeeper, CancellationToken.None);
+
+        Assert.Equal(38m, balance.PhysicalQuantity);
+        Assert.Single(fixture.Store.InventoryTransactions);
+    }
+
+    [Fact]
+    public async Task A_part_cannot_leave_while_another_warehouse_is_still_picking()
+    {
+        var fixture = new Fixture();
+        var (ready, balance, _) = fixture.AddReadyShipment(fixture.WarehouseA, 12m, onHand: 50m);
+        fixture.Store.Shipments.Add(new Shipment
+        {
+            Id = Guid.NewGuid(), SalesOrderId = fixture.Order.Id, WarehouseId = fixture.WarehouseB,
+            RunPickingListId = Guid.NewGuid(), ShipmentCode = "SHIP-002099",
+            Status = ShipmentStatuses.WaitingToPick, TotalQuantity = 5m, Version = 0
+        });
+
+        var error = await Assert.ThrowsAsync<ShipmentOperationException>(() =>
+            fixture.Service.ConfirmIssueAsync(
+                ready.Id, new ConfirmShipmentIssueData(ready.Version), Guid.NewGuid(),
+                SystemRoles.WarehouseKeeper, CancellationToken.None));
+
+        Assert.Equal("conflict", error.Code);
+        // Nothing moved: the whole order waits, not just the slow warehouse.
+        Assert.Equal(50m, balance.PhysicalQuantity);
+        Assert.Equal(ShipmentStatuses.Ready, ready.Status);
+    }
+
+    [Fact]
+    public async Task One_warehouse_in_exception_stops_every_part_that_has_not_left()
+    {
+        var fixture = new Fixture();
+        var (ready, _, _) = fixture.AddReadyShipment(fixture.WarehouseA, 12m, onHand: 50m);
+        fixture.Store.Shipments.Add(new Shipment
+        {
+            Id = Guid.NewGuid(), SalesOrderId = fixture.Order.Id, WarehouseId = fixture.WarehouseB,
+            RunPickingListId = Guid.NewGuid(), ShipmentCode = "SHIP-002098",
+            Status = ShipmentStatuses.Exception, ExceptionReason = "Hàng hỏng khi soạn",
+            TotalQuantity = 5m, Version = 1
+        });
+
+        var error = await Assert.ThrowsAsync<ShipmentOperationException>(() =>
+            fixture.Service.ConfirmIssueAsync(
+                ready.Id, new ConfirmShipmentIssueData(ready.Version), Guid.NewGuid(),
+                SystemRoles.WarehouseKeeper, CancellationToken.None));
+
+        Assert.Contains("Hàng hỏng khi soạn", error.Message);
+    }
+
+    [Fact]
+    public async Task A_prepaid_order_that_has_not_been_paid_cannot_leave()
+    {
+        var fixture = new Fixture();
+        fixture.Order.PaymentMethod = OrderPaymentMethods.Prepaid;
+        fixture.PaymentStore.Payment!.Status = PaymentStatuses.Unpaid;
+        var (ready, balance, _) = fixture.AddReadyShipment(fixture.WarehouseA, 12m, onHand: 50m);
+
+        var error = await Assert.ThrowsAsync<ShipmentOperationException>(() =>
+            fixture.Service.ConfirmIssueAsync(
+                ready.Id, new ConfirmShipmentIssueData(ready.Version), Guid.NewGuid(),
+                SystemRoles.WarehouseKeeper, CancellationToken.None));
+
+        Assert.Equal("conflict", error.Code);
+        Assert.Equal(50m, balance.PhysicalQuantity);
+    }
+
+    [Fact]
+    public async Task A_credit_order_does_not_have_to_be_paid_before_it_leaves()
+    {
+        var fixture = new Fixture();
+        // Credit is settled on terms and COD on delivery, so neither gates the door.
+        fixture.PaymentStore.Payment!.Status = PaymentStatuses.Unpaid;
+        var (ready, balance, _) = fixture.AddReadyShipment(fixture.WarehouseA, 12m, onHand: 50m);
+
+        await fixture.Service.ConfirmIssueAsync(
+            ready.Id, new ConfirmShipmentIssueData(ready.Version), Guid.NewGuid(),
+            SystemRoles.WarehouseKeeper, CancellationToken.None);
+
+        Assert.Equal(38m, balance.PhysicalQuantity);
+    }
+
+    [Fact]
+    public async Task The_order_is_only_issued_once_every_warehouse_part_has_left()
+    {
+        var fixture = new Fixture();
+        var (first, _, _) = fixture.AddReadyShipment(fixture.WarehouseA, 12m, onHand: 50m);
+        var (second, _, _) = fixture.AddReadyShipment(fixture.WarehouseB, 5m, onHand: 20m);
+        var actor = Guid.NewGuid();
+
+        await fixture.Service.ConfirmIssueAsync(
+            first.Id, new ConfirmShipmentIssueData(first.Version), actor,
+            SystemRoles.WarehouseKeeper, CancellationToken.None);
+        Assert.NotEqual(OrderStatuses.Issued, fixture.Order.Status);
+
+        await fixture.Service.ConfirmIssueAsync(
+            second.Id, new ConfirmShipmentIssueData(second.Version), actor,
+            SystemRoles.WarehouseKeeper, CancellationToken.None);
+        Assert.Equal(OrderStatuses.Issued, fixture.Order.Status);
+    }
+
+    [Fact]
+    public async Task Readiness_names_the_warehouse_that_is_holding_the_order_up()
+    {
+        var fixture = new Fixture();
+        fixture.AddReadyShipment(fixture.WarehouseA, 12m, onHand: 50m);
+        fixture.Store.Shipments.Add(new Shipment
+        {
+            Id = Guid.NewGuid(), SalesOrderId = fixture.Order.Id, WarehouseId = fixture.WarehouseB,
+            RunPickingListId = Guid.NewGuid(), ShipmentCode = "SHIP-002097",
+            Status = ShipmentStatuses.WaitingToPick, TotalQuantity = 5m, Version = 0
+        });
+
+        var readiness = await fixture.Service.GetOrderReadinessAsync(
+            fixture.Order.Id, Guid.NewGuid(), SystemRoles.Operator, CancellationToken.None);
+
+        Assert.False(readiness.IsReady);
+        Assert.True(readiness.PaymentSettled);
+        Assert.Equal(2, readiness.Parts.Count);
+        Assert.Single(readiness.BlockingReasons);
+    }
+
+    [Fact]
+    public async Task A_part_already_gone_does_not_make_the_order_unready_forever()
+    {
+        var fixture = new Fixture();
+        var (first, _, _) = fixture.AddReadyShipment(fixture.WarehouseA, 12m, onHand: 50m);
+        fixture.AddReadyShipment(fixture.WarehouseB, 5m, onHand: 20m);
+
+        await fixture.Service.ConfirmIssueAsync(
+            first.Id, new ConfirmShipmentIssueData(first.Version), Guid.NewGuid(),
+            SystemRoles.WarehouseKeeper, CancellationToken.None);
+
+        var readiness = await fixture.Service.GetOrderReadinessAsync(
+            fixture.Order.Id, Guid.NewGuid(), SystemRoles.Operator, CancellationToken.None);
+
+        Assert.True(readiness.IsReady);
+    }
+
     private sealed class Fixture
     {
         public Guid WarehouseA { get; } = Guid.NewGuid();
@@ -336,6 +524,40 @@ public sealed class ShipmentServiceTests
         public void AddCompletedPickingList(Guid warehouseId, decimal totalPicked) =>
             Store.PendingLists.Add(new PendingShipmentSource(
                 Guid.NewGuid(), Order.Id, warehouseId, totalPicked));
+
+        /// <summary>A part that has been picked and whose stock is still held by the approval.</summary>
+        public (Shipment Shipment, InventoryBalance Balance, Reservation Hold) AddReadyShipment(
+            Guid warehouseId, decimal quantity, decimal onHand = 100m)
+        {
+            var shipment = new Shipment
+            {
+                Id = Guid.NewGuid(), SalesOrderId = Order.Id, WarehouseId = warehouseId,
+                RunPickingListId = Guid.NewGuid(), ShipmentCode = $"SHIP-00200{Store.Shipments.Count}",
+                Status = ShipmentStatuses.Ready, TotalQuantity = quantity, Version = 1
+            };
+            var batchId = Guid.NewGuid();
+            var batch = new Batch
+            {
+                Id = batchId, WarehouseId = warehouseId, ProductId = Guid.NewGuid(), BatchCode = "LO-900"
+            };
+            var balance = new InventoryBalance
+            {
+                Id = Guid.NewGuid(), BatchId = batchId,
+                PhysicalQuantity = onHand, ReservedQuantity = quantity,
+                AvailableQuantity = onHand - quantity, Version = 1
+            };
+            var hold = new Reservation
+            {
+                Id = Guid.NewGuid(), AllocationRunAllocationId = Guid.NewGuid(), BatchId = batchId,
+                Quantity = quantity, Status = ReservationStatuses.Active, ReservedAt = Now
+            };
+            Store.Shipments.Add(shipment);
+            Store.Lines[shipment.Id] = [new ShipmentLineView(
+                Guid.NewGuid(), 1, batch.ProductId, "SKU001", "Sữa chua", batchId, "LO-900",
+                quantity, 10_000, quantity * 10_000)];
+            Store.Issuable[shipment.Id] = [new ShipmentIssueRow(batchId, quantity, batch, balance, [hold])];
+            return (shipment, balance, hold);
+        }
 
         public (Shipment Shipment, ShipmentLineView Line, Guid BatchId, string QrCode)
             AddDeliveringShipment(decimal quantity)
@@ -430,6 +652,16 @@ public sealed class ShipmentServiceTests
 
         public Task<Vehicle?> FindVehicleAsync(Guid id, CancellationToken cancellationToken) =>
             Task.FromResult(Vehicles.SingleOrDefault(item => item.Id == id));
+
+        public Dictionary<Guid, IReadOnlyCollection<ShipmentIssueRow>> Issuable { get; } = [];
+        public List<InventoryTransaction> InventoryTransactions { get; } = [];
+
+        public Task<IReadOnlyCollection<ShipmentIssueRow>> ListIssuableAsync(
+            Guid shipmentId, CancellationToken cancellationToken) =>
+            Task.FromResult(Issuable.GetValueOrDefault(shipmentId) ?? []);
+
+        public void AddInventoryTransaction(InventoryTransaction transaction) =>
+            InventoryTransactions.Add(transaction);
 
         public void AddShipment(Shipment shipment) => Shipments.Add(shipment);
         public void AddReceipt(ReceiptConfirmation receipt) => Receipts.Add(receipt);

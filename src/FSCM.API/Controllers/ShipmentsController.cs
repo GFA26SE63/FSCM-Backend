@@ -24,6 +24,21 @@ public sealed class ShipmentsController(ShipmentService service) : ControllerBas
     public Task<ShipmentResult> Get(Guid id, CancellationToken cancellationToken) =>
         service.GetAsync(id, GetActorUserId(), GetActorRole(), cancellationToken);
 
+    /// <summary>
+    /// F93: whether this order may leave the warehouses, and which part is holding it if not.
+    /// </summary>
+    [HttpGet("orders/{orderId:guid}/readiness")]
+    public Task<OrderShipmentReadinessResult> OrderReadiness(Guid orderId, CancellationToken cancellationToken) =>
+        service.GetOrderReadinessAsync(orderId, GetActorUserId(), GetActorRole(), cancellationToken);
+
+    /// <summary>F96: confirm the goods left this warehouse; stock falls here and nowhere else.</summary>
+    [HttpPost("{id:guid}/issue")]
+    public Task<ShipmentResult> ConfirmIssue(
+        Guid id, ConfirmShipmentIssueRequest request, CancellationToken cancellationToken) =>
+        service.ConfirmIssueAsync(
+            id, new ConfirmShipmentIssueData(request.ExpectedVersion),
+            GetActorUserId(), GetActorRole(), cancellationToken);
+
     /// <summary>F60: retailer delivery view of one order — per-warehouse shipments + payment status.</summary>
     [HttpGet("orders/{orderId:guid}/delivery-view")]
     public Task<RetailerOrderDeliveryResult> OrderDeliveryView(Guid orderId, CancellationToken cancellationToken) =>

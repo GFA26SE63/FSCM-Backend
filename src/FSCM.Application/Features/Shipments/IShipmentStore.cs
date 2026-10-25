@@ -42,6 +42,18 @@ public sealed record PendingShipmentSource(
     Guid WarehouseId,
     decimal TotalQuantity);
 
+/// <summary>
+/// One batch of a shipment at the moment it is issued: how much leaves, the balance it leaves, and
+/// the holds that paid for it. The holds are carried so issuing consumes the very rows the approval
+/// created, rather than decrementing a reserved total that might have been held for something else.
+/// </summary>
+public sealed record ShipmentIssueRow(
+    Guid BatchId,
+    decimal Quantity,
+    Batch Batch,
+    InventoryBalance Balance,
+    IReadOnlyCollection<Reservation> Holds);
+
 public interface IShipmentStore
 {
     Task<bool> CanAccessWarehouseAsync(Guid userId, string role, Guid warehouseId, CancellationToken cancellationToken);
@@ -63,6 +75,12 @@ public interface IShipmentStore
     Task<IReadOnlyCollection<Shipment>> ListByOrderAsync(Guid orderId, CancellationToken cancellationToken);
     Task<Driver?> FindDriverAsync(Guid id, CancellationToken cancellationToken);
     Task<Vehicle?> FindVehicleAsync(Guid id, CancellationToken cancellationToken);
+
+    /// <summary>What one ready shipment would take out of stock, per batch, locked for update.</summary>
+    Task<IReadOnlyCollection<ShipmentIssueRow>> ListIssuableAsync(
+        Guid shipmentId, CancellationToken cancellationToken);
+
+    void AddInventoryTransaction(InventoryTransaction transaction);
 
     void AddShipment(Shipment shipment);
     void AddReceipt(ReceiptConfirmation receipt);
