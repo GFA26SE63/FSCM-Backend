@@ -107,10 +107,10 @@ public sealed class PhysicalSchemaModelTests
             .ToArray();
 
         Assert.Equal(ExpectedTables, tableNames);
-        Assert.Equal(82, entityTypes.Length);
+        Assert.Equal(83, entityTypes.Length);
         // Develop's run-picking shape plus loyalty program expiry and retailer scope.
-        Assert.Equal(918, entityTypes.Sum(entityType => entityType.GetProperties().Count()));
-        Assert.Equal(185, entityTypes.Sum(entityType => entityType.GetForeignKeys().Count()));
+        Assert.Equal(926, entityTypes.Sum(entityType => entityType.GetProperties().Count()));
+        Assert.Equal(189, entityTypes.Sum(entityType => entityType.GetForeignKeys().Count()));
         Assert.All(
             entityTypes.SelectMany(entityType => entityType.GetForeignKeys()),
             foreignKey => Assert.Equal(DeleteBehavior.Restrict, foreignKey.DeleteBehavior));
