@@ -15,3 +15,6 @@ public sealed record ConfirmShipmentReceiptRequest(
     IReadOnlyCollection<ConfirmShipmentReceiptLineRequest> Lines,
     int ExpectedVersion,
     string? Note);
+
+/// <summary>F96: the warehouse confirms this delivery part physically left.</summary>
+public sealed record ConfirmShipmentIssueRequest(int ExpectedVersion);

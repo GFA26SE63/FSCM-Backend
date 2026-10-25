@@ -235,6 +235,8 @@ to stop a tempting optimisation, so they are stated as rules rather than left to
 | Record the working | `AllocationRunService.PersistTrace` | Why each batch was kept or ruled out, and how the survivors ranked |
 | Approve | `AllocationPlanApprovalService` | Reserves stock, then marks the version approved |
 | Issue picking | `RunPickingIssueService` | Gather per warehouse, then split back to order lines |
+| Check the order may leave | `ShipmentService.GetOrderReadinessAsync` | Every warehouse part picked, payment condition met |
+| Confirm it left | `ShipmentService.ConfirmIssueAsync` | OnHand and Reserved both fall; the hold is consumed |
 
 ### The run day
 
@@ -270,6 +272,12 @@ from the run moment, so a late approval needs its ETA re-checked.
 - **Hours, never days.** Shelf life and MLOR are compared in hours against the product's total shelf
   life. A run arriving next morning is not the same as one arriving that evening, and rounding to
   days hides it.
+- **An order is all or nothing at the door too.** Every warehouse part must be picked, and the
+  payment condition met, before any part leaves. One warehouse short or damaged stops the whole
+  order rather than sending what happens to be ready and leaving the retailer to chase the rest.
+- **Stock moves once, at issue.** Approval raises Reserved and leaves OnHand alone; issuing takes
+  both down together and consumes the hold that paid for it. Confirming twice returns the part
+  unchanged, because a duplicated deduction stays invisible until someone counts the shelf.
 - **An order is all or nothing.** A line that cannot be filled completely undoes every draw the
   order already made, including the lines that succeeded, and hands the quantity back to the pool
   for the orders behind it. There is no partial delivery for the run to decide on.
