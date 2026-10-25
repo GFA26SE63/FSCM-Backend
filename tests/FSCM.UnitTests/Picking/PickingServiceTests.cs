@@ -44,6 +44,26 @@ public sealed class PickingServiceTests
     }
 
     [Fact]
+    public async Task Scan_rejects_reused_operation_key_when_split_mapping_changes()
+    {
+        var f = new Fixture();
+        await f.ScanAsync(10, [(f.First.AllocationRunAllocationId, 6), (f.Second.AllocationRunAllocationId, 4)]);
+
+        var error = await Assert.ThrowsAsync<PickingOperationException>(() =>
+            f.Service.ScanAsync(f.List.PickingCode,
+                new ScanPickingLabelData(f.Label.QrCode, 10, 0, 1,
+                [
+                    new RunPickingSplitQuantityData(f.First.AllocationRunAllocationId, 5),
+                    new RunPickingSplitQuantityData(f.Second.AllocationRunAllocationId, 5)
+                ]),
+                "scan-001", f.ActorId, SystemRoles.WarehouseKeeper, default));
+
+        Assert.Equal("conflict", error.Code);
+        Assert.Equal(10, f.Gather.PickedQuantity);
+        Assert.Single(f.Events, x => x.EventType == QrLabelEventTypes.Picked);
+    }
+
+    [Fact]
     public async Task Complete_requires_every_gather_and_split_then_marks_warehouse_ready()
     {
         var f = new Fixture();

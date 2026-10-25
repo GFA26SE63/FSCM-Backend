@@ -3,6 +3,9 @@ using FSCM.Application.Features.QrLabels;
 using FSCM.Application.Features.Shipments;
 using FSCM.Domain.Authorization;
 using FSCM.Domain.Entities;
+using System.Globalization;
+using System.Security.Cryptography;
+using System.Text;
 
 namespace FSCM.Application.Features.Picking;
 
@@ -45,12 +48,14 @@ public sealed class PickingService(IRunPickingStore store, TimeProvider timeProv
         var requestQuantity = data.Quantity ?? data.Splits.Sum(x => x.Quantity);
         if (data.Splits.Sum(x => x.Quantity) != requestQuantity)
             throw PickingOperationException.Validation("Split quantities must equal the scanned quantity.");
+        var scanNote = ScanNote(qrCode, data.Splits);
 
         var prior = await store.FindOperationAsync(operationKey, ct);
         if (prior is not null)
         {
             if (prior.EventType != QrLabelEventTypes.Picked || prior.ReferenceCode != code ||
-                prior.Note != ScanNote(qrCode) || prior.Quantity != requestQuantity)
+                prior.Note != scanNote || prior.Quantity != requestQuantity ||
+                prior.PerformedByUserId != actorId)
                 throw PickingOperationException.Conflict("Operation key was already used for another picking command.");
             return await GetAsync(code, actorId, role, ct);
         }
@@ -124,7 +129,7 @@ public sealed class PickingService(IRunPickingStore store, TimeProvider timeProv
             view.List.Version++;
             view.List.UpdatedAt = now;
             store.AddLabelEvent(NewEvent(pickedLabel, actorId, operationKey, QrLabelEventTypes.Picked,
-                QrLabelStatuses.Available, QrLabelStatuses.Picked, code, ScanNote(qrCode), now));
+                QrLabelStatuses.Available, QrLabelStatuses.Picked, code, scanNote, now));
             await store.SaveChangesAsync(txCt);
         }, ct);
         store.ClearTracking();
@@ -268,5 +273,13 @@ public sealed class PickingService(IRunPickingStore store, TimeProvider timeProv
         return value;
     }
     private static string? NormalizeOptional(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
-    private static string ScanNote(string qrCode) => $"Quét tem {qrCode} để soạn gom";
+    private static string ScanNote(string qrCode, IReadOnlyCollection<RunPickingSplitQuantityData> splits)
+    {
+        var canonicalSplits = string.Join('|', splits
+            .OrderBy(x => x.AllocationRunAllocationId)
+            .Select(x => $"{x.AllocationRunAllocationId:D}:{x.Quantity.ToString(CultureInfo.InvariantCulture)}"));
+        var fingerprint = Convert.ToHexString(SHA256.HashData(
+            Encoding.UTF8.GetBytes($"{qrCode}|{canonicalSplits}")));
+        return $"Quét tem {qrCode} để soạn gom; request-sha256={fingerprint}";
+    }
 }
