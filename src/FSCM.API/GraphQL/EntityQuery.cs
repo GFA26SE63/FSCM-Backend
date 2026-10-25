@@ -17,6 +17,26 @@ namespace FSCM.API.GraphQL;
 /// </summary>
 public sealed class EntityQuery(EntityQueryAccess access)
 {
+    /// <summary>F32/F37 scoped order list; mirrors GET /api/v1/orders.</summary>
+    public Task<PagedOrderResult> OrderReads(
+        [Service] OrderService service,
+        string? status = null,
+        Guid? retailerId = null,
+        bool createdByMe = false,
+        string? search = null,
+        int page = 1,
+        int pageSize = 20,
+        CancellationToken cancellationToken = default) =>
+        service.ListAsync(access.UserId, access.Role,
+            new OrderListQuery(status, retailerId, createdByMe, search, page, pageSize), cancellationToken);
+
+    /// <summary>F32/F37 scoped order detail with immutable allocation/F98 fragments.</summary>
+    public Task<OrderDetailResult> OrderRead(
+        Guid id,
+        [Service] OrderService service,
+        CancellationToken cancellationToken = default) =>
+        service.GetAsync(id, access.UserId, access.Role, cancellationToken);
+
     /// <summary>
     /// Returns the same pre-allocation quote as GET /api/v1/pricing/snapshot.
     /// The quote deliberately has no batch/HSD price because allocation has not selected a batch.

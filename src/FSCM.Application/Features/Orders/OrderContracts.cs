@@ -78,6 +78,33 @@ public sealed record OrderAllocationResult(
     string? DiscountSourceCode,
     string Status);
 
+public sealed record OrderAllocationFragmentResult(
+    Guid AllocationId,
+    Guid PlanPriceId,
+    Guid BatchId,
+    string BatchCode,
+    DateOnly BatchExpirationDate,
+    Guid WarehouseId,
+    string WarehouseCode,
+    decimal Quantity,
+    int Sequence,
+    DateTimeOffset EstimatedArrivalAt,
+    decimal RemainingLifeHoursAtArrival,
+    decimal ListUnitPrice,
+    decimal OrdinaryPromotionDiscountPerUnit,
+    decimal BaseUnitPrice,
+    decimal RemainingShelfLifePercent,
+    Guid? DiscountRuleId,
+    string? DiscountRuleScope,
+    string? DiscountRuleCode,
+    int DiscountRuleVersion,
+    string? DiscountType,
+    decimal? DiscountValue,
+    decimal ShelfLifeDiscountPerUnit,
+    decimal FinalUnitPrice,
+    decimal NetAmount,
+    string DiscountReason);
+
 public sealed record OrderMlorSnapshotResult(
     string SourceScope,
     Guid? SourceRuleId,
@@ -126,6 +153,8 @@ public sealed record OrderLineResult(
     public decimal BaseUnitPrice => UnitPrice;
     public decimal OrdinaryPromotionDiscountAmount => DiscountAmount;
     public decimal IndicativeNetAmount => NetAmount;
+    public IReadOnlyCollection<OrderAllocationFragmentResult> AllocationFragments { get; init; } = [];
+    public decimal? OfficialNetAmount { get; init; }
 }
 
 public sealed record OrderStatusHistoryResult(
@@ -159,6 +188,7 @@ public sealed record OrderSummaryResult(
     DateTimeOffset CreatedAt)
 {
     public decimal IndicativeAmount => FinalAmount;
+    public decimal? OfficialAmount { get; init; }
 }
 
 public sealed record OrderListQuery(
@@ -183,6 +213,19 @@ public sealed record OrderShipmentLinkResult(
     string Status,
     DateTimeOffset? DispatchedAt,
     DateTimeOffset? DeliveredAt);
+
+public sealed record OrderWarehouseProgressResult(
+    Guid WarehouseId,
+    string WarehouseCode,
+    Guid? PickingListId,
+    string? PickingCode,
+    string? PickingStatus,
+    Guid? ShipmentId,
+    string? ShipmentCode,
+    string? ShipmentStatus,
+    decimal PlannedQuantity,
+    decimal PickedQuantity,
+    decimal ReceivedQuantity);
 
 public sealed record OrderDetailResult(
     Guid Id,
@@ -220,6 +263,11 @@ public sealed record OrderDetailResult(
     IReadOnlyCollection<OrderShipmentLinkResult> Shipments)
 {
     public decimal IndicativeAmount => FinalAmount;
+    public decimal? OfficialAmount { get; init; }
+    public string? AllocationRunCode { get; init; }
+    public int? AllocationPlanVersion { get; init; }
+    public DateTimeOffset? OfficialPricedAt { get; init; }
+    public IReadOnlyCollection<OrderWarehouseProgressResult> WarehouseProgress { get; init; } = [];
 }
 
 public sealed record OrderTimelineResult(

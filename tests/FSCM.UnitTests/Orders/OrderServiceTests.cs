@@ -1,3 +1,4 @@
+using FSCM.Application.Features.AllocationRuns;
 using FSCM.Application.Features.Inventory;
 using FSCM.Application.Features.Orders;
 using FSCM.Application.Features.Picking;
@@ -292,6 +293,44 @@ public sealed class OrderServiceTests
         Assert.Single(fixture.Store.Orders);
     }
 
+    [Fact]
+    public async Task Approved_run_read_preserves_each_batch_price_and_warehouse_progress()
+    {
+        var fixture = new Fixture();
+        var created = await fixture.CreateAsync(10);
+        var line = Assert.Single(fixture.Store.Lines);
+        var secondBatchId = Guid.NewGuid();
+        fixture.Store.ReadContext = new OrderAllocationReadContext(
+            Guid.NewGuid(), "RUN-20261020", AllocationRunStatuses.Approved,
+            AllocationRunOrderStatuses.Fulfilled, null, Guid.NewGuid(), 3,
+            AllocationPlanVersionStatuses.Approved, Now,
+            [
+                Fragment(line.Id, fixture.Store.Batch.Id, fixture.Store.Warehouse.Id, 4m, 80m, 320m, 1),
+                Fragment(line.Id, secondBatchId, fixture.Store.Warehouse.Id, 6m, 70m, 420m, 2)
+            ],
+            [new(fixture.Store.Warehouse.Id, fixture.Store.Warehouse.Code, Guid.NewGuid(), "PK-001",
+                "Completed", Guid.NewGuid(), "SHP-001", "Delivering", 10m, 10m, 0m)]);
+
+        var result = await fixture.Service.GetAsync(created.Id, fixture.SalesUserId, SystemRoles.Sales, default);
+
+        Assert.Equal(740m, result.OfficialAmount);
+        Assert.Equal("RUN-20261020", result.AllocationRunCode);
+        Assert.Equal(3, result.AllocationPlanVersion);
+        var fragments = Assert.Single(result.Lines).AllocationFragments.OrderBy(item => item.Sequence).ToArray();
+        Assert.Equal([80m, 70m], fragments.Select(item => item.FinalUnitPrice));
+        Assert.Equal([320m, 420m], fragments.Select(item => item.NetAmount));
+        Assert.Equal(740m, result.Lines.Single().OfficialNetAmount);
+        Assert.Equal("SHP-001", Assert.Single(result.WarehouseProgress).ShipmentCode);
+    }
+
+    private static OrderAllocationFragmentView Fragment(
+        Guid lineId, Guid batchId, Guid warehouseId, decimal quantity,
+        decimal finalUnitPrice, decimal netAmount, int sequence) => new(
+        Guid.NewGuid(), Guid.NewGuid(), lineId, batchId, $"BATCH-{sequence}", new DateOnly(2026, 11, 30),
+        warehouseId, "WH-TD", quantity, sequence, Now.AddHours(8), 500m,
+        100m, 90m, 60m, Guid.NewGuid(), "Sku", "SKU001", 4,
+        "Percentage", 10m, 10m, finalUnitPrice, netAmount, "Giảm giá theo hạn sử dụng");
+
     private sealed class Fixture
     {
         public Guid SalesUserId { get; } = Guid.NewGuid();
@@ -383,6 +422,7 @@ public sealed class OrderServiceTests
         public List<OrderPromotion> Promotions { get; } = [];
         public List<OrderStatusHistory> History { get; } = [];
         public List<AuditLog> Audits { get; } = [];
+        public OrderAllocationReadContext? ReadContext { get; set; }
 
         public FakeStore(Guid salesUserId, decimal physicalQuantity)
         {
@@ -482,10 +522,13 @@ public sealed class OrderServiceTests
                 .Select(line => new OrderLineView(line,
                     Allocations.Where(item => item.SalesOrderLineId == line.Id).ToArray(),
                     Promotions.SingleOrDefault(item => item.SalesOrderLineId == line.Id))).ToArray();
-            return new(order, lines, History.Where(item => item.SalesOrderId == order.Id).ToArray(), [],
+            return new OrderView(order, lines, History.Where(item => item.SalesOrderId == order.Id).ToArray(), [],
                 new Dictionary<Guid, string> { [Batch.Id] = Batch.BatchCode },
                 new Dictionary<Guid, string> { [Warehouse.Id] = Warehouse.Code },
-                new Dictionary<Guid, int> { [Batch.Id] = Balance.Version });
+                new Dictionary<Guid, int> { [Batch.Id] = Balance.Version })
+            {
+                AllocationContext = ReadContext
+            };
         }
     }
 

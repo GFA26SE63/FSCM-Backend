@@ -1,6 +1,7 @@
 using System.Data;
 using System.Text.Json;
 using FSCM.Application.Features.Orders;
+using FSCM.Application.Features.AllocationRuns;
 using FSCM.Application.Features.WarehouseConfiguration;
 using FSCM.Domain.Authorization;
 using FSCM.Domain.Entities;
@@ -295,8 +296,119 @@ public sealed class OrderStore(AppDbContext dbContext) : IOrderStore
         var lineViews = lines.Select(line => new OrderLineView(
             line,
             allocations.Where(item => item.SalesOrderLineId == line.Id).ToArray(),
-            promotionSnapshots.SingleOrDefault(item => item.SalesOrderLineId == line.Id))).ToArray();
-        return new OrderView(order, lineViews, history, deliveries, batchCodes, warehouseCodes, inventoryVersions);
+            promotionSnapshots.Where(item => item.SalesOrderLineId == line.Id)
+                .OrderByDescending(item => item.IsServerFinal)
+                .ThenByDescending(item => item.AppliedAt)
+                .ThenBy(item => item.Id)
+                .FirstOrDefault())).ToArray();
+        var allocationContext = await LoadAllocationContextAsync(order.Id, lineIds, cancellationToken);
+        return new OrderView(order, lineViews, history, deliveries, batchCodes, warehouseCodes, inventoryVersions)
+        {
+            AllocationContext = allocationContext
+        };
+    }
+
+    private async Task<OrderAllocationReadContext?> LoadAllocationContextAsync(
+        Guid orderId,
+        IReadOnlyCollection<Guid> lineIds,
+        CancellationToken cancellationToken)
+    {
+        var runOrder = await (
+            from item in dbContext.AllocationRunOrderRecords.AsNoTracking()
+            where item.SalesOrderId == orderId
+            join run in dbContext.AllocationRunRecords.AsNoTracking() on item.AllocationRunId equals run.Id
+            orderby run.BusinessDate descending, run.StartedAt descending
+            select new { Order = item, Run = run }).FirstOrDefaultAsync(cancellationToken);
+        if (runOrder is null) return null;
+
+        var plan = await dbContext.AllocationPlanVersionRecords.AsNoTracking()
+            .Where(item => item.AllocationRunId == runOrder.Run.Id &&
+                (item.Status == AllocationPlanVersionStatuses.Approved ||
+                 item.Status == AllocationPlanVersionStatuses.AwaitingApproval))
+            .OrderByDescending(item => item.Status == AllocationPlanVersionStatuses.Approved)
+            .ThenByDescending(item => item.VersionNumber)
+            .FirstOrDefaultAsync(cancellationToken);
+        if (plan is null) return null;
+
+        var runLines = await dbContext.AllocationRunLineRecords.AsNoTracking()
+            .Where(item => item.AllocationRunOrderId == runOrder.Order.Id && lineIds.Contains(item.SalesOrderLineId))
+            .ToArrayAsync(cancellationToken);
+        var runLineIds = runLines.Select(item => item.Id).ToArray();
+        var runLineToOrderLine = runLines.ToDictionary(item => item.Id, item => item.SalesOrderLineId);
+        var allocations = await dbContext.AllocationRunAllocationRecords.AsNoTracking()
+            .Where(item => item.AllocationPlanVersionId == plan.Id && runLineIds.Contains(item.AllocationRunLineId))
+            .OrderBy(item => item.Sequence).ToArrayAsync(cancellationToken);
+        var prices = await dbContext.AllocationPlanPriceRecords.AsNoTracking()
+            .Where(item => item.AllocationPlanVersionId == plan.Id && runLineIds.Contains(item.AllocationRunLineId))
+            .ToArrayAsync(cancellationToken);
+        var priceByPart = prices.ToDictionary(item => (item.AllocationRunLineId, item.BatchId, item.WarehouseId));
+
+        var batchIds = allocations.Select(item => item.BatchId).Distinct().ToArray();
+        var warehouseIds = allocations.Select(item => item.WarehouseId).Distinct().ToArray();
+        var batches = await dbContext.BatchRecords.AsNoTracking().Where(item => batchIds.Contains(item.Id))
+            .ToDictionaryAsync(item => item.Id, cancellationToken);
+        var warehouses = await dbContext.WarehouseRecords.AsNoTracking().Where(item => warehouseIds.Contains(item.Id))
+            .ToDictionaryAsync(item => item.Id, cancellationToken);
+        var tierIds = prices.Where(item => item.ShelfLifeDiscountTierId.HasValue)
+            .Select(item => item.ShelfLifeDiscountTierId!.Value).Distinct().ToArray();
+        var tiers = await dbContext.ShelfLifeDiscountTierRecords.AsNoTracking()
+            .Where(item => tierIds.Contains(item.Id)).ToDictionaryAsync(item => item.Id, cancellationToken);
+        var productIds = tiers.Values.Where(item => item.ProductId.HasValue).Select(item => item.ProductId!.Value).Distinct().ToArray();
+        var categoryIds = tiers.Values.Where(item => item.ProductCategoryId.HasValue).Select(item => item.ProductCategoryId!.Value).Distinct().ToArray();
+        var productCodes = await dbContext.ProductRecords.AsNoTracking().Where(item => productIds.Contains(item.Id))
+            .ToDictionaryAsync(item => item.Id, item => item.Sku, cancellationToken);
+        var categoryCodes = await dbContext.ProductCategoryRecords.AsNoTracking().Where(item => categoryIds.Contains(item.Id))
+            .ToDictionaryAsync(item => item.Id, item => item.Code, cancellationToken);
+
+        var fragments = allocations.Select(allocation =>
+        {
+            if (!priceByPart.TryGetValue((allocation.AllocationRunLineId, allocation.BatchId, allocation.WarehouseId), out var price))
+                throw OrderOperationException.Conflict("Allocation price snapshot is incomplete for this order.");
+            tiers.TryGetValue(price.ShelfLifeDiscountTierId ?? Guid.Empty, out var tier);
+            var ruleCode = tier?.ProductId is Guid productId ? productCodes.GetValueOrDefault(productId)
+                : tier?.ProductCategoryId is Guid categoryId ? categoryCodes.GetValueOrDefault(categoryId) : null;
+            return new OrderAllocationFragmentView(
+                allocation.Id, price.Id, runLineToOrderLine[allocation.AllocationRunLineId],
+                allocation.BatchId, batches[allocation.BatchId].BatchCode, batches[allocation.BatchId].ExpirationDate,
+                allocation.WarehouseId, warehouses[allocation.WarehouseId].Code,
+                allocation.Quantity, allocation.Sequence, allocation.EstimatedArrivalAt,
+                allocation.RemainingShelfLifeHours, price.ListUnitPrice, price.BaseNetUnitPrice,
+                price.RemainingShelfLifePercent, price.ShelfLifeDiscountTierId, tier?.Scope, ruleCode,
+                price.DiscountTableVersion, price.DiscountType, price.DiscountValue,
+                price.ShelfLifeDiscountPerUnit, price.FinalNetUnitPrice, price.Amount, price.Explanation);
+        }).ToArray();
+
+        var pickingLists = await dbContext.RunPickingListRecords.AsNoTracking()
+            .Where(item => item.AllocationPlanVersionId == plan.Id && warehouseIds.Contains(item.WarehouseId))
+            .ToArrayAsync(cancellationToken);
+        var pickingIds = pickingLists.Select(item => item.Id).ToArray();
+        var splits = await (
+            from split in dbContext.RunPickingSplitRecords.AsNoTracking()
+            where split.SalesOrderId == orderId
+            join gather in dbContext.RunPickingGatherRecords.AsNoTracking() on split.RunPickingGatherId equals gather.Id
+            where pickingIds.Contains(gather.RunPickingListId)
+            select new { gather.RunPickingListId, split.PickedQuantity }).ToArrayAsync(cancellationToken);
+        var shipments = await dbContext.ShipmentRecords.AsNoTracking()
+            .Where(item => item.SalesOrderId == orderId && warehouseIds.Contains(item.WarehouseId))
+            .ToArrayAsync(cancellationToken);
+        var progress = warehouseIds.OrderBy(id => warehouses[id].Code).Select(warehouseId =>
+        {
+            var picking = pickingLists.Where(item => item.WarehouseId == warehouseId)
+                .OrderByDescending(item => item.CreatedAt).FirstOrDefault();
+            var shipment = shipments.Where(item => item.WarehouseId == warehouseId)
+                .OrderByDescending(item => item.CreatedAt).FirstOrDefault();
+            return new OrderWarehouseProgressView(
+                warehouseId, warehouses[warehouseId].Code, picking?.Id, picking?.PickingCode, picking?.Status,
+                shipment?.Id, shipment?.ShipmentCode, shipment?.Status,
+                fragments.Where(item => item.WarehouseId == warehouseId).Sum(item => item.Quantity),
+                picking is null ? 0m : splits.Where(item => item.RunPickingListId == picking.Id).Sum(item => item.PickedQuantity),
+                shipment?.ReceivedQuantity ?? 0m);
+        }).ToArray();
+
+        return new OrderAllocationReadContext(
+            runOrder.Run.Id, runOrder.Run.RunCode, runOrder.Run.Status, runOrder.Order.Status,
+            runOrder.Order.ShortageReason, plan.Id, plan.VersionNumber, plan.Status, plan.PricedAt,
+            fragments, progress);
     }
 
 }
