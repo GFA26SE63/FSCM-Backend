@@ -32,6 +32,7 @@ public sealed class PhysicalSchemaModelTests
         "INVENTORY_BALANCE",
         "INVENTORY_TRANSACTION",
         "LOYALTY_PROGRAM",
+        "LOYALTY_PROGRAM_RETAILER",
         "LOYALTY_REWARD",
         "LOYALTY_TRANSACTION",
         "MAP_DISTANCE_CACHE",
@@ -105,11 +106,10 @@ public sealed class PhysicalSchemaModelTests
             .ToArray();
 
         Assert.Equal(ExpectedTables, tableNames);
-        Assert.Equal(81, entityTypes.Length);
-        // Develop's run-picking shape (910) plus BATCH_QR_LABEL.GoodsReceiptId (F40, +1 property
-        // and +1 FK) → 911 properties / 183 FKs across the listed tables.
-        Assert.Equal(911, entityTypes.Sum(entityType => entityType.GetProperties().Count()));
-        Assert.Equal(183, entityTypes.Sum(entityType => entityType.GetForeignKeys().Count()));
+        Assert.Equal(82, entityTypes.Length);
+        // Develop's run-picking shape plus loyalty program expiry and retailer scope.
+        Assert.Equal(918, entityTypes.Sum(entityType => entityType.GetProperties().Count()));
+        Assert.Equal(185, entityTypes.Sum(entityType => entityType.GetForeignKeys().Count()));
         Assert.All(
             entityTypes.SelectMany(entityType => entityType.GetForeignKeys()),
             foreignKey => Assert.Equal(DeleteBehavior.Restrict, foreignKey.DeleteBehavior));

@@ -15,6 +15,7 @@ public sealed class RewardRedemptionConfiguration : IEntityTypeConfiguration<Rew
         builder.Property(entity => entity.LoyaltyRewardId).HasColumnType("uuid").IsRequired();
         builder.Property(entity => entity.LoyaltyTransactionId).HasColumnType("uuid").IsRequired(false);
         builder.Property(entity => entity.SalesOrderId).HasColumnType("uuid").IsRequired(false);
+        builder.Property(entity => entity.ClientRequestId).HasMaxLength(100).IsRequired();
         builder.Property(entity => entity.RedeemedPoints).IsRequired();
         builder.Property(entity => entity.Status).HasMaxLength(30).IsRequired();
         builder.Property(entity => entity.RedeemedByUserId).HasColumnType("uuid").IsRequired();
@@ -44,5 +45,6 @@ public sealed class RewardRedemptionConfiguration : IEntityTypeConfiguration<Rew
             .WithMany()
             .HasForeignKey(entity => entity.RedeemedByUserId)
             .OnDelete(DeleteBehavior.Restrict);
+        builder.HasIndex(entity => new { entity.RetailerId, entity.ClientRequestId }).IsUnique();
     }
 }
