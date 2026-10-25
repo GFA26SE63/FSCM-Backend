@@ -310,6 +310,46 @@ public sealed class AllocationRunStore(AppDbContext dbContext) : IAllocationRunS
             dbContext.RunPickingListRecords.AsNoTracking().Where(item => item.Id == pickingListId),
             cancellationToken)).SingleOrDefault();
 
+    /// <summary>
+    /// The approved plan's view of one order.
+    ///
+    /// Only an Approved version counts. A proposal still awaiting a decision, or one that was
+    /// superseded by a recalculation, is not a result: serving either would let a caller act on
+    /// figures that are still being argued about or have already been replaced.
+    /// </summary>
+    public async Task<OrderRunResultView?> FindOrderRunResultAsync(
+        Guid salesOrderId, CancellationToken cancellationToken)
+    {
+        var header = await dbContext.AllocationRunOrderRecords.AsNoTracking()
+            .Where(order => order.SalesOrderId == salesOrderId)
+            .Join(dbContext.AllocationRunRecords.AsNoTracking(),
+                order => order.AllocationRunId, run => run.Id, (order, run) => new { order, run })
+            .Join(dbContext.AllocationPlanVersionRecords.AsNoTracking(),
+                item => item.run.Id, version => version.AllocationRunId,
+                (item, version) => new { item.order, item.run, version })
+            .Where(item => item.version.Status == AllocationPlanVersionStatuses.Approved)
+            .OrderByDescending(item => item.version.VersionNumber)
+            .FirstOrDefaultAsync(cancellationToken);
+        if (header is null) return null;
+
+        var lines = await dbContext.AllocationRunLineRecords.AsNoTracking()
+            .Where(line => line.AllocationRunOrderId == header.order.Id)
+            .ToArrayAsync(cancellationToken);
+        if (lines.Length == 0) return null;
+
+        var lineIds = lines.Select(line => line.Id).ToArray();
+        var traces = await dbContext.AllocationLineTraceRecords.AsNoTracking()
+            .Where(trace => trace.AllocationPlanVersionId == header.version.Id
+                            && lineIds.Contains(trace.AllocationRunLineId))
+            .ToArrayAsync(cancellationToken);
+        var prices = await dbContext.AllocationPlanPriceRecords.AsNoTracking()
+            .Where(price => price.AllocationPlanVersionId == header.version.Id
+                            && lineIds.Contains(price.AllocationRunLineId))
+            .ToArrayAsync(cancellationToken);
+
+        return new OrderRunResultView(header.order, header.run, header.version, lines, traces, prices);
+    }
+
     public async Task<OrderPriceView?> FindOrderPriceAsync(Guid salesOrderId, CancellationToken cancellationToken)
     {
         // The newest version the order appears in: a superseded proposal must not be served once a

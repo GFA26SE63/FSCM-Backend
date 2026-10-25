@@ -37,6 +37,18 @@ public sealed record AllocationOrderTraceView(
     AllocationPlanVersion PlanVersion,
     IReadOnlyCollection<AllocationLineTraceView> Lines);
 
+/// <summary>
+/// One order as the approved plan left it: the run that decided, the lines with what they drew,
+/// the per-line trace that says why, and the prices of whatever was allocated.
+/// </summary>
+public sealed record OrderRunResultView(
+    AllocationRunOrder Order,
+    AllocationRun Run,
+    AllocationPlanVersion PlanVersion,
+    IReadOnlyCollection<AllocationRunLine> Lines,
+    IReadOnlyCollection<AllocationLineTrace> Traces,
+    IReadOnlyCollection<AllocationPlanPrice> Prices);
+
 public sealed record RunPickingListView(
     RunPickingList List,
     IReadOnlyCollection<RunPickingGather> Gathers,
@@ -157,6 +169,9 @@ public interface IAllocationRunStore
     Task<IReadOnlyCollection<RunPickingListView>> ListRunPickingListsForWarehouseAsync(
         Guid warehouseId, CancellationToken cancellationToken);
     Task<RunPickingListView?> FindRunPickingListAsync(Guid pickingListId, CancellationToken cancellationToken);
+
+    /// <summary>The approved plan's view of one order, or null while no plan has been approved.</summary>
+    Task<OrderRunResultView?> FindOrderRunResultAsync(Guid salesOrderId, CancellationToken cancellationToken);
 
     Task<OrderPriceView?> FindOrderPriceAsync(Guid salesOrderId, CancellationToken cancellationToken);
     Task<AllocationOrderTraceView?> FindOrderTraceAsync(Guid salesOrderId, CancellationToken cancellationToken);

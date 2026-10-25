@@ -37,6 +37,7 @@ internal abstract class StubAllocationRunStore : IAllocationRunStore
     public virtual Task<IReadOnlyCollection<RunPickingListView>> ListRunPickingListsAsync(Guid runId, CancellationToken cancellationToken) => throw NotSetUp();
     public virtual Task<IReadOnlyCollection<RunPickingListView>> ListRunPickingListsForWarehouseAsync(Guid warehouseId, CancellationToken cancellationToken) => throw NotSetUp();
     public virtual Task<RunPickingListView?> FindRunPickingListAsync(Guid pickingListId, CancellationToken cancellationToken) => throw NotSetUp();
+    public virtual Task<OrderRunResultView?> FindOrderRunResultAsync(Guid salesOrderId, CancellationToken cancellationToken) => throw NotSetUp();
     public virtual Task<OrderPriceView?> FindOrderPriceAsync(Guid salesOrderId, CancellationToken cancellationToken) => throw NotSetUp();
     public virtual Task<AllocationOrderTraceView?> FindOrderTraceAsync(Guid salesOrderId, CancellationToken cancellationToken) => throw NotSetUp();
     public virtual void AddLineTraces(IEnumerable<AllocationLineTrace> traces) => throw NotSetUp();
