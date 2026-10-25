@@ -1,4 +1,6 @@
 using FSCM.Application.Features.EntityQueries;
+using FSCM.Application.Features.Orders;
+using FSCM.Application.Features.Promotions;
 using FSCM.Application.Features.Retailers;
 using FSCM.Application.Features.WarehouseConfiguration;
 using FSCM.Domain.Entities;
@@ -15,6 +17,25 @@ namespace FSCM.API.GraphQL;
 /// </summary>
 public sealed class EntityQuery(EntityQueryAccess access)
 {
+    /// <summary>
+    /// Returns the same pre-allocation quote as GET /api/v1/pricing/snapshot.
+    /// The quote deliberately has no batch/HSD price because allocation has not selected a batch.
+    /// </summary>
+    public async Task<PriceSnapshotResult> PricingSnapshot(
+        Guid productId,
+        decimal quantity,
+        Guid? retailerId,
+        DateTimeOffset? at,
+        [Service] PromotionService promotionService,
+        [Service] OrderService orderService,
+        CancellationToken cancellationToken = default)
+    {
+        await orderService.EnsurePricingScopeAsync(
+            retailerId, access.UserId, access.Role, cancellationToken);
+        return await promotionService.CalculateIndicativePriceAsync(
+            productId, quantity, retailerId, at, cancellationToken);
+    }
+
     public Task<IReadOnlyCollection<WarehouseResult>> WarehouseProfiles(
         [Service] WarehouseConfigurationService service,
         bool includeInactive = false,
