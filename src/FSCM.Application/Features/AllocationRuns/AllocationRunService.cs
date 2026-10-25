@@ -28,6 +28,12 @@ public sealed class AllocationRunService(
     /// </summary>
     public async Task<AllocationRunResult> StartAsync(DateTimeOffset cutoffAt, CancellationToken cancellationToken)
     {
+        // Npgsql only binds a DateTimeOffset whose offset is zero, and both callers build the
+        // cutoff in Vietnam time: the job from the local clock, the manual run from the published
+        // schedule. Normalising here keeps the same instant and spares every query downstream from
+        // caring, instead of failing on the first one that happens to take the cutoff as a
+        // parameter. The business date is still read in Vietnam, where the day is defined.
+        cutoffAt = cutoffAt.ToUniversalTime();
         var businessDate = ToBusinessDate(cutoffAt);
         var existing = await store.FindViewByBusinessDateAsync(businessDate, cancellationToken);
         if (existing is not null)
@@ -174,6 +180,56 @@ public sealed class AllocationRunService(
     /// Planning an already planned run is refused rather than silently rebuilding, so a retry
     /// cannot replace a plan an Admin is in the middle of reviewing.
     /// </summary>
+    /// <summary>
+    /// Runs today's allocation by hand: close the run at its cutoff, then plan it.
+    ///
+    /// The 12:00 job is the normal path. It is also the only one, which means a deployment that was
+    /// down at noon has no way to produce the day's plan at all - the orders simply sit there until
+    /// tomorrow, when they queue behind a day of newer ones. This is the recovery.
+    ///
+    /// The cutoff is not a parameter by default: it comes from the published schedule, so pressing
+    /// the button cannot quietly change which orders belong to the run. An Admin may pass a later
+    /// moment on the same business date, for the case where the run was down and orders kept
+    /// arriving, and whatever is used is stored on the run itself - the boundary that was applied
+    /// stays readable afterwards rather than being inferred from when someone pressed it.
+    ///
+    /// Closing is idempotent on the business date, so pressing twice joins the run that exists
+    /// instead of splitting the day across two plans.
+    /// </summary>
+    public async Task<AllocationRunResult> RunNowAsync(
+        DateTimeOffset? cutoffAt, CancellationToken cancellationToken)
+    {
+        var schedule = await deliveryEta.GetScheduleAsync(null, cancellationToken);
+        var scheduled = schedule.Milestones.Single(item => item.Key == "allocation_run").At;
+        var now = timeProvider.GetUtcNow();
+        var cutoff = cutoffAt ?? scheduled;
+
+        if (cutoff > now)
+        {
+            throw AllocationRunOperationException.Conflict(
+                $"The cutoff {cutoff:HH:mm} has not passed yet; a run cannot close before it.");
+        }
+
+        if (cutoff < scheduled)
+        {
+            throw AllocationRunOperationException.Validation(
+                $"The cutoff cannot be earlier than the published {scheduled:HH:mm}: moving it back " +
+                "would drop orders that belong to this run.");
+        }
+
+        if (ToBusinessDate(cutoff) != ToBusinessDate(now))
+        {
+            throw AllocationRunOperationException.Validation(
+                "The cutoff must fall on today's business date; a past day cannot be re-run.");
+        }
+
+        var run = await StartAsync(cutoff, cancellationToken);
+        if (run.Status != AllocationRunStatuses.Snapshotted) return run;
+
+        await PlanAsync(run.Id, cancellationToken);
+        return await GetAsync(run.Id, cancellationToken);
+    }
+
     public async Task<AllocationPricing> PlanAsync(Guid runId, CancellationToken cancellationToken)
     {
         var view = await store.FindViewAsync(runId, cancellationToken)
@@ -403,7 +459,7 @@ public sealed class AllocationRunService(
         CancellationToken cancellationToken) =>
         await store.ExecuteInTransactionAsync(async transactionCancellationToken =>
         {
-            var tracked = await store.FindViewAsync(runId, transactionCancellationToken)
+            var tracked = await store.FindViewForUpdateAsync(runId, transactionCancellationToken)
                 ?? throw AllocationRunOperationException.NotFound("Allocation run disappeared while planning.");
             var orderById = tracked.Orders.ToDictionary(item => item.Id);
             var lineById = tracked.Lines.ToDictionary(item => item.Id);

@@ -576,21 +576,42 @@ public sealed class AllocationRunStore(AppDbContext dbContext) : IAllocationRunS
 
     public void ClearTracking() => dbContext.ChangeTracker.Clear();
 
+    /// <summary>
+    /// The same view, but tracked, for the step that writes the plan back.
+    ///
+    /// Planning does not only insert rows: it moves the run to AwaitingApproval, marks each order
+    /// fulfilled or short, records what every line drew and draws the pool down. All of that is
+    /// done by assigning to the objects in this view, so a read-only copy silently discards it -
+    /// the inserts land, the updates vanish, and the run sits at Snapshotted forever.
+    /// </summary>
+    public Task<AllocationRunView?> FindViewForUpdateAsync(Guid runId, CancellationToken cancellationToken) =>
+        BuildViewAsync(dbContext.AllocationRunRecords.Where(item => item.Id == runId), cancellationToken, true);
+
     private async Task<AllocationRunView?> BuildViewAsync(
-        IQueryable<AllocationRun> runs, CancellationToken cancellationToken)
+        IQueryable<AllocationRun> runs, CancellationToken cancellationToken, bool forUpdate = false)
     {
         var run = await runs.SingleOrDefaultAsync(cancellationToken);
         if (run is null) return null;
 
-        var orders = await dbContext.AllocationRunOrderRecords.AsNoTracking()
+        var orderQuery = forUpdate
+            ? dbContext.AllocationRunOrderRecords.AsQueryable()
+            : dbContext.AllocationRunOrderRecords.AsNoTracking();
+        var lineQuery = forUpdate
+            ? dbContext.AllocationRunLineRecords.AsQueryable()
+            : dbContext.AllocationRunLineRecords.AsNoTracking();
+        var poolQuery = forUpdate
+            ? dbContext.AllocationRunStockRecords.AsQueryable()
+            : dbContext.AllocationRunStockRecords.AsNoTracking();
+
+        var orders = await orderQuery
             .Where(item => item.AllocationRunId == run.Id)
             .OrderBy(item => item.PriorityRank)
             .ToArrayAsync(cancellationToken);
         var orderIds = orders.Select(item => item.Id).ToArray();
-        var lines = await dbContext.AllocationRunLineRecords.AsNoTracking()
+        var lines = await lineQuery
             .Where(item => orderIds.Contains(item.AllocationRunOrderId))
             .ToArrayAsync(cancellationToken);
-        var pool = await dbContext.AllocationRunStockRecords.AsNoTracking()
+        var pool = await poolQuery
             .Where(item => item.AllocationRunId == run.Id)
             .ToArrayAsync(cancellationToken);
 

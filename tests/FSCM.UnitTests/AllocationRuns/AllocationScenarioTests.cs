@@ -232,6 +232,75 @@ public sealed class AllocationScenarioTests
         Assert.Single(fixture.Store.Runs);
     }
 
+    [Fact]
+    public async Task Running_by_hand_uses_the_published_cutoff_not_the_moment_of_the_press()
+    {
+        var fixture = new ScenarioFixture();
+        fixture.AddBatch("LO-A", "SKU001", Cutoff.AddDays(40), quantity: 50m);
+        fixture.AddOrder("DH-000001", Cutoff.AddHours(-2), ("SKU001", 10m));
+        fixture.AddOrder("DH-000002", Cutoff.AddSeconds(5), ("SKU001", 10m));
+
+        var run = await fixture.Service.RunNowAsync(null, CancellationToken.None);
+
+        // Pressing the button must not quietly widen the run: the order that arrived after the
+        // published cutoff still belongs to the next one.
+        Assert.Equal(Cutoff, run.CutoffAt);
+        Assert.Equal("DH-000001", Assert.Single(run.Orders).OrderCode);
+    }
+
+    [Fact]
+    public async Task Running_by_hand_plans_the_run_as_well_as_closing_it()
+    {
+        var fixture = new ScenarioFixture();
+        fixture.AddBatch("LO-A", "SKU001", Cutoff.AddDays(40), quantity: 50m);
+        fixture.AddOrder("DH-000001", Cutoff.AddHours(-2), ("SKU001", 10m));
+
+        var run = await fixture.Service.RunNowAsync(null, CancellationToken.None);
+
+        // The recovery has to produce a plan, not a closed run with nothing in it.
+        Assert.Equal(AllocationRunStatuses.AwaitingApproval, run.Status);
+        Assert.Single(fixture.Store.Allocations);
+    }
+
+    [Fact]
+    public async Task A_cutoff_still_in_the_future_is_refused()
+    {
+        var fixture = new ScenarioFixture();
+
+        var error = await Assert.ThrowsAsync<AllocationRunOperationException>(() =>
+            fixture.Service.RunNowAsync(Cutoff.AddHours(1), CancellationToken.None));
+
+        Assert.Equal("conflict", error.Code);
+    }
+
+    [Fact]
+    public async Task A_cutoff_earlier_than_the_published_one_is_refused()
+    {
+        var fixture = new ScenarioFixture();
+
+        var error = await Assert.ThrowsAsync<AllocationRunOperationException>(() =>
+            fixture.Service.RunNowAsync(Cutoff.AddHours(-1), CancellationToken.None));
+
+        // Moving the boundary back would drop orders that belong to this run.
+        Assert.Equal("validation_error", error.Code);
+    }
+
+    [Fact]
+    public async Task Pressing_it_twice_joins_the_run_that_already_exists()
+    {
+        var fixture = new ScenarioFixture();
+        fixture.AddBatch("LO-A", "SKU001", Cutoff.AddDays(40), quantity: 50m);
+        fixture.AddOrder("DH-000001", Cutoff.AddHours(-2), ("SKU001", 10m));
+
+        var first = await fixture.Service.RunNowAsync(null, CancellationToken.None);
+        var second = await fixture.Service.RunNowAsync(null, CancellationToken.None);
+
+        Assert.Equal(first.Id, second.Id);
+        Assert.Single(fixture.Store.Runs);
+        // And it does not plan a second time over the first plan.
+        Assert.Single(fixture.Store.PlanVersions);
+    }
+
     private sealed class ScenarioFixture
     {
         private static readonly Guid RetailerId = Guid.NewGuid();

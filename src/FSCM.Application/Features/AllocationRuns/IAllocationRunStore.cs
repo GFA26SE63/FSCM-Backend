@@ -95,6 +95,9 @@ public interface IAllocationRunStore
 {
     Task<AllocationRun?> FindByBusinessDateAsync(DateOnly businessDate, CancellationToken cancellationToken);
     Task<AllocationRunView?> FindViewAsync(Guid runId, CancellationToken cancellationToken);
+
+    /// <summary>The same view, tracked, for the step that writes the plan back onto it.</summary>
+    Task<AllocationRunView?> FindViewForUpdateAsync(Guid runId, CancellationToken cancellationToken);
     Task<AllocationRunView?> FindViewByBusinessDateAsync(DateOnly businessDate, CancellationToken cancellationToken);
 
     /// <summary>
