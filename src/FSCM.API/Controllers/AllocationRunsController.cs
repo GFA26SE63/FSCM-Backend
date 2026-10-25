@@ -17,7 +17,8 @@ public sealed class AllocationRunsController(
     RunPickingIssueService picking,
     AllocationPriceLookupService prices,
     AllocationTraceService traces,
-    OrderService orders) : ControllerBase
+    OrderService orders,
+    AllocationRunResultService results) : ControllerBase
 {
     [HttpGet("{runId:guid}")]
     public Task<AllocationRunResult> Get(Guid runId, CancellationToken cancellationToken) =>
@@ -95,6 +96,15 @@ public sealed class AllocationRunsController(
         await orders.GetAsync(salesOrderId, ActorId(), ActorRole(), cancellationToken);
         return await traces.GetByOrderAsync(salesOrderId, cancellationToken);
     }
+
+    /// <summary>
+    /// F90: what the run decided about one order, once the plan was approved. A short order holds
+    /// nothing and cannot be resent keeping its place in the queue; both are fields on the result
+    /// so a screen does not have to infer them.
+    /// </summary>
+    [HttpGet("orders/{salesOrderId:guid}/result")]
+    public Task<OrderRunResult> OrderResult(Guid salesOrderId, CancellationToken cancellationToken) =>
+        results.GetByOrderAsync(salesOrderId, cancellationToken);
 
     private Guid ActorId() => Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var id)
         ? id : throw AllocationRunOperationException.Validation("Authenticated user identifier is invalid.");

@@ -294,6 +294,14 @@ from the run moment, so a late approval needs its ETA re-checked.
 
 Two records are written per plan version and keyed alike, so they can be read side by side:
 
+| What did the run decide about my order? | `ALLOCATION_RUN_ORDER` + `ALLOCATION_RUN_LINE` + the line trace | `GET /allocation-runs/orders/{salesOrderId}/result` |
+
+The result is published only once a plan version is approved, and it states two things as fields
+rather than prose: a short order **holds no stock**, and **no order can be resent keeping its place
+in the queue**. Buying the rest means a new order, timestamped on arrival, queued behind whatever
+came in before it. A screen that cannot read those two facts will eventually offer a button the run
+cannot honour.
+
 | Question | Record | Endpoint |
 | --- | --- | --- |
 | What was it priced at, and why that reduction? | `ALLOCATION_PLAN_PRICE` | `GET /allocation-runs/orders/{salesOrderId}/price` |
