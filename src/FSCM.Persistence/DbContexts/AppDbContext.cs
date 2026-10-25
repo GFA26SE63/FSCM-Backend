@@ -64,6 +64,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<PickingItem> PickingItemRecords => Set<PickingItem>();
     public DbSet<ReceiptConfirmation> ReceiptConfirmationRecords => Set<ReceiptConfirmation>();
     public DbSet<ReceiptConfirmationItem> ReceiptConfirmationItemRecords => Set<ReceiptConfirmationItem>();
+    public DbSet<ReceiptConfirmationQrLabel> ReceiptConfirmationQrLabelRecords => Set<ReceiptConfirmationQrLabel>();
     public DbSet<ReceiptDiscrepancy> ReceiptDiscrepancyRecords => Set<ReceiptDiscrepancy>();
     public DbSet<ReceiptDiscrepancyItem> ReceiptDiscrepancyItemRecords => Set<ReceiptDiscrepancyItem>();
     public DbSet<Payment> PaymentRecords => Set<Payment>();

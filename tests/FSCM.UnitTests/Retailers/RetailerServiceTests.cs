@@ -52,6 +52,32 @@ public sealed class RetailerServiceTests
     }
 
     [Fact]
+    public async Task Approval_requires_reason()
+    {
+        var fixture = new Fixture();
+        var declared = await fixture.DeclareAsync(10_000_000, 20, 20);
+
+        var exception = await Assert.ThrowsAsync<RetailerOperationException>(() =>
+            fixture.Service.ReviewAsync(declared.Id, Guid.NewGuid(), true, 7, null, CancellationToken.None));
+
+        Assert.Equal("validation_error", exception.Code);
+        Assert.Equal(RetailerStatuses.PendingApproval, declared.Status);
+    }
+
+    [Fact]
+    public async Task Duplicate_retailer_declaration_is_rejected()
+    {
+        var fixture = new Fixture();
+        await fixture.DeclareAsync(10_000_000, 20, 20);
+
+        var exception = await Assert.ThrowsAsync<RetailerOperationException>(() =>
+            fixture.DeclareAsync(20_000_000, 30, 40));
+
+        Assert.Equal("conflict", exception.Code);
+        Assert.Single(fixture.Store.Retailers);
+    }
+
+    [Fact]
     public async Task Draft_cannot_be_submitted_without_a_valid_mlor_declaration()
     {
         var fixture = new Fixture();
@@ -195,6 +221,14 @@ public sealed class RetailerServiceTests
             Task.FromResult(Retailers.Where(item => item.Id == retailerId).Select(ToView).SingleOrDefault());
         public Task<Retailer?> FindForUpdateAsync(Guid retailerId, CancellationToken cancellationToken) =>
             Task.FromResult(Retailers.SingleOrDefault(item => item.Id == retailerId));
+        public Task<Retailer?> FindDuplicateAsync(
+            string name, string? phone, string? email, string? address,
+            Guid? excludedRetailerId, CancellationToken cancellationToken) =>
+            Task.FromResult(Retailers.FirstOrDefault(item => item.Id != excludedRetailerId &&
+                ((phone is not null && item.Phone?.ToLowerInvariant() == phone) ||
+                 (email is not null && item.Email?.ToLowerInvariant() == email) ||
+                 (address is not null && item.Name.ToLowerInvariant() == name &&
+                     item.Address?.ToLowerInvariant() == address))));
         public Task<IReadOnlyCollection<RetailerMlorView>> ListMlorDeclarationsAsync(
             IReadOnlyCollection<Guid> retailerIds, bool includeInactive, bool tracking, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyCollection<RetailerMlorView>>(Mlors

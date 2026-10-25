@@ -12,6 +12,7 @@ using FSCM.Application.Features.InternalTransfers;
 using FSCM.Application.Features.Loyalty;
 using FSCM.Application.Features.ManualPayments;
 using FSCM.Application.Features.Maps;
+using FSCM.Application.Features.MobileSnapshots;
 using FSCM.Application.Features.Orders;
 using FSCM.Application.Features.Payments;
 using FSCM.Application.Features.Picking;
@@ -64,6 +65,7 @@ public static class DependencyInjection
         services.AddScoped<RedemptionWorkflowService>();
         services.AddScoped<LoyaltyCardService>();
         services.AddScoped<MapService>();
+        services.AddScoped<MobileSnapshotService>();
         services.AddScoped<OrderService>();
         services.AddScoped<IOrderPricingService, OrderPricingService>();
         services.AddScoped<PaymentService>();

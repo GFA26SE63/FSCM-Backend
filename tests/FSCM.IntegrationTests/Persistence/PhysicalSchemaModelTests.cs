@@ -54,6 +54,7 @@ public sealed class PhysicalSchemaModelTests
         "QR_LABEL_EVENT",
         "RECEIPT_CONFIRMATION",
         "RECEIPT_CONFIRMATION_ITEM",
+        "RECEIPT_CONFIRMATION_QR_LABEL",
         "RECEIPT_DISCREPANCY",
         "RECEIPT_DISCREPANCY_ITEM",
         "REGION",
@@ -130,6 +131,14 @@ public sealed class PhysicalSchemaModelTests
         var receipt = context.Model.FindEntityType(typeof(ReceiptConfirmation))!;
         Assert.True(receipt.GetIndexes().Single(index => index.Properties
             .Single().Name == nameof(ReceiptConfirmation.OperationKey)).IsUnique);
+        var shipmentReceiptIndex = receipt.GetIndexes().Single(index => index.Properties
+            .Single().Name == nameof(ReceiptConfirmation.ShipmentId));
+        Assert.True(shipmentReceiptIndex.IsUnique);
+        Assert.Equal("\"ShipmentId\" IS NOT NULL", shipmentReceiptIndex.GetFilter());
+
+        var receiptQr = context.Model.FindEntityType(typeof(ReceiptConfirmationQrLabel))!;
+        Assert.True(receiptQr.GetIndexes().Single(index => index.Properties.Count == 1 &&
+            index.Properties[0].Name == nameof(ReceiptConfirmationQrLabel.BatchQrLabelId)).IsUnique);
 
         var driver = context.Model.FindEntityType(typeof(Driver))!;
         Assert.True(driver.GetIndexes().Single(index => index.Properties

@@ -1,4 +1,8 @@
 using FSCM.Application.Features.EntityQueries;
+using FSCM.Application.Features.Orders;
+using FSCM.Application.Features.Promotions;
+using FSCM.Application.Features.Retailers;
+using FSCM.Application.Features.WarehouseConfiguration;
 using FSCM.Domain.Entities;
 using HotChocolate.Data;
 using HotChocolate.Types;
@@ -13,6 +17,60 @@ namespace FSCM.API.GraphQL;
 /// </summary>
 public sealed class EntityQuery(EntityQueryAccess access)
 {
+    /// <summary>
+    /// Returns the same pre-allocation quote as GET /api/v1/pricing/snapshot.
+    /// The quote deliberately has no batch/HSD price because allocation has not selected a batch.
+    /// </summary>
+    public async Task<PriceSnapshotResult> PricingSnapshot(
+        Guid productId,
+        decimal quantity,
+        Guid? retailerId,
+        DateTimeOffset? at,
+        [Service] PromotionService promotionService,
+        [Service] OrderService orderService,
+        CancellationToken cancellationToken = default)
+    {
+        await orderService.EnsurePricingScopeAsync(
+            retailerId, access.UserId, access.Role, cancellationToken);
+        return await promotionService.CalculateIndicativePriceAsync(
+            productId, quantity, retailerId, at, cancellationToken);
+    }
+
+    public Task<IReadOnlyCollection<WarehouseResult>> WarehouseProfiles(
+        [Service] WarehouseConfigurationService service,
+        bool includeInactive = false,
+        CancellationToken cancellationToken = default) =>
+        service.ListWarehousesAsync(includeInactive, cancellationToken);
+
+    public Task<WarehouseResult> WarehouseProfile(
+        Guid warehouseId,
+        [Service] WarehouseConfigurationService service,
+        CancellationToken cancellationToken = default) =>
+        service.GetWarehouseAsync(warehouseId, cancellationToken);
+
+    public Task<RetailerPage> RetailerProfiles(
+        [Service] RetailerService service,
+        string? status = null,
+        string? search = null,
+        string? scope = null,
+        int page = 1,
+        int pageSize = 20,
+        CancellationToken cancellationToken = default) =>
+        service.SearchAsync(access.UserId, access.Role, status, search, scope, page, pageSize, cancellationToken);
+
+    public Task<RetailerDetails> RetailerProfile(
+        Guid retailerId,
+        [Service] RetailerService service,
+        CancellationToken cancellationToken = default) =>
+        service.GetAsync(retailerId, access.UserId, access.Role, cancellationToken);
+
+    public Task<RetailerMlorResolutionResult> RetailerMlorResolution(
+        Guid retailerId,
+        Guid productId,
+        [Service] RetailerService service,
+        CancellationToken cancellationToken = default) =>
+        service.ResolveMlorAsync(retailerId, productId, access.UserId, access.Role, cancellationToken);
+
     [UsePaging(typeof(DomainEntityObjectType<UserAccount>), ConnectionName = "EntityUserAccounts", DefaultPageSize = 50, MaxPageSize = int.MaxValue, IncludeTotalCount = true, RequirePagingBoundaries = false), UseProjection, UseFiltering, UseSorting]
     public IQueryable<UserAccount> UserAccounts([Service] IEntityQueryService source) => source.Query<UserAccount>(access);
     [UsePaging(typeof(DomainEntityObjectType<Warehouse>), ConnectionName = "EntityWarehouses", DefaultPageSize = 50, MaxPageSize = int.MaxValue, IncludeTotalCount = true, RequirePagingBoundaries = false), UseProjection, UseFiltering, UseSorting]
@@ -118,6 +176,8 @@ public sealed class EntityQuery(EntityQueryAccess access)
     public IQueryable<ReceiptConfirmation> ReceiptConfirmations([Service] IEntityQueryService source) => source.Query<ReceiptConfirmation>(access);
     [UsePaging(typeof(DomainEntityObjectType<ReceiptConfirmationItem>), ConnectionName = "EntityReceiptConfirmationItems", DefaultPageSize = 50, MaxPageSize = int.MaxValue, IncludeTotalCount = true, RequirePagingBoundaries = false), UseProjection, UseFiltering, UseSorting]
     public IQueryable<ReceiptConfirmationItem> ReceiptConfirmationItems([Service] IEntityQueryService source) => source.Query<ReceiptConfirmationItem>(access);
+    [UsePaging(typeof(DomainEntityObjectType<ReceiptConfirmationQrLabel>), ConnectionName = "EntityReceiptConfirmationQrLabels", DefaultPageSize = 50, MaxPageSize = int.MaxValue, IncludeTotalCount = true, RequirePagingBoundaries = false), UseProjection, UseFiltering, UseSorting]
+    public IQueryable<ReceiptConfirmationQrLabel> ReceiptConfirmationQrLabels([Service] IEntityQueryService source) => source.Query<ReceiptConfirmationQrLabel>(access);
     [UsePaging(typeof(DomainEntityObjectType<ReceiptDiscrepancy>), ConnectionName = "EntityReceiptDiscrepancies", DefaultPageSize = 50, MaxPageSize = int.MaxValue, IncludeTotalCount = true, RequirePagingBoundaries = false), UseProjection, UseFiltering, UseSorting]
     public IQueryable<ReceiptDiscrepancy> ReceiptDiscrepancies([Service] IEntityQueryService source) => source.Query<ReceiptDiscrepancy>(access);
     [UsePaging(typeof(DomainEntityObjectType<ReceiptDiscrepancyItem>), ConnectionName = "EntityReceiptDiscrepancyItems", DefaultPageSize = 50, MaxPageSize = int.MaxValue, IncludeTotalCount = true, RequirePagingBoundaries = false), UseProjection, UseFiltering, UseSorting]
@@ -131,6 +191,8 @@ public sealed class EntityQuery(EntityQueryAccess access)
     public IQueryable<ManualRefund> ManualRefunds([Service] IEntityQueryService source) => source.Query<ManualRefund>(access);
     [UsePaging(typeof(DomainEntityObjectType<Delivery>), ConnectionName = "EntityDeliveries", DefaultPageSize = 50, MaxPageSize = int.MaxValue, IncludeTotalCount = true, RequirePagingBoundaries = false), UseProjection, UseFiltering, UseSorting]
     public IQueryable<Delivery> Deliveries([Service] IEntityQueryService source) => source.Query<Delivery>(access);
+    [UsePaging(typeof(DomainEntityObjectType<Shipment>), ConnectionName = "EntityShipments", DefaultPageSize = 50, MaxPageSize = int.MaxValue, IncludeTotalCount = true, RequirePagingBoundaries = false), UseProjection, UseFiltering, UseSorting]
+    public IQueryable<Shipment> Shipments([Service] IEntityQueryService source) => source.Query<Shipment>(access);
     [UsePaging(typeof(DomainEntityObjectType<Driver>), ConnectionName = "EntityDrivers", DefaultPageSize = 50, MaxPageSize = int.MaxValue, IncludeTotalCount = true, RequirePagingBoundaries = false), UseProjection, UseFiltering, UseSorting]
     public IQueryable<Driver> Drivers([Service] IEntityQueryService source) => source.Query<Driver>(access);
     [UsePaging(typeof(DomainEntityObjectType<Vehicle>), ConnectionName = "EntityVehicles", DefaultPageSize = 50, MaxPageSize = int.MaxValue, IncludeTotalCount = true, RequirePagingBoundaries = false), UseProjection, UseFiltering, UseSorting]

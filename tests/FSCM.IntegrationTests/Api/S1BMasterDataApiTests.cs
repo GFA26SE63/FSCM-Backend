@@ -19,7 +19,8 @@ public sealed class S1BMasterDataApiTests
     public async Task Warehouse_legacy_transit_api_is_removed_and_eta_uses_shared_table()
     {
         using var identityFactory = new IdentityAuthorizationTests.IdentityApiFactory();
-        var warehouseStore = new TestWarehouseStore(identityFactory.Admin.Id);
+        var warehouseStore = new TestWarehouseStore(
+            identityFactory.Admin.Id, identityFactory.WarehouseKeeper);
         var mapStore = new TestMapStore(warehouseStore);
         using var factory = identityFactory.WithWebHostBuilder(builder =>
             builder.ConfigureTestServices(services =>
@@ -41,6 +42,21 @@ public sealed class S1BMasterDataApiTests
         var warehouse = await client.GetFromJsonAsync<JsonElement>(
             $"/api/v1/warehouses/{warehouseStore.Warehouse.Id}");
         Assert.Equal(120, warehouse.GetProperty("minimumStockThresholdCartons").GetInt32());
+        var keeper = Assert.Single(warehouse.GetProperty("keepers").EnumerateArray());
+        Assert.Equal(identityFactory.WarehouseKeeper.Id, keeper.GetProperty("userId").GetGuid());
+
+        var warehouseGraphQlResponse = await client.PostAsJsonAsync("/graphql", new
+        {
+            query = "query($id: UUID!) { entities { warehouseProfile(warehouseId: $id) { id code minimumStockThresholdCartons keepers { userId fullName } } } }",
+            variables = new { id = warehouseStore.Warehouse.Id }
+        });
+        var warehouseGraphQlBody = await warehouseGraphQlResponse.Content.ReadAsStringAsync();
+        Assert.True(warehouseGraphQlResponse.IsSuccessStatusCode, warehouseGraphQlBody);
+        var warehouseGraphQl = JsonDocument.Parse(warehouseGraphQlBody).RootElement;
+        Assert.False(warehouseGraphQl.TryGetProperty("errors", out _), warehouseGraphQlBody);
+        Assert.Equal(identityFactory.WarehouseKeeper.Id, warehouseGraphQl.GetProperty("data")
+            .GetProperty("entities").GetProperty("warehouseProfile")
+            .GetProperty("keepers")[0].GetProperty("userId").GetGuid());
 
         var legacyRoute = $"/api/v1/warehouses/{warehouseStore.Warehouse.Id}/transit-time-rules";
         Assert.Equal(System.Net.HttpStatusCode.NotFound, (await client.GetAsync(legacyRoute)).StatusCode);
@@ -48,6 +64,15 @@ public sealed class S1BMasterDataApiTests
             (await client.GetAsync($"{legacyRoute}/history")).StatusCode);
         Assert.Equal(System.Net.HttpStatusCode.NotFound,
             (await client.PutAsJsonAsync(legacyRoute, new { rules = Array.Empty<object>() })).StatusCode);
+
+        client.DefaultRequestHeaders.Authorization = Bearer(identityFactory.Sales, identityFactory);
+        Assert.Equal(System.Net.HttpStatusCode.Forbidden,
+            (await client.DeleteAsync($"/api/v1/mlor-configurations/{warehouseStore.Mlor.Id}")).StatusCode);
+        client.DefaultRequestHeaders.Authorization = Bearer(identityFactory.Admin, identityFactory);
+        Assert.Equal(System.Net.HttpStatusCode.NoContent,
+            (await client.DeleteAsync($"/api/v1/mlor-configurations/{warehouseStore.Mlor.Id}")).StatusCode);
+        Assert.False(warehouseStore.Mlor.IsActive);
+        Assert.Equal("RetailerMlorRuleDeactivated", Assert.Single(warehouseStore.AuditLogs).Action);
 
         var etaResponse = await client.PostAsJsonAsync("/api/v1/eta/estimate", new
         {
@@ -96,10 +121,43 @@ public sealed class S1BMasterDataApiTests
         Assert.Equal("Sku", resolution.GetProperty("sourceScope").GetString());
         Assert.Equal(0.55m, resolution.GetProperty("minimumLifeRatio").GetDecimal());
 
+        var retailerGraphQlResponse = await client.PostAsJsonAsync("/graphql", new
+        {
+            query = "query($retailerId: UUID!, $productId: UUID!) { entities { retailerProfile(retailerId: $retailerId) { id generalInformation { name } mlorDeclarations { scope productId minimumLifeRatio } } retailerMlorResolution(retailerId: $retailerId, productId: $productId) { sourceScope minimumLifeRatio } } }",
+            variables = new { retailerId = store.Retailer.Id, productId = store.Product.Id }
+        });
+        var retailerGraphQlBody = await retailerGraphQlResponse.Content.ReadAsStringAsync();
+        Assert.True(retailerGraphQlResponse.IsSuccessStatusCode, retailerGraphQlBody);
+        var retailerGraphQl = JsonDocument.Parse(retailerGraphQlBody).RootElement;
+        Assert.False(retailerGraphQl.TryGetProperty("errors", out _), retailerGraphQlBody);
+        var retailerProfile = retailerGraphQl.GetProperty("data").GetProperty("entities");
+        Assert.Equal("Cửa hàng An Phú", retailerProfile.GetProperty("retailerProfile")
+            .GetProperty("generalInformation").GetProperty("name").GetString());
+        Assert.Equal("Sku", retailerProfile.GetProperty("retailerMlorResolution")
+            .GetProperty("sourceScope").GetString());
+
         client.DefaultRequestHeaders.Authorization = Bearer(identityFactory.Sales, identityFactory);
         Assert.Equal(System.Net.HttpStatusCode.Forbidden,
             (await client.GetAsync($"/api/v1/mlor-configurations?retailerId={store.Retailer.Id}")).StatusCode);
+        var otherSales = identityFactory.AddTestUser("sales.other@test.local", FSCM.Domain.Authorization.SystemRoles.Sales);
+        client.DefaultRequestHeaders.Authorization = Bearer(otherSales, identityFactory);
+        Assert.Empty((await client.GetFromJsonAsync<JsonElement>("/api/v1/retailers?scope=mine"))
+            .GetProperty("items").EnumerateArray());
+        Assert.Equal(System.Net.HttpStatusCode.NotFound,
+            (await client.GetAsync($"/api/v1/retailers/{store.Retailer.Id}")).StatusCode);
+
+        store.Retailer.Status = RetailerStatuses.PendingApproval;
         client.DefaultRequestHeaders.Authorization = Bearer(identityFactory.Admin, identityFactory);
+        var review = await client.PostAsJsonAsync($"/api/v1/retailers/{store.Retailer.Id}/review", new
+        {
+            approve = true,
+            creditTermDays = 14,
+            reason = "Hồ sơ và MLOR hợp lệ"
+        });
+        review.EnsureSuccessStatusCode();
+        var reviewed = JsonDocument.Parse(await review.Content.ReadAsStringAsync()).RootElement;
+        Assert.Equal(RetailerStatuses.Active, reviewed.GetProperty("status").GetString());
+        Assert.Equal("10005000", reviewed.GetProperty("code").GetString());
 
     }
 
@@ -114,7 +172,7 @@ public sealed class S1BMasterDataApiTests
 
     private sealed class TestWarehouseStore : IWarehouseConfigurationStore
     {
-        public TestWarehouseStore(Guid adminId)
+        public TestWarehouseStore(Guid adminId, UserAccount warehouseKeeper)
         {
             AdminId = adminId;
             Warehouse = new Warehouse
@@ -156,17 +214,37 @@ public sealed class S1BMasterDataApiTests
                 CreatedAt = TestMapStore.Now,
                 UpdatedAt = TestMapStore.Now
             });
+            Keeper = new WarehouseKeeperView(
+                Warehouse.Id, warehouseKeeper.Id, warehouseKeeper.FullName, warehouseKeeper.Email);
+            Mlor = new RetailerProductMlor
+            {
+                Id = Guid.NewGuid(),
+                RetailerId = Guid.NewGuid(),
+                ProductId = Guid.NewGuid(),
+                MinimumLifeRatio = 0.3m,
+                Version = 1,
+                UpdatedByUserId = adminId,
+                EffectiveFrom = TestMapStore.Now,
+                IsActive = true
+            };
         }
 
         public Guid AdminId { get; }
         public Warehouse Warehouse { get; }
         public MapLocation Location { get; }
         public List<TransitTimeRule> Rules { get; } = [];
+        public WarehouseKeeperView Keeper { get; }
+        public RetailerProductMlor Mlor { get; }
+        public List<AuditLog> AuditLogs { get; } = [];
         public Task<IReadOnlyCollection<WarehouseView>> ListWarehousesAsync(bool includeInactive, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyCollection<WarehouseView>>([new(Warehouse, Location)]);
         public Task<WarehouseView?> FindWarehouseViewAsync(Guid warehouseId, CancellationToken cancellationToken) => Task.FromResult<WarehouseView?>(warehouseId == Warehouse.Id ? new(Warehouse, Location) : null);
         public Task<Warehouse?> FindWarehouseAsync(Guid warehouseId, CancellationToken cancellationToken) => Task.FromResult<Warehouse?>(warehouseId == Warehouse.Id ? Warehouse : null);
         public Task<Warehouse?> FindWarehouseByCodeAsync(string code, CancellationToken cancellationToken) => Task.FromResult<Warehouse?>(code == Warehouse.Code ? Warehouse : null);
         public Task<MapLocation?> FindWarehouseLocationAsync(Guid warehouseId, CancellationToken cancellationToken) => Task.FromResult<MapLocation?>(warehouseId == Warehouse.Id ? Location : null);
+        public Task<IReadOnlyCollection<WarehouseKeeperView>> ListActiveWarehouseKeepersAsync(
+            IReadOnlyCollection<Guid> warehouseIds, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyCollection<WarehouseKeeperView>>(
+                warehouseIds.Contains(Warehouse.Id) ? [Keeper] : []);
         public void AddWarehouse(Warehouse warehouse) { }
         public void AddLocation(MapLocation location) { }
         public Task<IReadOnlyCollection<TransitTimeRule>> ListTransitRulesAsync(Guid warehouseId, bool includeInactive, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyCollection<TransitTimeRule>>(Rules.Where(item => includeInactive || item.IsActive).ToArray());
@@ -174,11 +252,13 @@ public sealed class S1BMasterDataApiTests
         public void AddTransitRules(IEnumerable<TransitTimeRule> rules) => Rules.AddRange(rules);
         public Task<IReadOnlyCollection<MlorView>> ListMlorAsync(Guid? retailerId, Guid? productCategoryId, Guid? productId, bool includeInactive, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyCollection<MlorView>>([]);
         public Task<RetailerProductMlor?> FindActiveMlorAsync(Guid retailerId, Guid? productCategoryId, Guid? productId, CancellationToken cancellationToken) => Task.FromResult<RetailerProductMlor?>(null);
+        public Task<RetailerProductMlor?> FindMlorAsync(Guid mlorId, CancellationToken cancellationToken) =>
+            Task.FromResult<RetailerProductMlor?>(mlorId == Mlor.Id ? Mlor : null);
         public Task<Retailer?> FindRetailerAsync(Guid retailerId, CancellationToken cancellationToken) => Task.FromResult<Retailer?>(null);
         public Task<Product?> FindProductAsync(Guid productId, CancellationToken cancellationToken) => Task.FromResult<Product?>(null);
         public Task<ProductCategory?> FindCategoryAsync(Guid categoryId, CancellationToken cancellationToken) => Task.FromResult<ProductCategory?>(null);
         public void AddMlor(RetailerProductMlor mlor) { }
-        public void AddAuditLog(AuditLog auditLog) { }
+        public void AddAuditLog(AuditLog auditLog) => AuditLogs.Add(auditLog);
         public Task<IReadOnlyCollection<SystemConfiguration>> ListCurrentConfigurationsAsync(CancellationToken cancellationToken) => Task.FromResult<IReadOnlyCollection<SystemConfiguration>>([]);
         public Task<IReadOnlyCollection<SystemConfiguration>> ListConfigurationHistoryAsync(string key, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyCollection<SystemConfiguration>>([]);
         public Task<SystemConfiguration?> FindCurrentConfigurationAsync(string key, CancellationToken cancellationToken) => Task.FromResult<SystemConfiguration?>(null);
@@ -282,6 +362,7 @@ public sealed class S1BMasterDataApiTests
     {
         public TestRetailerStore(Guid adminId, Guid salesId)
         {
+            SalesId = salesId;
             Retailer = new Retailer
             {
                 Id = Guid.NewGuid(),
@@ -306,12 +387,20 @@ public sealed class S1BMasterDataApiTests
         }
 
         public Retailer Retailer { get; }
+        public Guid SalesId { get; }
         public ProductCategory Category { get; }
         public Product Product { get; }
         public List<RetailerProductMlor> Mlors { get; } = [];
-        public Task<IReadOnlyCollection<RetailerView>> ListAsync(Guid actorUserId, string actorRole, string? status, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyCollection<RetailerView>>([new(Retailer, Guid.NewGuid(), "HCM-A", null)]);
+        public Task<IReadOnlyCollection<RetailerView>> ListAsync(Guid actorUserId, string actorRole, string? status, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyCollection<RetailerView>>(
+                actorRole == FSCM.Domain.Authorization.SystemRoles.Sales && actorUserId != SalesId
+                    ? []
+                    : [new(Retailer, Guid.NewGuid(), "HCM-A", null)]);
         public Task<RetailerView?> FindViewAsync(Guid retailerId, CancellationToken cancellationToken) => Task.FromResult<RetailerView?>(new(Retailer, Guid.NewGuid(), "HCM-A", null));
         public Task<Retailer?> FindForUpdateAsync(Guid retailerId, CancellationToken cancellationToken) => Task.FromResult<Retailer?>(Retailer);
+        public Task<Retailer?> FindDuplicateAsync(
+            string name, string? phone, string? email, string? address,
+            Guid? excludedRetailerId, CancellationToken cancellationToken) => Task.FromResult<Retailer?>(null);
         public Task<IReadOnlyCollection<RetailerMlorView>> ListMlorDeclarationsAsync(IReadOnlyCollection<Guid> retailerIds, bool includeInactive, bool tracking, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyCollection<RetailerMlorView>>(Mlors.Where(item => includeInactive || item.IsActive).Select(item => new RetailerMlorView(item, item.ProductCategoryId.HasValue ? Category.Code : null, item.ProductCategoryId.HasValue ? Category.Name : null, item.ProductId.HasValue ? Product.Sku : null, item.ProductId.HasValue ? Product.Name : null)).ToArray());
         public Task<ProductCategory?> FindCategoryAsync(Guid categoryId, CancellationToken cancellationToken) => Task.FromResult<ProductCategory?>(Category);
         public Task<Product?> FindProductAsync(Guid productId, CancellationToken cancellationToken) => Task.FromResult<Product?>(Product);

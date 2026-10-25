@@ -19,7 +19,16 @@ public sealed record SubmitOfflineOrderRequest(
     string? DeliveryAddress,
     string? Note,
     decimal OfflineEstimatedAmount,
-    IReadOnlyCollection<CreateAssistedOrderLineRequest> Lines);
+    IReadOnlyCollection<CreateAssistedOrderLineRequest> Lines,
+    string? SnapshotVersion = null,
+    bool ConfirmConditionChanges = false,
+    IReadOnlyCollection<OfflineExpectedConditionRequest>? ExpectedConditions = null);
+
+public sealed record OfflineExpectedConditionRequest(
+    Guid ProductId,
+    decimal ExpectedBaseUnitPrice,
+    int ExpectedMlorVersion,
+    decimal ExpectedMlorRatio);
 
 public sealed record OrderDecisionRequest(int ExpectedVersion);
 

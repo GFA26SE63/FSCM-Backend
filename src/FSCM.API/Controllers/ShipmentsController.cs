@@ -50,6 +50,27 @@ public sealed class ShipmentsController(ShipmentService service) : ControllerBas
             new AssignShipmentData(request.DriverId, request.VehicleId, request.ExpectedVersion),
             GetActorRole(), cancellationToken);
 
+    /// <summary>
+    /// F61: confirms actual received and damaged quantities for one warehouse shipment.
+    /// Missing quantity is calculated by the server and the order completes only after every
+    /// shipment is received without an exception.
+    /// </summary>
+    [Authorize(Roles = SystemRoles.Retailer)]
+    [HttpPost("{id:guid}/receipt")]
+    public Task<ShipmentResult> ConfirmReceipt(
+        Guid id,
+        [FromBody] ConfirmShipmentReceiptRequest request,
+        [FromHeader(Name = "Idempotency-Key")] string operationKey,
+        CancellationToken cancellationToken) =>
+        service.ConfirmReceiptAsync(id,
+            new ConfirmShipmentReceiptData(
+                request.QrCodes,
+                request.Lines.Select(line => new ConfirmShipmentReceiptLineData(
+                    line.OrderLineId, line.BatchId, line.ReceivedQuantity, line.DamagedQuantity)).ToArray(),
+                request.ExpectedVersion,
+                request.Note),
+            operationKey, GetActorUserId(), GetActorRole(), cancellationToken);
+
     private Guid GetActorUserId() =>
         Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var userId)
             ? userId

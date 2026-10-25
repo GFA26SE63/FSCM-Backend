@@ -2949,6 +2949,9 @@ namespace FSCM.Persistence.Migrations
                     b.Property<Guid>("SalesOrderId")
                         .HasColumnType("uuid");
 
+                    b.Property<Guid?>("ShipmentId")
+                        .HasColumnType("uuid");
+
                     b.Property<string>("Status")
                         .IsRequired()
                         .HasMaxLength(30)
@@ -2961,8 +2964,11 @@ namespace FSCM.Persistence.Migrations
                     b.HasIndex("OperationKey")
                         .IsUnique();
 
-                    b.HasIndex("SalesOrderId")
-                        .IsUnique();
+                    b.HasIndex("SalesOrderId");
+
+                    b.HasIndex("ShipmentId")
+                        .IsUnique()
+                        .HasFilter("\"ShipmentId\" IS NOT NULL");
 
                     b.ToTable("RECEIPT_CONFIRMATION", (string)null);
                 });
@@ -2979,7 +2985,15 @@ namespace FSCM.Persistence.Migrations
                     b.Property<Guid>("BatchQrLabelId")
                         .HasColumnType("uuid");
 
+                    b.Property<decimal>("DamagedQuantity")
+                        .HasPrecision(18, 3)
+                        .HasColumnType("numeric(18,3)");
+
                     b.Property<decimal>("ExpectedQuantity")
+                        .HasPrecision(18, 3)
+                        .HasColumnType("numeric(18,3)");
+
+                    b.Property<decimal>("MissingQuantity")
                         .HasPrecision(18, 3)
                         .HasColumnType("numeric(18,3)");
 
@@ -2990,6 +3004,9 @@ namespace FSCM.Persistence.Migrations
                         .HasPrecision(18, 3)
                         .HasColumnType("numeric(18,3)");
 
+                    b.Property<Guid?>("SalesOrderLineId")
+                        .HasColumnType("uuid");
+
                     b.Property<DateTimeOffset>("ScannedAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -2999,9 +3016,42 @@ namespace FSCM.Persistence.Migrations
 
                     b.HasIndex("BatchQrLabelId");
 
-                    b.HasIndex("ReceiptConfirmationId");
+                    b.HasIndex("SalesOrderLineId");
 
-                    b.ToTable("RECEIPT_CONFIRMATION_ITEM", (string)null);
+                    b.HasIndex("ReceiptConfirmationId", "SalesOrderLineId", "BatchId")
+                        .IsUnique()
+                        .HasFilter("\"SalesOrderLineId\" IS NOT NULL");
+
+                    b.ToTable("RECEIPT_CONFIRMATION_ITEM", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_RECEIPT_CONFIRMATION_ITEM_ACTUAL_QUANTITY", "\"DamagedQuantity\" >= 0 AND \"ReceivedQuantity\" >= \"DamagedQuantity\" AND \"ExpectedQuantity\" >= \"ReceivedQuantity\" AND \"MissingQuantity\" = \"ExpectedQuantity\" - \"ReceivedQuantity\"");
+                        });
+                });
+
+            modelBuilder.Entity("FSCM.Domain.Entities.ReceiptConfirmationQrLabel", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("BatchQrLabelId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("ReceiptConfirmationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("ScannedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("BatchQrLabelId")
+                        .IsUnique();
+
+                    b.HasIndex("ReceiptConfirmationId", "BatchQrLabelId")
+                        .IsUnique();
+
+                    b.ToTable("RECEIPT_CONFIRMATION_QR_LABEL", (string)null);
                 });
 
             modelBuilder.Entity("FSCM.Domain.Entities.ReceiptDiscrepancy", b =>
@@ -5877,10 +5927,15 @@ namespace FSCM.Persistence.Migrations
                         .IsRequired();
 
                     b.HasOne("FSCM.Domain.Entities.SalesOrder", null)
-                        .WithOne()
-                        .HasForeignKey("FSCM.Domain.Entities.ReceiptConfirmation", "SalesOrderId")
+                        .WithMany()
+                        .HasForeignKey("SalesOrderId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
+
+                    b.HasOne("FSCM.Domain.Entities.Shipment", null)
+                        .WithMany()
+                        .HasForeignKey("ShipmentId")
+                        .OnDelete(DeleteBehavior.Restrict);
                 });
 
             modelBuilder.Entity("FSCM.Domain.Entities.ReceiptConfirmationItem", b =>
@@ -5891,6 +5946,26 @@ namespace FSCM.Persistence.Migrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
+                    b.HasOne("FSCM.Domain.Entities.BatchQrLabel", null)
+                        .WithMany()
+                        .HasForeignKey("BatchQrLabelId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("FSCM.Domain.Entities.ReceiptConfirmation", null)
+                        .WithMany()
+                        .HasForeignKey("ReceiptConfirmationId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("FSCM.Domain.Entities.SalesOrderLine", null)
+                        .WithMany()
+                        .HasForeignKey("SalesOrderLineId")
+                        .OnDelete(DeleteBehavior.Restrict);
+                });
+
+            modelBuilder.Entity("FSCM.Domain.Entities.ReceiptConfirmationQrLabel", b =>
+                {
                     b.HasOne("FSCM.Domain.Entities.BatchQrLabel", null)
                         .WithMany()
                         .HasForeignKey("BatchQrLabelId")

@@ -137,7 +137,7 @@ public sealed class DeliveryStore(AppDbContext dbContext) : IDeliveryStore
         string operationKey, CancellationToken cancellationToken)
     {
         var orderId = await dbContext.ReceiptConfirmationRecords.AsNoTracking()
-            .Where(item => item.OperationKey == operationKey)
+            .Where(item => item.OperationKey == operationKey && item.ShipmentId == null)
             .Select(item => (Guid?)item.SalesOrderId).SingleOrDefaultAsync(cancellationToken);
         return orderId.HasValue ? await FindByOrderAsync(orderId.Value, false, cancellationToken) : null;
     }
@@ -259,7 +259,8 @@ public sealed class DeliveryStore(AppDbContext dbContext) : IDeliveryStore
         var order = await orderQuery.SingleAsync(cancellationToken);
         var retailer = await dbContext.RetailerRecords.AsNoTracking()
             .SingleAsync(item => item.Id == order.RetailerId, cancellationToken);
-        var receiptQuery = dbContext.ReceiptConfirmationRecords.Where(item => item.SalesOrderId == order.Id);
+        var receiptQuery = dbContext.ReceiptConfirmationRecords
+            .Where(item => item.SalesOrderId == order.Id && item.ShipmentId == null);
         if (!forUpdate) receiptQuery = receiptQuery.AsNoTracking();
         var receipt = await receiptQuery.SingleOrDefaultAsync(cancellationToken);
         if (receipt is null) return new(delivery, order, retailer, null, []);

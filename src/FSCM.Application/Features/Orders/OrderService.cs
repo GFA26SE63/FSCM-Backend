@@ -97,11 +97,14 @@ public sealed class OrderService(
             data.ClientOrderKey, data.RetailerId, data.PaymentMethod, data.RequestedDeliveryDate,
             data.DeliveryAddress, data.Note, data.Lines);
         var normalized = Normalize(assisted);
-        var requestHash = ComputeRequestHash(normalized, salesUserId);
+        var requestHash = ComputeOfflineRequestHash(normalized, data, salesUserId);
         var existing = await store.FindByClientOrderKeyAsync(normalized.ClientOrderKey, cancellationToken);
         if (existing is not null)
         {
-            if (existing.CreatedByUserId != salesUserId || existing.RequestHash != requestHash)
+            var legacyOfflineHash = ComputeRequestHash(normalized, salesUserId);
+            if (existing.CreatedByUserId != salesUserId ||
+                existing.RequestHash != requestHash &&
+                !(existing.Source == OrderSources.Offline && existing.RequestHash == legacyOfflineHash))
                 throw OrderOperationException.Conflict("Client order key was already used for a different request.");
             return await GetAsync(existing.Id, salesUserId, SystemRoles.Sales, cancellationToken);
         }
@@ -123,6 +126,40 @@ public sealed class OrderService(
         var plan = await BuildCaptureAsync(
             normalized, retailerContext, salesUserId, orderCode, requestHash, now, cancellationToken,
             OrderSources.Offline, data.OfflineEstimatedAmount);
+        var expectedConditions = data.ExpectedConditions ?? [];
+        if (expectedConditions.Any(item => item.ProductId == Guid.Empty ||
+            item.ExpectedBaseUnitPrice < 0 || item.ExpectedMlorVersion < 1 ||
+            item.ExpectedMlorRatio is <= 0 or >= 1) ||
+            expectedConditions.GroupBy(item => item.ProductId).Any(group => group.Count() != 1))
+        {
+            throw OrderOperationException.Validation("Expected offline price and MLOR conditions are invalid.");
+        }
+        var expectedByProduct = expectedConditions.ToDictionary(item => item.ProductId);
+        if (expectedByProduct.Count != plan.Lines.Count)
+            throw OrderOperationException.Validation(
+                "Expected conditions must contain exactly one entry for every submitted product.");
+        var differences = plan.Lines.Select(line =>
+        {
+            if (!expectedByProduct.TryGetValue(line.ProductId, out var expected)) return null;
+            var currentBaseUnitPrice = line.OrderedQuantity == 0 ? 0 :
+                decimal.Round(line.NetAmount / line.OrderedQuantity, 2, MidpointRounding.AwayFromZero);
+            return expected.ExpectedBaseUnitPrice == currentBaseUnitPrice &&
+                   expected.ExpectedMlorVersion == line.MlorSourceVersion &&
+                   expected.ExpectedMlorRatio == line.MlorMinimumLifeRatio
+                ? null
+                : new OfflineConditionDifference(line.ProductId, line.SkuSnapshot,
+                    expected.ExpectedBaseUnitPrice, currentBaseUnitPrice,
+                    expected.ExpectedMlorVersion, line.MlorSourceVersion,
+                    expected.ExpectedMlorRatio, line.MlorMinimumLifeRatio);
+        }).Where(item => item is not null).Cast<OfflineConditionDifference>().ToArray();
+        var totalChanged = data.OfflineEstimatedAmount != plan.Order.FinalAmount;
+        if ((totalChanged || differences.Length != 0) && !data.ConfirmConditionChanges)
+        {
+            throw OrderOperationException.Conflict(
+                "Base-price or MLOR conditions changed. Sales must explicitly confirm before the draft is accepted.",
+                new OfflineConditionConflictResult(data.ClientOrderKey, data.SnapshotVersion,
+                    data.OfflineEstimatedAmount, plan.Order.FinalAmount, differences));
+        }
         try
         {
             await store.ExecuteInTransactionAsync(async transactionCancellationToken =>
@@ -787,6 +824,22 @@ public sealed class OrderService(
         var canonical = string.Join('|', salesUserId.ToString("N"), data.RetailerId.ToString("N"),
             data.PaymentMethod, data.RequestedDeliveryDate?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
             data.DeliveryAddress, data.Note, string.Join(';', lines));
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(canonical)));
+    }
+
+    private static string ComputeOfflineRequestHash(
+        CreateAssistedOrderData normalized,
+        SubmitOfflineOrderData offline,
+        Guid salesUserId)
+    {
+        var conditions = (offline.ExpectedConditions ?? []).OrderBy(item => item.ProductId)
+            .Select(item => string.Join(':', item.ProductId.ToString("N"),
+                item.ExpectedBaseUnitPrice.ToString(CultureInfo.InvariantCulture),
+                item.ExpectedMlorVersion.ToString(CultureInfo.InvariantCulture),
+                item.ExpectedMlorRatio.ToString(CultureInfo.InvariantCulture)));
+        var canonical = string.Join('|', ComputeRequestHash(normalized, salesUserId),
+            offline.OfflineEstimatedAmount.ToString(CultureInfo.InvariantCulture),
+            offline.SnapshotVersion?.Trim(), string.Join(';', conditions));
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(canonical)));
     }
 

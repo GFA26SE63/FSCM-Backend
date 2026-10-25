@@ -1,5 +1,6 @@
 using System.Data;
 using FSCM.Application.Features.AllocationRuns;
+using FSCM.Application.Features.QrLabels;
 using FSCM.Application.Features.Shipments;
 using FSCM.Domain.Authorization;
 using FSCM.Domain.Entities;
@@ -63,6 +64,48 @@ public sealed class ShipmentStore(AppDbContext dbContext) : IShipmentStore
         if (!forUpdate) query = query.AsNoTracking();
         var shipment = await query.SingleOrDefaultAsync(cancellationToken);
         return shipment is null ? null : await LoadAsync(shipment, cancellationToken);
+    }
+
+    public async Task<ShipmentView?> FindByReceiptOperationKeyAsync(
+        string operationKey, CancellationToken cancellationToken)
+    {
+        var shipmentId = await dbContext.ReceiptConfirmationRecords.AsNoTracking()
+            .Where(item => item.OperationKey == operationKey && item.ShipmentId != null)
+            .Select(item => item.ShipmentId).SingleOrDefaultAsync(cancellationToken);
+        return shipmentId.HasValue
+            ? await FindByIdAsync(shipmentId.Value, false, cancellationToken)
+            : null;
+    }
+
+    public Task<SalesOrder?> FindOrderForUpdateAsync(Guid orderId, CancellationToken cancellationToken) =>
+        dbContext.SalesOrderRecords.SingleOrDefaultAsync(item => item.Id == orderId, cancellationToken);
+
+    public async Task<IReadOnlyCollection<ShipmentLabelView>> ListLabelsAsync(
+        Guid shipmentId, bool forUpdate, CancellationToken cancellationToken)
+    {
+        var shipmentInfo = await (
+            from shipment in dbContext.ShipmentRecords.AsNoTracking()
+            join list in dbContext.RunPickingListRecords.AsNoTracking()
+                on shipment.RunPickingListId equals list.Id
+            join order in dbContext.SalesOrderRecords.AsNoTracking()
+                on shipment.SalesOrderId equals order.Id
+            where shipment.Id == shipmentId
+            select new { list.PickingCode, order.OrderCode, shipment.WarehouseId })
+            .SingleOrDefaultAsync(cancellationToken);
+        if (shipmentInfo is null) return [];
+
+        var ids = await (
+            from labelEvent in dbContext.QrLabelEventRecords.AsNoTracking()
+            join label in dbContext.BatchQrLabelRecords.AsNoTracking()
+                on labelEvent.BatchQrLabelId equals label.Id
+            where labelEvent.EventType == QrLabelEventTypes.Dispatched &&
+                  labelEvent.ReferenceCode == shipmentInfo.OrderCode &&
+                  label.CurrentWarehouseId == shipmentInfo.WarehouseId
+            select labelEvent.BatchQrLabelId).Distinct().ToArrayAsync(cancellationToken);
+        var query = dbContext.BatchQrLabelRecords.Where(item => ids.Contains(item.Id));
+        if (!forUpdate) query = query.AsNoTracking();
+        return (await query.OrderBy(item => item.QrCode).ToArrayAsync(cancellationToken))
+            .Select(item => new ShipmentLabelView(item, item.BatchId)).ToArray();
     }
 
     public async Task<IReadOnlyCollection<PendingShipmentSource>> ListPendingSourcesAsync(
@@ -129,6 +172,12 @@ public sealed class ShipmentStore(AppDbContext dbContext) : IShipmentStore
         dbContext.VehicleRecords.AsNoTracking().SingleOrDefaultAsync(item => item.Id == id, cancellationToken);
 
     public void AddShipment(Shipment shipment) => dbContext.ShipmentRecords.Add(shipment);
+    public void AddReceipt(ReceiptConfirmation receipt) => dbContext.ReceiptConfirmationRecords.Add(receipt);
+    public void AddReceiptLine(ReceiptConfirmationItem line) => dbContext.ReceiptConfirmationItemRecords.Add(line);
+    public void AddReceiptQrLabel(ReceiptConfirmationQrLabel qrLabel) =>
+        dbContext.ReceiptConfirmationQrLabelRecords.Add(qrLabel);
+    public void AddLabelEvent(QrLabelEvent labelEvent) => dbContext.QrLabelEventRecords.Add(labelEvent);
+    public void AddOrderHistory(OrderStatusHistory history) => dbContext.OrderStatusHistoryRecords.Add(history);
 
     public async Task SaveChangesAsync(CancellationToken cancellationToken)
     {
@@ -146,6 +195,29 @@ public sealed class ShipmentStore(AppDbContext dbContext) : IShipmentStore
             throw ShipmentOperationException.Conflict("A shipment already exists for this order and warehouse.");
         }
     }
+
+    public async Task ExecuteInTransactionAsync(
+        Func<CancellationToken, Task> operation, CancellationToken cancellationToken)
+    {
+        var strategy = dbContext.Database.CreateExecutionStrategy();
+        await strategy.ExecuteAsync(async () =>
+        {
+            dbContext.ChangeTracker.Clear();
+            await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
+            try
+            {
+                await operation(cancellationToken);
+                await transaction.CommitAsync(cancellationToken);
+            }
+            catch
+            {
+                await transaction.RollbackAsync(cancellationToken);
+                throw;
+            }
+        });
+    }
+
+    public void ClearTracking() => dbContext.ChangeTracker.Clear();
 
     private IQueryable<Shipment> ApplyRoleScope(IQueryable<Shipment> query, Guid userId, string role) => role switch
     {
@@ -198,6 +270,34 @@ public sealed class ShipmentStore(AppDbContext dbContext) : IShipmentStore
                 price.FinalNetUnitPrice, price.FinalNetUnitPrice * split.PickedQuantity))
             .ToArrayAsync(cancellationToken);
 
-        return new ShipmentView(shipment, order, warehouse, pickingCode, lines);
+        var receipt = await dbContext.ReceiptConfirmationRecords.AsNoTracking()
+            .SingleOrDefaultAsync(item => item.ShipmentId == shipment.Id, cancellationToken);
+        ShipmentReceiptView? receiptView = null;
+        if (receipt is not null)
+        {
+            var receiptLines = await dbContext.ReceiptConfirmationItemRecords.AsNoTracking()
+                .Where(item => item.ReceiptConfirmationId == receipt.Id)
+                .OrderBy(item => item.Id).ToArrayAsync(cancellationToken);
+            var qrCodes = await (
+                from link in dbContext.ReceiptConfirmationQrLabelRecords.AsNoTracking()
+                where link.ReceiptConfirmationId == receipt.Id
+                join label in dbContext.BatchQrLabelRecords.AsNoTracking()
+                    on link.BatchQrLabelId equals label.Id
+                orderby label.QrCode
+                select label.QrCode).ToArrayAsync(cancellationToken);
+            receiptView = new ShipmentReceiptView(receipt, receiptLines, qrCodes);
+            var actualByLine = receiptLines.Where(item => item.SalesOrderLineId.HasValue)
+                .ToDictionary(item => (item.SalesOrderLineId!.Value, item.BatchId));
+            lines = lines.Select(line => actualByLine.TryGetValue((line.OrderLineId, line.BatchId), out var actual)
+                ? line with
+                {
+                    ReceivedQuantity = actual.ReceivedQuantity,
+                    DamagedQuantity = actual.DamagedQuantity,
+                    MissingQuantity = actual.MissingQuantity
+                }
+                : line).ToArray();
+        }
+
+        return new ShipmentView(shipment, order, warehouse, pickingCode, lines, receiptView);
     }
 }

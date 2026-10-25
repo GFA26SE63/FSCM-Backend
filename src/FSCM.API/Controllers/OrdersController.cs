@@ -53,6 +53,11 @@ public sealed class OrdersController(
 
     [Authorize(Roles = SystemRoles.Sales)]
     [HttpPost]
+    [ProducesResponseType<OrderDetailResult>(StatusCodes.Status201Created)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
     public async Task<IActionResult> Create(
         CreateAssistedOrderRequest request,
         CancellationToken cancellationToken)
@@ -72,6 +77,12 @@ public sealed class OrdersController(
 
     [Authorize(Roles = SystemRoles.Sales)]
     [HttpPost("offline")]
+    [HttpPost("sync")]
+    [ProducesResponseType<OrderDetailResult>(StatusCodes.Status201Created)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
     public async Task<IActionResult> SubmitOffline(
         SubmitOfflineOrderRequest request,
         CancellationToken cancellationToken)
@@ -84,7 +95,12 @@ public sealed class OrdersController(
             request.DeliveryAddress,
             request.Note,
             request.OfflineEstimatedAmount,
-            request.Lines.Select(item => new CreateOrderLineData(item.ProductId, item.Quantity)).ToArray()),
+            request.Lines.Select(item => new CreateOrderLineData(item.ProductId, item.Quantity)).ToArray(),
+            request.SnapshotVersion,
+            request.ConfirmConditionChanges,
+            request.ExpectedConditions?.Select(item => new OfflineExpectedConditionData(
+                item.ProductId, item.ExpectedBaseUnitPrice, item.ExpectedMlorVersion,
+                item.ExpectedMlorRatio)).ToArray()),
             GetActorUserId(),
             cancellationToken);
         return CreatedAtAction(nameof(Get), new { id = result.Id }, result);
@@ -128,6 +144,7 @@ public sealed class OrdersController(
             operationKey, GetActorUserId(), GetActorRole(), cancellationToken);
 
     [Authorize(Roles = SystemRoles.Retailer)]
+    [Obsolete("Use POST /api/v1/shipments/{id}/receipt for per-shipment actual quantities.")]
     [HttpPost("{id:guid}/confirm-receipt")]
     public Task<DeliveryResult> ConfirmReceipt(
         Guid id,

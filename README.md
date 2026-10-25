@@ -300,6 +300,29 @@ answered from the chosen ones, and a score means nothing without the scores it b
 outcome distinguishes `Released` - it drew its stock and lost it to a later line's shortfall - from
 `Short`, the line that actually failed.
 
+## Offline mobile snapshot and manual send
+
+Sales devices explicitly request `GET /api/v1/mobile/snapshot`. The response is scoped from the
+authenticated Sales assignment and includes an opaque content-derived `version`, a checksum, and a
+full payload (`deltaMode=Full`). The client revalidates its cached version with `If-None-Match`; the
+server returns `304 Not Modified` when the scoped payload is unchanged. Full-only synchronization is
+intentional so assignment removal, deactivation, and relationship deletion cannot leave stale rows
+in SQLite. Cached inventory is
+indicative only; cached base price, ordinary promotion, and MLOR conditions are revalidated by the
+server. The snapshot never promises a batch-specific shelf-life discount.
+
+An offline draft remains local to the mobile client. When connectivity is available, Sales presses
+Send and calls `POST /api/v1/orders/sync` (the compatibility route `/api/v1/orders/offline` has the
+same behavior). A transport retry reuses `clientOrderKey` and returns the existing order. If base
+price or MLOR changed, the API returns `409` with the current conditions and creates no order; the
+client must show those changes and resend with `confirmConditionChanges=true`. Server receipt time
+sets cutoff priority. Sending never reserves stock and is not rejected merely because indicative
+stock is short.
+
+The snapshot GET intentionally has no GraphQL twin: it is a bulk device-cache synchronization
+transport with HTTP ETag/checksum semantics, not a persisted business read model. Order reads remain
+available via the shared REST/GraphQL order read services.
+
 ## Validation
 
 ```powershell

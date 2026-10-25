@@ -65,6 +65,10 @@ public sealed class EntityQueryService(AppDbContext dbContext) : IEntityQuerySer
             return Cast<TEntity, ManualRefund>(dbContext.ManualRefundRecords.Where(x => orderIds.Contains(x.SalesOrderId)));
         if (typeof(TEntity) == typeof(Delivery))
             return Cast<TEntity, Delivery>(ScopedDeliveries(access, orderIds));
+        if (typeof(TEntity) == typeof(Shipment))
+            return Cast<TEntity, Shipment>(dbContext.ShipmentRecords.Where(x =>
+                orderIds.Contains(x.SalesOrderId) ||
+                (access.Role == SystemRoles.WarehouseKeeper && warehouseIds.Contains(x.WarehouseId))));
         if (typeof(TEntity) == typeof(PickingList))
             return Cast<TEntity, PickingList>(dbContext.PickingListRecords.Where(x =>
                 orderIds.Contains(x.SalesOrderId) || warehouseIds.Contains(x.WarehouseId)));
@@ -82,6 +86,13 @@ public sealed class EntityQueryService(AppDbContext dbContext) : IEntityQuerySer
             var confirmationIds = dbContext.ReceiptConfirmationRecords
                 .Where(x => orderIds.Contains(x.SalesOrderId)).Select(x => x.Id);
             return Cast<TEntity, ReceiptConfirmationItem>(dbContext.ReceiptConfirmationItemRecords.Where(x =>
+                confirmationIds.Contains(x.ReceiptConfirmationId)));
+        }
+        if (typeof(TEntity) == typeof(ReceiptConfirmationQrLabel))
+        {
+            var confirmationIds = dbContext.ReceiptConfirmationRecords
+                .Where(x => orderIds.Contains(x.SalesOrderId)).Select(x => x.Id);
+            return Cast<TEntity, ReceiptConfirmationQrLabel>(dbContext.ReceiptConfirmationQrLabelRecords.Where(x =>
                 confirmationIds.Contains(x.ReceiptConfirmationId)));
         }
         if (typeof(TEntity) == typeof(ReceiptDiscrepancy))
