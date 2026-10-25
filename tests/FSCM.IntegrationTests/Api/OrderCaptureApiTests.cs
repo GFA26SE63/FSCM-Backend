@@ -187,10 +187,55 @@ public sealed class OrderCaptureApiTests
         Assert.Equal(900m, created.GetProperty("finalAmount").GetDecimal());
         Assert.Equal("OrderCaptured", Assert.Single(store.Audits).Action);
 
+        var originalPromotion = Assert.Single(store.Promotions);
+        store.Promotions.Add(new OrderPromotion
+        {
+            Id = Guid.NewGuid(),
+            SalesOrderLineId = originalPromotion.SalesOrderLineId,
+            PromotionId = Guid.NewGuid(),
+            PromotionCodeSnapshot = "KM-LEGACY",
+            PromotionNameSnapshot = "Khuyến mãi dữ liệu cũ",
+            PromotionTypeSnapshot = "Campaign",
+            MinimumQuantitySnapshot = 1m,
+            EffectiveFromSnapshot = originalPromotion.EffectiveFromSnapshot,
+            EffectiveToSnapshot = originalPromotion.EffectiveToSnapshot,
+            DiscountPercent = 5m,
+            DiscountAmount = 50m,
+            IsServerFinal = false,
+            AppliedAt = originalPromotion.AppliedAt.AddMinutes(-1)
+        });
+
         var list = await client.GetFromJsonAsync<JsonElement>(
             "/api/v1/orders?createdByMe=true&page=1&pageSize=10&search=DH-");
         Assert.Equal(1, list.GetProperty("totalCount").GetInt32());
         Assert.Equal("PendingRun", list.GetProperty("items")[0].GetProperty("allocationState").GetString());
+
+        var detail = await client.GetFromJsonAsync<JsonElement>($"/api/v1/orders/{orderId}");
+        Assert.Equal("KM-001", detail.GetProperty("lines")[0]
+            .GetProperty("ordinaryPromotion").GetProperty("code").GetString());
+
+        var graphQlResponse = await client.PostAsJsonAsync("/graphql", new
+        {
+            query = $$"""
+                query {
+                  entities {
+                    orderRead(id: "{{orderId}}") {
+                      id orderCode allocationState officialAmount
+                      lines { id allocationFragments { batchId finalUnitPrice netAmount } }
+                    }
+                    orderReads(createdByMe: true, search: "DH-") {
+                      totalCount items { id orderCode }
+                    }
+                  }
+                }
+                """
+        });
+        var graphQlBody = await graphQlResponse.Content.ReadAsStringAsync();
+        Assert.True(graphQlResponse.IsSuccessStatusCode, graphQlBody);
+        var graphQl = JsonDocument.Parse(graphQlBody).RootElement;
+        Assert.False(graphQl.TryGetProperty("errors", out _), graphQlBody);
+        Assert.Equal(orderId, graphQl.GetProperty("data").GetProperty("entities")
+            .GetProperty("orderRead").GetProperty("id").GetGuid());
 
         var timeline = await client.GetFromJsonAsync<JsonElement>($"/api/v1/orders/{orderId}/timeline");
         Assert.Equal("PendingApproval", timeline.GetProperty("currentStatus").GetString());
@@ -494,7 +539,11 @@ public sealed class OrderCaptureApiTests
             if (order is null) return null;
             var lines = Lines.Where(item => item.SalesOrderId == order.Id)
                 .Select(item => new OrderLineView(item, [],
-                    Promotions.SingleOrDefault(promotion => promotion.SalesOrderLineId == item.Id))).ToArray();
+                    Promotions.Where(promotion => promotion.SalesOrderLineId == item.Id)
+                        .OrderByDescending(promotion => promotion.IsServerFinal)
+                        .ThenByDescending(promotion => promotion.AppliedAt)
+                        .ThenBy(promotion => promotion.Id)
+                        .FirstOrDefault())).ToArray();
             return new(order, lines, History.Where(item => item.SalesOrderId == order.Id).ToArray(), [],
                 new Dictionary<Guid, string>(), new Dictionary<Guid, string>(), new Dictionary<Guid, int>());
         }

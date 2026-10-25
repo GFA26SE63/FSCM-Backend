@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using FSCM.Application.Features.AllocationRuns;
 using FSCM.Application.Features.Inventory;
 using FSCM.Application.Features.Picking;
 using FSCM.Domain.Authorization;
@@ -225,7 +226,8 @@ public sealed class OrderService(
         CancellationToken cancellationToken)
     {
         var view = await GetViewableAsync(orderId, actorUserId, actorRole, cancellationToken);
-        return new(view.Order.Id, view.Order.OrderCode, view.Order.Status, AllocationState(view), null, null, null,
+        return new(view.Order.Id, view.Order.OrderCode, view.Order.Status, AllocationState(view),
+            view.AllocationContext?.RunId, view.AllocationContext?.PlanStatus, view.AllocationContext?.OrderResult,
             ToHistory(view.History), ToShipments(view.Deliveries));
     }
 
@@ -689,17 +691,20 @@ public sealed class OrderService(
         view.Order.Status,
         view.Order.PaymentMethod,
         view.Order.FinalAmount,
-        view.Order.FinalPricePendingAllocation,
+        FinalPricePendingAllocation(view),
         AllocationState(view),
-        null,
-        null,
-        null,
-        view.Deliveries.Count,
+        view.AllocationContext?.RunId,
+        view.AllocationContext?.PlanStatus,
+        view.AllocationContext?.OrderResult,
+        view.AllocationContext?.WarehouseProgress.Count(item => item.ShipmentId.HasValue) ?? view.Deliveries.Count,
         (int)view.Lines.Sum(item => item.Line.OrderedQuantity),
         view.Lines.Count,
         view.Order.Source,
         view.Order.Version,
-        view.Order.CreatedAt);
+        view.Order.CreatedAt)
+    {
+        OfficialAmount = OfficialAmount(view)
+    };
 
     private static OrderDetailResult ToDetail(OrderView view) => new(
         view.Order.Id,
@@ -720,19 +725,35 @@ public sealed class OrderService(
         view.Order.SubtotalAmount,
         view.Order.DiscountAmount,
         view.Order.FinalAmount,
-        view.Order.FinalPricePendingAllocation,
+        FinalPricePendingAllocation(view),
         AllocationState(view),
-        null,
-        null,
-        null,
-        view.Order.RejectionReason,
+        view.AllocationContext?.RunId,
+        view.AllocationContext?.PlanStatus,
+        view.AllocationContext?.OrderResult,
+        view.Order.RejectionReason ?? view.AllocationContext?.ShortageReason,
         view.Order.OfflineEstimatedAmount,
         view.Order.HasOfflineDifference,
         view.Order.Version,
         view.Order.ServerReceivedAt,
         view.Order.CreatedAt,
         view.Order.UpdatedAt,
-        view.Lines.OrderBy(item => item.Line.LineNumber).Select(item => new OrderLineResult(
+        view.Lines.OrderBy(item => item.Line.LineNumber).Select(item => ToLine(view, item)).ToArray(),
+        ToHistory(view.History),
+        ToShipments(view.Deliveries))
+    {
+        OfficialAmount = OfficialAmount(view),
+        AllocationRunCode = view.AllocationContext?.RunCode,
+        AllocationPlanVersion = view.AllocationContext?.PlanVersionNumber,
+        OfficialPricedAt = view.AllocationContext?.PlanStatus == AllocationPlanVersionStatuses.Approved
+            ? view.AllocationContext.PricedAt : null,
+        WarehouseProgress = view.AllocationContext?.WarehouseProgress.Select(item =>
+            new OrderWarehouseProgressResult(
+                item.WarehouseId, item.WarehouseCode, item.PickingListId, item.PickingCode,
+                item.PickingStatus, item.ShipmentId, item.ShipmentCode, item.ShipmentStatus,
+                item.PlannedQuantity, item.PickedQuantity, item.ReceivedQuantity)).ToArray() ?? []
+    };
+
+    private static OrderLineResult ToLine(OrderView view, OrderLineView item) => new(
             item.Line.Id,
             item.Line.LineNumber,
             item.Line.ProductId,
@@ -794,9 +815,26 @@ public sealed class OrderService(
                     allocation.NetAmount,
                     allocation.DiscountSourceType,
                     allocation.DiscountSourceCode,
-                    allocation.Status)).ToArray())).ToArray(),
-        ToHistory(view.History),
-        ToShipments(view.Deliveries));
+                    allocation.Status)).ToArray())
+    {
+        AllocationFragments = view.AllocationContext?.Fragments
+                .Where(fragment => fragment.SalesOrderLineId == item.Line.Id)
+                .OrderBy(fragment => fragment.Sequence)
+                .Select(fragment => new OrderAllocationFragmentResult(
+                    fragment.AllocationId, fragment.PlanPriceId, fragment.BatchId, fragment.BatchCode,
+                    fragment.BatchExpirationDate, fragment.WarehouseId, fragment.WarehouseCode,
+                    fragment.Quantity, fragment.Sequence, fragment.EstimatedArrivalAt,
+                    fragment.RemainingLifeHoursAtArrival, fragment.ListUnitPrice,
+                    fragment.ListUnitPrice - fragment.BaseUnitPrice, fragment.BaseUnitPrice,
+                    fragment.RemainingShelfLifePercent, fragment.DiscountRuleId,
+                    fragment.DiscountRuleScope, fragment.DiscountRuleCode, fragment.DiscountRuleVersion,
+                    fragment.DiscountType, fragment.DiscountValue, fragment.ShelfLifeDiscountPerUnit,
+                    fragment.FinalUnitPrice, fragment.NetAmount, fragment.DiscountReason)).ToArray() ?? [],
+        OfficialNetAmount = view.AllocationContext?.PlanStatus == AllocationPlanVersionStatuses.Approved
+                ? view.AllocationContext.Fragments.Where(fragment => fragment.SalesOrderLineId == item.Line.Id)
+                    .Sum(fragment => fragment.NetAmount)
+                : null
+    };
 
     private static IReadOnlyCollection<OrderStatusHistoryResult> ToHistory(
         IReadOnlyCollection<OrderStatusHistory> history) =>
@@ -812,10 +850,21 @@ public sealed class OrderService(
     private static string AllocationState(OrderView view) => view.Order.Status switch
     {
         OrderStatuses.Cancelled or OrderStatuses.Rejected => "NotApplicable",
+        _ when view.AllocationContext is not null => view.AllocationContext.PlanStatus == AllocationPlanVersionStatuses.Approved
+            ? "Allocated" : "Proposed",
         _ when view.Lines.SelectMany(item => item.Allocations).Any() =>
             view.Order.FinalPricePendingAllocation ? "Proposed" : "Allocated",
         _ => "PendingRun"
     };
+
+    private static decimal? OfficialAmount(OrderView view) =>
+        view.AllocationContext?.PlanStatus == AllocationPlanVersionStatuses.Approved
+            ? view.AllocationContext.Fragments.Sum(item => item.NetAmount)
+            : null;
+
+    private static bool FinalPricePendingAllocation(OrderView view) =>
+        view.AllocationContext?.PlanStatus != AllocationPlanVersionStatuses.Approved &&
+        view.Order.FinalPricePendingAllocation;
 
     private static string ComputeRequestHash(CreateAssistedOrderData data, Guid salesUserId)
     {
