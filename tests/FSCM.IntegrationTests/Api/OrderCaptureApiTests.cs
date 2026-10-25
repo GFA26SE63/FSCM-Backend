@@ -40,6 +40,10 @@ public sealed class OrderCaptureApiTests
         var snapshot = await client.GetFromJsonAsync<JsonElement>("/api/v1/mobile/snapshot");
         Assert.Equal("Full", snapshot.GetProperty("deltaMode").GetString());
         Assert.Contains("tham khảo", snapshot.GetProperty("stockDisclaimer").GetString());
+        var version = snapshot.GetProperty("version").GetString();
+        using var cacheRequest = new HttpRequestMessage(HttpMethod.Get, "/api/v1/mobile/snapshot");
+        cacheRequest.Headers.IfNoneMatch.ParseAdd($"\"{version}\"");
+        Assert.Equal(HttpStatusCode.NotModified, (await client.SendAsync(cacheRequest)).StatusCode);
 
         var key = Guid.NewGuid();
         var response = await client.PostAsJsonAsync("/api/v1/orders/sync", new
@@ -326,10 +330,9 @@ public sealed class OrderCaptureApiTests
 
     private sealed class TestMobileSnapshotStore : IMobileSnapshotStore
     {
-        public Task<MobileSnapshotData> LoadAsync(Guid salesUserId, DateTimeOffset? changedAfter,
+        public Task<MobileSnapshotData> LoadAsync(Guid salesUserId, DateTimeOffset effectiveAt,
             CancellationToken cancellationToken) => Task.FromResult(new MobileSnapshotData(
-                [], [], [], [], [], [], [], null,
-                new DateTimeOffset(2026, 10, 23, 8, 0, 0, TimeSpan.Zero)));
+                [], [], [], [], [], [], [], null));
     }
 
     private sealed class TestQuoteStore : IPromotionStore

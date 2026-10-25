@@ -303,8 +303,11 @@ outcome distinguishes `Released` - it drew its stock and lost it to a later line
 ## Offline mobile snapshot and manual send
 
 Sales devices explicitly request `GET /api/v1/mobile/snapshot`. The response is scoped from the
-authenticated Sales assignment and includes an opaque `version`, a checksum of the current full
-snapshot, and either a full payload or a delta when `sinceVersion` is supplied. Cached inventory is
+authenticated Sales assignment and includes an opaque content-derived `version`, a checksum, and a
+full payload (`deltaMode=Full`). The client revalidates its cached version with `If-None-Match`; the
+server returns `304 Not Modified` when the scoped payload is unchanged. Full-only synchronization is
+intentional so assignment removal, deactivation, and relationship deletion cannot leave stale rows
+in SQLite. Cached inventory is
 indicative only; cached base price, ordinary promotion, and MLOR conditions are revalidated by the
 server. The snapshot never promises a batch-specific shelf-life discount.
 
@@ -316,9 +319,9 @@ client must show those changes and resend with `confirmConditionChanges=true`. S
 sets cutoff priority. Sending never reserves stock and is not rejected merely because indicative
 stock is short.
 
-The snapshot GET intentionally has no GraphQL twin: it is a device cache synchronization transport
-with delta/checksum semantics, not a persisted business read model. Order reads remain available via
-the shared REST/GraphQL order read services.
+The snapshot GET intentionally has no GraphQL twin: it is a bulk device-cache synchronization
+transport with HTTP ETag/checksum semantics, not a persisted business read model. Order reads remain
+available via the shared REST/GraphQL order read services.
 
 ## Validation
 
