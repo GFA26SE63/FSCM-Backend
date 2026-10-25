@@ -19,6 +19,17 @@ public sealed class AllocationRunsController(
     AllocationTraceService traces,
     OrderService orders) : ControllerBase
 {
+    /// <summary>
+    /// Runs today's allocation now, for the case where the 12:00 job did not. Idempotent on the
+    /// business date, and the cutoff comes from the published schedule unless an Admin overrides it
+    /// with a later moment on the same day.
+    /// </summary>
+    [HttpPost]
+    [Authorize(Roles = SystemRoles.Admin)]
+    public Task<AllocationRunResult> RunNow(
+        StartAllocationRunRequest? request, CancellationToken cancellationToken) =>
+        runs.RunNowAsync(request?.CutoffAt, cancellationToken);
+
     [HttpGet("{runId:guid}")]
     public Task<AllocationRunResult> Get(Guid runId, CancellationToken cancellationToken) =>
         runs.GetAsync(runId, cancellationToken);

@@ -14,6 +14,7 @@ internal abstract class StubAllocationRunStore : IAllocationRunStore
 
     public virtual Task<AllocationRun?> FindByBusinessDateAsync(DateOnly businessDate, CancellationToken cancellationToken) => throw NotSetUp();
     public virtual Task<AllocationRunView?> FindViewAsync(Guid runId, CancellationToken cancellationToken) => throw NotSetUp();
+    public virtual Task<AllocationRunView?> FindViewForUpdateAsync(Guid runId, CancellationToken cancellationToken) => FindViewAsync(runId, cancellationToken);
     public virtual Task<AllocationRunView?> FindViewByBusinessDateAsync(DateOnly businessDate, CancellationToken cancellationToken) => throw NotSetUp();
     public virtual Task<IReadOnlyCollection<EligibleOrderView>> ListEligibleOrdersAsync(DateTimeOffset cutoffAt, CancellationToken cancellationToken) => throw NotSetUp();
     public virtual Task<IReadOnlyCollection<AvailableBatchView>> ListAvailableStockAsync(IReadOnlyCollection<Guid> productIds, DateOnly businessDate, CancellationToken cancellationToken) => throw NotSetUp();
