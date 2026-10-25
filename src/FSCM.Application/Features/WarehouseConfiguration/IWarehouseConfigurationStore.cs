@@ -3,6 +3,7 @@ using FSCM.Domain.Entities;
 namespace FSCM.Application.Features.WarehouseConfiguration;
 
 public sealed record WarehouseView(Warehouse Warehouse, MapLocation? Location);
+public sealed record WarehouseKeeperView(Guid WarehouseId, Guid UserId, string FullName, string Email);
 public sealed record MlorView(
     RetailerProductMlor Mlor,
     string RetailerCode,
@@ -19,6 +20,8 @@ public interface IWarehouseConfigurationStore
     Task<Warehouse?> FindWarehouseAsync(Guid warehouseId, CancellationToken cancellationToken);
     Task<Warehouse?> FindWarehouseByCodeAsync(string code, CancellationToken cancellationToken);
     Task<MapLocation?> FindWarehouseLocationAsync(Guid warehouseId, CancellationToken cancellationToken);
+    Task<IReadOnlyCollection<WarehouseKeeperView>> ListActiveWarehouseKeepersAsync(
+        IReadOnlyCollection<Guid> warehouseIds, CancellationToken cancellationToken);
     void AddWarehouse(Warehouse warehouse);
     void AddLocation(MapLocation location);
 
@@ -32,6 +35,7 @@ public interface IWarehouseConfigurationStore
         bool includeInactive, CancellationToken cancellationToken);
     Task<RetailerProductMlor?> FindActiveMlorAsync(
         Guid retailerId, Guid? productCategoryId, Guid? productId, CancellationToken cancellationToken);
+    Task<RetailerProductMlor?> FindMlorAsync(Guid mlorId, CancellationToken cancellationToken);
     Task<Retailer?> FindRetailerAsync(Guid retailerId, CancellationToken cancellationToken);
     Task<Product?> FindProductAsync(Guid productId, CancellationToken cancellationToken);
     Task<ProductCategory?> FindCategoryAsync(Guid categoryId, CancellationToken cancellationToken);

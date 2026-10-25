@@ -12,9 +12,15 @@ public sealed record WarehouseResult(
     decimal Longitude,
     string? ProviderPlaceId,
     int MinimumStockThresholdCartons,
+    IReadOnlyCollection<WarehouseKeeperResult> Keepers,
     bool IsActive,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt);
+
+public sealed record WarehouseKeeperResult(
+    Guid UserId,
+    string FullName,
+    string Email);
 
 public sealed record SaveWarehouseData(
     string Code,

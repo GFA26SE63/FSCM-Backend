@@ -16,6 +16,9 @@ public interface IRetailerStore
     Task<IReadOnlyCollection<RetailerView>> ListAsync(Guid actorUserId, string actorRole, string? status, CancellationToken cancellationToken);
     Task<RetailerView?> FindViewAsync(Guid retailerId, CancellationToken cancellationToken);
     Task<Retailer?> FindForUpdateAsync(Guid retailerId, CancellationToken cancellationToken);
+    Task<Retailer?> FindDuplicateAsync(
+        string name, string? phone, string? email, string? address,
+        Guid? excludedRetailerId, CancellationToken cancellationToken);
     Task<IReadOnlyCollection<RetailerMlorView>> ListMlorDeclarationsAsync(
         IReadOnlyCollection<Guid> retailerIds, bool includeInactive, bool tracking,
         CancellationToken cancellationToken);
