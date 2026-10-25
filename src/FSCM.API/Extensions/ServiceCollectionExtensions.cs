@@ -115,7 +115,13 @@ public static class ServiceCollectionExtensions
                      System.Reflection.BindingFlags.Public |
                      System.Reflection.BindingFlags.DeclaredOnly))
         {
-            var entityType = method.ReturnType.GetGenericArguments().Single();
+            if (!method.ReturnType.IsGenericType ||
+                method.ReturnType.GetGenericTypeDefinition() != typeof(IQueryable<>))
+            {
+                continue;
+            }
+
+            var entityType = method.ReturnType.GetGenericArguments()[0];
             graphQl.AddType(typeof(DomainEntityObjectType<>).MakeGenericType(entityType));
         }
 

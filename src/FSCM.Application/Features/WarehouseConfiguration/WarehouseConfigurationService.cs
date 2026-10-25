@@ -8,11 +8,22 @@ public sealed partial class WarehouseConfigurationService(
     IWarehouseConfigurationStore store,
     TimeProvider timeProvider)
 {
-    public async Task<IReadOnlyCollection<WarehouseResult>> ListWarehousesAsync(bool includeInactive, CancellationToken cancellationToken) =>
-        (await store.ListWarehousesAsync(includeInactive, cancellationToken)).Select(ToWarehouseResult).ToArray();
+    public async Task<IReadOnlyCollection<WarehouseResult>> ListWarehousesAsync(
+        bool includeInactive, CancellationToken cancellationToken)
+    {
+        var views = await store.ListWarehousesAsync(includeInactive, cancellationToken);
+        var keepers = await ListWarehouseKeeperLookupAsync(
+            views.Select(item => item.Warehouse.Id), cancellationToken);
+        return views.Select(item => ToWarehouseResult(
+            item, keepers.GetValueOrDefault(item.Warehouse.Id, []))).ToArray();
+    }
 
-    public async Task<WarehouseResult> GetWarehouseAsync(Guid warehouseId, CancellationToken cancellationToken) =>
-        ToWarehouseResult(await RequireWarehouseViewAsync(warehouseId, cancellationToken));
+    public async Task<WarehouseResult> GetWarehouseAsync(Guid warehouseId, CancellationToken cancellationToken)
+    {
+        var view = await RequireWarehouseViewAsync(warehouseId, cancellationToken);
+        var keepers = await store.ListActiveWarehouseKeepersAsync([warehouseId], cancellationToken);
+        return ToWarehouseResult(view, keepers);
+    }
 
     public async Task<WarehouseResult> CreateWarehouseAsync(SaveWarehouseData data, CancellationToken cancellationToken)
     {
@@ -39,7 +50,7 @@ public sealed partial class WarehouseConfigurationService(
         store.AddWarehouse(warehouse);
         store.AddLocation(location);
         await store.SaveChangesAsync(cancellationToken);
-        return ToWarehouseResult(new WarehouseView(warehouse, location));
+        return ToWarehouseResult(new WarehouseView(warehouse, location), []);
     }
 
     public async Task<WarehouseResult> UpdateWarehouseAsync(Guid warehouseId, SaveWarehouseData data, CancellationToken cancellationToken)
@@ -72,7 +83,8 @@ public sealed partial class WarehouseConfigurationService(
         }
 
         await store.SaveChangesAsync(cancellationToken);
-        return ToWarehouseResult(new WarehouseView(warehouse, location));
+        var keepers = await store.ListActiveWarehouseKeepersAsync([warehouseId], cancellationToken);
+        return ToWarehouseResult(new WarehouseView(warehouse, location), keepers);
     }
 
     public async Task SetWarehouseStatusAsync(Guid warehouseId, bool isActive, CancellationToken cancellationToken)
@@ -236,6 +248,39 @@ public sealed partial class WarehouseConfigurationService(
         await store.SaveChangesAsync(cancellationToken);
         return ToMlorResult(new MlorView(mlor, retailer.Code, retailer.Name,
             category?.Code, category?.Name, product?.Sku, product?.Name));
+    }
+
+    public async Task DeactivateMlorAsync(
+        Guid mlorId, Guid updatedByUserId, CancellationToken cancellationToken)
+    {
+        var mlor = await store.FindMlorAsync(mlorId, cancellationToken)
+            ?? throw WarehouseConfigurationOperationException.NotFound("MLOR configuration was not found.");
+        if (!mlor.IsActive)
+            return;
+
+        var now = timeProvider.GetUtcNow();
+        mlor.IsActive = false;
+        mlor.EffectiveTo = now;
+        store.AddAuditLog(new AuditLog
+        {
+            Id = Guid.NewGuid(),
+            UserAccountId = updatedByUserId,
+            EntityName = nameof(RetailerProductMlor),
+            EntityId = mlor.Id,
+            Action = "RetailerMlorRuleDeactivated",
+            OldValues = JsonSerializer.Serialize(new
+            {
+                mlor.RetailerId,
+                mlor.ProductCategoryId,
+                mlor.ProductId,
+                mlor.MinimumLifeRatio,
+                mlor.MinimumLifeHours,
+                mlor.Version
+            }),
+            NewValues = JsonSerializer.Serialize(new { mlor.IsActive, mlor.EffectiveTo }),
+            CreatedAt = now
+        });
+        await store.SaveChangesAsync(cancellationToken);
     }
 
     public async Task<IReadOnlyCollection<ConfigurationResult>> ListCurrentConfigurationsAsync(CancellationToken cancellationToken) =>
@@ -412,10 +457,21 @@ public sealed partial class WarehouseConfigurationService(
         UpdatedAt = now
     };
 
-    private static WarehouseResult ToWarehouseResult(WarehouseView view) => new(
+    private async Task<Dictionary<Guid, IReadOnlyCollection<WarehouseKeeperView>>> ListWarehouseKeeperLookupAsync(
+        IEnumerable<Guid> warehouseIds, CancellationToken cancellationToken)
+    {
+        var ids = warehouseIds.Distinct().ToArray();
+        var keepers = await store.ListActiveWarehouseKeepersAsync(ids, cancellationToken);
+        return keepers.GroupBy(item => item.WarehouseId)
+            .ToDictionary(group => group.Key, group => (IReadOnlyCollection<WarehouseKeeperView>)group.ToArray());
+    }
+
+    private static WarehouseResult ToWarehouseResult(
+        WarehouseView view, IReadOnlyCollection<WarehouseKeeperView> keepers) => new(
         view.Warehouse.Id, view.Warehouse.Code, view.Warehouse.Name, view.Warehouse.Type,
         view.Warehouse.Address, view.Location?.Latitude ?? 0, view.Location?.Longitude ?? 0,
         view.Location?.ProviderPlaceId, view.Warehouse.MinimumStockThresholdCartons,
+        keepers.Select(item => new WarehouseKeeperResult(item.UserId, item.FullName, item.Email)).ToArray(),
         view.Warehouse.IsActive, view.Warehouse.CreatedAt, view.Warehouse.UpdatedAt);
 
     private static TransitTimeRuleResult ToTransitResult(TransitTimeRule rule) => new(

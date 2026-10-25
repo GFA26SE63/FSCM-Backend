@@ -1,4 +1,5 @@
 using FSCM.Application.Features.WarehouseConfiguration;
+using FSCM.Domain.Authorization;
 using FSCM.Domain.Entities;
 using FSCM.Persistence.DbContexts;
 using Microsoft.EntityFrameworkCore;
@@ -26,6 +27,18 @@ public sealed class WarehouseConfigurationStore(AppDbContext dbContext) : IWareh
 
     public Task<MapLocation?> FindWarehouseLocationAsync(Guid warehouseId, CancellationToken cancellationToken) =>
         dbContext.MapLocationRecords.SingleOrDefaultAsync(item => item.WarehouseId == warehouseId, cancellationToken);
+
+    public async Task<IReadOnlyCollection<WarehouseKeeperView>> ListActiveWarehouseKeepersAsync(
+        IReadOnlyCollection<Guid> warehouseIds, CancellationToken cancellationToken) =>
+        await (from assignment in dbContext.UserWarehouseAssignmentRecords.AsNoTracking()
+               join user in dbContext.UserAccountRecords.AsNoTracking()
+                   on assignment.UserAccountId equals user.Id
+               where warehouseIds.Contains(assignment.WarehouseId) && assignment.IsActive &&
+                   user.IsActive && user.Role == SystemRoles.WarehouseKeeper
+               orderby user.FullName, user.Id
+               select new WarehouseKeeperView(
+                   assignment.WarehouseId, user.Id, user.FullName, user.Email))
+            .ToArrayAsync(cancellationToken);
 
     public void AddWarehouse(Warehouse warehouse) => dbContext.WarehouseRecords.Add(warehouse);
     public void AddLocation(MapLocation location) => dbContext.MapLocationRecords.Add(location);
@@ -88,6 +101,10 @@ public sealed class WarehouseConfigurationStore(AppDbContext dbContext) : IWareh
             item => item.RetailerId == retailerId && item.ProductCategoryId == productCategoryId &&
                 item.ProductId == productId && item.IsActive,
             cancellationToken);
+
+    public Task<RetailerProductMlor?> FindMlorAsync(Guid mlorId, CancellationToken cancellationToken) =>
+        dbContext.RetailerProductMlorRecords.SingleOrDefaultAsync(
+            item => item.Id == mlorId, cancellationToken);
 
     public Task<Retailer?> FindRetailerAsync(Guid retailerId, CancellationToken cancellationToken) =>
         dbContext.RetailerRecords.AsNoTracking().SingleOrDefaultAsync(item => item.Id == retailerId, cancellationToken);

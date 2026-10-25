@@ -1,4 +1,6 @@
 using FSCM.Application.Features.EntityQueries;
+using FSCM.Application.Features.Retailers;
+using FSCM.Application.Features.WarehouseConfiguration;
 using FSCM.Domain.Entities;
 using HotChocolate.Data;
 using HotChocolate.Types;
@@ -13,6 +15,41 @@ namespace FSCM.API.GraphQL;
 /// </summary>
 public sealed class EntityQuery(EntityQueryAccess access)
 {
+    public Task<IReadOnlyCollection<WarehouseResult>> WarehouseProfiles(
+        [Service] WarehouseConfigurationService service,
+        bool includeInactive = false,
+        CancellationToken cancellationToken = default) =>
+        service.ListWarehousesAsync(includeInactive, cancellationToken);
+
+    public Task<WarehouseResult> WarehouseProfile(
+        Guid warehouseId,
+        [Service] WarehouseConfigurationService service,
+        CancellationToken cancellationToken = default) =>
+        service.GetWarehouseAsync(warehouseId, cancellationToken);
+
+    public Task<RetailerPage> RetailerProfiles(
+        [Service] RetailerService service,
+        string? status = null,
+        string? search = null,
+        string? scope = null,
+        int page = 1,
+        int pageSize = 20,
+        CancellationToken cancellationToken = default) =>
+        service.SearchAsync(access.UserId, access.Role, status, search, scope, page, pageSize, cancellationToken);
+
+    public Task<RetailerDetails> RetailerProfile(
+        Guid retailerId,
+        [Service] RetailerService service,
+        CancellationToken cancellationToken = default) =>
+        service.GetAsync(retailerId, access.UserId, access.Role, cancellationToken);
+
+    public Task<RetailerMlorResolutionResult> RetailerMlorResolution(
+        Guid retailerId,
+        Guid productId,
+        [Service] RetailerService service,
+        CancellationToken cancellationToken = default) =>
+        service.ResolveMlorAsync(retailerId, productId, access.UserId, access.Role, cancellationToken);
+
     [UsePaging(typeof(DomainEntityObjectType<UserAccount>), ConnectionName = "EntityUserAccounts", DefaultPageSize = 50, MaxPageSize = int.MaxValue, IncludeTotalCount = true, RequirePagingBoundaries = false), UseProjection, UseFiltering, UseSorting]
     public IQueryable<UserAccount> UserAccounts([Service] IEntityQueryService source) => source.Query<UserAccount>(access);
     [UsePaging(typeof(DomainEntityObjectType<Warehouse>), ConnectionName = "EntityWarehouses", DefaultPageSize = 50, MaxPageSize = int.MaxValue, IncludeTotalCount = true, RequirePagingBoundaries = false), UseProjection, UseFiltering, UseSorting]
