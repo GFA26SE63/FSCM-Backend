@@ -309,6 +309,22 @@ Content-Type: application/json
 
 ###
 
+# F75 Sales KPI with versioned targets/weights and order-GUID drill-down.
+GET {{FSCM.API_HostAddress}}/api/v1/reports/sales-kpis?fromDate=2026-10-01&toDate=2026-10-31
+Authorization: Bearer {{salesLogin.response.body.$.accessToken}}
+
+###
+
+POST {{FSCM.API_HostAddress}}/graphql
+Authorization: Bearer {{salesLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "query": "query { salesKpis(query: { fromDate: \"2026-10-01\", toDate: \"2026-10-31\" }) { fromDate toDate scope configurationVersion recognitionRule entries { salesUserId salesUserName overallCompletionRate recognizedRevenue metrics { code target actual completionRate weight weightedScore unit } orders { orderId orderCode recognitionDate recognizedRevenue } } } }"
+}
+
+###
+
 # @name operatorLogin
 POST {{FSCM.API_HostAddress}}/api/v1/auth/login
 Content-Type: application/json

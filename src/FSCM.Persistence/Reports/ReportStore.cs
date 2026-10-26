@@ -1,6 +1,7 @@
 using FSCM.Application.Features.Orders;
 using FSCM.Application.Features.Reports;
 using FSCM.Persistence.DbContexts;
+using FSCM.Application.Features.WarehouseConfiguration;
 using Microsoft.EntityFrameworkCore;
 
 namespace FSCM.Persistence.Reports;
@@ -83,5 +84,65 @@ public sealed class ReportStore(AppDbContext dbContext) : IReportStore
                 group.Count(),
                 group.Sum(row => row.Revenue)))
             .ToArray();
+    }
+
+    public async Task<IReadOnlyCollection<SalesKpiOrderRow>> ListRecognizedOrdersAsync(
+        DateOnly fromDate, DateOnly toDate, IReadOnlyCollection<Guid>? salesGroupIds,
+        Guid? salesUserId, CancellationToken cancellationToken)
+    {
+        var groupSet = salesGroupIds?.ToHashSet();
+        var rows = await (
+            from order in dbContext.SalesOrderRecords.AsNoTracking()
+            where order.Status == OrderStatuses.Delivered
+            join payment in dbContext.PaymentRecords.AsNoTracking()
+                on order.Id equals payment.SalesOrderId into payments
+            from payment in payments.DefaultIfEmpty()
+            join user in dbContext.UserAccountRecords.AsNoTracking()
+                on order.CreatedByUserId equals user.Id
+            join salesGroup in dbContext.SalesGroupRecords.AsNoTracking()
+                on order.SalesGroupId equals salesGroup.Id
+            join retailer in dbContext.RetailerRecords.AsNoTracking()
+                on order.RetailerId equals retailer.Id
+            select new
+            {
+                Order = order, Payment = payment, UserName = user.FullName,
+                GroupCode = salesGroup.Code, GroupName = salesGroup.Name, salesGroup.RegionId,
+                RetailerCreatedAt = retailer.CreatedAt
+            }).ToArrayAsync(cancellationToken);
+
+        return rows.Where(row => groupSet == null || groupSet.Contains(row.Order.SalesGroupId))
+            .Where(row => !salesUserId.HasValue || row.Order.CreatedByUserId == salesUserId.Value)
+            .Select(row => new
+            {
+                Row = row,
+                RecognitionDate = row.Payment?.DeliveredDate
+                    ?? DateOnly.FromDateTime(row.Order.ServerReceivedAt.ToOffset(VietnamOffset).DateTime)
+            })
+            .Where(row => row.RecognitionDate >= fromDate && row.RecognitionDate <= toDate)
+            .Select(item => new SalesKpiOrderRow(
+                item.Row.Order.Id, item.Row.Order.OrderCode, item.Row.Order.RetailerId,
+                item.Row.Order.RetailerCodeSnapshot, item.Row.Order.RetailerNameSnapshot,
+                item.Row.Order.CreatedByUserId, item.Row.UserName, item.Row.Order.SalesGroupId,
+                item.Row.GroupCode, item.Row.GroupName, item.Row.RegionId, item.RecognitionDate,
+                DateOnly.FromDateTime(item.Row.RetailerCreatedAt.ToOffset(VietnamOffset).DateTime),
+                item.Row.Order.SubtotalAmount, item.Row.Order.DiscountAmount,
+                item.Row.Order.FinalAmount,
+                Math.Max(0, item.Row.Order.FinalAmount - (item.Row.Payment?.AdjustedAmount ?? item.Row.Order.FinalAmount)),
+                item.Row.Payment?.AdjustedAmount ?? item.Row.Order.FinalAmount))
+            .ToArray();
+    }
+
+    public async Task<SalesKpiConfigurationRow?> FindSalesKpiConfigurationAsync(
+        DateOnly periodEnd, CancellationToken cancellationToken)
+    {
+        var exclusiveEndUtc = new DateTimeOffset(periodEnd.AddDays(1).ToDateTime(TimeOnly.MinValue), VietnamOffset)
+            .ToUniversalTime();
+        return
+        await dbContext.SystemConfigurationRecords.AsNoTracking()
+            .Where(item => item.ConfigKey == BusinessConfigurationKeys.SalesKpi && item.EffectiveFrom < exclusiveEndUtc)
+            .OrderByDescending(item => item.EffectiveFrom)
+            .ThenByDescending(item => item.Version)
+            .Select(item => new SalesKpiConfigurationRow(item.ConfigValue, item.Version, item.EffectiveFrom))
+            .FirstOrDefaultAsync(cancellationToken);
     }
 }
