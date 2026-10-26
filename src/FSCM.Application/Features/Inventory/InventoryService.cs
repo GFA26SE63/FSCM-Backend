@@ -113,7 +113,8 @@ public sealed class InventoryService(IInventoryStore store, TimeProvider timePro
 
         var now = timeProvider.GetUtcNow();
         var businessDate = GetVietnamDate(now);
-        var batches = new Dictionary<(Guid ProductId, DateOnly ExpirationDate), (Batch Batch, InventoryBalance Balance)>();
+        var batches = new Dictionary<(Guid ProductId, DateOnly ProductionDate, DateOnly ExpirationDate),
+            (Batch Batch, InventoryBalance Balance)>();
         foreach (var item in approval.Lines)
         {
             var input = new ReceiveGoodsLineData(item.Line.ProductId, item.Line.SourceLotCode,
@@ -122,11 +123,11 @@ public sealed class InventoryService(IInventoryStore store, TimeProvider timePro
             if (item.Product.Status != "Published")
                 throw InventoryOperationException.Conflict($"Product '{item.Product.Sku}' is not published.");
 
-            var key = (item.Line.ProductId, item.Line.ExpirationDate);
+            var key = (item.Line.ProductId, item.Line.ProductionDate, item.Line.ExpirationDate);
             if (!batches.TryGetValue(key, out var stock))
             {
                 var batch = await store.FindBatchForUpdateAsync(approval.Receipt.WarehouseId,
-                    item.Line.ProductId, item.Line.ExpirationDate, cancellationToken);
+                    item.Line.ProductId, item.Line.ProductionDate, item.Line.ExpirationDate, cancellationToken);
                 InventoryBalance balance;
                 if (batch is null)
                 {
@@ -137,8 +138,10 @@ public sealed class InventoryService(IInventoryStore store, TimeProvider timePro
                         RootBatchId = batchId,
                         WarehouseId = approval.Receipt.WarehouseId,
                         ProductId = item.Line.ProductId,
-                        BatchCode = BuildBatchCode(approval.Warehouse.Code, item.Product.Sku, item.Line.ExpirationDate),
+                        BatchCode = BuildBatchCode(approval.Warehouse.Code, item.Product.Sku,
+                            item.Line.ProductionDate, item.Line.ExpirationDate),
                         Quantity = 0,
+                        ProductionDate = item.Line.ProductionDate,
                         ExpirationDate = item.Line.ExpirationDate,
                         ExpiryStatus = CalculateExpiryStatus(item.Line.ExpirationDate,
                             item.Product.NearDateThresholdHours, businessDate),
@@ -314,8 +317,9 @@ public sealed class InventoryService(IInventoryStore store, TimeProvider timePro
             throw InventoryOperationException.Conflict("Inventory quantities cannot become negative.");
     }
 
-    private static string BuildBatchCode(string warehouseCode, string sku, DateOnly expirationDate) =>
-        $"{warehouseCode}-{sku}-{expirationDate:ddMMyyyy}";
+    private static string BuildBatchCode(
+        string warehouseCode, string sku, DateOnly productionDate, DateOnly expirationDate) =>
+        $"{warehouseCode}-{sku}-{productionDate:ddMMyyyy}-{expirationDate:ddMMyyyy}";
 
     private static string CalculateExpiryStatus(DateOnly expirationDate, int nearDateThresholdHours, DateOnly today)
     {

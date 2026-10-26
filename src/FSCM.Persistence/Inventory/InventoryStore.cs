@@ -80,9 +80,11 @@ public sealed class InventoryStore(AppDbContext dbContext) : IInventoryStore, II
     }
 
     public Task<Batch?> FindBatchForUpdateAsync(
-        Guid warehouseId, Guid productId, DateOnly expirationDate, CancellationToken cancellationToken) =>
+        Guid warehouseId, Guid productId, DateOnly productionDate, DateOnly expirationDate,
+        CancellationToken cancellationToken) =>
         dbContext.BatchRecords.SingleOrDefaultAsync(item => item.WarehouseId == warehouseId &&
-            item.ProductId == productId && item.ExpirationDate == expirationDate, cancellationToken);
+            item.ProductId == productId && item.ProductionDate == productionDate &&
+            item.ExpirationDate == expirationDate, cancellationToken);
 
     public Task<InventoryBalance?> FindBalanceForUpdateAsync(Guid batchId, CancellationToken cancellationToken) =>
         dbContext.InventoryBalanceRecords.SingleOrDefaultAsync(item => item.BatchId == batchId, cancellationToken);

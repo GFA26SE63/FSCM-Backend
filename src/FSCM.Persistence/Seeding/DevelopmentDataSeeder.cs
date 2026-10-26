@@ -265,7 +265,7 @@ public sealed class DevelopmentDataSeeder(
         await dbContext.SaveChangesAsync(cancellationToken);
 
         var batch = await dbContext.BatchRecords.SingleAsync(
-            item => item.BatchCode == "WH-TD-SKU002-28102026", cancellationToken);
+            item => item.BatchCode == "WH-TD-SKU002-14102026-28102026", cancellationToken);
         var batchPromotion = await dbContext.PromotionRecords.SingleOrDefaultAsync(
             item => item.Code == "KM-003", cancellationToken);
         if (batchPromotion is null)
@@ -313,11 +313,11 @@ public sealed class DevelopmentDataSeeder(
     {
         var definitions = new[]
         {
-            new QrLabelSeed("TEM-000204", "WH-HCM-01-SKU001-30042027", 300m, null, QrLabelStatuses.Available, "Tem gốc cho lô sữa tiệt trùng"),
-            new QrLabelSeed("TEM-000205", "WH-HCM-01-SKU001-30042027", 100m, "TEM-000204", QrLabelStatuses.Available, "Tem con tách từ tem TEM-000204"),
-            new QrLabelSeed("TEM-000206", "WH-TD-SKU002-28102026", 80m, null, QrLabelStatuses.Available, "Tem cho lô sữa chua gần hạn"),
-            new QrLabelSeed("TEM-000207", "WH-Q7-SKU003-10102026", 20m, null, QrLabelStatuses.Invalidated, "Tem lô thực phẩm hết hạn đã vô hiệu hóa"),
-            new QrLabelSeed("TEM-000208", "WH-TD-SKU001-31032027", 200m, null, QrLabelStatuses.Available, "Tem gốc cho lô sữa tươi phục vụ soạn đơn tại kho Thủ Đức")
+            new QrLabelSeed("TEM-000204", "WH-HCM-01-SKU001-23042027-30042027", 300m, null, QrLabelStatuses.Available, "Tem gốc cho lô sữa tiệt trùng"),
+            new QrLabelSeed("TEM-000205", "WH-HCM-01-SKU001-23042027-30042027", 100m, "TEM-000204", QrLabelStatuses.Available, "Tem con tách từ tem TEM-000204"),
+            new QrLabelSeed("TEM-000206", "WH-TD-SKU002-14102026-28102026", 80m, null, QrLabelStatuses.Available, "Tem cho lô sữa chua gần hạn"),
+            new QrLabelSeed("TEM-000207", "WH-Q7-SKU003-07102026-10102026", 20m, null, QrLabelStatuses.Invalidated, "Tem lô thực phẩm hết hạn đã vô hiệu hóa"),
+            new QrLabelSeed("TEM-000208", "WH-TD-SKU001-24032027-31032027", 200m, null, QrLabelStatuses.Available, "Tem gốc cho lô sữa tươi phục vụ soạn đơn tại kho Thủ Đức")
         };
         var labels = new Dictionary<string, BatchQrLabel>(StringComparer.Ordinal);
         foreach (var definition in definitions.Where(item => item.ParentQrCode is null))
@@ -1224,7 +1224,7 @@ public sealed class DevelopmentDataSeeder(
             line.ExpirationDate = definition.ExpirationDate;
             await dbContext.SaveChangesAsync(cancellationToken);
 
-            var batchCode = $"{warehouse.Code}-{product.Sku}-{definition.ExpirationDate:ddMMyyyy}";
+            var batchCode = $"{warehouse.Code}-{product.Sku}-{line.ProductionDate:ddMMyyyy}-{definition.ExpirationDate:ddMMyyyy}";
             var batch = await dbContext.BatchRecords.SingleOrDefaultAsync(item => item.BatchCode == batchCode, cancellationToken);
             var isNewBatch = batch is null;
             if (batch is null)
@@ -1237,6 +1237,7 @@ public sealed class DevelopmentDataSeeder(
             batch.ProductId = product.Id;
             batch.GoodsReceiptLineId = line.Id;
             if (isNewBatch) batch.Quantity = definition.OnHand;
+            batch.ProductionDate = line.ProductionDate;
             batch.ExpirationDate = definition.ExpirationDate;
             batch.ExpiryStatus = definition.ExpiryStatus;
             batch.StockStatus = BatchStockStatuses.InStock;

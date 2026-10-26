@@ -8,7 +8,8 @@ public sealed record ScanQrLabelData(
 
 public sealed record QrLabelResult(
     Guid Id, string QrCode, string QrPayload, Guid BatchId, string BatchCode,
-    Guid WarehouseId, string WarehouseCode, Guid ProductId, string Sku,
+    Guid WarehouseId, string WarehouseCode, Guid ProductId, string Sku, string ProductName,
+    DateOnly ProductionDate, DateOnly ExpirationDate,
     Guid? GoodsReceiptId, string? ReceiptCode,
     decimal Quantity, string Status, Guid? ParentLabelId, string? ParentQrCode,
     Guid RootLabelId, string RootQrCode, string? BlobUrl, int Version,
