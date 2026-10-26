@@ -312,6 +312,13 @@ perfectly well, and holds no opinion about what Npgsql will bind.
 - **An order is all or nothing at the door too.** Every warehouse part must be picked, and the
   payment condition met, before any part leaves. One warehouse short or damaged stops the whole
   order rather than sending what happens to be ready and leaving the retailer to chase the rest.
+  The trap here is that **the shipment rows are not the list of warehouses an order is waiting
+  on**: a part is created only when its warehouse closes its picking sheet, so a warehouse still
+  picking has no row at all. Readiness therefore reads the expected warehouses from the sheets the
+  approved plan produced (`ListExpectedWarehousesAsync`) and reports a warehouse with no part yet
+  as one still to come, with a null shipment id. Deciding it from the rows alone made the first
+  warehouse to finish look like the whole order, and issuing is gated on the same answer - which is
+  partial delivery, arrived at by accident.
 - **Stock moves once, at issue.** Approval raises Reserved and leaves OnHand alone; issuing takes
   both down together and consumes the hold that paid for it. Confirming twice returns the part
   unchanged, because a duplicated deduction stays invisible until someone counts the shelf.
