@@ -163,10 +163,20 @@ public sealed class OrderStore(AppDbContext dbContext) : IOrderStore
             SystemRoles.SalesManager => query.Where(item =>
                 dbContext.SalesGroupMemberRecords.Any(membership => membership.UserAccountId == actorUserId &&
                     membership.SalesGroupId == item.SalesGroupId && membership.IsActive)),
+            // See the note in ShipmentStore: the run allocates into its own table, so both have
+            // to be consulted or a keeper's order list comes back empty.
             SystemRoles.WarehouseKeeper => query.Where(item =>
                 dbContext.AllocationRecords.Any(allocation =>
                     dbContext.SalesOrderLineRecords.Any(line => line.Id == allocation.SalesOrderLineId &&
                         line.SalesOrderId == item.Id) &&
+                    dbContext.UserWarehouseAssignmentRecords.Any(assignment =>
+                        assignment.UserAccountId == actorUserId && assignment.WarehouseId == allocation.WarehouseId &&
+                        assignment.IsActive)) ||
+                dbContext.AllocationRunAllocationRecords.Any(allocation =>
+                    dbContext.AllocationRunLineRecords.Any(runLine =>
+                        runLine.Id == allocation.AllocationRunLineId &&
+                        dbContext.SalesOrderLineRecords.Any(line => line.Id == runLine.SalesOrderLineId &&
+                            line.SalesOrderId == item.Id)) &&
                     dbContext.UserWarehouseAssignmentRecords.Any(assignment =>
                         assignment.UserAccountId == actorUserId && assignment.WarehouseId == allocation.WarehouseId &&
                         assignment.IsActive))),
