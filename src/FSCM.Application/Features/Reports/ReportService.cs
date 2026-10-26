@@ -78,6 +78,34 @@ public sealed class ReportService(IReportStore store, TimeProvider timeProvider)
             entries);
     }
 
+    public async Task<ProductRankingResult> GetProductRankingAsync(
+        ProductRankingQuery query, Guid actorUserId, string actorRole, CancellationToken cancellationToken)
+    {
+        ValidatePeriod(query.FromDate, query.ToDate);
+        if (query.Criterion is not (ProductRankingCriteria.Quantity or ProductRankingCriteria.Revenue))
+            throw ReportOperationException.Validation("Criterion must be Quantity or Revenue.");
+
+        var (groupIds, scope) = await ResolveScopeAsync(
+            query.SalesGroupId, actorUserId, actorRole, cancellationToken);
+        var rows = await store.AggregateProductSalesAsync(
+            query.FromDate, query.ToDate, groupIds, cancellationToken);
+        var ordered = query.Criterion == ProductRankingCriteria.Quantity
+            ? rows.OrderByDescending(row => row.NormalizedSoldQuantity)
+                .ThenByDescending(row => row.AdjustedNetRevenue)
+            : rows.OrderByDescending(row => row.AdjustedNetRevenue)
+                .ThenByDescending(row => row.NormalizedSoldQuantity);
+        var entries = ordered.ThenBy(row => row.Sku, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(row => row.ProductId)
+            .Select((row, index) => new ProductRankingEntryResult(
+                index + 1, row.ProductId, row.Sku, row.ProductName,
+                row.NormalizedSoldQuantity, "carton", row.AdjustedNetRevenue))
+            .ToArray();
+
+        return new(query.FromDate, query.ToDate, query.Criterion, scope, "carton",
+            "Delivered orders recognized on Payment.DeliveredDate, otherwise ServerReceivedAt in Asia/Ho_Chi_Minh; approved allocation fragment net amounts, with approved order adjustments allocated proportionally by product.",
+            entries);
+    }
+
     private async Task<(IReadOnlyCollection<Guid>? GroupIds, string Scope)> ResolveScopeAsync(
         Guid? requestedGroupId, Guid actorUserId, string actorRole, CancellationToken cancellationToken)
     {

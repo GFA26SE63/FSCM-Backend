@@ -101,5 +101,10 @@ public sealed class SalesKpiApiTests
                 "\"promotionRevenueRatioMaximum\":0.05,\"successfulOrdersWeight\":0.25," +
                 "\"retailersServedWeight\":0.25,\"newRetailersWeight\":0.25," +
                 "\"promotionRevenueRatioWeight\":0.25}", 3, DateTimeOffset.Parse("2026-10-01T00:00:00Z")));
+
+        public Task<IReadOnlyCollection<ProductSalesRow>> AggregateProductSalesAsync(
+            DateOnly fromDate, DateOnly toDate, IReadOnlyCollection<Guid>? salesGroupIds,
+            CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyCollection<ProductSalesRow>>([]);
     }
 }

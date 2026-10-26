@@ -19,6 +19,10 @@ public sealed record SalesKpiOrderRow(
 
 public sealed record SalesKpiConfigurationRow(string Json, int Version, DateTimeOffset EffectiveFrom);
 
+public sealed record ProductSalesRow(
+    Guid ProductId, string Sku, string ProductName,
+    decimal NormalizedSoldQuantity, decimal AdjustedNetRevenue);
+
 public interface IReportStore
 {
     /// <summary>Active SalesGroup ids the user is a member of (used for SalesManager scoping).</summary>
@@ -45,4 +49,8 @@ public interface IReportStore
 
     Task<SalesKpiConfigurationRow?> FindSalesKpiConfigurationAsync(
         DateOnly periodEnd, CancellationToken cancellationToken);
+
+    Task<IReadOnlyCollection<ProductSalesRow>> AggregateProductSalesAsync(
+        DateOnly fromDate, DateOnly toDate, IReadOnlyCollection<Guid>? salesGroupIds,
+        CancellationToken cancellationToken);
 }

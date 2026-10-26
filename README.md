@@ -405,6 +405,14 @@ The snapshot GET intentionally has no GraphQL twin: it is a bulk device-cache sy
 transport with HTTP ETag/checksum semantics, not a persisted business read model. Order reads remain
 available via the shared REST/GraphQL order read services.
 
+## Product ranking (F78)
+
+`GET /api/v1/reports/best-selling-products` and GraphQL `bestSellingProducts` rank delivered products for an
+inclusive Vietnam-local period by either `Quantity` or `Revenue`. Quantity is normalized to the
+canonical order unit `carton`. Revenue starts from the approved allocation-fragment net price and
+allocates approved order-level adjustments proportionally to each product. Admin/Operator may use
+all or a selected Sales group; Sales Manager/Sales access is restricted to active group membership.
+
 ## Validation
 
 ```powershell

@@ -584,3 +584,20 @@ Content-Type: application/json
   "query": "query($orderId: UUID!) { manualPaymentsBySalesOrder(salesOrderId: $orderId, first: 20) { totalCount nodes { id orderCode method status amount totalConfirmedAmount outstandingAmount version } } }",
   "variables": { "orderId": "00000000-0000-0000-0000-000000000000" }
 }
+
+###
+
+# F78 product ranking. criterion is Quantity or Revenue; dates are inclusive Vietnam-local days.
+GET {{FSCM.API_HostAddress}}/api/v1/reports/best-selling-products?fromDate=2026-10-01&toDate=2026-10-31&criterion=Quantity
+Authorization: Bearer {{salesLogin.response.body.$.accessToken}}
+
+###
+
+POST {{FSCM.API_HostAddress}}/graphql
+Authorization: Bearer {{salesLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "query": "query($query: ProductRankingQueryInput!) { bestSellingProducts(query: $query) { fromDate toDate criterion scope quantityUnit recognitionRule entries { rank productId sku productName normalizedSoldQuantity quantityUnit adjustedNetRevenue } } }",
+  "variables": { "query": { "fromDate": "2026-10-01", "toDate": "2026-10-31", "criterion": "Revenue" } }
+}

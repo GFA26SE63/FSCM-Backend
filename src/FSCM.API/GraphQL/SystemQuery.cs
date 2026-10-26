@@ -47,6 +47,14 @@ public sealed class SystemQuery
         [Service] IHttpContextAccessor accessor,
         CancellationToken cancellationToken) =>
         service.GetSalesKpiAsync(query, CurrentUser.Id(accessor), CurrentUser.Role(accessor), cancellationToken);
+
+    [Authorize(Roles = [SystemRoles.Admin, SystemRoles.Operator, SystemRoles.SalesManager, SystemRoles.Sales])]
+    public Task<ProductRankingResult> BestSellingProducts(
+        ProductRankingQuery query,
+        [Service] ReportService service,
+        [Service] IHttpContextAccessor accessor,
+        CancellationToken cancellationToken) =>
+        service.GetProductRankingAsync(query, CurrentUser.Id(accessor), CurrentUser.Role(accessor), cancellationToken);
 }
 
 internal static class CurrentUser
