@@ -108,8 +108,8 @@ public sealed class PhysicalSchemaModelTests
 
         Assert.Equal(ExpectedTables, tableNames);
         Assert.Equal(83, entityTypes.Length);
-        // Develop's run-picking shape plus loyalty program expiry and retailer scope.
-        Assert.Equal(926, entityTypes.Sum(entityType => entityType.GetProperties().Count()));
+        // Develop's run-picking shape plus loyalty scope and notification deep-link metadata.
+        Assert.Equal(929, entityTypes.Sum(entityType => entityType.GetProperties().Count()));
         Assert.Equal(189, entityTypes.Sum(entityType => entityType.GetForeignKeys().Count()));
         Assert.All(
             entityTypes.SelectMany(entityType => entityType.GetForeignKeys()),
@@ -331,6 +331,13 @@ public sealed class PhysicalSchemaModelTests
         var outboxId = notification.FindProperty(nameof(Notification.OutboxMessageId))!;
         Assert.True(notification.GetIndexes().Single(index =>
             index.Properties.SequenceEqual([userId, outboxId])).IsUnique);
+        Assert.Equal(50, notification.FindProperty(nameof(Notification.RelatedEntityType))!.GetMaxLength());
+        Assert.True(notification.FindProperty(nameof(Notification.RelatedEntityId))!.IsNullable);
+        Assert.Equal(500, notification.FindProperty(nameof(Notification.DeepLink))!.GetMaxLength());
+        var isRead = notification.FindProperty(nameof(Notification.IsRead))!;
+        var createdAt = notification.FindProperty(nameof(Notification.CreatedAt))!;
+        Assert.Contains(notification.GetIndexes(), index =>
+            index.Properties.SequenceEqual([userId, isRead, createdAt]));
     }
 
     [Fact]

@@ -2138,6 +2138,10 @@ namespace FSCM.Persistence.Migrations
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<string>("DeepLink")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
                     b.Property<bool>("IsRead")
                         .HasColumnType("boolean");
 
@@ -2150,6 +2154,13 @@ namespace FSCM.Persistence.Migrations
 
                     b.Property<DateTimeOffset?>("ReadAt")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("RelatedEntityId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("RelatedEntityType")
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
 
                     b.Property<Guid?>("SalesOrderId")
                         .HasColumnType("uuid");
@@ -2176,6 +2187,8 @@ namespace FSCM.Persistence.Migrations
                     b.HasIndex("UserAccountId", "OutboxMessageId")
                         .IsUnique()
                         .HasFilter("\"OutboxMessageId\" IS NOT NULL");
+
+                    b.HasIndex("UserAccountId", "IsRead", "CreatedAt");
 
                     b.ToTable("NOTIFICATION", (string)null);
                 });
