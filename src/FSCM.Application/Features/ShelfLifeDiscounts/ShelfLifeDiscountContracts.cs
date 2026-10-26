@@ -63,8 +63,15 @@ public sealed record ShelfLifeDiscountTableResult(
 /// <paramref name="Tier"/> is null when nothing matches, which means a reduction of zero rather
 /// than an error: most stock is not near expiry.
 /// </summary>
+/// <summary>
+/// What the shelf-life reduction came to for one part, and where it came from.
+///
+/// <see cref="TableId"/> is null and <see cref="Version"/> is 0 when no table was in force at all.
+/// That is a real answer, not a failure: the reduction is zero and the part keeps its base price,
+/// exactly as it does when a table is in force but no band covers the remaining percentage.
+/// </summary>
 public sealed record ShelfLifeDiscountMatch(
-    Guid TableId,
+    Guid? TableId,
     int Version,
     decimal RemainingPercent,
     ShelfLifeDiscountTierResult? Tier,
