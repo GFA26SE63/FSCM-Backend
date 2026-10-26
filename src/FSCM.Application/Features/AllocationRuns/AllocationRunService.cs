@@ -204,23 +204,29 @@ public sealed class AllocationRunService(
         var now = timeProvider.GetUtcNow();
         var cutoff = cutoffAt ?? scheduled;
 
+        // The business date goes first, and the order is the whole point. The published time this is
+        // measured against is today's, so a cutoff on any other day fails one of the two checks
+        // below as a side effect - yesterday's is earlier than it, tomorrow's is later than now -
+        // and the caller is told their time is out of range when the real answer is that they named
+        // the wrong day.
+        if (ToBusinessDate(cutoff) != ToBusinessDate(now))
+        {
+            throw AllocationRunOperationException.Validation(
+                $"The cutoff must fall on today's business date, {ToBusinessDate(now):yyyy-MM-dd}: " +
+                "a day that has closed cannot be re-run, and a later one has not begun.");
+        }
+
         if (cutoff > now)
         {
             throw AllocationRunOperationException.Conflict(
-                $"The cutoff {cutoff:HH:mm} has not passed yet; a run cannot close before it.");
+                $"The cutoff {InVietnam(cutoff):HH:mm} has not passed yet; a run cannot close before it.");
         }
 
         if (cutoff < scheduled)
         {
             throw AllocationRunOperationException.Validation(
-                $"The cutoff cannot be earlier than the published {scheduled:HH:mm}: moving it back " +
-                "would drop orders that belong to this run.");
-        }
-
-        if (ToBusinessDate(cutoff) != ToBusinessDate(now))
-        {
-            throw AllocationRunOperationException.Validation(
-                "The cutoff must fall on today's business date; a past day cannot be re-run.");
+                $"The cutoff cannot be earlier than the published {InVietnam(scheduled):HH:mm}: moving " +
+                "it back would drop orders that belong to this run.");
         }
 
         var run = await StartAsync(cutoff, cancellationToken);
@@ -566,6 +572,14 @@ public sealed class AllocationRunService(
         ToResult(await store.FindViewByBusinessDateAsync(businessDate, cancellationToken)
             ?? throw AllocationRunOperationException.NotFound(
                 $"No allocation run exists for {businessDate:yyyy-MM-dd}."));
+
+    /// <summary>
+    /// The same instant in Vietnam, for a message someone reads. A cutoff arrives in whatever offset
+    /// its caller built it in - the schedule in local time, an API client quite possibly in UTC - and
+    /// a refusal that says 05:00 about a 12:00 cutoff is worse than no message at all.
+    /// </summary>
+    private static DateTimeOffset InVietnam(DateTimeOffset moment) =>
+        TimeZoneInfo.ConvertTime(moment, VietnamTimeZone);
 
     /// <summary>The Vietnam calendar day a cutoff belongs to, so a run is one per local day.</summary>
     public static DateOnly ToBusinessDate(DateTimeOffset moment) =>

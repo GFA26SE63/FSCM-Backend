@@ -1,4 +1,5 @@
 using FSCM.Application.Features.Inventory;
+using FSCM.Application.Features.AllocationRuns;
 using FSCM.Application.Features.Shipments;
 using FSCM.Application.Features.Payments;
 using FSCM.Application.Features.Orders;
@@ -338,12 +339,9 @@ public sealed class ShipmentServiceTests
     {
         var fixture = new Fixture();
         var (ready, balance, _) = fixture.AddReadyShipment(fixture.WarehouseA, 12m, onHand: 50m);
-        fixture.Store.Shipments.Add(new Shipment
-        {
-            Id = Guid.NewGuid(), SalesOrderId = fixture.Order.Id, WarehouseId = fixture.WarehouseB,
-            RunPickingListId = Guid.NewGuid(), ShipmentCode = "SHIP-002099",
-            Status = ShipmentStatuses.WaitingToPick, TotalQuantity = 5m, Version = 0
-        });
+        // The slow warehouse has no shipment part, because a part is only created when its sheet
+        // closes. That is the real shape of this situation, and it is what the check missed.
+        fixture.AddOpenPickingList(fixture.WarehouseB);
 
         var error = await Assert.ThrowsAsync<ShipmentOperationException>(() =>
             fixture.Service.ConfirmIssueAsync(
@@ -354,6 +352,59 @@ public sealed class ShipmentServiceTests
         // Nothing moved: the whole order waits, not just the slow warehouse.
         Assert.Equal(50m, balance.PhysicalQuantity);
         Assert.Equal(ShipmentStatuses.Ready, ready.Status);
+    }
+
+    [Fact]
+    public async Task A_warehouse_with_no_part_yet_is_still_reported_and_still_holds_the_order()
+    {
+        var fixture = new Fixture();
+        fixture.AddReadyShipment(fixture.WarehouseA, 12m, onHand: 50m);
+        fixture.AddOpenPickingList(fixture.WarehouseB, "WH-B");
+
+        var readiness = await fixture.Service.GetOrderReadinessAsync(
+            fixture.Order.Id, Guid.NewGuid(), SystemRoles.Operator, CancellationToken.None);
+
+        Assert.False(readiness.IsReady);
+        // Reported, not merely counted as a refusal: a keeper standing in the other warehouse has
+        // to be able to see which warehouse they are waiting on.
+        Assert.Equal(2, readiness.Parts.Count);
+        var pending = Assert.Single(readiness.Parts, item => item.WarehouseCode == "WH-B");
+        Assert.Null(pending.ShipmentId);
+        Assert.Null(pending.ShipmentCode);
+        Assert.Equal(ShipmentStatuses.WaitingToPick, pending.Status);
+        Assert.Contains("WH-B", Assert.Single(readiness.BlockingReasons));
+    }
+
+    [Fact]
+    public async Task A_sheet_closed_with_an_exception_holds_the_order_before_any_part_exists()
+    {
+        var fixture = new Fixture();
+        fixture.AddReadyShipment(fixture.WarehouseA, 12m, onHand: 50m);
+        fixture.AddOpenPickingList(
+            fixture.WarehouseB, "WH-B", RunPickingListStatuses.NeedsHandling);
+
+        var readiness = await fixture.Service.GetOrderReadinessAsync(
+            fixture.Order.Id, Guid.NewGuid(), SystemRoles.Operator, CancellationToken.None);
+
+        Assert.False(readiness.IsReady);
+        // An exception recorded on the sheet is an exception on the order, whether or not that
+        // warehouse ever got as far as having a shipment part.
+        Assert.True(readiness.HasException);
+    }
+
+    [Fact]
+    public async Task An_order_served_by_one_warehouse_is_ready_once_that_warehouse_has_closed()
+    {
+        var fixture = new Fixture();
+        var (ready, balance, _) = fixture.AddReadyShipment(fixture.WarehouseA, 12m, onHand: 50m);
+
+        // Guards the other direction: waiting for warehouses that were never part of the plan
+        // would stop every order instead of only the half-picked ones.
+        await fixture.Service.ConfirmIssueAsync(
+            ready.Id, new ConfirmShipmentIssueData(ready.Version), Guid.NewGuid(),
+            SystemRoles.WarehouseKeeper, CancellationToken.None);
+
+        Assert.Equal(38m, balance.PhysicalQuantity);
     }
 
     [Fact]
@@ -433,12 +484,7 @@ public sealed class ShipmentServiceTests
     {
         var fixture = new Fixture();
         fixture.AddReadyShipment(fixture.WarehouseA, 12m, onHand: 50m);
-        fixture.Store.Shipments.Add(new Shipment
-        {
-            Id = Guid.NewGuid(), SalesOrderId = fixture.Order.Id, WarehouseId = fixture.WarehouseB,
-            RunPickingListId = Guid.NewGuid(), ShipmentCode = "SHIP-002097",
-            Status = ShipmentStatuses.WaitingToPick, TotalQuantity = 5m, Version = 0
-        });
+        fixture.AddOpenPickingList(fixture.WarehouseB, "WH-B");
 
         var readiness = await fixture.Service.GetOrderReadinessAsync(
             fixture.Order.Id, Guid.NewGuid(), SystemRoles.Operator, CancellationToken.None);
@@ -525,6 +571,15 @@ public sealed class ShipmentServiceTests
             Store.PendingLists.Add(new PendingShipmentSource(
                 Guid.NewGuid(), Order.Id, warehouseId, totalPicked));
 
+        /// <summary>
+        /// A warehouse that carries this order on a sheet it has not closed, so no shipment part
+        /// exists for it. This is the state that used to be invisible to the readiness check.
+        /// </summary>
+        public void AddOpenPickingList(Guid warehouseId, string warehouseCode = "WH-OPEN",
+            string pickingStatus = RunPickingListStatuses.Picking) =>
+            Store.OpenPickingLists.Add(new ExpectedWarehousePart(
+                warehouseId, warehouseCode, "PS-20261027-02", pickingStatus));
+
         /// <summary>A part that has been picked and whose stock is still held by the approval.</summary>
         public (Shipment Shipment, InventoryBalance Balance, Reservation Hold) AddReadyShipment(
             Guid warehouseId, decimal quantity, decimal onHand = 100m)
@@ -592,6 +647,12 @@ public sealed class ShipmentServiceTests
         public List<ShipmentLabelView> Labels { get; } = [];
         public Dictionary<Guid, IReadOnlyCollection<ShipmentLineView>> Lines { get; } = [];
         public List<PendingShipmentSource> PendingLists { get; } = [];
+
+        /// <summary>
+        /// Warehouses whose picking sheet has not closed yet, so they carry the order but have no
+        /// shipment part. Production reads these from the sheets the approved plan produced.
+        /// </summary>
+        public List<ExpectedWarehousePart> OpenPickingLists { get; } = [];
         public HashSet<Guid> ViewableOrders { get; } = [];
         private int _nextCode = 1000;
 
@@ -624,6 +685,23 @@ public sealed class ShipmentServiceTests
         public Task<IReadOnlyCollection<ShipmentLabelView>> ListLabelsAsync(
             Guid shipmentId, bool forUpdate, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyCollection<ShipmentLabelView>>(Labels.ToArray());
+
+        public Task<IReadOnlyCollection<ExpectedWarehousePart>> ListExpectedWarehousesAsync(
+            Guid orderId, CancellationToken cancellationToken)
+        {
+            // A warehouse that already has a part is expected by definition; OpenPickingLists adds
+            // the ones still picking, which is the case the real query exists to cover.
+            var covered = Shipments
+                .Where(item => item.SalesOrderId == orderId)
+                .Select(item => new ExpectedWarehousePart(
+                    item.WarehouseId, "WH", $"PS-{item.ShipmentCode}", RunPickingListStatuses.Ready));
+            var all = covered
+                .Concat(OpenPickingLists)
+                .GroupBy(item => item.WarehouseId)
+                .Select(group => group.First())
+                .ToArray();
+            return Task.FromResult<IReadOnlyCollection<ExpectedWarehousePart>>(all);
+        }
 
         public Task<IReadOnlyCollection<PendingShipmentSource>> ListPendingSourcesAsync(
             Guid? orderId, CancellationToken cancellationToken)

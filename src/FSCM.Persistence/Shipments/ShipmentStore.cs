@@ -109,6 +109,37 @@ public sealed class ShipmentStore(AppDbContext dbContext) : IShipmentStore
             .Select(item => new ShipmentLabelView(item, item.BatchId)).ToArray();
     }
 
+    public async Task<IReadOnlyCollection<ExpectedWarehousePart>> ListExpectedWarehousesAsync(
+        Guid orderId, CancellationToken cancellationToken)
+    {
+        // Every run picking sheet that carries a split of this order, which is one sheet per
+        // warehouse the approved plan drew from. A sheet that has not closed yet has produced no
+        // shipment part, and that is precisely the warehouse readiness has to keep waiting for.
+        var rows = await (
+                from list in dbContext.RunPickingListRecords.AsNoTracking()
+                join gather in dbContext.RunPickingGatherRecords.AsNoTracking()
+                    on list.Id equals gather.RunPickingListId
+                join split in dbContext.RunPickingSplitRecords.AsNoTracking()
+                    on gather.Id equals split.RunPickingGatherId
+                join warehouse in dbContext.WarehouseRecords.AsNoTracking()
+                    on list.WarehouseId equals warehouse.Id
+                where split.SalesOrderId == orderId
+                select new
+                {
+                    list.WarehouseId,
+                    WarehouseCode = warehouse.Code,
+                    list.PickingCode,
+                    list.Status
+                })
+            .Distinct()
+            .ToArrayAsync(cancellationToken);
+
+        return rows
+            .Select(row => new ExpectedWarehousePart(
+                row.WarehouseId, row.WarehouseCode, row.PickingCode, row.Status))
+            .ToArray();
+    }
+
     public async Task<IReadOnlyCollection<PendingShipmentSource>> ListPendingSourcesAsync(
         Guid? orderId, CancellationToken cancellationToken)
     {
