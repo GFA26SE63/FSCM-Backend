@@ -1025,7 +1025,13 @@ public sealed class DevelopmentDataSeeder(
                 "\"bufferMinutes\":60,\"dispatchSlotsLocalTime\":[\"06:00\",\"14:00\"]}", "object",
                 "Lịch ngày chạy đợt: chốt đợt lúc 00:00 (đóng ngày vừa kết thúc); trong ngày đó khuyến nghị " +
                 "gửi đơn trước 11:00, nhắc duyệt đơn 11:30; sau khi chốt thì " +
-                "nhắc duyệt phương án 13:30, hạn duyệt 14:00, soạn 4 giờ, đệm 1 giờ, xuất 06:00 và 14:00")
+                "nhắc duyệt phương án 13:30, hạn duyệt 14:00, soạn 4 giờ, đệm 1 giờ, xuất 06:00 và 14:00"),
+            new ConfigurationSeed(BusinessConfigurationKeys.SalesKpi,
+                "{\"successfulOrdersTarget\":15,\"retailersServedTarget\":5,\"newRetailersTarget\":1," +
+                "\"promotionRevenueRatioMaximum\":0.05,\"successfulOrdersWeight\":0.25," +
+                "\"retailersServedWeight\":0.25,\"newRetailersWeight\":0.25," +
+                "\"promotionRevenueRatioWeight\":0.25}", "object",
+                "Mục tiêu KPI tháng: 15 đơn thành công, 5 điểm bán phục vụ, 1 điểm bán mới và tỷ lệ khuyến mãi tối đa 5 phần trăm")
         };
         foreach (var definition in configurations)
         {
