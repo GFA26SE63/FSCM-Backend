@@ -55,11 +55,10 @@ public sealed class PaymentService(
         CancellationToken cancellationToken)
     {
         operationKey = NormalizeOperationKey(operationKey);
-        ValidateAmount(data.Amount);
         var collectionMethod = NormalizeCollectionMethod(data.CollectionMethod);
         ValidateCollectionAuthority(actorRole, collectionMethod);
         ValidateNote(data.Note);
-        var requestHash = Hash(orderId, data.Amount, collectionMethod, NormalizeNote(data.Note));
+        var requestHash = Hash(orderId, collectionMethod, data.ExpectedVersion, NormalizeNote(data.Note));
 
         var prior = await store.FindByOperationKeyAsync(operationKey, cancellationToken);
         if (prior is not null)
@@ -85,6 +84,9 @@ public sealed class PaymentService(
             if (view.Payment.PayOsPaymentLinkId is not null)
                 throw PaymentOperationException.Conflict(
                     "Payment has an active payOS checkout and cannot be collected manually.");
+            if (view.HasOpenDispute)
+                throw PaymentOperationException.Conflict(
+                    "Payment cannot be collected while the order has an unresolved dispute.");
             if (view.Payment.Version != data.ExpectedVersion)
                 throw PaymentOperationException.Conflict(
                     $"Payment version is {view.Payment.Version}; refresh and retry.");
@@ -92,9 +94,8 @@ public sealed class PaymentService(
                 throw PaymentOperationException.Forbidden(
                     "Sales can only record cash collection for their own order.");
             var outstanding = Math.Max(0, view.Payment.AdjustedAmount - view.Payment.ConfirmedAmount);
-            if (data.Amount != outstanding)
-                throw PaymentOperationException.Conflict(
-                    $"Only full collection is supported; outstanding amount is {outstanding:0.##} VND.");
+            if (outstanding <= 0)
+                throw PaymentOperationException.Conflict("Payment has no outstanding amount to collect.");
 
             var now = timeProvider.GetUtcNow();
             var oldValues = new
@@ -486,6 +487,12 @@ public sealed class PaymentService(
 
     private static string? NormalizeNote(string? note) =>
         string.IsNullOrWhiteSpace(note) ? null : note.Trim();
+
+    private static string Hash(Guid orderId, string method, int expectedVersion, string? note)
+    {
+        var canonical = $"{orderId:N}|{method}|{expectedVersion}|{note}";
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(canonical))).ToLowerInvariant();
+    }
 
     private static string Hash(Guid orderId, decimal amount, string method, string? note)
     {

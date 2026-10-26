@@ -17,6 +17,55 @@ namespace FSCM.IntegrationTests.Api;
 public sealed class PaymentApiTests
 {
     [Fact]
+    public async Task Collection_contract_uses_order_guid_server_outstanding_scope_and_idempotency()
+    {
+        using var identityFactory = new IdentityAuthorizationTests.IdentityApiFactory();
+        var operatorUser = identityFactory.AddTestUser("operator.collection@test.local", SystemRoles.Operator);
+        var store = new TestFinanceStore();
+        store.Order.PaymentMethod = OrderPaymentMethods.Credit;
+        store.Ledger.Method = OrderPaymentMethods.Credit;
+        store.Ledger.DeliveredDate = DateOnly.FromDateTime(DateTime.UtcNow);
+        store.Ledger.AdjustedAmount -= 50_000;
+        using var factory = CreateFactory(identityFactory, store);
+        using var client = factory.CreateClient();
+
+        client.DefaultRequestHeaders.Authorization = Bearer(identityFactory.Sales, identityFactory);
+        client.DefaultRequestHeaders.Add("Idempotency-Key", "api-collection-denied-001");
+        var denied = await client.PostAsJsonAsync(
+            $"/api/v1/payments/orders/{store.Order.Id}/collect",
+            new { collectionMethod = PaymentCollectionMethods.Cash, expectedVersion = 0, note = "Thu đủ" });
+        Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
+
+        client.DefaultRequestHeaders.Authorization = Bearer(operatorUser, identityFactory);
+        client.DefaultRequestHeaders.Remove("Idempotency-Key");
+        client.DefaultRequestHeaders.Add("Idempotency-Key", "api-collection-001");
+        var request = new
+        {
+            collectionMethod = PaymentCollectionMethods.BankTransfer,
+            expectedVersion = 0,
+            note = "Đã đối soát chứng từ chuyển khoản"
+        };
+        var first = await client.PostAsJsonAsync(
+            $"/api/v1/payments/orders/{store.Order.Id}/collect", request);
+        var replay = await client.PostAsJsonAsync(
+            $"/api/v1/payments/orders/{store.Order.Id}/collect", request);
+
+        Assert.Equal(HttpStatusCode.OK, first.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, replay.StatusCode);
+        var body = JsonDocument.Parse(await first.Content.ReadAsStringAsync()).RootElement;
+        Assert.Equal(store.Order.Id, body.GetProperty("orderId").GetGuid());
+        Assert.Equal(store.Ledger.AdjustedAmount, body.GetProperty("confirmedAmount").GetDecimal());
+        Assert.Equal(0, body.GetProperty("outstandingAmount").GetDecimal());
+        Assert.Equal(PaymentStatuses.Paid, body.GetProperty("status").GetString());
+        Assert.Equal(1, store.Ledger.Version);
+        Assert.Single(store.Audits, audit => audit.Action == "Collected");
+
+        var codeRoute = await client.PostAsJsonAsync(
+            $"/api/v1/payments/orders/{store.Order.OrderCode}/collect", request);
+        Assert.Equal(HttpStatusCode.NotFound, codeRoute.StatusCode);
+    }
+
+    [Fact]
     public async Task Manual_payment_uses_scope_and_canonical_ledger()
     {
         using var identityFactory = new IdentityAuthorizationTests.IdentityApiFactory();

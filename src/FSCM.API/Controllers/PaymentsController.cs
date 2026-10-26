@@ -31,7 +31,7 @@ public sealed class PaymentsController(PaymentService service) : ControllerBase
         [FromHeader(Name = "Idempotency-Key")] string operationKey,
         CancellationToken cancellationToken) =>
         service.CollectAsync(orderId,
-            new(request.Amount, request.CollectionMethod, request.ExpectedVersion, request.Note),
+            new(request.CollectionMethod, request.ExpectedVersion, request.Note),
             operationKey, GetActorUserId(), GetActorRole(), cancellationToken);
 
     [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator}")]
