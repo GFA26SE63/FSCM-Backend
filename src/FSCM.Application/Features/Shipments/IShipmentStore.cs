@@ -78,6 +78,9 @@ public interface IShipmentStore
     Task<ShipmentView?> FindByIdAsync(Guid id, bool forUpdate, CancellationToken cancellationToken);
     Task<ShipmentView?> FindByReceiptOperationKeyAsync(string operationKey, CancellationToken cancellationToken);
     Task<SalesOrder?> FindOrderForUpdateAsync(Guid orderId, CancellationToken cancellationToken);
+
+    /// <summary>The order itself, for a read that has no shipment part to take it from.</summary>
+    Task<SalesOrder?> FindOrderAsync(Guid orderId, CancellationToken cancellationToken);
     Task<IReadOnlyCollection<ShipmentLabelView>> ListLabelsAsync(
         Guid shipmentId, bool forUpdate, CancellationToken cancellationToken);
 

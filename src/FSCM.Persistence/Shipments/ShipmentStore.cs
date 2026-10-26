@@ -109,6 +109,10 @@ public sealed class ShipmentStore(AppDbContext dbContext) : IShipmentStore
             .Select(item => new ShipmentLabelView(item, item.BatchId)).ToArray();
     }
 
+    public Task<SalesOrder?> FindOrderAsync(Guid orderId, CancellationToken cancellationToken) =>
+        dbContext.SalesOrderRecords.AsNoTracking()
+            .SingleOrDefaultAsync(item => item.Id == orderId, cancellationToken);
+
     public async Task<IReadOnlyCollection<ExpectedWarehousePart>> ListExpectedWarehousesAsync(
         Guid orderId, CancellationToken cancellationToken)
     {
