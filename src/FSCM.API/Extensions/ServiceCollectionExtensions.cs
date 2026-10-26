@@ -37,6 +37,7 @@ public static class ServiceCollectionExtensions
         services.AddExceptionHandler<ComplaintExceptionHandler>();
         services.AddExceptionHandler<ShipmentExceptionHandler>();
         services.AddExceptionHandler<ReportExceptionHandler>();
+        services.AddExceptionHandler<NotificationExceptionHandler>();
         services.AddExceptionHandler<InventoryExceptionHandler>();
         services.AddExceptionHandler<InventoryLockExceptionHandler>();
         services.AddExceptionHandler<InternalTransferExceptionHandler>();
