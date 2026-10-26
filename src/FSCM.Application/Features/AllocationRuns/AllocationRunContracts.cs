@@ -109,6 +109,45 @@ public static class AllocationLineTraceOutcomes
     public const string Released = "Released";
 }
 
+/// <summary>One line of the run result a retailer or Sales sees after the plan was approved.</summary>
+public sealed record OrderRunResultLine(
+    Guid SalesOrderLineId,
+    string Sku,
+    int LineNumber,
+    decimal OrderedQuantity,
+    decimal AllocatedQuantity,
+    decimal ShortageQuantity,
+
+    /// <summary>Allocated, Short, or Released when the order gave this line back over another.</summary>
+    string Outcome,
+    string? Reason,
+    decimal FinalAmount);
+
+/// <summary>
+/// F90: what the run decided about one order, published only once an Admin approved the plan.
+///
+/// Two of these fields exist to stop a screen inventing something the run does not do. A short
+/// order holds nothing, so there is no reserved stock to show or to promise; and there is no way
+/// to resend it keeping its old place in the queue - buying the rest means a new order, which the
+/// server timestamps when it arrives. A client that cannot read either fact from the result will
+/// eventually draw a button for it.
+/// </summary>
+public sealed record OrderRunResult(
+    Guid SalesOrderId,
+    string OrderCode,
+    Guid AllocationRunId,
+    string RunCode,
+    DateOnly BusinessDate,
+    DateTimeOffset CutoffAt,
+    DateTimeOffset ApprovedAt,
+    int PlanVersionNumber,
+    bool IsFulfilled,
+    string? ShortageReason,
+    bool HasReservedStock,
+    bool CanResubmitKeepingPriority,
+    decimal FinalAmount,
+    IReadOnlyCollection<OrderRunResultLine> Lines);
+
 public sealed record AllocationRunLineResult(
     Guid Id,
     Guid SalesOrderLineId,
