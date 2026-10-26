@@ -102,6 +102,32 @@ public sealed class IdentityAuthorizationTests : IClassFixture<IdentityAuthoriza
     }
 
     [Fact]
+    public async Task Territory_routes_and_graphql_enforce_authentication_role_and_guid_contracts()
+    {
+        using var client = factory.CreateClient();
+        Assert.Equal(HttpStatusCode.Unauthorized,
+            (await client.GetAsync("/api/v1/regions")).StatusCode);
+
+        client.DefaultRequestHeaders.Authorization = Bearer(factory.CreateToken(factory.Sales));
+        Assert.Equal(HttpStatusCode.Forbidden, (await client.PostAsJsonAsync(
+            "/api/v1/regions", new { code = "Q12", name = "Quận 12", description = "Khu vực bán hàng" }))
+            .StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await client.PutAsJsonAsync(
+            $"/api/v1/territory-assignments/sales/{Guid.NewGuid()}",
+            new { destinationSalesGroupId = Guid.NewGuid() })).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound,
+            (await client.GetAsync("/api/v1/sales-groups/not-a-guid")).StatusCode);
+
+        var graphQlResponse = await client.PostAsJsonAsync("/graphql", new
+        {
+            query = "query { entities { regions(first: 1) { totalCount } salesGroups(first: 1) { totalCount } } }"
+        });
+        var graphQlBody = await graphQlResponse.Content.ReadAsStringAsync();
+        Assert.Equal(HttpStatusCode.OK, graphQlResponse.StatusCode);
+        Assert.False(JsonDocument.Parse(graphQlBody).RootElement.TryGetProperty("errors", out _), graphQlBody);
+    }
+
+    [Fact]
     public async Task GraphQl_entities_require_an_authenticated_active_account()
     {
         using var client = factory.CreateClient();
@@ -183,6 +209,53 @@ public sealed class IdentityAuthorizationTests : IClassFixture<IdentityAuthoriza
         Assert.Equal(HttpStatusCode.OK, secondLocalResponse.StatusCode);
     }
 
+    [Fact]
+    public async Task Mobile_local_login_refresh_logout_and_inactive_account_lifecycle_is_enforced()
+    {
+        using var client = factory.CreateClient();
+
+        var loginResponse = await client.PostAsJsonAsync("/api/v1/auth/login", new
+        {
+            Email = factory.Admin.Email,
+            Password = IdentityApiFactory.LocalPassword
+        });
+        Assert.Equal(HttpStatusCode.OK, loginResponse.StatusCode);
+        var login = await loginResponse.Content.ReadFromJsonAsync<AuthenticationResult>();
+        Assert.NotNull(login);
+        Assert.Equal(factory.Admin.Id, login.User.Id);
+        Assert.Equal(SystemRoles.Admin, login.User.Role);
+
+        var refreshResponse = await client.PostAsJsonAsync("/api/v1/auth/refresh", new
+        {
+            login.RefreshToken
+        });
+        Assert.Equal(HttpStatusCode.OK, refreshResponse.StatusCode);
+        var refreshed = await refreshResponse.Content.ReadFromJsonAsync<AuthenticationResult>();
+        Assert.NotNull(refreshed);
+        Assert.NotEqual(login.RefreshToken, refreshed.RefreshToken);
+
+        var reusedResponse = await client.PostAsJsonAsync("/api/v1/auth/refresh", new
+        {
+            login.RefreshToken
+        });
+        Assert.Equal(HttpStatusCode.Unauthorized, reusedResponse.StatusCode);
+
+        var logoutResponse = await client.PostAsJsonAsync("/api/v1/auth/logout", new
+        {
+            refreshed.RefreshToken
+        });
+        Assert.Equal(HttpStatusCode.NoContent, logoutResponse.StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await client.PostAsJsonAsync(
+            "/api/v1/auth/refresh", new { refreshed.RefreshToken })).StatusCode);
+
+        var inactiveResponse = await client.PostAsJsonAsync("/api/v1/auth/login", new
+        {
+            Email = factory.InactiveAdmin.Email,
+            Password = IdentityApiFactory.LocalPassword
+        });
+        Assert.Equal(HttpStatusCode.Unauthorized, inactiveResponse.StatusCode);
+    }
+
     private static AuthenticationHeaderValue Bearer(string token) => new("Bearer", token);
 
     public sealed class IdentityApiFactory : WebApplicationFactory<Program>
@@ -209,6 +282,13 @@ public sealed class IdentityAuthorizationTests : IClassFixture<IdentityAuthoriza
             store.Credentials.Add(new UserCredential
             {
                 UserAccountId = Admin.Id,
+                PasswordHash = TestPasswordHasher.CreateHash(LocalPassword),
+                CreatedAt = DateTimeOffset.UtcNow,
+                UpdatedAt = DateTimeOffset.UtcNow
+            });
+            store.Credentials.Add(new UserCredential
+            {
+                UserAccountId = InactiveAdmin.Id,
                 PasswordHash = TestPasswordHasher.CreateHash(LocalPassword),
                 CreatedAt = DateTimeOffset.UtcNow,
                 UpdatedAt = DateTimeOffset.UtcNow
@@ -353,8 +433,9 @@ public sealed class IdentityAuthorizationTests : IClassFixture<IdentityAuthoriza
 
     private sealed class TestIdentityTokenProvider : IIdentityTokenProvider
     {
+        private int tokenSequence;
         public TimeSpan RefreshTokenLifetime => TimeSpan.FromDays(1);
-        public string GenerateOpaqueToken() => "opaque-test-token";
+        public string GenerateOpaqueToken() => $"opaque-test-token-{Interlocked.Increment(ref tokenSequence)}";
         public string HashOpaqueToken(string token) => $"hash:{token}";
         public IssuedAccessToken CreateAccessToken(
             UserAccount user,
@@ -376,6 +457,7 @@ public sealed class IdentityAuthorizationTests : IClassFixture<IdentityAuthoriza
     {
         public List<UserAccount> Users { get; } = [];
         public List<UserCredential> Credentials { get; } = [];
+        public List<RefreshToken> RefreshTokens { get; } = [];
 
         public Task<UserAccount?> FindUserByEmailAsync(string normalizedEmail, CancellationToken cancellationToken) =>
             Task.FromResult(Users.SingleOrDefault(user => user.Email == normalizedEmail));
@@ -395,7 +477,8 @@ public sealed class IdentityAuthorizationTests : IClassFixture<IdentityAuthoriza
         }
         public Task<UserCredential?> FindCredentialAsync(Guid userId, CancellationToken cancellationToken) =>
             Task.FromResult(Credentials.SingleOrDefault(credential => credential.UserAccountId == userId));
-        public Task<RefreshToken?> FindRefreshTokenAsync(string tokenHash, CancellationToken cancellationToken) => Task.FromResult<RefreshToken?>(null);
+        public Task<RefreshToken?> FindRefreshTokenAsync(string tokenHash, CancellationToken cancellationToken) =>
+            Task.FromResult(RefreshTokens.SingleOrDefault(token => token.TokenHash == tokenHash));
         public Task<AccountToken?> FindAccountTokenAsync(string tokenHash, string purpose, CancellationToken cancellationToken) => Task.FromResult<AccountToken?>(null);
         public Task<IdentityScope> GetScopeAsync(Guid userId, CancellationToken cancellationToken) => Task.FromResult(IdentityScope.Empty);
         public Task<IdentityScopeLabels> GetScopeLabelsAsync(IdentityScope scope, CancellationToken cancellationToken) => Task.FromResult(IdentityScopeLabels.Empty);
@@ -408,10 +491,12 @@ public sealed class IdentityAuthorizationTests : IClassFixture<IdentityAuthoriza
         public Task<SalesGroupMember?> FindSalesGroupMembershipAsync(Guid userId, Guid salesGroupId, CancellationToken cancellationToken) => Task.FromResult<SalesGroupMember?>(null);
         public Task<IReadOnlyCollection<SalesGroupMember>> ListActiveSalesGroupMembershipsAsync(Guid userId, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyCollection<SalesGroupMember>>([]);
         public Task<UserRegionAssignment?> FindRegionAssignmentAsync(Guid userId, Guid regionId, CancellationToken cancellationToken) => Task.FromResult<UserRegionAssignment?>(null);
-        public Task<IReadOnlyCollection<RefreshToken>> GetActiveRefreshTokensAsync(Guid userId, DateTimeOffset now, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyCollection<RefreshToken>>([]);
+        public Task<IReadOnlyCollection<RefreshToken>> GetActiveRefreshTokensAsync(Guid userId, DateTimeOffset now, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyCollection<RefreshToken>>(RefreshTokens.Where(token =>
+                token.UserAccountId == userId && token.RevokedAt is null && token.ExpiresAt > now).ToArray());
         public void AddUser(UserAccount user) => Users.Add(user);
         public void AddCredential(UserCredential credential) => Credentials.Add(credential);
-        public void AddRefreshToken(RefreshToken refreshToken) { }
+        public void AddRefreshToken(RefreshToken refreshToken) => RefreshTokens.Add(refreshToken);
         public void AddAccountToken(AccountToken accountToken) { }
         public void AddWarehouseAssignment(UserWarehouseAssignment assignment) { }
         public void AddSalesGroupMembership(SalesGroupMember membership) { }

@@ -43,6 +43,33 @@ public sealed class OrderServiceTests
     }
 
     [Fact]
+    public async Task Credit_order_snapshots_the_approved_retailer_term()
+    {
+        var fixture = new Fixture();
+        var request = fixture.Request(10) with { PaymentMethod = OrderPaymentMethods.Credit };
+
+        var result = await fixture.Service.CreateAsync(request, fixture.SalesUserId, default);
+        fixture.Store.Retailer.CreditTermDays = 30;
+
+        Assert.Equal(14, result.CreditTermDays);
+        Assert.Equal(14, Assert.Single(fixture.Store.Orders).CreditTermDays);
+    }
+
+    [Fact]
+    public async Task Credit_order_is_rejected_when_retailer_has_no_approved_term()
+    {
+        var fixture = new Fixture();
+        fixture.Store.Retailer.CreditTermDays = 0;
+        var request = fixture.Request(10) with { PaymentMethod = OrderPaymentMethods.Credit };
+
+        var exception = await Assert.ThrowsAsync<OrderOperationException>(() =>
+            fixture.Service.CreateAsync(request, fixture.SalesUserId, default));
+
+        Assert.Equal("conflict", exception.Code);
+        Assert.Empty(fixture.Store.Orders);
+    }
+
+    [Fact]
     public async Task Repeated_client_order_key_returns_original_order_without_inventory_side_effect()
     {
         var fixture = new Fixture();
