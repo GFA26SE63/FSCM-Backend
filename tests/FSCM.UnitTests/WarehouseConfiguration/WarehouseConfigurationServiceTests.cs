@@ -147,6 +147,24 @@ public sealed class WarehouseConfigurationServiceTests
         Assert.Empty(fixture.Store.Configurations);
     }
 
+    [Fact]
+    public async Task Sales_kpi_configuration_requires_positive_targets_and_weights_summing_to_one()
+    {
+        var fixture = new Fixture();
+        const string invalid = """
+            {"successfulOrdersTarget":15,"retailersServedTarget":5,"newRetailersTarget":1,
+             "promotionRevenueRatioMaximum":0.05,"successfulOrdersWeight":0.5,
+             "retailersServedWeight":0.3,"newRetailersWeight":0.2,"promotionRevenueRatioWeight":0.2}
+            """;
+
+        var exception = await Assert.ThrowsAsync<WarehouseConfigurationOperationException>(() =>
+            fixture.Service.UpdateConfigurationAsync(BusinessConfigurationKeys.SalesKpi,
+                invalid, Guid.NewGuid(), CancellationToken.None));
+
+        Assert.Equal("validation_error", exception.Code);
+        Assert.Empty(fixture.Store.Configurations);
+    }
+
     private sealed class Fixture
     {
         public Fixture()
