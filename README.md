@@ -218,7 +218,7 @@ Configure `PayOS:ClientId`, `PayOS:ApiKey`, `PayOS:ChecksumKey`, `PayOS:ReturnUr
 
 Use [the HTTP request collection](src/FSCM.API/FSCM.API.http) after seeding to log in, exercise receipt and QR workflows, inspect inventory/expiry health, query the catalog, and request a historical-price suggestion.
 
-## The 12:00 allocation run
+## The daily allocation run
 
 Orders are not allocated when they arrive. A background job opens one run per Vietnam business date
 at the cutoff, draws every eligible order from one shared stock pool, and puts the result to an
@@ -247,19 +247,33 @@ job reads its cutoff before every wait, and the portal shows it. Recommended tim
 | --- | --- | --- |
 | `sales_submission_advice` | 11:00 | **Advice, not a gate.** An order accepted after it and before the cutoff is still in the run |
 | `order_review_reminder` | 11:30 | Orders still waiting for review will miss the cutoff |
-| `allocation_run` | 12:00 | The cutoff: the run takes what was accepted and reviewed before it |
+| `allocation_run` | 00:00 | The cutoff: the run takes what was accepted and reviewed before it |
 | `plan_approval_reminder` | 13:30 | A proposal is still undecided |
 | `plan_approval_deadline` | 14:00 | A decision is expected. **Nothing approves itself after it** |
 
-Reminders are validated against what they remind about: the two before the cutoff must fall before
-it, and the plan reminder must fall between the cutoff and the deadline. A schedule published before
-the reminders existed still loads, falling back to the defaults above.
+**The day closes at midnight.** The run allocates what came in during the day that has just ended,
+which is why the advice and the review reminder read as 11:00 and 11:30 *of that day* while the
+approval milestones belong to the day the run is on. The five stored values are times of day; each
+one is placed around the cutoff, so a milestone that belongs before it and would otherwise land
+after it moves back a day, and one that belongs after it moves forward. A midday cutoff, where all
+five sit on the business date itself, resolves exactly as it always did.
+
+That placement is also what makes a midnight cutoff expressible at all. Compared as plain times of
+day, nothing can precede 00:00, so the rule "the reminders must fall before the cutoff" rejected
+every schedule that closed the day at midnight - including one whose advice sat perfectly sensibly
+at 11:00 the morning before. The ordering is now checked on the resolved instants, which is the
+rule that was always meant.
+
+Reminders are still validated against what they remind about: the advice comes before the review
+reminder, both come before the cutoff, and the plan reminder falls between the cutoff and the
+deadline. A schedule published before the reminders existed still loads, falling back to the
+defaults above.
 
 The run job is **on unless switched off**: `AllocationRunOptions.Enabled` defaults to true, so a
-configuration file that omits `BackgroundJobs:AllocationRun` entirely still runs the job at 12:00.
-Anyone whose local `appsettings.json` predates that key should copy it across from the example, and
-disable it in `appsettings.Development.json` while pointing at a shared database - otherwise simply
-leaving the API running past noon opens a run and writes to it.
+configuration file that omits `BackgroundJobs:AllocationRun` entirely still runs the job at the
+cutoff. Anyone whose local `appsettings.json` predates that key should copy it across from the
+example, and disable it in `appsettings.Development.json` while pointing at a shared database -
+otherwise simply leaving the API running past the cutoff opens a run and writes to it.
 
 `BackgroundJobs:AllocationRun:CutoffLocalTime` is only a fallback for a deployment with no published
 schedule. Two independent cutoffs would let the ETA promise one time while the job keeps another.

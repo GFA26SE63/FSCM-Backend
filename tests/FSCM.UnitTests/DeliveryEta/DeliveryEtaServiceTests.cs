@@ -105,14 +105,92 @@ public sealed class DeliveryEtaServiceTests
     }
 
     [Fact]
-    public async Task A_schedule_whose_approval_deadline_precedes_the_run_is_rejected()
+    public async Task A_schedule_whose_approval_deadline_does_not_follow_the_run_is_rejected()
     {
         var fixture = await Fixture.CreateAsync();
+        // Nothing can be decided at the very moment the run closes.
         fixture.Store.ScheduleConfiguration!.ConfigValue =
-            Fixture.ScheduleJson(runLocalTime: "14:00", approvalDeadlineLocalTime: "12:00");
+            Fixture.ScheduleJson(runLocalTime: "14:00", approvalDeadlineLocalTime: "14:00");
 
         var exception = await Assert.ThrowsAsync<DeliveryEtaOperationException>(() =>
             fixture.Service.EstimateAsync(fixture.Request(), CancellationToken.None));
+
+        Assert.Equal("validation_error", exception.Code);
+    }
+
+    [Fact]
+    public async Task A_cutoff_at_midnight_is_a_schedule_the_system_can_hold()
+    {
+        var fixture = await Fixture.CreateAsync();
+        // The day closes at midnight and the run allocates what came in during the day that just
+        // ended. Nothing can be earlier in that calendar day than 00:00, so a timetable compared as
+        // times of day rejected this outright - which is what made the arrangement unreachable.
+        fixture.Store.ScheduleConfiguration!.ConfigValue = Fixture.ScheduleJson(runLocalTime: "00:00");
+
+        var schedule = await fixture.Service.GetScheduleAsync(
+            new DateOnly(2026, 10, 26), CancellationToken.None);
+
+        var at = schedule.Milestones.ToDictionary(item => item.Key, item => item.At);
+        // The advice and the review reminder belong to the working day being closed.
+        Assert.Equal(new DateTimeOffset(2026, 10, 25, 11, 0, 0, TimeSpan.FromHours(7)),
+            at["sales_submission_advice"]);
+        Assert.Equal(new DateTimeOffset(2026, 10, 25, 11, 30, 0, TimeSpan.FromHours(7)),
+            at["order_review_reminder"]);
+        // The cutoff itself stays on the business date it belongs to.
+        Assert.Equal(new DateTimeOffset(2026, 10, 26, 0, 0, 0, TimeSpan.FromHours(7)),
+            at["allocation_run"]);
+        // The approval milestones belong to the day the run is on.
+        Assert.Equal(new DateTimeOffset(2026, 10, 26, 13, 30, 0, TimeSpan.FromHours(7)),
+            at["plan_approval_reminder"]);
+        Assert.Equal(new DateTimeOffset(2026, 10, 26, 14, 0, 0, TimeSpan.FromHours(7)),
+            at["plan_approval_deadline"]);
+    }
+
+    [Fact]
+    public async Task A_midnight_cutoff_still_keeps_the_timetable_in_order()
+    {
+        var fixture = await Fixture.CreateAsync();
+
+        var schedule = await fixture.Service.GetScheduleAsync(
+            new DateOnly(2026, 10, 26), CancellationToken.None);
+        var midday = schedule.Milestones.Select(item => item.At).ToArray();
+
+        fixture.Store.ScheduleConfiguration!.ConfigValue = Fixture.ScheduleJson(runLocalTime: "00:00");
+        var midnight = (await fixture.Service.GetScheduleAsync(
+            new DateOnly(2026, 10, 26), CancellationToken.None)).Milestones.Select(item => item.At).ToArray();
+
+        // Whatever hour the day closes at, the five instants only ever move forwards.
+        foreach (var instants in new[] { midday, midnight })
+        {
+            Assert.Equal(instants.OrderBy(item => item).ToArray(), instants);
+        }
+    }
+
+    [Fact]
+    public async Task A_midday_cutoff_keeps_every_milestone_on_its_own_business_date()
+    {
+        var fixture = await Fixture.CreateAsync();
+
+        var schedule = await fixture.Service.GetScheduleAsync(
+            new DateOnly(2026, 10, 26), CancellationToken.None);
+
+        // Placing the milestones around the cutoff must not disturb the arrangement that was
+        // already in use: at midday, all five still fall on the business date itself.
+        Assert.All(schedule.Milestones, item =>
+            Assert.Equal(new DateOnly(2026, 10, 26), DateOnly.FromDateTime(item.At.DateTime)));
+    }
+
+    [Fact]
+    public async Task A_reminder_that_would_land_after_a_midnight_cutoff_is_still_rejected()
+    {
+        var fixture = await Fixture.CreateAsync();
+        // 00:30 is after the cutoff on the same day, and rolling it back a day would put it after
+        // the previous cutoff instead. Either way it reminds nobody in time.
+        fixture.Store.ScheduleConfiguration!.ConfigValue = Fixture.ScheduleJson(
+            runLocalTime: "00:00", orderReviewReminderLocalTime: "00:30");
+
+        var exception = await Assert.ThrowsAsync<DeliveryEtaOperationException>(() =>
+            fixture.Service.GetScheduleAsync(null, CancellationToken.None));
 
         Assert.Equal("validation_error", exception.Code);
     }
