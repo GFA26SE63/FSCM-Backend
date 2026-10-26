@@ -15,7 +15,6 @@ public static class PaymentCollectionMethods
 }
 
 public sealed record CollectPaymentData(
-    decimal Amount,
     string CollectionMethod,
     int ExpectedVersion,
     string? Note);

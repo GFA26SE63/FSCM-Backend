@@ -126,7 +126,7 @@ public sealed class PaymentServiceTests
         Assert.Equal(first.Id, repeated.Id);
         var exception = await Assert.ThrowsAsync<PaymentOperationException>(() =>
             fixture.Service.CollectAsync(fixture.Order.Id,
-                new(fixture.Order.FinalAmount, PaymentCollectionMethods.Cash, 1, "Nội dung khác"),
+                new(PaymentCollectionMethods.Cash, 1, "Nội dung khác"),
                 "payment-test-001", fixture.SalesUserId, SystemRoles.Sales, default));
         Assert.Equal("conflict", exception.Code);
     }
@@ -140,6 +140,19 @@ public sealed class PaymentServiceTests
             fixture.SalesUserId, SystemRoles.Sales, PaymentCollectionMethods.Cash, expectedVersion: 2));
 
         Assert.Equal("conflict", exception.Code);
+    }
+
+    [Fact]
+    public async Task Collection_is_blocked_while_order_has_an_unresolved_dispute()
+    {
+        var fixture = new Fixture();
+        fixture.Store.HasOpenDispute = true;
+
+        var exception = await Assert.ThrowsAsync<PaymentOperationException>(() => fixture.CollectAsync(
+            fixture.SalesUserId, SystemRoles.Sales, PaymentCollectionMethods.Cash));
+
+        Assert.Equal("conflict", exception.Code);
+        Assert.Equal(PaymentStatuses.Unpaid, fixture.Payment!.Status);
     }
 
     [Fact]
@@ -332,7 +345,7 @@ public sealed class PaymentServiceTests
             string role,
             string collectionMethod,
             int expectedVersion = 0) => Service.CollectAsync(Order.Id,
-            new(Order.FinalAmount, collectionMethod, expectedVersion, "Thu đủ công nợ"),
+            new(collectionMethod, expectedVersion, "Thu đủ công nợ"),
             "payment-test-001", actorUserId, role, default);
     }
 
@@ -341,6 +354,7 @@ public sealed class PaymentServiceTests
         private readonly Fixture fixture;
         public List<Payment> Payments { get; } = [];
         public List<AuditLog> Audits { get; } = [];
+        public bool HasOpenDispute { get; set; }
 
         public FakePaymentStore(Fixture fixture)
         {
@@ -351,7 +365,7 @@ public sealed class PaymentServiceTests
         public Task<PaymentView?> FindByOrderAsync(Guid orderId, bool forUpdate,
             CancellationToken cancellationToken) => Task.FromResult<PaymentView?>(
             Payments.SingleOrDefault(item => item.SalesOrderId == orderId) is { } payment
-                ? new(payment, fixture.Order, fixture.Retailer)
+                ? new(payment, fixture.Order, fixture.Retailer, HasOpenDispute: HasOpenDispute)
                 : null);
 
         public Task<PaymentView?> FindByOperationKeyAsync(string operationKey,

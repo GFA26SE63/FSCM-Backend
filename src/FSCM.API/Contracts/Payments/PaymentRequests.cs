@@ -1,7 +1,6 @@
 namespace FSCM.API.Contracts.Payments;
 
 public sealed record CollectPaymentRequest(
-    decimal Amount,
     string CollectionMethod,
     int ExpectedVersion,
     string? Note);

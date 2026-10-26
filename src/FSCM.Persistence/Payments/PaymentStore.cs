@@ -146,6 +146,9 @@ public sealed class PaymentStore(AppDbContext dbContext) : IPaymentStore
         var refundedAmount = await dbContext.ManualRefundRecords.AsNoTracking()
             .Where(item => item.PaymentId == payment.Id && item.Status == RefundStatuses.Refunded)
             .SumAsync(item => (decimal?)item.Amount, cancellationToken) ?? 0;
-        return new(payment, order, retailer, pendingRefundAmount, refundedAmount);
+        var hasOpenDispute = await dbContext.ReceiptDiscrepancyRecords.AsNoTracking()
+            .AnyAsync(item => item.SalesOrderId == payment.SalesOrderId && item.Status != "Resolved",
+                cancellationToken);
+        return new(payment, order, retailer, pendingRefundAmount, refundedAmount, hasOpenDispute);
     }
 }
