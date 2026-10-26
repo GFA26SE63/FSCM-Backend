@@ -21,7 +21,7 @@ public sealed class AllocationRunsController(
     AllocationRunResultService results) : ControllerBase
 {
     /// <summary>
-    /// Runs today's allocation now, for the case where the 12:00 job did not. Idempotent on the
+    /// Runs today's allocation now, for the case where the scheduled job did not. Idempotent on the
     /// business date, and the cutoff comes from the published schedule unless an Admin overrides it
     /// with a later moment on the same day.
     /// </summary>

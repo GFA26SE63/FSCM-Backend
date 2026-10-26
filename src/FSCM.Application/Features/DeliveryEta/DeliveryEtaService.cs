@@ -5,7 +5,7 @@ namespace FSCM.Application.Features.DeliveryEta;
 
 /// <summary>
 /// The shared estimate of when the customer receives the goods. An order placed today is not
-/// driven to the retailer immediately: it waits for the 12:00 allocation run, waits for the plan
+/// driven to the retailer immediately: it waits for the day's allocation run, waits for the plan
 /// to be approved, is picked, waits for the next dispatch slot, and only then travels. Adding
 /// driving time to "now" would understate the arrival by a day or more, so every stage is
 /// modelled and reported.
@@ -43,8 +43,9 @@ public sealed class DeliveryEtaService(
         var date = businessDate ?? DateOnly.FromDateTime(
             TimeZoneInfo.ConvertTime(timeProvider.GetUtcNow(), zone).DateTime);
 
-        ScheduleMilestone Milestone(string key, string label, TimeOnly at, bool advisory) =>
-            new(key, label, at, ToOffset(date, at, zone), advisory);
+        var cutoff = schedule.AllocationRunLocalTime;
+        ScheduleMilestone Milestone(string key, string label, TimeOnly at, bool advisory, bool beforeCutoff) =>
+            new(key, label, at, ResolveMilestone(date, cutoff, at, beforeCutoff, zone), advisory);
 
         return new AllocationScheduleResult(
             date,
@@ -52,15 +53,15 @@ public sealed class DeliveryEtaService(
             view.Version,
             [
                 Milestone("sales_submission_advice", "Khuyến nghị Sales gửi đơn trước",
-                    schedule.SalesSubmissionAdviceLocalTime, true),
+                    schedule.SalesSubmissionAdviceLocalTime, true, true),
                 Milestone("order_review_reminder", "Nhắc duyệt đơn còn chờ",
-                    schedule.OrderReviewReminderLocalTime, false),
+                    schedule.OrderReviewReminderLocalTime, false, true),
                 Milestone("allocation_run", "Giờ chốt đợt",
-                    schedule.AllocationRunLocalTime, false),
+                    schedule.AllocationRunLocalTime, false, false),
                 Milestone("plan_approval_reminder", "Nhắc duyệt phương án",
-                    schedule.PlanApprovalReminderLocalTime, false),
+                    schedule.PlanApprovalReminderLocalTime, false, false),
                 Milestone("plan_approval_deadline", "Hạn duyệt phương án",
-                    schedule.PlanApprovalDeadlineLocalTime, false)
+                    schedule.PlanApprovalDeadlineLocalTime, false, false)
             ],
             schedule.PreparationMinutes,
             schedule.BufferMinutes,
@@ -141,6 +142,29 @@ public sealed class DeliveryEtaService(
     private static DateTimeOffset NextDispatchSlot(
         DateTimeOffset from, IReadOnlyList<TimeOnly> slots, TimeZoneInfo zone) =>
         slots.Select(slot => NextLocalTime(from, slot, zone)).Min();
+
+    /// <summary>
+    /// The instant a milestone falls on, for a run whose cutoff is <paramref name="cutoff"/> on
+    /// <paramref name="date"/>.
+    ///
+    /// The five milestones are stored as times of day, which is only enough while the cutoff sits
+    /// in the middle of the working day. A cutoff at midnight closes the day that has just ended,
+    /// so the advice and the review reminder belong to the previous calendar day while the approval
+    /// milestones belong to the day the run is on. Placing each one relative to the cutoff rather
+    /// than on a fixed date lets both arrangements be read off the same five times, and leaves a
+    /// midday cutoff resolving exactly as it did before.
+    /// </summary>
+    private static DateTimeOffset ResolveMilestone(
+        DateOnly date, TimeOnly cutoff, TimeOnly at, bool beforeCutoff, TimeZoneInfo zone)
+    {
+        var cutoffAt = ToOffset(date, cutoff, zone);
+        var candidate = ToOffset(date, at, zone);
+        if (beforeCutoff && candidate >= cutoffAt) return ToOffset(date.AddDays(-1), at, zone);
+        // Strictly earlier, so the cutoff itself - which is passed through here too - stays put
+        // instead of being pushed to the next day.
+        if (!beforeCutoff && candidate < cutoffAt) return ToOffset(date.AddDays(1), at, zone);
+        return candidate;
+    }
 
     private static DateTimeOffset ToOffset(DateOnly date, TimeOnly time, TimeZoneInfo zone)
     {
@@ -225,12 +249,6 @@ public sealed class DeliveryEtaService(
 
             var run = ParseTime(AllocationRunLocalTime, nameof(AllocationRunLocalTime));
             var deadline = ParseTime(PlanApprovalDeadlineLocalTime, nameof(PlanApprovalDeadlineLocalTime));
-            if (deadline <= run)
-            {
-                throw DeliveryEtaOperationException.Validation(
-                    "The plan approval deadline must be later in the day than the allocation run.");
-            }
-
             var salesAdvice = OptionalTime(
                 SalesSubmissionAdviceLocalTime, nameof(SalesSubmissionAdviceLocalTime), DefaultSalesAdvice);
             var orderReminder = OptionalTime(
@@ -238,17 +256,45 @@ public sealed class DeliveryEtaService(
             var planReminder = OptionalTime(
                 PlanApprovalReminderLocalTime, nameof(PlanApprovalReminderLocalTime), DefaultPlanApprovalReminder);
 
-            // A reminder is only useful before the thing it is reminding about.
-            if (salesAdvice >= run || orderReminder >= run)
+            // Ordered as instants, not as times of day.
+            //
+            // Comparing the raw times only works while the cutoff sits in the middle of the working
+            // day. A cutoff at midnight has nothing before it on its own date, so a rule written as
+            // "the advice must be earlier in the day than the cutoff" rejects every schedule that
+            // closes the day at 00:00 - including one whose advice sits perfectly sensibly at 11:00
+            // the morning before. Resolving each milestone around the cutoff first states the rule
+            // that was always meant: the reminders come before the thing they remind about.
+            var zone = ResolveTimeZone(TimeZone);
+            // Any date: the check is about order, and these milestones carry no date of their own.
+            var reference = new DateOnly(2000, 1, 3);
+            var runAt = ToOffset(reference, run, zone);
+            var adviceAt = ResolveMilestone(reference, run, salesAdvice, true, zone);
+            var orderReminderAt = ResolveMilestone(reference, run, orderReminder, true, zone);
+            var planReminderAt = ResolveMilestone(reference, run, planReminder, false, zone);
+            var deadlineAt = ResolveMilestone(reference, run, deadline, false, zone);
+
+            if (adviceAt >= orderReminderAt)
+            {
+                throw DeliveryEtaOperationException.Validation(
+                    "The sales advice must come before the order review reminder.");
+            }
+
+            if (adviceAt >= runAt || orderReminderAt >= runAt)
             {
                 throw DeliveryEtaOperationException.Validation(
                     "The sales advice and the order review reminder must both fall before the cutoff.");
             }
 
-            if (planReminder <= run || planReminder >= deadline)
+            if (planReminderAt <= runAt || planReminderAt >= deadlineAt)
             {
                 throw DeliveryEtaOperationException.Validation(
                     "The plan approval reminder must fall between the cutoff and the approval deadline.");
+            }
+
+            if (deadlineAt <= runAt)
+            {
+                throw DeliveryEtaOperationException.Validation(
+                    "The plan approval deadline must come after the allocation run.");
             }
 
             if (PreparationMinutes < 0 || BufferMinutes < 0)

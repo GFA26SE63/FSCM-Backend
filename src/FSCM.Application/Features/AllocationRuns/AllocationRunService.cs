@@ -183,9 +183,9 @@ public sealed class AllocationRunService(
     /// <summary>
     /// Runs today's allocation by hand: close the run at its cutoff, then plan it.
     ///
-    /// The 12:00 job is the normal path. It is also the only one, which means a deployment that was
-    /// down at noon has no way to produce the day's plan at all - the orders simply sit there until
-    /// tomorrow, when they queue behind a day of newer ones. This is the recovery.
+    /// The scheduled job is the normal path. It is also the only one, which means a deployment that
+    /// was down at the cutoff has no way to produce the day's plan at all - the orders simply sit
+    /// there until tomorrow, when they queue behind a day of newer ones. This is the recovery.
     ///
     /// The cutoff is not a parameter by default: it comes from the published schedule, so pressing
     /// the button cannot quietly change which orders belong to the run. An Admin may pass a later

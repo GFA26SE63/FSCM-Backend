@@ -14,6 +14,12 @@ public sealed class AllocationRunOptions
     /// <summary>IANA time zone the cutoff is interpreted in. Defaults to Vietnam time.</summary>
     public string TimeZone { get; set; } = "Asia/Ho_Chi_Minh";
 
-    /// <summary>Daily cutoff in 24-hour "HH:mm" format. Defaults to 12:00 per the approved flow.</summary>
-    public string CutoffLocalTime { get; set; } = "12:00";
+    /// <summary>
+    /// Daily cutoff in 24-hour "HH:mm" format. Defaults to 00:00: the day closes at midnight and
+    /// the run allocates what came in during the day that just ended.
+    ///
+    /// Only a fallback for a deployment with no published schedule - the schedule an Admin
+    /// publishes wins, so that the ETA, the portal and this job cannot disagree about the hour.
+    /// </summary>
+    public string CutoffLocalTime { get; set; } = "00:00";
 }

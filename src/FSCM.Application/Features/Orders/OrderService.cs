@@ -247,7 +247,7 @@ public sealed class OrderService(
     }
 
     /// <summary>
-    /// Reviewing an order parks it for the next 12:00 run. It holds no stock: the run picks the
+    /// Reviewing an order parks it for the next run. It holds no stock: the run picks the
     /// batches and only run approval reserves them, so two approved orders can still compete for
     /// the same batch and the earlier acceptance time wins.
     /// </summary>
