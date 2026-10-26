@@ -8,4 +8,5 @@ public sealed record ResolveComplaintData(string Result);
 public sealed record ComplaintResult(Guid Id, string Code, string OrderCode, string RetailerCode,
     string RetailerName, string Sku, string ProductName, decimal ExpectedQuantity,
     decimal ActualQuantity, string IssueType, string Status, string? LabelCode,
-    string? Note, string? EvidenceUrl, DateTimeOffset CreatedAt, string? Response);
+    string? Note, string? EvidenceUrl, DateTimeOffset CreatedAt, string? Response,
+    Guid SalesOrderId = default);

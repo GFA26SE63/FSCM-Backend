@@ -1,6 +1,8 @@
 using FSCM.Application.Features.Inventory;
 using FSCM.Application.Features.AllocationRuns;
+using FSCM.Application.Features.Loyalty;
 using FSCM.Application.Features.Shipments;
+using FSCM.UnitTests.Loyalty;
 using FSCM.Application.Features.Payments;
 using FSCM.Application.Features.Orders;
 using FSCM.Application.Features.QrLabels;
@@ -596,8 +598,12 @@ public sealed class ShipmentServiceTests
                 Status = PaymentStatuses.Unpaid, Amount = Order.FinalAmount,
                 AdjustedAmount = Order.FinalAmount, FinalApprovalReference = "PLAN-1"
             };
+            // Loyalty is not what these tests are about: the fake ledger knows no orders, so
+            // evaluating one is a no-op.
             Service = new ShipmentService(Store, PaymentStore,
-                new PaymentPlanService(PaymentStore), new FixedTimeProvider(Now));
+                new PaymentPlanService(PaymentStore),
+                new LoyaltyAccrualService(new FakeLoyaltyAccrualStore(), new FixedTimeProvider(Now)),
+                new FixedTimeProvider(Now));
         }
 
         public FakePaymentStore PaymentStore { get; private set; } = null!;

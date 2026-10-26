@@ -80,5 +80,5 @@ public sealed class ComplaintStore(AppDbContext db) : IComplaintStore
     }
 
     private static ComplaintResult ToResult(ReceiptDiscrepancy d, string order, string retailerCode, string retailerName, string sku, string product, ReceiptDiscrepancyItem i, string? label, string? evidence) =>
-        new(d.Id, $"KN-{d.Id.ToString("N")[..8].ToUpperInvariant()}", order, retailerCode, retailerName, sku, product, i.ExpectedQuantity, i.ActualReceivedQuantity, i.IssueType, d.Status, label, i.Note ?? d.Note, evidence, d.ReportedAt, d.Status == "Resolved" ? d.Note : null);
+        new(d.Id, $"KN-{d.Id.ToString("N")[..8].ToUpperInvariant()}", order, retailerCode, retailerName, sku, product, i.ExpectedQuantity, i.ActualReceivedQuantity, i.IssueType, d.Status, label, i.Note ?? d.Note, evidence, d.ReportedAt, d.Status == "Resolved" ? d.Note : null, d.SalesOrderId);
 }

@@ -407,6 +407,39 @@ The snapshot GET intentionally has no GraphQL twin: it is a bulk device-cache sy
 transport with HTTP ETag/checksum semantics, not a persisted business read model. Order reads remain
 available via the shared REST/GraphQL order read services.
 
+## Loyalty points (F70)
+
+An order earns its points once, when it has actually been delivered **and** paid for **and** nothing
+about it is in dispute. Which of those three is the last to happen depends on the payment method, so
+this is written as one evaluation that three callers ask rather than as three separate rules:
+
+| Caller | Why it asks |
+| --- | --- |
+| `ShipmentService.ConfirmReceiptAsync` | the final warehouse part has been received |
+| `ManualPaymentService.ConfirmAsync` | the money just landed - a credit order is delivered long before this |
+| `ComplaintService.ResolveAsync` | the dispute that was holding it is closed, and nothing else will ask |
+
+`LoyaltyAccrualService.EvaluateAsync` is idempotent: an order that has already earned is returned
+unchanged, so every caller may ask after every event without guarding. All three ask **outside**
+their own transaction - the receipt and the payment are facts, points are a consequence, and a
+loyalty failure must not roll back a delivery the retailer has already taken.
+
+### Rules that are easy to get wrong
+
+- **The value is the approved final amount**, not the list price and not what today's discount table
+  would say. The run froze that number; a table published next week must not change what an order
+  that shipped last week was worth.
+- **Whole points, rounded down.** A part point is not a point, and rounding up mints value the order
+  never paid for.
+- **An order that does not qualify yet is held, not dropped.** A `PendingEarn` row carries no
+  balance and exists so the card can show "Chờ cộng" without a second table. It is written once, not
+  once per evaluation - a credit order sits unpaid for a whole term and would otherwise collect a
+  row per touch.
+- **A correction is a row, not an edit.** After a refund or a complaint, `AdjustAsync` writes the
+  difference against the same order and leaves the original earning readable. The balance is allowed
+  to go negative: points already spent cannot be un-spent, and redemption refuses while the balance
+  is short, which is what stops the difference being handed out twice.
+
 ## Product ranking (F78)
 
 `GET /api/v1/reports/best-selling-products` and GraphQL `bestSellingProducts` rank delivered products for an

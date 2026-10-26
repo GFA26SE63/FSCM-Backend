@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using FSCM.Application.Features.Orders;
+using FSCM.Application.Features.Loyalty;
 using FSCM.Application.Features.Payments;
 using FSCM.Domain.Authorization;
 using FSCM.Domain.Entities;
@@ -15,6 +16,7 @@ namespace FSCM.Application.Features.ManualPayments;
 public sealed class ManualPaymentService(
     IManualPaymentStore store,
     IPaymentStore paymentStore,
+    LoyaltyAccrualService accrual,
     TimeProvider timeProvider)
 {
     private static readonly TimeSpan VietnamOffset = TimeSpan.FromHours(7);
@@ -104,6 +106,9 @@ public sealed class ManualPaymentService(
         ChangeManualPaymentData data,
         CancellationToken cancellationToken)
     {
+        // Set inside the transaction, read after it: this payment may be the one that settles the
+        // order, and that is when its points become possible.
+        Guid? settledOrderId = null;
         EnsureWriteRole(actorRole);
         await paymentStore.ExecuteInTransactionAsync(async transactionCancellationToken =>
         {
@@ -135,11 +140,21 @@ public sealed class ManualPaymentService(
             payment.Version++;
             payment.UpdatedAt = now;
             ApplyLedgerConfirmation(ledger.Payment, payment, actorUserId, now);
+            if (ledger.Payment.Status == PaymentStatuses.Paid) settledOrderId = order.Id;
             AddAudit(payment, ledger.Payment, actorUserId, "ManualPaymentConfirmed", now);
             await paymentStore.SaveChangesAsync(transactionCancellationToken);
         }, cancellationToken);
 
         paymentStore.ClearTracking();
+
+        // Collecting the money can be the last condition an order was waiting on - a credit order
+        // is delivered long before it is paid - so the question is asked again here. Outside the
+        // transaction, and idempotent, so it cannot undo a payment that was recorded.
+        if (settledOrderId is { } paidOrderId)
+        {
+            await accrual.EvaluateAsync(paidOrderId, actorUserId, cancellationToken);
+        }
+
         return ToResult(await store.FindAsync(paymentId, cancellationToken)
             ?? throw ManualPaymentOperationException.Conflict(
                 "Manual payment was committed but could not be reloaded."));
