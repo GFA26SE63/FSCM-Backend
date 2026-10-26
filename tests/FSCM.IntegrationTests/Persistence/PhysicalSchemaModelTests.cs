@@ -108,8 +108,8 @@ public sealed class PhysicalSchemaModelTests
 
         Assert.Equal(ExpectedTables, tableNames);
         Assert.Equal(83, entityTypes.Length);
-        // Develop's run-picking shape plus loyalty scope and notification deep-link metadata.
-        Assert.Equal(929, entityTypes.Sum(entityType => entityType.GetProperties().Count()));
+        // Develop's run-picking shape plus loyalty scope, notification metadata and batch production date.
+        Assert.Equal(930, entityTypes.Sum(entityType => entityType.GetProperties().Count()));
         Assert.Equal(189, entityTypes.Sum(entityType => entityType.GetForeignKeys().Count()));
         Assert.All(
             entityTypes.SelectMany(entityType => entityType.GetForeignKeys()),
@@ -310,7 +310,12 @@ public sealed class PhysicalSchemaModelTests
         var receipt = context.Model.FindEntityType(typeof(GoodsReceipt))!;
         var receiptLine = context.Model.FindEntityType(typeof(GoodsReceiptLine))!;
 
+        Assert.Equal("date", batch.FindProperty(nameof(Batch.ProductionDate))!.GetColumnType());
         Assert.Equal("date", batch.FindProperty(nameof(Batch.ExpirationDate))!.GetColumnType());
+        Assert.Contains(batch.GetIndexes(), index => index.IsUnique &&
+            index.Properties.Select(property => property.Name).SequenceEqual([
+                nameof(Batch.WarehouseId), nameof(Batch.ProductId),
+                nameof(Batch.ProductionDate), nameof(Batch.ExpirationDate)]));
         Assert.Equal("date", receiptLine.FindProperty(nameof(GoodsReceiptLine.ProductionDate))!.GetColumnType());
         Assert.Equal("date", receiptLine.FindProperty(nameof(GoodsReceiptLine.ExpirationDate))!.GetColumnType());
         Assert.True(batch.FindProperty(nameof(Batch.Version))!.IsConcurrencyToken);

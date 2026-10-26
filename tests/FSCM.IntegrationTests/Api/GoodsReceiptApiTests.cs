@@ -141,8 +141,11 @@ public sealed class GoodsReceiptApiTests
         }
         public Task<IReadOnlyCollection<GoodsReceiptView>> ListReceiptsAsync(Guid actorUserId, string actorRole, Guid? warehouseId, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyCollection<GoodsReceiptView>>(Receipts.Select(item => ToView(item)!).ToArray());
-        public Task<Batch?> FindBatchForUpdateAsync(Guid warehouseId, Guid productId, DateOnly expirationDate, CancellationToken cancellationToken) =>
-            Task.FromResult(Batches.SingleOrDefault(item => item.WarehouseId == warehouseId && item.ProductId == productId && item.ExpirationDate == expirationDate));
+        public Task<Batch?> FindBatchForUpdateAsync(Guid warehouseId, Guid productId, DateOnly productionDate,
+            DateOnly expirationDate, CancellationToken cancellationToken) =>
+            Task.FromResult(Batches.SingleOrDefault(item => item.WarehouseId == warehouseId &&
+                item.ProductId == productId && item.ProductionDate == productionDate &&
+                item.ExpirationDate == expirationDate));
         public Task<InventoryBalance?> FindBalanceForUpdateAsync(Guid batchId, CancellationToken cancellationToken) =>
             Task.FromResult(Balance?.BatchId == batchId ? Balance : null);
         public Task<IReadOnlyCollection<BatchInventoryView>> ListInventoryAsync(Guid actorUserId, string actorRole, Guid? warehouseId, Guid? productId, CancellationToken cancellationToken) =>
@@ -177,7 +180,8 @@ public sealed class GoodsReceiptApiTests
             var lines = Lines.Where(item => item.GoodsReceiptId == receipt.Id).Select(line =>
             {
                 var batch = Batches.SingleOrDefault(item => item.WarehouseId == receipt.WarehouseId &&
-                    item.ProductId == line.ProductId && item.ExpirationDate == line.ExpirationDate);
+                    item.ProductId == line.ProductId && item.ProductionDate == line.ProductionDate &&
+                    item.ExpirationDate == line.ExpirationDate);
                 return new GoodsReceiptLineView(line, Product.Sku, Product.Name, batch?.Id, batch?.BatchCode);
             }).ToArray();
             return new GoodsReceiptView(receipt, Warehouse.Code, Warehouse.Name, lines);

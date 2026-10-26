@@ -31,7 +31,7 @@ public sealed class InventoryServiceTests
         var result = await fixture.ApproveAsync(pending.Id);
 
         Assert.Equal(GoodsReceiptStatuses.Received, result.Status);
-        Assert.Equal("WH-TA-SKU001-30042027", result.Lines.Single().BatchCode);
+        Assert.Equal("WH-TA-SKU001-01102026-30042027", result.Lines.Single().BatchCode);
         Assert.Equal(25, fixture.Store.Balances.Single().PhysicalQuantity);
         Assert.Equal(25, fixture.Store.Balances.Single().AvailableQuantity);
         Assert.Single(fixture.Store.Transactions);
@@ -49,6 +49,25 @@ public sealed class InventoryServiceTests
 
         Assert.Single(fixture.Store.Batches);
         Assert.Equal(40, fixture.Store.Balances.Single().PhysicalQuantity);
+        Assert.Equal(2, fixture.Store.Transactions.Count);
+    }
+
+    [Fact]
+    public async Task Same_expiry_with_different_production_dates_creates_distinct_batches()
+    {
+        var fixture = new Fixture();
+        var expiry = new DateOnly(2027, 4, 30);
+        var first = await fixture.CreateAsync("receipt-key-0001", 25, expiry);
+        await fixture.ApproveAsync(first.Id);
+        var second = await fixture.Service.CreateReceiptAsync(fixture.UserId, SystemRoles.WarehouseKeeper,
+            fixture.Store.Warehouse.Id, "receipt-key-0002",
+            [new ReceiveGoodsLineData(fixture.Store.Product.Id, "LÔ-THỬ-NGHIỆM-2", 15,
+                new DateOnly(2026, 10, 2), expiry)], CancellationToken.None);
+
+        await fixture.ApproveAsync(second.Id);
+
+        Assert.Equal(2, fixture.Store.Batches.Count);
+        Assert.Equal(40, fixture.Store.Balances.Sum(item => item.PhysicalQuantity));
         Assert.Equal(2, fixture.Store.Transactions.Count);
     }
 
@@ -177,8 +196,11 @@ public sealed class InventoryServiceTests
         }
         public Task<IReadOnlyCollection<GoodsReceiptView>> ListReceiptsAsync(Guid actorUserId, string actorRole, Guid? warehouseId, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyCollection<GoodsReceiptView>>(Receipts.Select(item => ToReceiptView(item)!).ToArray());
-        public Task<Batch?> FindBatchForUpdateAsync(Guid warehouseId, Guid productId, DateOnly expirationDate, CancellationToken cancellationToken) =>
-            Task.FromResult(Batches.SingleOrDefault(item => item.WarehouseId == warehouseId && item.ProductId == productId && item.ExpirationDate == expirationDate));
+        public Task<Batch?> FindBatchForUpdateAsync(Guid warehouseId, Guid productId, DateOnly productionDate,
+            DateOnly expirationDate, CancellationToken cancellationToken) =>
+            Task.FromResult(Batches.SingleOrDefault(item => item.WarehouseId == warehouseId &&
+                item.ProductId == productId && item.ProductionDate == productionDate &&
+                item.ExpirationDate == expirationDate));
         public Task<InventoryBalance?> FindBalanceForUpdateAsync(Guid batchId, CancellationToken cancellationToken) =>
             Task.FromResult(Balances.SingleOrDefault(item => item.BatchId == batchId));
         public Task<IReadOnlyCollection<BatchInventoryView>> ListInventoryAsync(Guid actorUserId, string actorRole, Guid? warehouseId, Guid? productId, CancellationToken cancellationToken) =>
@@ -206,7 +228,8 @@ public sealed class InventoryServiceTests
             var lines = Lines.Where(item => item.GoodsReceiptId == receipt.Id).Select(line =>
             {
                 var batch = Batches.SingleOrDefault(item => item.WarehouseId == receipt.WarehouseId &&
-                    item.ProductId == line.ProductId && item.ExpirationDate == line.ExpirationDate);
+                    item.ProductId == line.ProductId && item.ProductionDate == line.ProductionDate &&
+                    item.ExpirationDate == line.ExpirationDate);
                 return new GoodsReceiptLineView(line, Product.Sku, Product.Name, batch?.Id, batch?.BatchCode);
             }).ToArray();
             return new GoodsReceiptView(receipt, Warehouse.Code, Warehouse.Name, lines);

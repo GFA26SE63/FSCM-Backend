@@ -897,6 +897,9 @@ namespace FSCM.Persistence.Migrations
                     b.Property<Guid>("ProductId")
                         .HasColumnType("uuid");
 
+                    b.Property<DateOnly>("ProductionDate")
+                        .HasColumnType("date");
+
                     b.Property<decimal>("Quantity")
                         .HasPrecision(18, 3)
                         .HasColumnType("numeric(18,3)");
@@ -932,11 +935,13 @@ namespace FSCM.Persistence.Migrations
 
                     b.HasIndex("RootBatchId");
 
-                    b.HasIndex("WarehouseId", "ProductId", "ExpirationDate")
+                    b.HasIndex("WarehouseId", "ProductId", "ProductionDate", "ExpirationDate")
                         .IsUnique();
 
                     b.ToTable("BATCH", null, t =>
                         {
+                            t.HasCheckConstraint("CK_BATCH_Dates", "\"ProductionDate\" < \"ExpirationDate\"");
+
                             t.HasCheckConstraint("CK_BATCH_Quantity", "\"Quantity\" >= 0 AND TRUNC(\"Quantity\") = \"Quantity\"");
                         });
                 });

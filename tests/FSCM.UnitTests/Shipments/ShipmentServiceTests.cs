@@ -230,6 +230,9 @@ public sealed class ShipmentServiceTests
         Assert.NotNull(result.Receipt);
         Assert.Equal(0, result.Receipt!.Lines.Single().MissingQuantity);
         Assert.Equal(QrLabelStatuses.Delivered, fixture.Store.Labels.Single().Label.Status);
+        Assert.Empty(fixture.Store.InventoryTransactions);
+        Assert.Equal(0, fixture.PaymentStore.Payment!.ConfirmedAmount);
+        Assert.Equal(PaymentStatuses.Unpaid, fixture.PaymentStore.Payment.Status);
 
         var retry = await fixture.Service.ConfirmReceiptAsync(
             shipment.Id,
@@ -278,6 +281,38 @@ public sealed class ShipmentServiceTests
 
         Assert.Equal("validation_error", exception.Code);
         Assert.Empty(fixture.Store.Receipts);
+    }
+
+    [Fact]
+    public async Task Receipt_rejects_wrong_role_and_wrong_qr_without_side_effects()
+    {
+        var fixture = new Fixture();
+        var (shipment, line, batchId, _) = fixture.AddDeliveringShipment(quantity: 8);
+
+        var role = await Assert.ThrowsAsync<ShipmentOperationException>(() =>
+            fixture.Service.ConfirmReceiptAsync(
+                shipment.Id,
+                new ConfirmShipmentReceiptData(["TEM-KHONG-THUOC-PHAN-GIAO"],
+                    [new ConfirmShipmentReceiptLineData(line.OrderLineId, batchId, 8, 0)],
+                    shipment.Version, null),
+                "receipt-wrong-role", Guid.NewGuid(), SystemRoles.Sales, default));
+
+        Assert.Equal("forbidden", role.Code);
+        Assert.Empty(fixture.Store.Receipts);
+
+        var qr = await Assert.ThrowsAsync<ShipmentOperationException>(() =>
+            fixture.Service.ConfirmReceiptAsync(
+                shipment.Id,
+                new ConfirmShipmentReceiptData(["TEM-KHONG-THUOC-PHAN-GIAO"],
+                    [new ConfirmShipmentReceiptLineData(line.OrderLineId, batchId, 8, 0)],
+                    shipment.Version, null),
+                "receipt-wrong-qr", fixture.RetailerUserId, SystemRoles.Retailer, default));
+
+        Assert.Equal("validation_error", qr.Code);
+        Assert.Empty(fixture.Store.Receipts);
+        Assert.Empty(fixture.Store.InventoryTransactions);
+        Assert.Equal(0, fixture.PaymentStore.Payment!.ConfirmedAmount);
+        Assert.Equal(PaymentStatuses.Unpaid, fixture.PaymentStore.Payment.Status);
     }
 
     [Fact]

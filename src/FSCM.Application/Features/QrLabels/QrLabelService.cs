@@ -293,6 +293,7 @@ public sealed class QrLabelService(IQrLabelStore store, IQrCodeRenderer qrCodeRe
     private static QrLabelResult ToResult(QrLabelView view) => new(
         view.Label.Id, view.Label.QrCode, view.Label.QrCode, view.Label.BatchId, view.Batch.BatchCode,
         view.Label.CurrentWarehouseId, view.Warehouse.Code, view.Batch.ProductId, view.Product.Sku,
+        view.Product.Name, view.Batch.ProductionDate, view.Batch.ExpirationDate,
         view.Label.GoodsReceiptId, view.ReceiptCode,
         view.Label.Quantity, view.Label.Status, view.Label.ParentLabelId, view.ParentQrCode,
         view.Label.RootLabelId ?? view.Label.Id, view.RootQrCode, view.Label.BlobUrl,

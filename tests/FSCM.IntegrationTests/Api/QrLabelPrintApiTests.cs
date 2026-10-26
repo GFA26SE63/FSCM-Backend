@@ -52,9 +52,21 @@ public sealed class QrLabelPrintApiTests
 
         var detail = await client.GetFromJsonAsync<JsonElement>(
             $"/api/v1/qr-labels/{store.Child.QrCode}");
+        var label = detail.GetProperty("label");
+        Assert.Equal("Sữa tươi tiệt trùng", label.GetProperty("productName").GetString());
+        Assert.Equal("2026-08-30", label.GetProperty("productionDate").GetString());
+        Assert.Equal("2026-11-30", label.GetProperty("expirationDate").GetString());
+        Assert.Equal(TestQrLabelStore.ReceiptCode, label.GetProperty("receiptCode").GetString());
         Assert.Equal(2, detail.GetProperty("lineage").GetArrayLength());
         Assert.Equal(100m, detail.GetProperty("lineage").EnumerateArray()
             .Sum(item => item.GetProperty("quantity").GetDecimal()));
+
+        client.DefaultRequestHeaders.Authorization = Bearer(identityFactory.WarehouseKeeper, identityFactory);
+        Assert.Equal(HttpStatusCode.OK,
+            (await client.GetAsync($"/api/v1/qr-labels/{store.Child.QrCode}")).StatusCode);
+        store.AllowWarehouseAccess = false;
+        Assert.Equal(HttpStatusCode.Forbidden,
+            (await client.GetAsync($"/api/v1/qr-labels/{store.Child.QrCode}")).StatusCode);
     }
 
     [Fact]
@@ -119,6 +131,7 @@ public sealed class QrLabelPrintApiTests
                 WarehouseId = warehouse.Id,
                 ProductId = product.Id,
                 BatchCode = "WH-TA-SKU001-30112026",
+                ProductionDate = new DateOnly(2026, 8, 30),
                 ExpirationDate = new DateOnly(2026, 11, 30)
             };
             var rootId = Guid.NewGuid();
@@ -154,10 +167,11 @@ public sealed class QrLabelPrintApiTests
         public Batch Batch { get; }
         public BatchQrLabel Parent { get; }
         public BatchQrLabel Child { get; }
+        public bool AllowWarehouseAccess { get; set; } = true;
         private IReadOnlyCollection<BatchQrLabel> Labels => [Parent, Child];
 
         public Task<bool> CanAccessWarehouseAsync(Guid userId, string role, Guid warehouseId, CancellationToken cancellationToken) =>
-            Task.FromResult(warehouseId == warehouse.Id);
+            Task.FromResult(AllowWarehouseAccess && warehouseId == warehouse.Id);
         public Task<QrLabelView?> FindByCodeAsync(string qrCode, CancellationToken cancellationToken) =>
             Task.FromResult(ToView(Labels.SingleOrDefault(item => item.QrCode == qrCode)));
         public Task<BatchQrLabel?> FindForUpdateAsync(string qrCode, CancellationToken cancellationToken) =>
