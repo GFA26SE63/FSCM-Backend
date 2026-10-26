@@ -87,8 +87,18 @@ public sealed class AllocationPricingService(ShelfLifeDiscountService discounts)
                 // Measured from the shared moment, so the whole plan version agrees on how near
                 // expiry each batch is.
                 var remainingHours = (decimal)(part.BatchExpiresAt - pricedAt).TotalHours;
-                var remainingPercent = Math.Max(0m, Math.Round(
-                    remainingHours / part.TotalShelfLifeHours * 100m, 2, MidpointRounding.AwayFromZero));
+                // Bounded at both ends on purpose. Past its date a batch is at 0, and a batch with
+                // more life left than the product's own total shelf life is simply as fresh as that
+                // product gets, which is 100 - there is no such thing as 2228% of a shelf life, and
+                // the discount bands this feeds only run from 0 to 100 anyway. Unbounded, a single
+                // batch whose expiry disagrees with its product's shelf life overflowed
+                // ALLOCATION_PLAN_PRICE.RemainingShelfLifePercent, numeric(5,2), and took the whole
+                // run down with it.
+                var remainingPercent = Math.Clamp(
+                    Math.Round(remainingHours / part.TotalShelfLifeHours * 100m, 2,
+                        MidpointRounding.AwayFromZero),
+                    0m,
+                    100m);
 
                 var match = await discounts.MatchAsync(
                     part.ProductId, part.ProductCategoryId, remainingPercent,

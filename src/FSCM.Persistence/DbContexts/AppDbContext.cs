@@ -1,5 +1,6 @@
 using FSCM.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 namespace FSCM.Persistence.DbContexts;
 
@@ -97,6 +98,30 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<SystemConfiguration> SystemConfigurationRecords => Set<SystemConfiguration>();
     public DbSet<IdempotencyKey> IdempotencyKeyRecords => Set<IdempotencyKey>();
     public DbSet<OutboxMessage> OutboxMessageRecords => Set<OutboxMessage>();
+
+    /// <summary>
+    /// Every instant reaches PostgreSQL in UTC.
+    ///
+    /// Npgsql refuses to bind a <see cref="DateTimeOffset"/> whose offset is not zero to
+    /// <c>timestamp with time zone</c>, and the column stores an instant anyway - the offset is
+    /// never persisted. Without this, any value built in Vietnam time crashes the save, and the
+    /// places that legitimately build one are exactly the places this domain cares about: the run
+    /// cutoff, the schedule milestones, the delivery ETA. Fixing those one at a time is how the
+    /// same crash was found twice in one day, in two different writes, so it is settled here once
+    /// at the boundary rather than at each call site - which also leaves the services free to go on
+    /// returning Vietnam-offset values to callers that have to display them.
+    /// </summary>
+    protected override void ConfigureConventions(ModelConfigurationBuilder builder)
+    {
+        base.ConfigureConventions(builder);
+        builder.Properties<DateTimeOffset>().HaveConversion<UtcDateTimeOffsetConverter>();
+        builder.Properties<DateTimeOffset?>().HaveConversion<UtcDateTimeOffsetConverter>();
+    }
+
+    /// <summary>Same instant, offset zero. Reading back needs no change: it already is UTC.</summary>
+    private sealed class UtcDateTimeOffsetConverter()
+        : ValueConverter<DateTimeOffset, DateTimeOffset>(
+            value => value.ToUniversalTime(), stored => stored);
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

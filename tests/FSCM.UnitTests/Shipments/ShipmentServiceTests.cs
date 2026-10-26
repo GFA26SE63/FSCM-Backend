@@ -376,6 +376,40 @@ public sealed class ShipmentServiceTests
     }
 
     [Fact]
+    public async Task An_order_whose_warehouses_are_all_still_picking_is_not_ready_rather_than_unknown()
+    {
+        var fixture = new Fixture();
+        fixture.Store.ViewableOrders.Add(fixture.Order.Id);
+        // Nothing has closed a sheet, so the order has no shipment part at all. That is the
+        // ordinary state of an approved order mid-picking, and the honest answer is that it is not
+        // ready and these are the warehouses it waits on - not that the order is unknown.
+        fixture.AddOpenPickingList(fixture.WarehouseA, "WH-A");
+        fixture.AddOpenPickingList(fixture.WarehouseB, "WH-B");
+
+        var readiness = await fixture.Service.GetOrderReadinessAsync(
+            fixture.Order.Id, Guid.NewGuid(), SystemRoles.Operator, CancellationToken.None);
+
+        Assert.False(readiness.IsReady);
+        Assert.Equal(2, readiness.Parts.Count);
+        Assert.All(readiness.Parts, item => Assert.Null(item.ShipmentId));
+        Assert.Equal(2, readiness.BlockingReasons.Count);
+    }
+
+    [Fact]
+    public async Task An_order_with_no_parts_and_no_sheets_is_still_reported_as_unknown()
+    {
+        var fixture = new Fixture();
+        fixture.Store.ViewableOrders.Add(fixture.Order.Id);
+
+        // Nothing was ever issued for it, so there is genuinely nothing to report on.
+        var error = await Assert.ThrowsAsync<ShipmentOperationException>(() =>
+            fixture.Service.GetOrderReadinessAsync(
+                fixture.Order.Id, Guid.NewGuid(), SystemRoles.Operator, CancellationToken.None));
+
+        Assert.Equal("not_found", error.Code);
+    }
+
+    [Fact]
     public async Task A_sheet_closed_with_an_exception_holds_the_order_before_any_part_exists()
     {
         var fixture = new Fixture();
@@ -680,6 +714,9 @@ public sealed class ShipmentServiceTests
                 ? ToView(Shipments.Single(item => item.Id == shipmentId)) : null);
 
         public Task<SalesOrder?> FindOrderForUpdateAsync(Guid orderId, CancellationToken cancellationToken) =>
+            Task.FromResult(order.Id == orderId ? order : null);
+
+        public Task<SalesOrder?> FindOrderAsync(Guid orderId, CancellationToken cancellationToken) =>
             Task.FromResult(order.Id == orderId ? order : null);
 
         public Task<IReadOnlyCollection<ShipmentLabelView>> ListLabelsAsync(

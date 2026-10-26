@@ -52,6 +52,41 @@ public sealed class ShelfLifeDiscountServiceTests
     }
 
     [Fact]
+    public async Task No_table_at_all_also_means_no_reduction_rather_than_an_error()
+    {
+        var fixture = new Fixture();
+
+        // Nothing published. The answer is the same as a table with no band for this percentage:
+        // the part keeps its base price. Refusing instead stopped the allocation of a deployment
+        // that had simply not configured near-expiry pricing, and a run that cannot price cannot be
+        // approved, reserved, picked or issued - one unpublished table held up every order.
+        var match = await fixture.Service.MatchAsync(
+            Product, Category, 80m, 100_000m, null, CancellationToken.None);
+
+        Assert.Null(match.TableId);
+        Assert.Equal(0, match.Version);
+        Assert.Null(match.Tier);
+        Assert.Equal(0m, match.DiscountAmountPerUnit);
+        Assert.Contains("giá gốc", match.Explanation);
+    }
+
+    [Fact]
+    public async Task A_moment_before_any_table_took_effect_also_prices_at_base()
+    {
+        var fixture = new Fixture();
+        await fixture.PublishAsync(
+            Tier(ShelfLifeDiscountScopes.Sku, 0m, 30m, ShelfLifeDiscountTypes.Percent, 20m));
+
+        // Pricing a run from before the first table was published is a real case on any deployment
+        // that configured discounts late, and the stored price has to stay readable afterwards.
+        var match = await fixture.Service.MatchAsync(
+            Product, Category, 10m, 100_000m, Now.AddDays(-30), CancellationToken.None);
+
+        Assert.Null(match.TableId);
+        Assert.Equal(0m, match.DiscountAmountPerUnit);
+    }
+
+    [Fact]
     public async Task The_upper_bound_of_a_band_is_exclusive()
     {
         var fixture = new Fixture();

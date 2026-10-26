@@ -145,9 +145,18 @@ public sealed class ShipmentService(
             throw ShipmentOperationException.Forbidden("You cannot view this order deliveries.");
         await ReconcileAsync(orderId, cancellationToken);
         var views = await store.ListAsync(actorUserId, actorRole, orderId, null, null, cancellationToken);
-        if (views.Count == 0)
+        if (views.Count > 0) return await BuildReadinessAsync(views.First().Order, views, cancellationToken);
+
+        // No part exists yet, which is the ordinary state of an approved order while its warehouses
+        // are still picking - a part is only created when a warehouse closes its sheet. Refusing
+        // here told the caller the order was unknown when the true answer is that it is not ready
+        // and names the warehouses it is waiting on.
+        var order = await store.FindOrderAsync(orderId, cancellationToken)
+            ?? throw ShipmentOperationException.NotFound("Order was not found.");
+        var expected = await store.ListExpectedWarehousesAsync(orderId, cancellationToken);
+        if (expected.Count == 0)
             throw ShipmentOperationException.NotFound("This order has no delivery parts yet.");
-        return await BuildReadinessAsync(views, cancellationToken);
+        return await BuildReadinessAsync(order, [], cancellationToken);
     }
 
     /// <summary>
@@ -162,9 +171,10 @@ public sealed class ShipmentService(
     /// sheets the approved plan produced, and a missing one holds the order.
     /// </summary>
     private async Task<OrderShipmentReadinessResult> BuildReadinessAsync(
-        IReadOnlyCollection<ShipmentView> views, CancellationToken cancellationToken)
+        SalesOrder order,
+        IReadOnlyCollection<ShipmentView> views,
+        CancellationToken cancellationToken)
     {
-        var order = views.First().Order;
         var existing = views
             .Select(item => new ShipmentReadinessPartResult(
                 item.Shipment.Id, item.Shipment.ShipmentCode, item.Warehouse.Id, item.Warehouse.Code,
@@ -287,7 +297,8 @@ public sealed class ShipmentService(
 
             var siblings = await store.ListAsync(
                 actorUserId, SystemRoles.Admin, view.Order.Id, null, null, transactionCancellationToken);
-            var readiness = await BuildReadinessAsync(siblings, transactionCancellationToken);
+            var readiness = await BuildReadinessAsync(
+                view.Order, siblings, transactionCancellationToken);
             if (!readiness.IsReady)
             {
                 throw ShipmentOperationException.Conflict(string.Join(" ", readiness.BlockingReasons));
