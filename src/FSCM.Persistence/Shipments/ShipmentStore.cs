@@ -29,12 +29,24 @@ public sealed class ShipmentStore(AppDbContext dbContext) : IShipmentStore
                 order.Id == orderId && dbContext.SalesGroupMemberRecords.Any(membership =>
                     membership.UserAccountId == userId && membership.SalesGroupId == order.SalesGroupId &&
                     membership.IsActive), cancellationToken),
+            // Either allocation table puts the order in this keeper's warehouse. The run writes
+            // ALLOCATION_RUN_ALLOCATION and never the older ALLOCATION, so a rule that reads only
+            // the latter cannot see a single order the run produced - which is every order now.
             SystemRoles.WarehouseKeeper => dbContext.SalesOrderLineRecords.AsNoTracking().AnyAsync(line =>
-                line.SalesOrderId == orderId && dbContext.AllocationRecords.Any(allocation =>
-                    allocation.SalesOrderLineId == line.Id &&
-                    dbContext.UserWarehouseAssignmentRecords.Any(assignment =>
-                        assignment.UserAccountId == userId && assignment.IsActive &&
-                        assignment.WarehouseId == allocation.WarehouseId)), cancellationToken),
+                line.SalesOrderId == orderId &&
+                (dbContext.AllocationRecords.Any(allocation =>
+                        allocation.SalesOrderLineId == line.Id &&
+                        dbContext.UserWarehouseAssignmentRecords.Any(assignment =>
+                            assignment.UserAccountId == userId && assignment.IsActive &&
+                            assignment.WarehouseId == allocation.WarehouseId)) ||
+                 dbContext.AllocationRunAllocationRecords.Any(allocation =>
+                        dbContext.AllocationRunLineRecords.Any(runLine =>
+                            runLine.Id == allocation.AllocationRunLineId &&
+                            runLine.SalesOrderLineId == line.Id) &&
+                        dbContext.UserWarehouseAssignmentRecords.Any(assignment =>
+                            assignment.UserAccountId == userId && assignment.IsActive &&
+                            assignment.WarehouseId == allocation.WarehouseId))),
+                cancellationToken),
             SystemRoles.Retailer => dbContext.SalesOrderRecords.AsNoTracking().AnyAsync(order =>
                 order.Id == orderId && dbContext.RetailerRecords.Any(retailer =>
                     retailer.Id == order.RetailerId && retailer.UserAccountId == userId), cancellationToken),
