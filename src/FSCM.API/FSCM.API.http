@@ -601,3 +601,36 @@ Content-Type: application/json
   "query": "query($query: ProductRankingQueryInput!) { bestSellingProducts(query: $query) { fromDate toDate criterion scope quantityUnit recognitionRule entries { rank productId sku productName normalizedSoldQuantity quantityUnit adjustedNetRevenue } } }",
   "variables": { "query": { "fromDate": "2026-10-01", "toDate": "2026-10-31", "criterion": "Revenue" } }
 }
+
+###
+
+# F80 recipient-scoped notification list and unread badge.
+GET {{FSCM.API_HostAddress}}/api/v1/notifications?isRead=false&page=1&pageSize=20
+Authorization: Bearer {{salesLogin.response.body.$.accessToken}}
+
+###
+
+GET {{FSCM.API_HostAddress}}/api/v1/notifications/badges
+Authorization: Bearer {{salesLogin.response.body.$.accessToken}}
+
+###
+
+# Notification identity is a GUID; another recipient's GUID returns 404.
+PATCH {{FSCM.API_HostAddress}}/api/v1/notifications/00000000-0000-0000-0000-000000000000/read
+Authorization: Bearer {{salesLogin.response.body.$.accessToken}}
+
+###
+
+PATCH {{FSCM.API_HostAddress}}/api/v1/notifications/read-all
+Authorization: Bearer {{salesLogin.response.body.$.accessToken}}
+
+###
+
+POST {{FSCM.API_HostAddress}}/graphql
+Authorization: Bearer {{salesLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "query": "query($filter: NotificationFilterInput!) { notifications(filter: $filter) { page pageSize totalCount items { id type title message isRead createdAt readAt relatedEntityType relatedEntityId deepLink } } notificationBadges { unreadCount hasUnread } }",
+  "variables": { "filter": { "isRead": false, "page": 1, "pageSize": 20 } }
+}

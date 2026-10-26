@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using FSCM.Application.Features.EntityQueries;
 using FSCM.Application.Features.Identity;
+using FSCM.Application.Features.Notifications;
 using FSCM.Application.Features.Payments;
 using FSCM.Application.Features.Reports;
 using FSCM.Domain.Authorization;
@@ -55,6 +56,21 @@ public sealed class SystemQuery
         [Service] IHttpContextAccessor accessor,
         CancellationToken cancellationToken) =>
         service.GetProductRankingAsync(query, CurrentUser.Id(accessor), CurrentUser.Role(accessor), cancellationToken);
+
+    [Authorize]
+    public Task<NotificationPage> Notifications(
+        NotificationFilter filter,
+        [Service] NotificationService service,
+        [Service] IHttpContextAccessor accessor,
+        CancellationToken cancellationToken) =>
+        service.ListAsync(CurrentUser.Id(accessor), filter, cancellationToken);
+
+    [Authorize]
+    public Task<NotificationBadgeResult> NotificationBadges(
+        [Service] NotificationService service,
+        [Service] IHttpContextAccessor accessor,
+        CancellationToken cancellationToken) =>
+        service.GetBadgesAsync(CurrentUser.Id(accessor), cancellationToken);
 }
 
 internal static class CurrentUser
