@@ -286,7 +286,7 @@ public static class OrderStatuses
     public const string PendingApproval = "PendingApproval";
 
     /// <summary>
-    /// Reviewed and waiting for the next 12:00 allocation run. Approval commits no stock: the run
+    /// Reviewed and waiting for the next allocation run. Approval commits no stock: the run
     /// decides which batches an order gets, and only run approval reserves them (F87, F88).
     /// </summary>
     public const string PendingAllocation = "PendingAllocation";
