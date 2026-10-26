@@ -2,6 +2,7 @@ using System.Security.Claims;
 using FSCM.Application.Features.EntityQueries;
 using FSCM.Application.Features.Identity;
 using FSCM.Application.Features.Payments;
+using FSCM.Application.Features.Reports;
 using FSCM.Domain.Authorization;
 using HotChocolate.Authorization;
 
@@ -38,6 +39,14 @@ public sealed class SystemQuery
         [Service] IHttpContextAccessor accessor,
         CancellationToken cancellationToken) =>
         service.GetByOrderAsync(CurrentUser.Id(accessor), orderId, cancellationToken);
+
+    [Authorize(Roles = [SystemRoles.Admin, SystemRoles.Operator, SystemRoles.SalesManager, SystemRoles.Sales])]
+    public Task<SalesKpiResult> SalesKpis(
+        SalesKpiQuery query,
+        [Service] ReportService service,
+        [Service] IHttpContextAccessor accessor,
+        CancellationToken cancellationToken) =>
+        service.GetSalesKpiAsync(query, CurrentUser.Id(accessor), CurrentUser.Role(accessor), cancellationToken);
 }
 
 internal static class CurrentUser
@@ -52,4 +61,8 @@ internal static class CurrentUser
             ? id
             : throw IdentityOperationException.InvalidToken();
     }
+
+    public static string Role(IHttpContextAccessor accessor) =>
+        accessor.HttpContext?.User.FindFirstValue(ClaimTypes.Role)
+        ?? throw IdentityOperationException.InvalidToken();
 }

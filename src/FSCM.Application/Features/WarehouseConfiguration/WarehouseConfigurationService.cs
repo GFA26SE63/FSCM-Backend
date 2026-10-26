@@ -417,6 +417,20 @@ public sealed partial class WarehouseConfigurationService(
                     throw WarehouseConfigurationOperationException.Validation(
                         "ETA schedule needs a run time, a later approval deadline, and at least one dispatch slot.");
                 break;
+            case BusinessConfigurationKeys.SalesKpi:
+                if (value.ValueKind != JsonValueKind.Object ||
+                    !TryGetDecimal(value, "successfulOrdersTarget", out var orderTarget) || orderTarget <= 0 ||
+                    !TryGetDecimal(value, "retailersServedTarget", out var retailerTarget) || retailerTarget <= 0 ||
+                    !TryGetDecimal(value, "newRetailersTarget", out var newRetailerTarget) || newRetailerTarget <= 0 ||
+                    !TryGetDecimal(value, "promotionRevenueRatioMaximum", out var promotionMaximum) || promotionMaximum <= 0 || promotionMaximum >= 1 ||
+                    !TryGetDecimal(value, "successfulOrdersWeight", out var orderWeight) || orderWeight < 0 ||
+                    !TryGetDecimal(value, "retailersServedWeight", out var retailerWeight) || retailerWeight < 0 ||
+                    !TryGetDecimal(value, "newRetailersWeight", out var newRetailerWeight) || newRetailerWeight < 0 ||
+                    !TryGetDecimal(value, "promotionRevenueRatioWeight", out var promotionWeight) || promotionWeight < 0 ||
+                    Math.Abs(orderWeight + retailerWeight + newRetailerWeight + promotionWeight - 1m) > 0.0001m)
+                    throw WarehouseConfigurationOperationException.Validation(
+                        "Sales KPI targets must be positive, the promotion ratio must be between 0 and 1, and weights must be non-negative and sum to 1.");
+                break;
         }
 
         return JsonSerializer.Serialize(value);

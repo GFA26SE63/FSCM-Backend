@@ -23,3 +23,25 @@ public sealed record SalesRankingResult(
     DateOnly ToDate,
     string Scope,
     IReadOnlyCollection<SalesRankingEntryResult> Entries);
+
+public sealed record SalesKpiQuery(DateOnly FromDate, DateOnly ToDate, Guid? SalesGroupId, Guid? SalesUserId);
+
+public sealed record SalesKpiMetricResult(
+    string Code, string Name, decimal Target, decimal Actual, decimal CompletionRate, decimal Weight,
+    decimal WeightedScore, string Unit);
+
+public sealed record SalesKpiOrderResult(
+    Guid OrderId, string OrderCode, Guid RetailerId, string RetailerCode, string RetailerName,
+    DateOnly RecognitionDate, decimal RevenueBeforePromotion, decimal PromotionAmount,
+    decimal RevenueAfterPromotion, decimal ApprovedAdjustmentAmount, decimal RecognizedRevenue);
+
+public sealed record SalesKpiEntryResult(
+    Guid SalesUserId, string SalesUserName, Guid SalesGroupId, string SalesGroupCode, string SalesGroupName,
+    Guid RegionId, decimal OverallCompletionRate, decimal RecognizedRevenue,
+    IReadOnlyCollection<SalesKpiMetricResult> Metrics,
+    IReadOnlyCollection<SalesKpiOrderResult> Orders);
+
+public sealed record SalesKpiResult(
+    DateOnly FromDate, DateOnly ToDate, string Scope, int ConfigurationVersion,
+    DateTimeOffset ConfigurationEffectiveFrom, string RecognitionRule,
+    IReadOnlyCollection<SalesKpiEntryResult> Entries);
