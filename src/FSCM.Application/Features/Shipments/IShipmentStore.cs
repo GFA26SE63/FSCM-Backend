@@ -36,6 +36,20 @@ public sealed record ShipmentView(
 /// A Ready run picking list + one of its orders that has no shipment part yet (F92 reconciliation
 /// source). A run picking list spans many orders, so each (list, order) pair is one source.
 /// </summary>
+/// <summary>
+/// A warehouse an order is expected to leave from, taken from the run picking sheets the approved
+/// plan produced, together with the state of that sheet.
+///
+/// This exists because a shipment part is only created once its warehouse closes its sheet, so the
+/// set of shipment rows is not the set of warehouses an order is waiting on. Reading readiness from
+/// the rows alone made a half-picked order look ready.
+/// </summary>
+public sealed record ExpectedWarehousePart(
+    Guid WarehouseId,
+    string WarehouseCode,
+    string PickingCode,
+    string PickingStatus);
+
 public sealed record PendingShipmentSource(
     Guid RunPickingListId,
     Guid SalesOrderId,
@@ -68,6 +82,13 @@ public interface IShipmentStore
         Guid shipmentId, bool forUpdate, CancellationToken cancellationToken);
 
     /// <summary>Completed picking lists (optionally for one order) that do not yet have a shipment part.</summary>
+    /// <summary>
+    /// Every warehouse the approved plan expects this order to leave from, whether or not a
+    /// shipment part exists for it yet.
+    /// </summary>
+    Task<IReadOnlyCollection<ExpectedWarehousePart>> ListExpectedWarehousesAsync(
+        Guid orderId, CancellationToken cancellationToken);
+
     Task<IReadOnlyCollection<PendingShipmentSource>> ListPendingSourcesAsync(
         Guid? orderId, CancellationToken cancellationToken);
 

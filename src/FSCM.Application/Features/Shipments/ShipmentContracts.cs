@@ -41,9 +41,16 @@ public sealed record ConfirmShipmentIssueData(int ExpectedVersion);
 /// picked and the payment condition met before any part leaves. Reporting the blocking parts by
 /// name is the point - "not ready" without saying which warehouse sends someone to ask.
 /// </summary>
+/// <summary>
+/// One warehouse's part of an order, as the readiness check reports it.
+///
+/// <see cref="ShipmentId"/> and <see cref="ShipmentCode"/> are null for a warehouse that is still
+/// picking: a part is only created once that warehouse closes its sheet, and leaving such a
+/// warehouse out of the list entirely is what let a half-picked order read as ready.
+/// </summary>
 public sealed record ShipmentReadinessPartResult(
-    Guid ShipmentId,
-    string ShipmentCode,
+    Guid? ShipmentId,
+    string? ShipmentCode,
     Guid WarehouseId,
     string WarehouseCode,
     string Status,
