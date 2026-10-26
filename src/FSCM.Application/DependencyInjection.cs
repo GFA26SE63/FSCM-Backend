@@ -60,8 +60,8 @@ public static class DependencyInjection
         services.AddScoped<InternalTransferService>();
         services.AddScoped<ManualPaymentService>();
         services.AddScoped<LoyaltyService>();
-    services.AddScoped<RewardService>();
-    services.AddScoped<ComplaintService>();
+        services.AddScoped<RewardService>();
+        services.AddScoped<ComplaintService>();
         services.AddScoped<RedemptionService>();
         services.AddScoped<RedemptionWorkflowService>();
         services.AddScoped<LoyaltyCardService>();
@@ -70,6 +70,7 @@ public static class DependencyInjection
         services.AddScoped<OrderService>();
         services.AddScoped<IOrderPricingService, OrderPricingService>();
         services.AddScoped<PaymentService>();
+        services.AddScoped<RetailerReceivableService>();
         services.AddScoped<PaymentPlanService>();
         services.AddScoped<IPaymentPlanService>(provider => provider.GetRequiredService<PaymentPlanService>());
         services.AddScoped<PickingService>();

@@ -93,14 +93,15 @@ public static class DependencyInjection
         services.AddScoped<IManualPaymentStore, ManualPaymentStore>();
         services.AddScoped<ILoyaltyStore, LoyaltyStore>();
         services.AddScoped<IRewardStore, RewardStore>();
-    services.AddScoped<IRedemptionStore, RedemptionStore>();
-    services.AddScoped<IComplaintStore, ComplaintStore>();
+        services.AddScoped<IRedemptionStore, RedemptionStore>();
+        services.AddScoped<IComplaintStore, ComplaintStore>();
         services.AddScoped<IRedemptionWorkflowStore, RedemptionStore>();
         services.AddScoped<ILoyaltyCardStore, LoyaltyCardStore>();
         services.AddScoped<IMapStore, MapStore>();
         services.AddScoped<IMobileSnapshotStore, MobileSnapshotStore>();
         services.AddScoped<IOrderStore, OrderStore>();
         services.AddScoped<IPaymentStore, PaymentStore>();
+        services.AddScoped<IRetailerReceivableStore, RetailerReceivableStore>();
         services.AddScoped<IPickingStore, PickingStore>();
         services.AddScoped<IRunPickingStore, RunPickingStore>();
         services.AddScoped<IQrLabelStore, QrLabelStore>();
