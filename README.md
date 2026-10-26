@@ -277,9 +277,15 @@ The cutoff is not a parameter by default: it is read from the published schedule
 button cannot quietly change which orders belong to the run. An Admin may pass a later moment on
 the same business date, for the case where the run was down while orders kept arriving, and the
 moment actually used is stored on the run - the boundary that was applied stays readable instead of
-being inferred from when someone pressed it. A cutoff still in the future is refused (`conflict`),
-and one earlier than the published time is refused (`validation_error`), because moving it back
-would drop orders that belong to this run.
+being inferred from when someone pressed it.
+
+Three refusals, and they are checked in this order on purpose. A cutoff on any day but today is
+refused first (`validation_error`), because the published time it would otherwise be measured
+against is today's: yesterday's cutoff is earlier than it and tomorrow's is later than now, so
+either would be reported as a time out of range when the caller actually named the wrong day. Then
+a cutoff still in the future (`conflict`), and last one earlier than the published time
+(`validation_error`), because moving it back would drop orders that belong to this run. Times in
+these messages are written in Vietnam time whatever offset they arrived in.
 
 Opening is idempotent on the business date, so pressing twice joins the run that already exists
 rather than splitting the day across two plans. That also means the button cannot repair a run that
