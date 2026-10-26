@@ -1,6 +1,8 @@
 using System.Security.Claims;
 using FSCM.Application.Features.EntityQueries;
 using FSCM.Application.Features.Identity;
+using FSCM.Application.Features.Payments;
+using FSCM.Domain.Authorization;
 using HotChocolate.Authorization;
 
 namespace FSCM.API.GraphQL;
@@ -20,6 +22,22 @@ public sealed class SystemQuery
         return new EntityQuery(
             new EntityQueryAccess(current.Id, current.Role, current.Scope));
     }
+
+    [Authorize(Roles = [SystemRoles.Retailer])]
+    public Task<RetailerReceivablePage> RetailerReceivables(
+        RetailerReceivableFilter filter,
+        [Service] RetailerReceivableService service,
+        [Service] IHttpContextAccessor accessor,
+        CancellationToken cancellationToken) =>
+        service.ListAsync(CurrentUser.Id(accessor), filter, cancellationToken);
+
+    [Authorize(Roles = [SystemRoles.Retailer])]
+    public Task<RetailerReceivableResult> RetailerReceivable(
+        Guid orderId,
+        [Service] RetailerReceivableService service,
+        [Service] IHttpContextAccessor accessor,
+        CancellationToken cancellationToken) =>
+        service.GetByOrderAsync(CurrentUser.Id(accessor), orderId, cancellationToken);
 }
 
 internal static class CurrentUser

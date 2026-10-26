@@ -521,6 +521,29 @@ Content-Type: application/json
 
 ###
 
+# F68 Retailer-only receivable list. Use the Retailer account token.
+GET {{FSCM.API_HostAddress}}/api/v1/retailer/receivables?page=1&pageSize=20&overdue=true
+Authorization: Bearer {{retailerLogin.response.body.$.accessToken}}
+
+###
+
+# F68 detail uses immutable order GUID, not the display order code.
+GET {{FSCM.API_HostAddress}}/api/v1/retailer/receivables/orders/00000000-0000-0000-0000-000000000000
+Authorization: Bearer {{retailerLogin.response.body.$.accessToken}}
+
+###
+
+POST {{FSCM.API_HostAddress}}/graphql
+Authorization: Bearer {{retailerLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "query": "query($filter: RetailerReceivableFilterInput!) { retailerReceivables(filter: $filter) { page pageSize totalCount totalPages items { orderId orderCode originalOrderAmount finalApprovedAmount approvedAdjustmentAmount adjustedAmount confirmedCollectedAmount outstandingAmount pendingDisputedAmount collectibleAmount dueDate isOverdue pendingRefundAmount completedRefundAmount refundDueAmount collections { method amount status confirmedAt reference } disputes { id status disputedAmount reportedAt resolvedAt } refunds { id amount status transferredAt transactionReference verifiedAt reason } } } }",
+  "variables": { "filter": { "page": 1, "pageSize": 20, "overdue": true } }
+}
+
+###
+
 # Admin/Operator only. COD requires complete delivery; prepaid requires final approval.
 POST {{FSCM.API_HostAddress}}/api/v1/manual-payments
 Authorization: Bearer {{operatorLogin.response.body.$.accessToken}}
