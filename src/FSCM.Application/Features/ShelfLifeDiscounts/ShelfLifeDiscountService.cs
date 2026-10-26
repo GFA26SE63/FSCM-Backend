@@ -59,11 +59,17 @@ public sealed class ShelfLifeDiscountService(IShelfLifeDiscountStore store, Time
 
         var view = at is { } moment
             ? await store.FindEffectiveAtAsync(moment, cancellationToken)
-                ?? throw ShelfLifeDiscountOperationException.NotFound(
-                    $"No shelf-life discount table was in force at {moment:O}.")
-            : await store.FindCurrentAsync(cancellationToken)
-                ?? throw ShelfLifeDiscountOperationException.NotFound(
-                    "No shelf-life discount table has been published yet.");
+            : await store.FindCurrentAsync(cancellationToken);
+
+        // No table at all is the same answer as a table with no band for this remaining percentage:
+        // no reduction. Refusing instead stopped the whole allocation of a deployment that simply
+        // had not configured near-expiry pricing yet - a run that cannot price cannot be approved,
+        // reserved, picked or issued, so one unconfigured table held up every order in the system.
+        if (view is null)
+        {
+            return new ShelfLifeDiscountMatch(null, 0, remainingPercent, null, 0m,
+                "Chưa có bảng giảm HSD nào hiệu lực; giữ nguyên giá gốc.");
+        }
 
         var applicable = view.Tiers
             .Where(tier => remainingPercent >= tier.MinRemainingPercent
