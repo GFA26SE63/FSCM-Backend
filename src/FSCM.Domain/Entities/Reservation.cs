@@ -3,7 +3,7 @@
 namespace FSCM.Domain.Entities;
 
 // Held stock, for either path that can hold it: the older per-order allocation, or an allocation
-// made by a 12:00 run. Exactly one of the two links is set.
+// made by a daily allocation run. Exactly one of the two links is set.
 public sealed class Reservation
 {
     public Guid Id { get; set; }

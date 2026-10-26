@@ -8,7 +8,7 @@ using Microsoft.Extensions.Options;
 namespace FSCM.Infrastructure.BackgroundJobs;
 
 /// <summary>
-/// The daily allocation run (F85). Wakes at the configured cutoff, default 12:00
+/// The daily allocation run (F85). Wakes at the published cutoff, default 00:00
 /// Asia/Ho_Chi_Minh, closes the run and builds the plan.
 ///
 /// Closing is idempotent on the business day, so a restart, a second instance or a late wake-up
