@@ -3,6 +3,7 @@ using FSCM.Application.Features.Inventory;
 using FSCM.Application.Features.Orders;
 using FSCM.Application.Features.Payments;
 using FSCM.Application.Features.Retailers;
+using FSCM.Application.Features.ShelfLifeDiscounts;
 using FSCM.Application.Features.QrLabels;
 using FSCM.Application.Features.Promotions;
 using FSCM.Application.Features.WarehouseConfiguration;
@@ -67,6 +68,10 @@ public sealed class DevelopmentDataSeeder(
         await dbContext.SaveChangesAsync(cancellationToken);
         await SeedInventoryDataAsync(configuredWarehouses, products, users[SystemRoles.WarehouseKeeper].Id, now, cancellationToken);
         await dbContext.SaveChangesAsync(cancellationToken);
+        await SeedShelfLifeDiscountTableAsync(
+            categories, users[SystemRoles.Admin].Id, now, cancellationToken);
+        await SeedNearExpiryPricingFixtureAsync(
+            configuredWarehouses, products, now, cancellationToken);
         await SeedQrLabelDataAsync(users[SystemRoles.WarehouseKeeper].Id, now, cancellationToken);
         await SeedSalesGroupMembershipsAsync(users, salesGroups, now, cancellationToken);
         await SeedRetailerAssignmentsAsync(retailer.Id, salesGroups, now, cancellationToken);
@@ -306,6 +311,163 @@ public sealed class DevelopmentDataSeeder(
         }
         assignment.IsActive = true;
         assignment.RemovedAt = null;
+        await dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    /// <summary>
+    /// A first shelf-life discount table, so a development database can price at all.
+    ///
+    /// Without one in force every part simply keeps its base price, which is a correct answer but
+    /// an uninteresting one: no band is ever exercised, and the reduction half of F46 and F89 goes
+    /// untested. The bands are the ones the Portal prototype has always used.
+    /// </summary>
+    private async Task SeedShelfLifeDiscountTableAsync(
+        IReadOnlyDictionary<string, ProductCategory> categories,
+        Guid adminUserId,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        if (await dbContext.ShelfLifeDiscountTableRecords.AnyAsync(cancellationToken)) return;
+
+        var table = new ShelfLifeDiscountTable
+        {
+            Id = Guid.NewGuid(),
+            Version = 1,
+            EffectiveFrom = now.AddDays(-30),
+            EffectiveTo = null,
+            IsActive = true,
+            Note = "Bậc giảm theo % hạn sử dụng còn lại, theo bộ đang dùng từ bản prototype.",
+            CreatedByUserId = adminUserId,
+            CreatedAt = now,
+            UpdatedAt = now
+        };
+        dbContext.ShelfLifeDiscountTableRecords.Add(table);
+
+        // Bands are [min, max): adjacent ones meet without overlapping, and anything at or above
+        // the top band keeps its full price.
+        var bands = new (decimal Min, decimal Max, decimal Percent)[]
+        {
+            (0m, 30m, 15m),
+            (30m, 40m, 10m),
+            (40m, 60m, 5m)
+        };
+
+        // A band is scoped to a SKU or to a category - there is no "everything" scope, and a
+        // category band with no category on it matches nothing at all. So the bands are written out
+        // for every category, which is what gives a development database bands that actually fire.
+        foreach (var category in categories.Values)
+        {
+            foreach (var (min, max, percent) in bands)
+            {
+                dbContext.ShelfLifeDiscountTierRecords.Add(new ShelfLifeDiscountTier
+                {
+                    Id = Guid.NewGuid(),
+                    ShelfLifeDiscountTableId = table.Id,
+                    Scope = ShelfLifeDiscountScopes.Category,
+                    ProductId = null,
+                    ProductCategoryId = category.Id,
+                    MinRemainingPercent = min,
+                    MaxRemainingPercent = max,
+                    DiscountType = ShelfLifeDiscountTypes.Percent,
+                    DiscountValue = percent,
+                    CreatedAt = now
+                });
+            }
+        }
+
+        await dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    /// <summary>
+    /// One batch placed deliberately where a near-expiry reduction can actually be observed.
+    ///
+    /// Every other seeded batch sits at one extreme or the other: expired, below its product's
+    /// minimum life on receipt, or so far from its expiry that it is simply as fresh as the product
+    /// gets. None of them can be allocated *and* earn a reduction, so the discount half of pricing
+    /// could never be exercised end to end. This one is five days from expiry on a fourteen-day
+    /// SKU - comfortably past the 48-hour minimum life, and around 36% of its shelf life remaining,
+    /// which lands in the middle band.
+    ///
+    /// The expiry is relative to the moment of seeding and is refreshed on every run, because a
+    /// fixed date would drift out of the band within about a day and a half and leave the fixture
+    /// useless. That is why it is keyed by a fixed code rather than by its expiry like the others:
+    /// it is one batch that stays in position, not a new batch each day.
+    /// </summary>
+    private async Task SeedNearExpiryPricingFixtureAsync(
+        IReadOnlyCollection<Warehouse> warehouses,
+        IReadOnlyDictionary<string, Product> products,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        const string batchCode = "WH-TD-SKU002-CAN-HAN-MAU";
+        const string qrCode = "TEM-900001";
+        const decimal onHand = 150m;
+
+        var warehouse = warehouses.SingleOrDefault(item => item.Code == "WH-TD");
+        if (warehouse is null || !products.TryGetValue("SKU002", out var product)) return;
+
+        var expiresOn = DateOnly.FromDateTime(now.AddDays(5).Date);
+
+        var batch = await dbContext.BatchRecords
+            .SingleOrDefaultAsync(item => item.BatchCode == batchCode, cancellationToken);
+        if (batch is null)
+        {
+            var batchId = Guid.NewGuid();
+            batch = new Batch
+            {
+                Id = batchId,
+                RootBatchId = batchId,
+                BatchCode = batchCode,
+                Quantity = onHand,
+                CreatedAt = now
+            };
+            dbContext.BatchRecords.Add(batch);
+        }
+
+        batch.WarehouseId = warehouse.Id;
+        batch.ProductId = product.Id;
+        batch.ExpirationDate = expiresOn;
+        batch.ExpiryStatus = BatchExpiryStatuses.NearExpiry;
+        batch.StockStatus = BatchStockStatuses.InStock;
+        batch.Version = Math.Max(batch.Version, 1);
+        batch.UpdatedAt = now;
+        await dbContext.SaveChangesAsync(cancellationToken);
+
+        var balance = await dbContext.InventoryBalanceRecords
+            .SingleOrDefaultAsync(item => item.BatchId == batch.Id, cancellationToken);
+        if (balance is null)
+        {
+            // Only set on creation: a later run must not wipe out stock a test has reserved.
+            dbContext.InventoryBalanceRecords.Add(new InventoryBalance
+            {
+                Id = Guid.NewGuid(),
+                BatchId = batch.Id,
+                PhysicalQuantity = onHand,
+                ReservedQuantity = 0m,
+                AvailableQuantity = onHand,
+                Version = 1,
+                UpdatedAt = now
+            });
+        }
+
+        if (!await dbContext.BatchQrLabelRecords.AnyAsync(item => item.QrCode == qrCode, cancellationToken))
+        {
+            var labelId = Guid.NewGuid();
+            dbContext.BatchQrLabelRecords.Add(new BatchQrLabel
+            {
+                Id = labelId,
+                BatchId = batch.Id,
+                CurrentWarehouseId = warehouse.Id,
+                RootLabelId = labelId,
+                QrCode = qrCode,
+                Quantity = onHand,
+                Status = QrLabelStatuses.Available,
+                Version = 1,
+                GeneratedAt = now,
+                UpdatedAt = now
+            });
+        }
+
         await dbContext.SaveChangesAsync(cancellationToken);
     }
 
