@@ -89,10 +89,11 @@ public sealed class DevelopmentDataSeeder(
         var paymentSeedReference = "CHỜ-PHÂN-BỔ";
         if (!demoOrder.FinalPricePendingAllocation)
         {
-            if (demoOrder.Status is OrderStatuses.PendingApproval or OrderStatuses.Approved)
+            if (demoOrder.Status is OrderStatuses.PendingApproval)
             {
                 demoOrder = await orderService.ApproveAsync(
-                    demoOrder.Id, demoOrder.Version, users[SystemRoles.Operator].Id, cancellationToken);
+                    demoOrder.Id, demoOrder.Version, users[SystemRoles.Operator].Id,
+                    SystemRoles.Operator, cancellationToken);
             }
             paymentSeedReference = $"SEED-S1E-{demoOrder.OrderCode}";
             var existingPayment = await dbContext.PaymentRecords.SingleOrDefaultAsync(
@@ -855,10 +856,13 @@ public sealed class DevelopmentDataSeeder(
             new ConfigurationSeed(BusinessConfigurationKeys.OrderStepCartons, "1", "integer",
                 "Bước số lượng đặt hàng mặc định là một thùng"),
             new ConfigurationSeed(BusinessConfigurationKeys.EtaSchedule,
-                "{\"timeZone\":\"Asia/Ho_Chi_Minh\",\"allocationRunLocalTime\":\"12:00\"," +
+                "{\"timeZone\":\"Asia/Ho_Chi_Minh\",\"salesSubmissionAdviceLocalTime\":\"11:00\"," +
+                "\"orderReviewReminderLocalTime\":\"11:30\",\"allocationRunLocalTime\":\"12:00\"," +
+                "\"planApprovalReminderLocalTime\":\"13:30\"," +
                 "\"planApprovalDeadlineLocalTime\":\"14:00\",\"preparationMinutes\":240," +
                 "\"bufferMinutes\":60,\"dispatchSlotsLocalTime\":[\"06:00\",\"14:00\"]}", "object",
-                "Lịch tính ETA: chạy đợt 12:00, hạn duyệt 14:00, soạn 4 giờ, đệm 1 giờ, xuất 06:00 và 14:00")
+                "Lịch ngày chạy đợt: khuyến nghị gửi đơn trước 11:00, nhắc duyệt đơn 11:30, chốt đợt 12:00, " +
+                "nhắc duyệt phương án 13:30, hạn duyệt 14:00, soạn 4 giờ, đệm 1 giờ, xuất 06:00 và 14:00")
         };
         foreach (var definition in configurations)
         {
@@ -1190,8 +1194,11 @@ public sealed class DevelopmentDataSeeder(
             receipt.RequestHash = new string('0', 64);
             receipt.WarehouseId = warehouse.Id;
             receipt.CreatedByUserId = warehouseKeeperId;
+            receipt.ApprovedByUserId = warehouseKeeperId;
             receipt.Status = GoodsReceiptStatuses.Received;
             receipt.ReceivedAt = receivedAt;
+            receipt.ApprovedAt = receivedAt;
+            receipt.Version = Math.Max(receipt.Version, 1);
             receipt.UpdatedAt = now;
             await dbContext.SaveChangesAsync(cancellationToken);
 
@@ -1205,6 +1212,8 @@ public sealed class DevelopmentDataSeeder(
             }
             line.SourceLotCode = definition.SourceLotCode;
             line.ReceivedQuantity = definition.OnHand;
+            line.ProductionDate = definition.ExpirationDate.AddDays(
+                -(int)Math.Ceiling(product.ShelfLifeHours / 24m));
             line.ExpirationDate = definition.ExpirationDate;
             await dbContext.SaveChangesAsync(cancellationToken);
 

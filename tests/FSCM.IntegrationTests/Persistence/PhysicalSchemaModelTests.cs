@@ -9,6 +9,16 @@ public sealed class PhysicalSchemaModelTests
     private static readonly string[] ExpectedTables =
     [
         "ALLOCATION",
+        "ALLOCATION_LINE_TRACE",
+        "ALLOCATION_PLAN_PRICE",
+        "ALLOCATION_PLAN_VERSION",
+        "ALLOCATION_RUN",
+        "ALLOCATION_RUN_ALLOCATION",
+        "ALLOCATION_RUN_LINE",
+        "ALLOCATION_RUN_ORDER",
+        "ALLOCATION_RUN_STOCK",
+        "ALLOCATION_TRACE_CANDIDATE",
+        "ALLOCATION_TRACE_SCORE",
         "AUDIT_LOG",
         "BATCH",
         "BATCH_PROMOTION",
@@ -22,6 +32,7 @@ public sealed class PhysicalSchemaModelTests
         "INVENTORY_BALANCE",
         "INVENTORY_TRANSACTION",
         "LOYALTY_PROGRAM",
+        "LOYALTY_PROGRAM_RETAILER",
         "LOYALTY_REWARD",
         "LOYALTY_TRANSACTION",
         "MAP_DISTANCE_CACHE",
@@ -43,6 +54,7 @@ public sealed class PhysicalSchemaModelTests
         "QR_LABEL_EVENT",
         "RECEIPT_CONFIRMATION",
         "RECEIPT_CONFIRMATION_ITEM",
+        "RECEIPT_CONFIRMATION_QR_LABEL",
         "RECEIPT_DISCREPANCY",
         "RECEIPT_DISCREPANCY_ITEM",
         "REGION",
@@ -52,11 +64,16 @@ public sealed class PhysicalSchemaModelTests
         "RETAILER_PRODUCT_MLOR",
         "RETAILER_SALES_ASSIGNMENT",
         "REWARD_REDEMPTION",
+        "RUN_PICKING_GATHER",
+        "RUN_PICKING_LIST",
+        "RUN_PICKING_SPLIT",
         "SALES_GROUP",
         "SALES_GROUP_MEMBER",
         "SALES_ORDER",
         "SALES_ORDER_ATTACHMENT",
         "SALES_ORDER_LINE",
+        "SHELF_LIFE_DISCOUNT_TABLE",
+        "SHELF_LIFE_DISCOUNT_TIER",
         "STOCK_HOLD",
         "SYSTEM_CONFIGURATION",
         "TRANSIT_TABLE",
@@ -90,9 +107,10 @@ public sealed class PhysicalSchemaModelTests
             .ToArray();
 
         Assert.Equal(ExpectedTables, tableNames);
-        Assert.Equal(66, entityTypes.Length);
-        Assert.Equal(691, entityTypes.Sum(entityType => entityType.GetProperties().Count()));
-        Assert.Equal(147, entityTypes.Sum(entityType => entityType.GetForeignKeys().Count()));
+        Assert.Equal(83, entityTypes.Length);
+        // Develop's run-picking shape plus loyalty program expiry and retailer scope.
+        Assert.Equal(926, entityTypes.Sum(entityType => entityType.GetProperties().Count()));
+        Assert.Equal(189, entityTypes.Sum(entityType => entityType.GetForeignKeys().Count()));
         Assert.All(
             entityTypes.SelectMany(entityType => entityType.GetForeignKeys()),
             foreignKey => Assert.Equal(DeleteBehavior.Restrict, foreignKey.DeleteBehavior));
@@ -113,6 +131,14 @@ public sealed class PhysicalSchemaModelTests
         var receipt = context.Model.FindEntityType(typeof(ReceiptConfirmation))!;
         Assert.True(receipt.GetIndexes().Single(index => index.Properties
             .Single().Name == nameof(ReceiptConfirmation.OperationKey)).IsUnique);
+        var shipmentReceiptIndex = receipt.GetIndexes().Single(index => index.Properties
+            .Single().Name == nameof(ReceiptConfirmation.ShipmentId));
+        Assert.True(shipmentReceiptIndex.IsUnique);
+        Assert.Equal("\"ShipmentId\" IS NOT NULL", shipmentReceiptIndex.GetFilter());
+
+        var receiptQr = context.Model.FindEntityType(typeof(ReceiptConfirmationQrLabel))!;
+        Assert.True(receiptQr.GetIndexes().Single(index => index.Properties.Count == 1 &&
+            index.Properties[0].Name == nameof(ReceiptConfirmationQrLabel.BatchQrLabelId)).IsUnique);
 
         var driver = context.Model.FindEntityType(typeof(Driver))!;
         Assert.True(driver.GetIndexes().Single(index => index.Properties
@@ -281,12 +307,15 @@ public sealed class PhysicalSchemaModelTests
         using var context = CreateContext();
         var batch = context.Model.FindEntityType(typeof(Batch))!;
         var balance = context.Model.FindEntityType(typeof(InventoryBalance))!;
+        var receipt = context.Model.FindEntityType(typeof(GoodsReceipt))!;
         var receiptLine = context.Model.FindEntityType(typeof(GoodsReceiptLine))!;
 
         Assert.Equal("date", batch.FindProperty(nameof(Batch.ExpirationDate))!.GetColumnType());
+        Assert.Equal("date", receiptLine.FindProperty(nameof(GoodsReceiptLine.ProductionDate))!.GetColumnType());
         Assert.Equal("date", receiptLine.FindProperty(nameof(GoodsReceiptLine.ExpirationDate))!.GetColumnType());
         Assert.True(batch.FindProperty(nameof(Batch.Version))!.IsConcurrencyToken);
         Assert.True(balance.FindProperty(nameof(InventoryBalance.Version))!.IsConcurrencyToken);
+        Assert.True(receipt.FindProperty(nameof(GoodsReceipt.Version))!.IsConcurrencyToken);
         Assert.Null(balance.FindProperty("HeldQuantity"));
         var transaction = context.Model.FindEntityType(typeof(InventoryTransaction))!;
         Assert.Null(transaction.FindProperty("HeldQuantityDelta"));
@@ -357,15 +386,22 @@ public sealed class PhysicalSchemaModelTests
         using var context = CreateContext();
         var order = context.Model.FindEntityType(typeof(SalesOrder))!;
         var line = context.Model.FindEntityType(typeof(SalesOrderLine))!;
+        var orderPromotion = context.Model.FindEntityType(typeof(OrderPromotion))!;
         var allocation = context.Model.FindEntityType(typeof(Allocation))!;
         var retailer = context.Model.FindEntityType(typeof(Retailer))!;
 
-        Assert.Equal("jsonb", order.FindProperty(nameof(SalesOrder.AllocationTraceJson))!.GetColumnType());
+        Assert.Null(order.FindProperty("AllocationTraceJson"));
         Assert.True(order.FindProperty(nameof(SalesOrder.Version))!.IsConcurrencyToken);
         Assert.False(order.FindProperty(nameof(SalesOrder.RetailerCodeSnapshot))!.IsNullable);
         Assert.False(order.FindProperty(nameof(SalesOrder.RetailerNameSnapshot))!.IsNullable);
         Assert.False(order.FindProperty(nameof(SalesOrder.FinalPricePendingAllocation))!.IsNullable);
         Assert.False(line.FindProperty(nameof(SalesOrderLine.FinalPricePendingAllocation))!.IsNullable);
+        Assert.False(line.FindProperty(nameof(SalesOrderLine.ProductPriceId))!.IsNullable);
+        Assert.False(line.FindProperty(nameof(SalesOrderLine.MlorSourceScope))!.IsNullable);
+        Assert.False(line.FindProperty(nameof(SalesOrderLine.MlorSourceVersion))!.IsNullable);
+        Assert.False(line.FindProperty(nameof(SalesOrderLine.MlorMinimumLifeRatio))!.IsNullable);
+        Assert.False(orderPromotion.FindProperty(nameof(OrderPromotion.PromotionCodeSnapshot))!.IsNullable);
+        Assert.False(orderPromotion.FindProperty(nameof(OrderPromotion.EffectiveFromSnapshot))!.IsNullable);
 
         var orderId = line.FindProperty(nameof(SalesOrderLine.SalesOrderId))!;
         var lineNumber = line.FindProperty(nameof(SalesOrderLine.LineNumber))!;

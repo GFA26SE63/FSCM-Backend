@@ -6,6 +6,7 @@ using System.Security.Claims;
 using System.Text;
 using System.Text.Json;
 using FSCM.Application.Features.Identity;
+using FSCM.Application.Features.EntityQueries;
 using FSCM.Domain.Authorization;
 using FSCM.Domain.Entities;
 using Microsoft.AspNetCore.Hosting;
@@ -47,7 +48,7 @@ public sealed class IdentityAuthorizationTests : IClassFixture<IdentityAuthoriza
     }
 
     [Fact]
-    public async Task GraphQl_users_uses_the_same_internal_jwt_and_admin_policy()
+    public async Task GraphQl_legacy_root_queries_are_removed()
     {
         using var client = factory.CreateClient();
         client.DefaultRequestHeaders.Authorization = Bearer(factory.CreateToken(factory.Admin));
@@ -57,11 +58,62 @@ public sealed class IdentityAuthorizationTests : IClassFixture<IdentityAuthoriza
         });
 
         var response = await client.PostAsync("/graphql", content);
+        var responseBody = await response.Content.ReadAsStringAsync();
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var json = JsonDocument.Parse(responseBody);
+        Assert.True(json.RootElement.TryGetProperty("errors", out var errors), responseBody);
+        Assert.NotEmpty(errors.EnumerateArray());
+    }
+
+    [Fact]
+    public async Task GraphQl_entities_support_projection_filter_sort_and_client_selected_paging()
+    {
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization = Bearer(factory.CreateToken(factory.Sales));
+        using var content = JsonContent.Create(new
+        {
+            query = """
+                query {
+                  entities {
+                    products(
+                      first: 1
+                      where: { sku: { startsWith: "SKU-GQL" } }
+                      order: [{ sku: DESC }]) {
+                      totalCount
+                      nodes { id sku name }
+                      pageInfo { hasNextPage endCursor }
+                    }
+                  }
+                }
+                """
+        });
+
+        var response = await client.PostAsync("/graphql", content);
+        var responseBody = await response.Content.ReadAsStringAsync();
+        Assert.True(response.StatusCode == HttpStatusCode.OK, responseBody);
+        var json = JsonDocument.Parse(responseBody);
+        Assert.False(json.RootElement.TryGetProperty("errors", out _), responseBody);
+        var products = json.RootElement.GetProperty("data").GetProperty("entities").GetProperty("products");
+        Assert.Equal(2, products.GetProperty("totalCount").GetInt32());
+        Assert.Single(products.GetProperty("nodes").EnumerateArray());
+        Assert.True(products.GetProperty("pageInfo").GetProperty("hasNextPage").GetBoolean());
+        Assert.Equal(factory.Sales.Id, factory.EntityQueries.LastAccess?.UserId);
+        Assert.Equal(SystemRoles.Sales, factory.EntityQueries.LastAccess?.Role);
+    }
+
+    [Fact]
+    public async Task GraphQl_entities_require_an_authenticated_active_account()
+    {
+        using var client = factory.CreateClient();
+        var response = await client.PostAsJsonAsync("/graphql", new
+        {
+            query = "query { entities { products(first: 1) { nodes { id } } } }"
+        });
+
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
-        Assert.False(json.RootElement.TryGetProperty("errors", out _));
-        Assert.Equal(4, json.RootElement.GetProperty("data").GetProperty("users")
-            .GetProperty("totalCount").GetInt32());
+        Assert.True(json.RootElement.TryGetProperty("errors", out var errors));
+        Assert.NotEmpty(errors.EnumerateArray());
     }
 
     [Fact]
@@ -82,6 +134,24 @@ public sealed class IdentityAuthorizationTests : IClassFixture<IdentityAuthoriza
         var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
         Assert.True(json.RootElement.TryGetProperty("errors", out var errors));
         Assert.NotEmpty(errors.EnumerateArray());
+    }
+
+    [Fact]
+    public async Task Graphql_exposes_shipment_receipt_actual_read_models()
+    {
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization = Bearer(factory.CreateToken(factory.Admin));
+        using var content = JsonContent.Create(new
+        {
+            query = "query { entities { shipments(first: 1) { totalCount } receiptConfirmations(first: 1) { totalCount nodes { shipmentId status } } receiptConfirmationItems(first: 1) { totalCount nodes { salesOrderLineId receivedQuantity damagedQuantity missingQuantity } } receiptConfirmationQrLabels(first: 1) { totalCount } } }"
+        });
+
+        var response = await client.PostAsync("/graphql", content);
+
+        var body = await response.Content.ReadAsStringAsync();
+        Assert.True(response.StatusCode == HttpStatusCode.OK, body);
+        var json = JsonDocument.Parse(body);
+        Assert.False(json.RootElement.TryGetProperty("errors", out _));
     }
 
     [Fact]
@@ -131,6 +201,11 @@ public sealed class IdentityAuthorizationTests : IClassFixture<IdentityAuthoriza
             Sales = AddUser("sales@test.local", SystemRoles.Sales, true);
             WarehouseKeeper = AddUser("warehouse.keeper@test.local", SystemRoles.WarehouseKeeper, true);
             InactiveAdmin = AddUser("inactive.admin@test.local", SystemRoles.Admin, false);
+            EntityQueries.Products.AddRange([
+                new Product { Id = Guid.NewGuid(), Sku = "SKU-GQL-001", Name = "Sản phẩm GraphQL 1" },
+                new Product { Id = Guid.NewGuid(), Sku = "SKU-GQL-002", Name = "Sản phẩm GraphQL 2" },
+                new Product { Id = Guid.NewGuid(), Sku = "OTHER-001", Name = "Sản phẩm khác" }
+            ]);
             store.Credentials.Add(new UserCredential
             {
                 UserAccountId = Admin.Id,
@@ -144,6 +219,9 @@ public sealed class IdentityAuthorizationTests : IClassFixture<IdentityAuthoriza
         public UserAccount Sales { get; }
         public UserAccount WarehouseKeeper { get; }
         public UserAccount InactiveAdmin { get; }
+        public TestEntityQueryService EntityQueries { get; } = new();
+
+        public UserAccount AddTestUser(string email, string role) => AddUser(email, role, true);
 
         public string CreateToken(UserAccount user)
         {
@@ -204,6 +282,8 @@ public sealed class IdentityAuthorizationTests : IClassFixture<IdentityAuthoriza
                 services.AddSingleton<IIdentityTokenProvider, TestIdentityTokenProvider>();
                 services.RemoveAll<IPasswordHasher>();
                 services.AddSingleton<IPasswordHasher, TestPasswordHasher>();
+                services.RemoveAll<IEntityQueryService>();
+                services.AddSingleton<IEntityQueryService>(EntityQueries);
                 services.PostConfigure<JwtBearerOptions>(
                     JwtBearerDefaults.AuthenticationScheme,
                     options => options.TokenValidationParameters = new TokenValidationParameters
@@ -257,6 +337,20 @@ public sealed class IdentityAuthorizationTests : IClassFixture<IdentityAuthoriza
         }
     }
 
+    public sealed class TestEntityQueryService : IEntityQueryService
+    {
+        public List<Product> Products { get; } = [];
+        public EntityQueryAccess? LastAccess { get; private set; }
+
+        public IQueryable<TEntity> Query<TEntity>(EntityQueryAccess access) where TEntity : class
+        {
+            LastAccess = access;
+            if (typeof(TEntity) == typeof(Product))
+                return (IQueryable<TEntity>)(object)Products.AsQueryable();
+            return Array.Empty<TEntity>().AsQueryable();
+        }
+    }
+
     private sealed class TestIdentityTokenProvider : IIdentityTokenProvider
     {
         public TimeSpan RefreshTokenLifetime => TimeSpan.FromDays(1);
@@ -304,6 +398,7 @@ public sealed class IdentityAuthorizationTests : IClassFixture<IdentityAuthoriza
         public Task<RefreshToken?> FindRefreshTokenAsync(string tokenHash, CancellationToken cancellationToken) => Task.FromResult<RefreshToken?>(null);
         public Task<AccountToken?> FindAccountTokenAsync(string tokenHash, string purpose, CancellationToken cancellationToken) => Task.FromResult<AccountToken?>(null);
         public Task<IdentityScope> GetScopeAsync(Guid userId, CancellationToken cancellationToken) => Task.FromResult(IdentityScope.Empty);
+        public Task<IdentityScopeLabels> GetScopeLabelsAsync(IdentityScope scope, CancellationToken cancellationToken) => Task.FromResult(IdentityScopeLabels.Empty);
         public Task<bool> WarehouseExistsAsync(Guid warehouseId, CancellationToken cancellationToken) => Task.FromResult(false);
         public Task<bool> SalesGroupExistsAsync(Guid salesGroupId, CancellationToken cancellationToken) => Task.FromResult(false);
         public Task<bool> RegionExistsAsync(Guid regionId, CancellationToken cancellationToken) => Task.FromResult(false);

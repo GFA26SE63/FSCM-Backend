@@ -9,6 +9,7 @@ public static class DeliveryStatuses
 public static class ReceiptConfirmationStatuses
 {
     public const string Confirmed = "Confirmed";
+    public const string Exception = "Exception";
 }
 
 public sealed record DispatchOrderData(
@@ -21,6 +22,30 @@ public sealed record ConfirmRetailerReceiptData(
     IReadOnlyCollection<string> QrCodes,
     int ExpectedOrderVersion,
     string? Note);
+
+public sealed record CreateDriverData(
+    Guid WarehouseId,
+    string? Code,
+    string FullName,
+    string Phone,
+    string LicenseNumber);
+
+public sealed record UpdateDriverData(
+    string FullName,
+    string Phone,
+    string LicenseNumber);
+
+public sealed record CreateVehicleData(
+    Guid WarehouseId,
+    string PlateNumber,
+    string VehicleType,
+    decimal Capacity);
+
+public sealed record UpdateVehicleData(
+    string VehicleType,
+    decimal Capacity);
+
+public sealed record SetActiveData(bool IsActive);
 
 public sealed record DriverResult(
     Guid Id,

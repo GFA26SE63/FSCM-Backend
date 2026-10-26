@@ -1,3 +1,4 @@
+using FSCM.Application.Features.AllocationRuns;
 using FSCM.Application.Features.Inventory;
 using FSCM.Application.Features.Orders;
 using FSCM.Application.Features.Picking;
@@ -25,12 +26,19 @@ public sealed class OrderServiceTests
         Assert.Equal(900m, result.FinalAmount);
         Assert.True(result.FinalPricePendingAllocation);
         Assert.True(Assert.Single(result.Lines).FinalPricePendingAllocation);
-        Assert.Equal("KM-001", Assert.Single(result.Lines).DiscountSourceCode);
+        var line = Assert.Single(result.Lines);
+        Assert.Equal("KM-001", line.DiscountSourceCode);
+        Assert.Equal("Sku", line.Mlor.SourceScope);
+        Assert.Equal(2, line.Mlor.SourceVersion);
+        Assert.Equal(0.25m, line.Mlor.MinimumLifeRatio);
+        Assert.NotEqual(Guid.Empty, line.ProductPriceId);
+        Assert.Equal("Khuyến mãi tháng mười", line.OrdinaryPromotion!.Name);
         Assert.Empty(result.Lines.Single().Allocations);
         Assert.Equal(0m, fixture.Store.Balance.ReservedQuantity);
         Assert.Equal(50m, fixture.Store.Balance.AvailableQuantity);
-        Assert.Contains("pendingRun", fixture.Store.Orders.Single().AllocationTraceJson, StringComparison.OrdinalIgnoreCase);
+        Assert.True(fixture.Store.Orders.Single().FinalPricePendingAllocation);
         Assert.False(Assert.Single(fixture.Store.Promotions).IsServerFinal);
+        Assert.Equal("KM-001", fixture.Store.Promotions.Single().PromotionCodeSnapshot);
         Assert.Equal("OrderCaptured", Assert.Single(fixture.Store.Audits).Action);
     }
 
@@ -86,20 +94,21 @@ public sealed class OrderServiceTests
     }
 
     [Fact]
-    public async Task Existing_review_endpoint_does_not_reserve_when_capture_has_no_allocation()
+    public async Task Reviewing_an_order_parks_it_for_the_run_and_commits_no_stock()
     {
         var fixture = new Fixture();
         var created = await fixture.CreateAsync(10);
 
         var approved = await fixture.Service.ApproveAsync(
-            created.Id, created.Version, fixture.OperatorUserId, default);
+            created.Id, created.Version, fixture.OperatorUserId, SystemRoles.Operator, default);
 
-        Assert.Equal(OrderStatuses.Approved, approved.Status);
+        Assert.Equal(OrderStatuses.PendingAllocation, approved.Status);
         Assert.Equal(0m, fixture.Store.Balance.ReservedQuantity);
         Assert.Equal(50m, fixture.Store.Balance.AvailableQuantity);
         Assert.Equal(1, approved.Version);
         Assert.Equal(0, fixture.Inventory.ReserveCalls);
-        Assert.Equal(1, fixture.PickingPlan.Calls);
+        // Picking lists come from the run (F43), not from reviewing one order.
+        Assert.Equal(0, fixture.PickingPlan.Calls);
     }
 
     [Theory]
@@ -114,12 +123,81 @@ public sealed class OrderServiceTests
             ? await fixture.Service.CancelAsync(created.Id, created.Version, fixture.SalesUserId,
                 SystemRoles.Sales, "Khách hàng đổi kế hoạch", default)
             : await fixture.Service.RejectAsync(created.Id, created.Version,
-                "Không đáp ứng lịch giao", fixture.OperatorUserId, default);
+                "Không đáp ứng lịch giao", fixture.OperatorUserId, SystemRoles.Operator, default);
 
         Assert.Equal(cancel ? OrderStatuses.Cancelled : OrderStatuses.Rejected, result.Status);
         Assert.Equal(50m, fixture.Store.Balance.AvailableQuantity);
         Assert.Equal(0, fixture.Inventory.ReleaseCalls);
         Assert.Equal(cancel ? 1 : 0, fixture.PickingPlan.CancelCalls);
+    }
+
+    [Fact]
+    public async Task Admin_can_review_an_order_not_only_Operator()
+    {
+        var fixture = new Fixture();
+        var created = await fixture.CreateAsync(10);
+
+        var approved = await fixture.Service.ApproveAsync(
+            created.Id, created.Version, fixture.OperatorUserId, SystemRoles.Admin, default);
+
+        Assert.Equal(OrderStatuses.PendingAllocation, approved.Status);
+    }
+
+    [Fact]
+    public async Task Warehouse_keeper_cannot_review_an_order()
+    {
+        var fixture = new Fixture();
+        var created = await fixture.CreateAsync(10);
+
+        var exception = await Assert.ThrowsAsync<OrderOperationException>(() =>
+            fixture.Service.ApproveAsync(created.Id, created.Version, fixture.OperatorUserId,
+                SystemRoles.WarehouseKeeper, default));
+
+        Assert.Equal("forbidden", exception.Code);
+    }
+
+    [Fact]
+    public async Task Reviewing_twice_is_a_no_op_rather_than_a_second_decision()
+    {
+        var fixture = new Fixture();
+        var created = await fixture.CreateAsync(10);
+        var approved = await fixture.Service.ApproveAsync(
+            created.Id, created.Version, fixture.OperatorUserId, SystemRoles.Operator, default);
+
+        var again = await fixture.Service.ApproveAsync(
+            approved.Id, approved.Version, fixture.OperatorUserId, SystemRoles.Operator, default);
+
+        Assert.Equal(approved.Version, again.Version);
+        Assert.Equal(0, fixture.Inventory.ReserveCalls);
+        Assert.Equal(0, fixture.PickingPlan.Calls);
+    }
+
+    [Fact]
+    public async Task An_order_waiting_for_the_run_can_still_be_cancelled()
+    {
+        var fixture = new Fixture();
+        var created = await fixture.CreateAsync(10);
+        var approved = await fixture.Service.ApproveAsync(
+            created.Id, created.Version, fixture.OperatorUserId, SystemRoles.Operator, default);
+
+        var cancelled = await fixture.Service.CancelAsync(approved.Id, approved.Version,
+            fixture.OperatorUserId, SystemRoles.Operator, "Retailer đóng cửa", default);
+
+        Assert.Equal(OrderStatuses.Cancelled, cancelled.Status);
+    }
+
+    [Fact]
+    public async Task Rejecting_without_a_reason_is_refused()
+    {
+        var fixture = new Fixture();
+        var created = await fixture.CreateAsync(10);
+
+        var exception = await Assert.ThrowsAsync<OrderOperationException>(() =>
+            fixture.Service.RejectAsync(created.Id, created.Version, "   ",
+                fixture.OperatorUserId, SystemRoles.Operator, default));
+
+        Assert.Equal("validation_error", exception.Code);
+        Assert.Equal(OrderStatuses.PendingApproval, fixture.Store.Orders.Single().Status);
     }
 
     [Fact]
@@ -129,11 +207,129 @@ public sealed class OrderServiceTests
         var created = await fixture.CreateAsync(10);
 
         var exception = await Assert.ThrowsAsync<OrderOperationException>(() =>
-            fixture.Service.ApproveAsync(created.Id, created.Version + 1, fixture.OperatorUserId, default));
+            fixture.Service.ApproveAsync(created.Id, created.Version + 1, fixture.OperatorUserId,
+                SystemRoles.Operator, default));
 
         Assert.Equal("conflict", exception.Code);
         Assert.Equal(OrderStatuses.PendingApproval, fixture.Store.Orders.Single().Status);
     }
+
+    [Fact]
+    public async Task Offline_submission_stamps_source_and_server_cutoff_without_touching_stock()
+    {
+        var fixture = new Fixture();
+
+        var result = await fixture.SubmitOfflineAsync(quantity: 10, estimate: 900m);
+
+        Assert.Equal(OrderSources.Offline, result.Source);
+        Assert.Equal(OrderStatuses.PendingApproval, result.Status);
+        Assert.Equal(900m, result.FinalAmount);
+        Assert.Equal(900m, result.OfflineEstimatedAmount);
+        Assert.False(result.HasOfflineDifference);
+        Assert.Equal(Now, result.ServerReceivedAt);
+        // Momentary stock is not reserved by capture.
+        Assert.Equal(0m, fixture.Store.Balance.ReservedQuantity);
+        Assert.Equal(50m, fixture.Store.Balance.AvailableQuantity);
+    }
+
+    [Fact]
+    public async Task Offline_submission_requires_explicit_confirmation_when_server_price_changed()
+    {
+        var fixture = new Fixture();
+
+        var exception = await Assert.ThrowsAsync<OrderOperationException>(() =>
+            fixture.SubmitOfflineAsync(quantity: 10, estimate: 1_000m));
+
+        Assert.Equal("conflict", exception.Code);
+        var details = Assert.IsType<OfflineConditionConflictResult>(exception.Details);
+        Assert.Equal(900m, details.CurrentIndicativeAmount);
+        Assert.Empty(fixture.Store.Orders);
+    }
+
+    [Fact]
+    public async Task Offline_submission_accepts_changed_conditions_only_after_sales_confirmation()
+    {
+        var fixture = new Fixture();
+        var request = fixture.OfflineRequest(10, 1_000m) with { ConfirmConditionChanges = true };
+
+        var result = await fixture.Service.SubmitOfflineAsync(request, fixture.SalesUserId, default);
+
+        Assert.True(result.HasOfflineDifference);
+        Assert.Equal(900m, result.FinalAmount);
+        Assert.Single(fixture.Store.Orders);
+    }
+
+    [Fact]
+    public async Task Offline_submission_returns_current_price_and_mlor_line_conditions()
+    {
+        var fixture = new Fixture();
+        var request = fixture.OfflineRequest(10, 900m) with
+        {
+            SnapshotVersion = "123",
+            ExpectedConditions = [new(fixture.Store.Product.Id, 91m, 1, 0.2m)]
+        };
+
+        var exception = await Assert.ThrowsAsync<OrderOperationException>(() =>
+            fixture.Service.SubmitOfflineAsync(request, fixture.SalesUserId, default));
+
+        var details = Assert.IsType<OfflineConditionConflictResult>(exception.Details);
+        var changed = Assert.Single(details.ChangedLines);
+        Assert.Equal(90m, changed.CurrentBaseUnitPrice);
+        Assert.Equal(2, changed.CurrentMlorVersion);
+        Assert.Equal(0.25m, changed.CurrentMlorRatio);
+        Assert.Empty(fixture.Store.Orders);
+    }
+
+    [Fact]
+    public async Task Offline_resubmission_with_same_client_key_is_idempotent()
+    {
+        var fixture = new Fixture();
+        var request = fixture.OfflineRequest(10, 900m);
+
+        var first = await fixture.Service.SubmitOfflineAsync(request, fixture.SalesUserId, default);
+        var second = await fixture.Service.SubmitOfflineAsync(request, fixture.SalesUserId, default);
+
+        Assert.Equal(first.Id, second.Id);
+        Assert.Single(fixture.Store.Orders);
+    }
+
+    [Fact]
+    public async Task Approved_run_read_preserves_each_batch_price_and_warehouse_progress()
+    {
+        var fixture = new Fixture();
+        var created = await fixture.CreateAsync(10);
+        var line = Assert.Single(fixture.Store.Lines);
+        var secondBatchId = Guid.NewGuid();
+        fixture.Store.ReadContext = new OrderAllocationReadContext(
+            Guid.NewGuid(), "RUN-20261020", AllocationRunStatuses.Approved,
+            AllocationRunOrderStatuses.Fulfilled, null, Guid.NewGuid(), 3,
+            AllocationPlanVersionStatuses.Approved, Now,
+            [
+                Fragment(line.Id, fixture.Store.Batch.Id, fixture.Store.Warehouse.Id, 4m, 80m, 320m, 1),
+                Fragment(line.Id, secondBatchId, fixture.Store.Warehouse.Id, 6m, 70m, 420m, 2)
+            ],
+            [new(fixture.Store.Warehouse.Id, fixture.Store.Warehouse.Code, Guid.NewGuid(), "PK-001",
+                "Completed", Guid.NewGuid(), "SHP-001", "Delivering", 10m, 10m, 0m)]);
+
+        var result = await fixture.Service.GetAsync(created.Id, fixture.SalesUserId, SystemRoles.Sales, default);
+
+        Assert.Equal(740m, result.OfficialAmount);
+        Assert.Equal("RUN-20261020", result.AllocationRunCode);
+        Assert.Equal(3, result.AllocationPlanVersion);
+        var fragments = Assert.Single(result.Lines).AllocationFragments.OrderBy(item => item.Sequence).ToArray();
+        Assert.Equal([80m, 70m], fragments.Select(item => item.FinalUnitPrice));
+        Assert.Equal([320m, 420m], fragments.Select(item => item.NetAmount));
+        Assert.Equal(740m, result.Lines.Single().OfficialNetAmount);
+        Assert.Equal("SHP-001", Assert.Single(result.WarehouseProgress).ShipmentCode);
+    }
+
+    private static OrderAllocationFragmentView Fragment(
+        Guid lineId, Guid batchId, Guid warehouseId, decimal quantity,
+        decimal finalUnitPrice, decimal netAmount, int sequence) => new(
+        Guid.NewGuid(), Guid.NewGuid(), lineId, batchId, $"BATCH-{sequence}", new DateOnly(2026, 11, 30),
+        warehouseId, "WH-TD", quantity, sequence, Now.AddHours(8), 500m,
+        100m, 90m, 60m, Guid.NewGuid(), "Sku", "SKU001", 4,
+        "Percentage", 10m, 10m, finalUnitPrice, netAmount, "Giảm giá theo hạn sử dụng");
 
     private sealed class Fixture
     {
@@ -164,6 +360,22 @@ public sealed class OrderServiceTests
 
         public Task<OrderDetailResult> CreateAsync(int quantity) =>
             Service.CreateAsync(Request(quantity), SalesUserId, default);
+
+        public SubmitOfflineOrderData OfflineRequest(int quantity, decimal estimate) => new(
+            Guid.Parse("10000000-0000-0000-0000-000000000002"),
+            Store.Retailer.Id,
+            OrderPaymentMethods.Cod,
+            new DateOnly(2026, 10, 20),
+            null,
+            "Đơn nháp offline",
+            estimate,
+            [new CreateOrderLineData(Store.Product.Id, quantity)],
+            "123",
+            false,
+            [new OfflineExpectedConditionData(Store.Product.Id, 90m, 2, 0.25m)]);
+
+        public Task<OrderDetailResult> SubmitOfflineAsync(int quantity, decimal estimate) =>
+            Service.SubmitOfflineAsync(OfflineRequest(quantity, estimate), SalesUserId, default);
     }
 
     private sealed class FakePickingPlan : IPickingPlanService
@@ -210,6 +422,7 @@ public sealed class OrderServiceTests
         public List<OrderPromotion> Promotions { get; } = [];
         public List<OrderStatusHistory> History { get; } = [];
         public List<AuditLog> Audits { get; } = [];
+        public OrderAllocationReadContext? ReadContext { get; set; }
 
         public FakeStore(Guid salesUserId, decimal physicalQuantity)
         {
@@ -269,8 +482,11 @@ public sealed class OrderServiceTests
                 [new(Batch, Balance, Warehouse, 10.802m, 106.743m)]);
         public Task<MapLocation?> FindRetailerLocationAsync(Guid retailerId, CancellationToken cancellationToken) =>
             Task.FromResult<MapLocation?>(retailerId == Retailer.Id ? RetailerLocation : null);
-        public Task<decimal?> FindMlorRatioAsync(Guid retailerId, Guid productId, CancellationToken cancellationToken) =>
-            Task.FromResult<decimal?>(0.25m);
+        public Task<OrderMlorSnapshot?> ResolveMlorAsync(
+            Guid retailerId, Guid productId, DateTimeOffset at, CancellationToken cancellationToken) =>
+            Task.FromResult<OrderMlorSnapshot?>(new(
+                "Sku", Guid.Parse("30000000-0000-0000-0000-000000000001"), 2,
+                null, 0.25m, null, at));
         public Task<string?> FindConfigurationAsync(string key, CancellationToken cancellationToken) =>
             Task.FromResult(Configurations.GetValueOrDefault(key));
         public Task<string> NextOrderCodeAsync(CancellationToken cancellationToken) => Task.FromResult("DH-001030");
@@ -304,11 +520,15 @@ public sealed class OrderServiceTests
             if (order is null) return null;
             var lines = Lines.Where(item => item.SalesOrderId == order.Id)
                 .Select(line => new OrderLineView(line,
-                    Allocations.Where(item => item.SalesOrderLineId == line.Id).ToArray())).ToArray();
-            return new(order, lines, History.Where(item => item.SalesOrderId == order.Id).ToArray(), [],
+                    Allocations.Where(item => item.SalesOrderLineId == line.Id).ToArray(),
+                    Promotions.SingleOrDefault(item => item.SalesOrderLineId == line.Id))).ToArray();
+            return new OrderView(order, lines, History.Where(item => item.SalesOrderId == order.Id).ToArray(), [],
                 new Dictionary<Guid, string> { [Batch.Id] = Batch.BatchCode },
                 new Dictionary<Guid, string> { [Warehouse.Id] = Warehouse.Code },
-                new Dictionary<Guid, int> { [Batch.Id] = Balance.Version });
+                new Dictionary<Guid, int> { [Batch.Id] = Balance.Version })
+            {
+                AllocationContext = ReadContext
+            };
         }
     }
 
@@ -319,7 +539,9 @@ public sealed class OrderServiceTests
         {
             var gross = quantity * 100m;
             return Task.FromResult(new OrderPriceSnapshot(100m, gross, 10m, gross * 0.1m,
-                gross * 0.9m, Guid.NewGuid(), "Campaign", "KM-001"));
+                gross * 0.9m, Guid.Parse("50000000-0000-0000-0000-000000000001"),
+                Now.AddDays(-30), null, Guid.NewGuid(), "Campaign", "KM-001",
+                "Khuyến mãi tháng mười", 5m, Now.AddDays(-1), Now.AddDays(10)));
         }
     }
 

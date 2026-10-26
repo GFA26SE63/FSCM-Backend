@@ -11,6 +11,49 @@ public sealed record CreateAssistedOrderData(
     string? Note,
     IReadOnlyCollection<CreateOrderLineData> Lines);
 
+/// <summary>
+/// F30: an offline draft a Sales rep captured without connectivity and submits once back online.
+/// <see cref="ClientOrderKey"/> makes resubmission after a connection error idempotent (no duplicate
+/// order). <see cref="OfflineEstimatedAmount"/> is the amount Sales quoted offline; the server
+/// re-prices against current base price/MLOR and flags a difference for Sales to confirm.
+/// </summary>
+public sealed record SubmitOfflineOrderData(
+    Guid ClientOrderKey,
+    Guid RetailerId,
+    string PaymentMethod,
+    DateOnly? RequestedDeliveryDate,
+    string? DeliveryAddress,
+    string? Note,
+    decimal OfflineEstimatedAmount,
+    IReadOnlyCollection<CreateOrderLineData> Lines,
+    string? SnapshotVersion = null,
+    bool ConfirmConditionChanges = false,
+    IReadOnlyCollection<OfflineExpectedConditionData>? ExpectedConditions = null);
+
+public sealed record OfflineExpectedConditionData(
+    Guid ProductId,
+    decimal ExpectedBaseUnitPrice,
+    int ExpectedMlorVersion,
+    decimal ExpectedMlorRatio);
+
+public sealed record OfflineConditionDifference(
+    Guid ProductId,
+    string Sku,
+    decimal ExpectedBaseUnitPrice,
+    decimal CurrentBaseUnitPrice,
+    int ExpectedMlorVersion,
+    int CurrentMlorVersion,
+    decimal ExpectedMlorRatio,
+    decimal CurrentMlorRatio);
+
+public sealed record OfflineConditionConflictResult(
+    Guid ClientOrderKey,
+    string? SnapshotVersion,
+    decimal OfflineEstimatedAmount,
+    decimal CurrentIndicativeAmount,
+    IReadOnlyCollection<OfflineConditionDifference> ChangedLines,
+    bool RequiresExplicitConfirmation = true);
+
 public sealed record OrderAllocationResult(
     Guid Id,
     Guid BatchId,
@@ -35,6 +78,54 @@ public sealed record OrderAllocationResult(
     string? DiscountSourceCode,
     string Status);
 
+public sealed record OrderAllocationFragmentResult(
+    Guid AllocationId,
+    Guid PlanPriceId,
+    Guid BatchId,
+    string BatchCode,
+    DateOnly BatchExpirationDate,
+    Guid WarehouseId,
+    string WarehouseCode,
+    decimal Quantity,
+    int Sequence,
+    DateTimeOffset EstimatedArrivalAt,
+    decimal RemainingLifeHoursAtArrival,
+    decimal ListUnitPrice,
+    decimal OrdinaryPromotionDiscountPerUnit,
+    decimal BaseUnitPrice,
+    decimal RemainingShelfLifePercent,
+    Guid? DiscountRuleId,
+    string? DiscountRuleScope,
+    string? DiscountRuleCode,
+    int DiscountRuleVersion,
+    string? DiscountType,
+    decimal? DiscountValue,
+    decimal ShelfLifeDiscountPerUnit,
+    decimal FinalUnitPrice,
+    decimal NetAmount,
+    string DiscountReason);
+
+public sealed record OrderMlorSnapshotResult(
+    string SourceScope,
+    Guid? SourceRuleId,
+    int SourceVersion,
+    Guid? ProductCategoryId,
+    decimal MinimumLifeRatio,
+    int? MinimumLifeHours,
+    DateTimeOffset ResolvedAt);
+
+public sealed record OrderOrdinaryPromotionSnapshotResult(
+    Guid PromotionId,
+    string Code,
+    string Name,
+    string Type,
+    decimal MinimumQuantity,
+    decimal DiscountPercent,
+    decimal DiscountAmount,
+    DateTimeOffset EffectiveFrom,
+    DateTimeOffset EffectiveTo,
+    DateTimeOffset AppliedAt);
+
 public sealed record OrderLineResult(
     Guid Id,
     int LineNumber,
@@ -49,6 +140,12 @@ public sealed record OrderLineResult(
     decimal NetAmount,
     string? DiscountSourceType,
     string? DiscountSourceCode,
+    Guid ProductPriceId,
+    DateTimeOffset ProductPriceEffectiveFrom,
+    DateTimeOffset? ProductPriceEffectiveTo,
+    DateTimeOffset PricedAt,
+    OrderMlorSnapshotResult Mlor,
+    OrderOrdinaryPromotionSnapshotResult? OrdinaryPromotion,
     DateTimeOffset? EstimatedArrivalAt,
     bool FinalPricePendingAllocation,
     IReadOnlyCollection<OrderAllocationResult> Allocations)
@@ -56,6 +153,8 @@ public sealed record OrderLineResult(
     public decimal BaseUnitPrice => UnitPrice;
     public decimal OrdinaryPromotionDiscountAmount => DiscountAmount;
     public decimal IndicativeNetAmount => NetAmount;
+    public IReadOnlyCollection<OrderAllocationFragmentResult> AllocationFragments { get; init; } = [];
+    public decimal? OfficialNetAmount { get; init; }
 }
 
 public sealed record OrderStatusHistoryResult(
@@ -89,6 +188,7 @@ public sealed record OrderSummaryResult(
     DateTimeOffset CreatedAt)
 {
     public decimal IndicativeAmount => FinalAmount;
+    public decimal? OfficialAmount { get; init; }
 }
 
 public sealed record OrderListQuery(
@@ -113,6 +213,19 @@ public sealed record OrderShipmentLinkResult(
     string Status,
     DateTimeOffset? DispatchedAt,
     DateTimeOffset? DeliveredAt);
+
+public sealed record OrderWarehouseProgressResult(
+    Guid WarehouseId,
+    string WarehouseCode,
+    Guid? PickingListId,
+    string? PickingCode,
+    string? PickingStatus,
+    Guid? ShipmentId,
+    string? ShipmentCode,
+    string? ShipmentStatus,
+    decimal PlannedQuantity,
+    decimal PickedQuantity,
+    decimal ReceivedQuantity);
 
 public sealed record OrderDetailResult(
     Guid Id,
@@ -139,6 +252,8 @@ public sealed record OrderDetailResult(
     string? AllocationProposalStatus,
     string? AllocationResult,
     string? RejectionReason,
+    decimal? OfflineEstimatedAmount,
+    bool HasOfflineDifference,
     int Version,
     DateTimeOffset ServerReceivedAt,
     DateTimeOffset CreatedAt,
@@ -148,6 +263,11 @@ public sealed record OrderDetailResult(
     IReadOnlyCollection<OrderShipmentLinkResult> Shipments)
 {
     public decimal IndicativeAmount => FinalAmount;
+    public decimal? OfficialAmount { get; init; }
+    public string? AllocationRunCode { get; init; }
+    public int? AllocationPlanVersion { get; init; }
+    public DateTimeOffset? OfficialPricedAt { get; init; }
+    public IReadOnlyCollection<OrderWarehouseProgressResult> WarehouseProgress { get; init; } = [];
 }
 
 public sealed record OrderTimelineResult(
@@ -161,11 +281,16 @@ public sealed record OrderTimelineResult(
     IReadOnlyCollection<OrderStatusHistoryResult> Events,
     IReadOnlyCollection<OrderShipmentLinkResult> Shipments);
 
-public sealed record OrderTraceResult(Guid OrderId, string OrderCode, string AllocationTraceJson);
-
 public static class OrderStatuses
 {
     public const string PendingApproval = "PendingApproval";
+
+    /// <summary>
+    /// Reviewed and waiting for the next 12:00 allocation run. Approval commits no stock: the run
+    /// decides which batches an order gets, and only run approval reserves them (F87, F88).
+    /// </summary>
+    public const string PendingAllocation = "PendingAllocation";
+
     public const string Approved = "Approved";
     public const string Picking = "Picking";
     public const string Rejected = "Rejected";

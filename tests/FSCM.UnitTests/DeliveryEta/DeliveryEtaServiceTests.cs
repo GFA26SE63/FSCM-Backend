@@ -117,6 +117,94 @@ public sealed class DeliveryEtaServiceTests
         Assert.Equal("validation_error", exception.Code);
     }
 
+    [Fact]
+    public async Task The_run_day_timetable_comes_back_in_order_with_the_advice_marked_advisory()
+    {
+        var fixture = await Fixture.CreateAsync();
+
+        var schedule = await fixture.Service.GetScheduleAsync(new DateOnly(2026, 10, 21), CancellationToken.None);
+
+        Assert.Equal(
+            ["sales_submission_advice", "order_review_reminder", "allocation_run", "plan_approval_reminder", "plan_approval_deadline"],
+            schedule.Milestones.Select(item => item.Key));
+        Assert.Equal(
+            [new TimeOnly(11, 0), new TimeOnly(11, 30), new TimeOnly(12, 0), new TimeOnly(13, 30), new TimeOnly(14, 0)],
+            schedule.Milestones.Select(item => item.LocalTime));
+        // Only the sales advice is advisory: an order accepted after it and before noon still runs.
+        Assert.Equal(
+            [true, false, false, false, false],
+            schedule.Milestones.Select(item => item.IsAdvisory));
+    }
+
+    [Fact]
+    public async Task Each_milestone_is_resolved_to_an_instant_in_the_published_time_zone()
+    {
+        var fixture = await Fixture.CreateAsync();
+
+        var schedule = await fixture.Service.GetScheduleAsync(new DateOnly(2026, 10, 21), CancellationToken.None);
+
+        var cutoff = schedule.Milestones.Single(item => item.Key == "allocation_run");
+        // Noon in Vietnam, not noon UTC: a portal must not have to re-derive the zone.
+        Assert.Equal(new DateTimeOffset(2026, 10, 21, 12, 0, 0, TimeSpan.FromHours(7)), cutoff.At);
+        Assert.Equal("Asia/Ho_Chi_Minh", schedule.TimeZone);
+    }
+
+    [Fact]
+    public async Task A_schedule_published_before_the_reminders_existed_still_loads()
+    {
+        var fixture = await Fixture.CreateAsync();
+
+        var schedule = await fixture.Service.GetScheduleAsync(new DateOnly(2026, 10, 21), CancellationToken.None);
+
+        // The stored document carries no reminder times at all, so the recommended ones stand in
+        // rather than the whole schedule failing to load.
+        Assert.Equal(new TimeOnly(11, 0), schedule.Milestones[0].LocalTime);
+        Assert.Equal(new TimeOnly(13, 30), schedule.Milestones[3].LocalTime);
+    }
+
+    [Fact]
+    public async Task A_reminder_to_send_orders_after_the_cutoff_is_rejected()
+    {
+        var fixture = await Fixture.CreateAsync();
+        fixture.Store.ScheduleConfiguration!.ConfigValue = Fixture.ScheduleJson(orderReviewReminderLocalTime: "12:30");
+
+        var exception = await Assert.ThrowsAsync<DeliveryEtaOperationException>(() =>
+            fixture.Service.GetScheduleAsync(null, CancellationToken.None));
+
+        Assert.Equal("validation_error", exception.Code);
+    }
+
+    [Fact]
+    public async Task A_plan_reminder_outside_the_window_it_reminds_about_is_rejected()
+    {
+        var fixture = await Fixture.CreateAsync();
+        // After the deadline it reminds nobody of anything.
+        fixture.Store.ScheduleConfiguration!.ConfigValue = Fixture.ScheduleJson(planApprovalReminderLocalTime: "15:00");
+
+        var exception = await Assert.ThrowsAsync<DeliveryEtaOperationException>(() =>
+            fixture.Service.GetScheduleAsync(null, CancellationToken.None));
+
+        Assert.Equal("validation_error", exception.Code);
+    }
+
+    [Fact]
+    public async Task Custom_milestones_are_kept_as_published()
+    {
+        var fixture = await Fixture.CreateAsync();
+        fixture.Store.ScheduleConfiguration!.ConfigValue = Fixture.ScheduleJson(
+            runLocalTime: "10:00",
+            approvalDeadlineLocalTime: "12:00",
+            salesAdviceLocalTime: "08:30",
+            orderReviewReminderLocalTime: "09:30",
+            planApprovalReminderLocalTime: "11:00");
+
+        var schedule = await fixture.Service.GetScheduleAsync(new DateOnly(2026, 10, 21), CancellationToken.None);
+
+        Assert.Equal(
+            [new TimeOnly(8, 30), new TimeOnly(9, 30), new TimeOnly(10, 0), new TimeOnly(11, 0), new TimeOnly(12, 0)],
+            schedule.Milestones.Select(item => item.LocalTime));
+    }
+
     private sealed class Fixture
     {
         public static readonly TimeZoneInfo Vietnam = TimeZoneInfo.FindSystemTimeZoneById("Asia/Ho_Chi_Minh");
@@ -151,11 +239,18 @@ public sealed class DeliveryEtaServiceTests
             new(WarehouseId, RetailerId, referenceAt ?? Now);
 
         public static string ScheduleJson(
-            string runLocalTime = "12:00", string approvalDeadlineLocalTime = "14:00") =>
+            string runLocalTime = "12:00",
+            string approvalDeadlineLocalTime = "14:00",
+            string? salesAdviceLocalTime = null,
+            string? orderReviewReminderLocalTime = null,
+            string? planApprovalReminderLocalTime = null) =>
             JsonSerializer.Serialize(new
             {
                 timeZone = "Asia/Ho_Chi_Minh",
+                salesSubmissionAdviceLocalTime = salesAdviceLocalTime,
+                orderReviewReminderLocalTime,
                 allocationRunLocalTime = runLocalTime,
+                planApprovalReminderLocalTime,
                 planApprovalDeadlineLocalTime = approvalDeadlineLocalTime,
                 preparationMinutes = 240,
                 bufferMinutes = 60,

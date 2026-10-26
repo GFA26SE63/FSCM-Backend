@@ -2,6 +2,7 @@ using System.Security.Claims;
 using FSCM.API.Contracts.Deliveries;
 using FSCM.API.Contracts.Orders;
 using FSCM.Application.Features.Deliveries;
+using FSCM.Application.Features.AllocationRuns;
 using FSCM.Application.Features.Orders;
 using FSCM.Domain.Authorization;
 using Microsoft.AspNetCore.Authorization;
@@ -12,7 +13,10 @@ namespace FSCM.API.Controllers;
 [ApiController]
 [Authorize]
 [Route("api/v1/orders")]
-public sealed class OrdersController(OrderService service, DeliveryService deliveryService) : ControllerBase
+public sealed class OrdersController(
+    OrderService service,
+    DeliveryService deliveryService,
+    AllocationTraceService allocationTraceService) : ControllerBase
 {
     [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator},{SystemRoles.SalesManager},{SystemRoles.Sales},{SystemRoles.WarehouseKeeper},{SystemRoles.Retailer}")]
     [HttpGet]
@@ -35,8 +39,12 @@ public sealed class OrdersController(OrderService service, DeliveryService deliv
 
     [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator},{SystemRoles.SalesManager},{SystemRoles.Sales},{SystemRoles.WarehouseKeeper},{SystemRoles.Retailer}")]
     [HttpGet("{id:guid}/allocation-trace")]
-    public Task<OrderTraceResult> Trace(Guid id, CancellationToken cancellationToken) =>
-        service.GetTraceAsync(id, GetActorUserId(), GetActorRole(), cancellationToken);
+    [Obsolete("Use GET /api/v1/allocation-runs/orders/{salesOrderId}/trace.")]
+    public async Task<OrderTraceDetailResult> Trace(Guid id, CancellationToken cancellationToken)
+    {
+        await service.GetAsync(id, GetActorUserId(), GetActorRole(), cancellationToken);
+        return await allocationTraceService.GetByOrderAsync(id, cancellationToken);
+    }
 
     [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator},{SystemRoles.SalesManager},{SystemRoles.Sales},{SystemRoles.WarehouseKeeper},{SystemRoles.Retailer}")]
     [HttpGet("{id:guid}/timeline")]
@@ -45,6 +53,11 @@ public sealed class OrdersController(OrderService service, DeliveryService deliv
 
     [Authorize(Roles = SystemRoles.Sales)]
     [HttpPost]
+    [ProducesResponseType<OrderDetailResult>(StatusCodes.Status201Created)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
     public async Task<IActionResult> Create(
         CreateAssistedOrderRequest request,
         CancellationToken cancellationToken)
@@ -62,22 +75,53 @@ public sealed class OrdersController(OrderService service, DeliveryService deliv
         return CreatedAtAction(nameof(Get), new { id = result.Id }, result);
     }
 
-    [Authorize(Roles = SystemRoles.Operator)]
+    [Authorize(Roles = SystemRoles.Sales)]
+    [HttpPost("offline")]
+    [HttpPost("sync")]
+    [ProducesResponseType<OrderDetailResult>(StatusCodes.Status201Created)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    public async Task<IActionResult> SubmitOffline(
+        SubmitOfflineOrderRequest request,
+        CancellationToken cancellationToken)
+    {
+        var result = await service.SubmitOfflineAsync(new(
+            request.ClientOrderKey,
+            request.RetailerId,
+            request.PaymentMethod,
+            request.RequestedDeliveryDate,
+            request.DeliveryAddress,
+            request.Note,
+            request.OfflineEstimatedAmount,
+            request.Lines.Select(item => new CreateOrderLineData(item.ProductId, item.Quantity)).ToArray(),
+            request.SnapshotVersion,
+            request.ConfirmConditionChanges,
+            request.ExpectedConditions?.Select(item => new OfflineExpectedConditionData(
+                item.ProductId, item.ExpectedBaseUnitPrice, item.ExpectedMlorVersion,
+                item.ExpectedMlorRatio)).ToArray()),
+            GetActorUserId(),
+            cancellationToken);
+        return CreatedAtAction(nameof(Get), new { id = result.Id }, result);
+    }
+
+    [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator}")]
     [HttpPost("{id:guid}/approve")]
     public Task<OrderDetailResult> Approve(
         Guid id,
         OrderDecisionRequest request,
         CancellationToken cancellationToken) =>
-        service.ApproveAsync(id, request.ExpectedVersion, GetActorUserId(), cancellationToken);
+        service.ApproveAsync(id, request.ExpectedVersion, GetActorUserId(), GetActorRole(), cancellationToken);
 
-    [Authorize(Roles = SystemRoles.Operator)]
+    [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator}")]
     [HttpPost("{id:guid}/reject")]
     public Task<OrderDetailResult> Reject(
         Guid id,
         RejectOrderRequest request,
         CancellationToken cancellationToken) =>
         service.RejectAsync(id, request.ExpectedVersion, request.Reason,
-            GetActorUserId(), cancellationToken);
+            GetActorUserId(), GetActorRole(), cancellationToken);
 
     [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator},{SystemRoles.Sales}")]
     [HttpPost("{id:guid}/cancel")]
@@ -100,6 +144,7 @@ public sealed class OrdersController(OrderService service, DeliveryService deliv
             operationKey, GetActorUserId(), GetActorRole(), cancellationToken);
 
     [Authorize(Roles = SystemRoles.Retailer)]
+    [Obsolete("Use POST /api/v1/shipments/{id}/receipt for per-shipment actual quantities.")]
     [HttpPost("{id:guid}/confirm-receipt")]
     public Task<DeliveryResult> ConfirmReceipt(
         Guid id,

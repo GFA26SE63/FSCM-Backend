@@ -8,6 +8,7 @@ using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
+using HotChocolate.Types.Descriptors;
 
 namespace FSCM.API.Extensions;
 
@@ -30,10 +31,16 @@ public static class ServiceCollectionExtensions
         services.AddOpenApi();
         services.AddHealthChecks();
         services.AddProblemDetails();
+        services.AddExceptionHandler<AllocationRunExceptionHandler>();
         services.AddExceptionHandler<CatalogExceptionHandler>();
         services.AddExceptionHandler<DeliveryExceptionHandler>();
+        services.AddExceptionHandler<ComplaintExceptionHandler>();
+        services.AddExceptionHandler<ShipmentExceptionHandler>();
+        services.AddExceptionHandler<ReportExceptionHandler>();
         services.AddExceptionHandler<InventoryExceptionHandler>();
+        services.AddExceptionHandler<InventoryLockExceptionHandler>();
         services.AddExceptionHandler<InternalTransferExceptionHandler>();
+        services.AddExceptionHandler<LoyaltyExceptionHandler>();
         services.AddExceptionHandler<ManualPaymentExceptionHandler>();
         services.AddExceptionHandler<MapExceptionHandler>();
         services.AddExceptionHandler<OrderExceptionHandler>();
@@ -42,7 +49,9 @@ public static class ServiceCollectionExtensions
         services.AddExceptionHandler<QrLabelExceptionHandler>();
         services.AddExceptionHandler<PromotionExceptionHandler>();
         services.AddExceptionHandler<RetailerExceptionHandler>();
+        services.AddExceptionHandler<RefundExceptionHandler>();
         services.AddExceptionHandler<TerritoryExceptionHandler>();
+        services.AddExceptionHandler<ShelfLifeDiscountExceptionHandler>();
         services.AddExceptionHandler<TransitTableExceptionHandler>();
         services.AddExceptionHandler<DeliveryEtaExceptionHandler>();
         services.AddExceptionHandler<WarehouseConfigurationExceptionHandler>();
@@ -85,11 +94,11 @@ public static class ServiceCollectionExtensions
             });
         });
         services.AddHttpContextAccessor();
-        services.AddFscmGraphQlDataLoaders();
-
-        services
+        var graphQl = services
             .AddGraphQLServer()
             .AddAuthorization()
+            .AddConvention<INamingConventions, EntityNamingConventions>()
+            .AddProjections()
             .AddFiltering()
             .AddSorting()
             .AddMaxExecutionDepthRule(12)
@@ -97,18 +106,26 @@ public static class ServiceCollectionExtensions
             .ModifyPagingOptions(options =>
             {
                 options.DefaultPageSize = 20;
-                options.MaxPageSize = 100;
+                options.MaxPageSize = int.MaxValue;
                 options.IncludeTotalCount = true;
-                options.RequirePagingBoundaries = true;
+                options.RequirePagingBoundaries = false;
             })
-            .AddQueryType<SystemQuery>()
-            .AddTypeExtension<ProductGraphQlExtensions>()
-            .AddTypeExtension<WarehouseGraphQlExtensions>()
-            .AddTypeExtension<RetailerGraphQlExtensions>()
-            .AddTypeExtension<InventoryGraphQlExtensions>()
-            .AddTypeExtension<GoodsReceiptGraphQlExtensions>()
-            .AddTypeExtension<GoodsReceiptLineGraphQlExtensions>()
-            .AddTypeExtension<QrLabelGraphQlExtensions>();
+            .AddQueryType<SystemQuery>();
+
+        foreach (var method in typeof(EntityQuery).GetMethods(
+                     System.Reflection.BindingFlags.Instance |
+                     System.Reflection.BindingFlags.Public |
+                     System.Reflection.BindingFlags.DeclaredOnly))
+        {
+            if (!method.ReturnType.IsGenericType ||
+                method.ReturnType.GetGenericTypeDefinition() != typeof(IQueryable<>))
+            {
+                continue;
+            }
+
+            var entityType = method.ReturnType.GetGenericArguments()[0];
+            graphQl.AddType(typeof(DomainEntityObjectType<>).MakeGenericType(entityType));
+        }
 
         return services;
     }

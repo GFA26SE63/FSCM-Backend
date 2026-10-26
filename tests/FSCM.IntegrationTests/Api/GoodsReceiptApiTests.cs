@@ -13,7 +13,7 @@ namespace FSCM.IntegrationTests.Api;
 public sealed class GoodsReceiptApiTests
 {
     [Fact]
-    public async Task Admin_receipt_is_authorized_idempotent_and_available_through_graphQl()
+    public async Task Receipt_create_and_approval_are_authorized_and_idempotent()
     {
         using var identityFactory = new IdentityAuthorizationTests.IdentityApiFactory();
         var store = new TestInventoryStore();
@@ -29,7 +29,8 @@ public sealed class GoodsReceiptApiTests
             warehouseId = store.Warehouse.Id,
             lines = new[]
             {
-                new { productId = store.Product.Id, sourceLotCode = "LÔ-NHẬP-THỬ", quantity = 20, expirationDate = "2027-04-30" }
+                new { productId = store.Product.Id, sourceLotCode = "LÔ-NHẬP-THỬ", quantity = 20,
+                    productionDate = "2026-10-01", expirationDate = "2027-04-30" }
             }
         };
 
@@ -49,6 +50,24 @@ public sealed class GoodsReceiptApiTests
         Assert.Equal(HttpStatusCode.Created, first.StatusCode);
         Assert.Equal(HttpStatusCode.Created, repeated.StatusCode);
         Assert.Single(store.Receipts);
+        Assert.Null(store.Balance);
+        Assert.Empty(store.Transactions);
+
+        var pendingReceipt = JsonDocument.Parse(await first.Content.ReadAsStringAsync()).RootElement;
+        Assert.Equal(GoodsReceiptStatuses.Pending, pendingReceipt.GetProperty("status").GetString());
+        Assert.Equal(JsonValueKind.Null, pendingReceipt.GetProperty("receivedAt").ValueKind);
+        Assert.Equal(JsonValueKind.Null, pendingReceipt.GetProperty("lines")[0].GetProperty("batchId").ValueKind);
+        Assert.Equal("2026-10-01", pendingReceipt.GetProperty("lines")[0].GetProperty("productionDate").GetString());
+        var receiptId = pendingReceipt.GetProperty("id").GetGuid();
+
+        client.DefaultRequestHeaders.Authorization = Bearer(identityFactory.Sales, identityFactory);
+        Assert.Equal(HttpStatusCode.Forbidden,
+            (await client.PostAsync($"/api/v1/goods-receipts/{receiptId}/approve", null)).StatusCode);
+        client.DefaultRequestHeaders.Authorization = Bearer(identityFactory.Admin, identityFactory);
+        var approved = await client.PostAsync($"/api/v1/goods-receipts/{receiptId}/approve", null);
+        var approvedAgain = await client.PostAsync($"/api/v1/goods-receipts/{receiptId}/approve", null);
+        Assert.Equal(HttpStatusCode.OK, approved.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, approvedAgain.StatusCode);
         Assert.Equal(20, store.Balance!.PhysicalQuantity);
         Assert.Equal(20, store.Balance.AvailableQuantity);
         Assert.Equal(InventoryTransactionSourceTypes.GoodsReceipt,
@@ -60,39 +79,8 @@ public sealed class GoodsReceiptApiTests
         Assert.Equal(20m, inventoryItem.GetProperty("onHandQuantity").GetDecimal());
         Assert.Equal(20m, inventoryItem.GetProperty("availableQuantity").GetDecimal());
 
-        var receiptId = JsonDocument.Parse(await first.Content.ReadAsStringAsync())
-            .RootElement.GetProperty("id").GetGuid();
-        var graphQl = await client.PostAsJsonAsync("/graphql", new
-        {
-            query = "query($id: UUID!) { goodsReceipt(id: $id) { id receiptCode lines { receivedQuantity batchCode } } }",
-            variables = new { id = receiptId }
-        });
-        Assert.Equal(HttpStatusCode.OK, graphQl.StatusCode);
-        var graphQlJson = JsonDocument.Parse(await graphQl.Content.ReadAsStringAsync());
-        Assert.False(graphQlJson.RootElement.TryGetProperty("errors", out _), graphQlJson.RootElement.ToString());
-        Assert.Equal(20m, graphQlJson.RootElement.GetProperty("data").GetProperty("goodsReceipt")
-            .GetProperty("lines")[0].GetProperty("receivedQuantity").GetDecimal());
-
-        var inventoryGraphQl = await client.PostAsJsonAsync("/graphql", new
-        {
-            query = "query { inventory(first: 10) { nodes { onHandQuantity reservedQuantity availableQuantity } } }"
-        });
-        var inventoryGraphQlJson = JsonDocument.Parse(await inventoryGraphQl.Content.ReadAsStringAsync());
-        Assert.False(inventoryGraphQlJson.RootElement.TryGetProperty("errors", out _), inventoryGraphQlJson.RootElement.ToString());
-        Assert.Equal(20m, inventoryGraphQlJson.RootElement.GetProperty("data").GetProperty("inventory")
-            .GetProperty("nodes")[0].GetProperty("availableQuantity").GetDecimal());
-
         var health = await client.GetAsync("/api/v1/inventory/expiry/health");
         Assert.Equal(HttpStatusCode.OK, health.StatusCode);
-        var healthGraphQl = await client.PostAsJsonAsync("/graphql", new
-        {
-            query = "query { inventoryExpiryHealth { schedulerEnabled scheduleTimeZone scheduleLocalTime pendingOutboxMessages failedOutboxMessages } }"
-        });
-        Assert.Equal(HttpStatusCode.OK, healthGraphQl.StatusCode);
-        var healthJson = JsonDocument.Parse(await healthGraphQl.Content.ReadAsStringAsync());
-        Assert.False(healthJson.RootElement.TryGetProperty("errors", out _), healthJson.RootElement.ToString());
-        Assert.Equal("Asia/Ho_Chi_Minh", healthJson.RootElement.GetProperty("data")
-            .GetProperty("inventoryExpiryHealth").GetProperty("scheduleTimeZone").GetString());
 
         client.DefaultRequestHeaders.Remove("Idempotency-Key");
         client.DefaultRequestHeaders.Authorization = Bearer(identityFactory.WarehouseKeeper, identityFactory);
@@ -100,6 +88,10 @@ public sealed class GoodsReceiptApiTests
         var keeperReceipt = await client.PostAsJsonAsync("/api/v1/goods-receipts", request);
         Assert.Equal(HttpStatusCode.Created, keeperReceipt.StatusCode);
         Assert.Equal(2, store.Receipts.Count);
+        var keeperReceiptId = JsonDocument.Parse(await keeperReceipt.Content.ReadAsStringAsync())
+            .RootElement.GetProperty("id").GetGuid();
+        Assert.Equal(HttpStatusCode.OK,
+            (await client.PostAsync($"/api/v1/goods-receipts/{keeperReceiptId}/approve", null)).StatusCode);
         Assert.Equal(40, store.Balance.PhysicalQuantity);
     }
 
@@ -140,6 +132,13 @@ public sealed class GoodsReceiptApiTests
             Task.FromResult(ToView(Receipts.SingleOrDefault(item => item.IdempotencyKey == key)));
         public Task<GoodsReceiptView?> FindReceiptAsync(Guid receiptId, CancellationToken cancellationToken) =>
             Task.FromResult(ToView(Receipts.SingleOrDefault(item => item.Id == receiptId)));
+        public Task<GoodsReceiptApprovalView?> FindReceiptForApprovalAsync(Guid receiptId, CancellationToken cancellationToken)
+        {
+            var receipt = Receipts.SingleOrDefault(item => item.Id == receiptId);
+            return Task.FromResult(receipt is null ? null : new GoodsReceiptApprovalView(receipt, Warehouse,
+                Lines.Where(item => item.GoodsReceiptId == receiptId)
+                    .Select(item => new GoodsReceiptApprovalLine(item, Product)).ToArray()));
+        }
         public Task<IReadOnlyCollection<GoodsReceiptView>> ListReceiptsAsync(Guid actorUserId, string actorRole, Guid? warehouseId, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyCollection<GoodsReceiptView>>(Receipts.Select(item => ToView(item)!).ToArray());
         public Task<Batch?> FindBatchForUpdateAsync(Guid warehouseId, Guid productId, DateOnly expirationDate, CancellationToken cancellationToken) =>
@@ -149,12 +148,12 @@ public sealed class GoodsReceiptApiTests
         public Task<IReadOnlyCollection<BatchInventoryView>> ListInventoryAsync(Guid actorUserId, string actorRole, Guid? warehouseId, Guid? productId, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyCollection<BatchInventoryView>>(Balance is null ? [] : [
                 new BatchInventoryView(Batches.Single(), Balance, Warehouse.Code, Warehouse.Name,
-                    Product.Sku, Product.Name, Product.NearDateThresholdHours)
+                    Product.Sku, Product.Name, Product.NearDateThresholdHours, 0m, false)
             ]);
         public Task<BatchInventoryView?> FindBatchInventoryAsync(Guid batchId, CancellationToken cancellationToken) =>
             Task.FromResult<BatchInventoryView?>(Balance?.BatchId == batchId
                 ? new BatchInventoryView(Batches.Single(), Balance, Warehouse.Code, Warehouse.Name,
-                    Product.Sku, Product.Name, Product.NearDateThresholdHours)
+                    Product.Sku, Product.Name, Product.NearDateThresholdHours, 0m, false)
                 : null);
         public Task<IReadOnlyCollection<InventoryHistoryView>> ListHistoryAsync(Guid actorUserId, string actorRole, Guid? warehouseId, Guid? batchId, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyCollection<InventoryHistoryView>>([]);
@@ -177,9 +176,9 @@ public sealed class GoodsReceiptApiTests
             if (receipt is null) return null;
             var lines = Lines.Where(item => item.GoodsReceiptId == receipt.Id).Select(line =>
             {
-                var batch = Batches.Single(item => item.WarehouseId == receipt.WarehouseId &&
+                var batch = Batches.SingleOrDefault(item => item.WarehouseId == receipt.WarehouseId &&
                     item.ProductId == line.ProductId && item.ExpirationDate == line.ExpirationDate);
-                return new GoodsReceiptLineView(line, Product.Sku, Product.Name, batch.Id, batch.BatchCode);
+                return new GoodsReceiptLineView(line, Product.Sku, Product.Name, batch?.Id, batch?.BatchCode);
             }).ToArray();
             return new GoodsReceiptView(receipt, Warehouse.Code, Warehouse.Name, lines);
         }

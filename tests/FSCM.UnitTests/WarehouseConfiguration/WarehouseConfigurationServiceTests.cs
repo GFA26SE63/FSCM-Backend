@@ -27,6 +27,20 @@ public sealed class WarehouseConfigurationServiceTests
     }
 
     [Fact]
+    public async Task Warehouse_detail_returns_only_active_warehouse_keepers()
+    {
+        var fixture = new Fixture();
+        var warehouse = fixture.AddWarehouse();
+        fixture.Store.Keepers.Add(new WarehouseKeeperView(
+            warehouse.Id, Guid.NewGuid(), "Nguyễn Văn Kho", "thukho@example.test"));
+
+        var result = await fixture.Service.GetWarehouseAsync(warehouse.Id, CancellationToken.None);
+
+        var keeper = Assert.Single(result.Keepers);
+        Assert.Equal("Nguyễn Văn Kho", keeper.FullName);
+    }
+
+    [Fact]
     public async Task Transit_rules_reject_overlapping_distance_ranges()
     {
         var fixture = new Fixture();
@@ -85,6 +99,22 @@ public sealed class WarehouseConfigurationServiceTests
             fixture.Service.SetMlorAsync(fixture.AddRetailer().Id, null, fixture.AddProduct().Id,
                 ratio, null, Guid.NewGuid(), CancellationToken.None));
         Assert.Equal("validation_error", exception.Code);
+    }
+
+    [Fact]
+    public async Task Deactivating_mlor_preserves_history_and_writes_audit()
+    {
+        var fixture = new Fixture();
+        var mlor = fixture.AddMlor(fixture.AddRetailer().Id, fixture.AddProduct().Id, 0.3m);
+        var actorId = Guid.NewGuid();
+
+        await fixture.Service.DeactivateMlorAsync(mlor.Id, actorId, CancellationToken.None);
+
+        Assert.False(mlor.IsActive);
+        Assert.Equal(Now, mlor.EffectiveTo);
+        var audit = Assert.Single(fixture.Store.AuditLogs);
+        Assert.Equal("RetailerMlorRuleDeactivated", audit.Action);
+        Assert.Equal(actorId, audit.UserAccountId);
     }
 
     [Fact]
@@ -191,6 +221,7 @@ public sealed class WarehouseConfigurationServiceTests
         public List<ProductCategory> Categories { get; } = [];
         public List<SystemConfiguration> Configurations { get; } = [];
         public List<AuditLog> AuditLogs { get; } = [];
+        public List<WarehouseKeeperView> Keepers { get; } = [];
 
         public Task<IReadOnlyCollection<WarehouseView>> ListWarehousesAsync(bool includeInactive, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyCollection<WarehouseView>>(Warehouses.Where(item => includeInactive || item.IsActive)
@@ -203,6 +234,10 @@ public sealed class WarehouseConfigurationServiceTests
         public Task<Warehouse?> FindWarehouseAsync(Guid id, CancellationToken cancellationToken) => Task.FromResult(Warehouses.SingleOrDefault(item => item.Id == id));
         public Task<Warehouse?> FindWarehouseByCodeAsync(string code, CancellationToken cancellationToken) => Task.FromResult(Warehouses.SingleOrDefault(item => item.Code == code));
         public Task<MapLocation?> FindWarehouseLocationAsync(Guid id, CancellationToken cancellationToken) => Task.FromResult(Locations.SingleOrDefault(item => item.WarehouseId == id));
+        public Task<IReadOnlyCollection<WarehouseKeeperView>> ListActiveWarehouseKeepersAsync(
+            IReadOnlyCollection<Guid> warehouseIds, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyCollection<WarehouseKeeperView>>(
+                Keepers.Where(item => warehouseIds.Contains(item.WarehouseId)).ToArray());
         public void AddWarehouse(Warehouse item) => Warehouses.Add(item);
         public void AddLocation(MapLocation item) => Locations.Add(item);
         public Task<IReadOnlyCollection<TransitTimeRule>> ListTransitRulesAsync(Guid id, bool includeInactive, CancellationToken cancellationToken) =>
@@ -229,6 +264,8 @@ public sealed class WarehouseConfigurationServiceTests
             Guid retailerId, Guid? productCategoryId, Guid? productId, CancellationToken cancellationToken) =>
             Task.FromResult(Mlors.SingleOrDefault(item => item.RetailerId == retailerId &&
                 item.ProductCategoryId == productCategoryId && item.ProductId == productId && item.IsActive));
+        public Task<RetailerProductMlor?> FindMlorAsync(Guid mlorId, CancellationToken cancellationToken) =>
+            Task.FromResult(Mlors.SingleOrDefault(item => item.Id == mlorId));
         public Task<Retailer?> FindRetailerAsync(Guid id, CancellationToken cancellationToken) => Task.FromResult(Retailers.SingleOrDefault(item => item.Id == id));
         public Task<Product?> FindProductAsync(Guid id, CancellationToken cancellationToken) => Task.FromResult(Products.SingleOrDefault(item => item.Id == id));
         public Task<ProductCategory?> FindCategoryAsync(Guid id, CancellationToken cancellationToken) =>

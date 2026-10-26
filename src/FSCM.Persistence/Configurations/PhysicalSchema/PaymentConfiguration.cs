@@ -15,6 +15,7 @@ public sealed class PaymentConfiguration : IEntityTypeConfiguration<Payment>
         builder.Property(entity => entity.Method).HasMaxLength(30).IsRequired();
         builder.Property(entity => entity.Status).HasMaxLength(30).IsRequired();
         builder.Property(entity => entity.Amount).HasPrecision(18, 2).IsRequired();
+        builder.Property(entity => entity.AdjustedAmount).HasPrecision(18, 2).IsRequired();
         builder.Property(entity => entity.ConfirmedAmount).HasPrecision(18, 2).IsRequired();
         builder.Property(entity => entity.FinalApprovedAt).HasColumnType("timestamp with time zone").IsRequired();
         builder.Property(entity => entity.FinalApprovalReference).HasMaxLength(100).IsRequired();
@@ -53,6 +54,8 @@ public sealed class PaymentConfiguration : IEntityTypeConfiguration<Payment>
         builder.ToTable(table =>
         {
             table.HasCheckConstraint("CK_PAYMENT_Amount", "\"Amount\" > 0");
+            table.HasCheckConstraint("CK_PAYMENT_AdjustedAmount",
+                "\"AdjustedAmount\" >= 0 AND \"AdjustedAmount\" <= \"Amount\"");
             table.HasCheckConstraint("CK_PAYMENT_ConfirmedAmount",
                 "\"ConfirmedAmount\" >= 0 AND \"ConfirmedAmount\" <= \"Amount\"");
         });

@@ -42,6 +42,7 @@ public sealed class QrLabelPrintApiTests
         Assert.Contains(store.Parent.QrCode, html);
         Assert.Contains("70 thùng", html);
         Assert.Contains("<svg", html);
+        Assert.Contains(TestQrLabelStore.ReceiptCode, html);
 
         var batch = await client.GetAsync($"/api/v1/qr-labels/batches/{store.Batch.Id}/print");
         Assert.Equal(HttpStatusCode.OK, batch.StatusCode);
@@ -57,7 +58,7 @@ public sealed class QrLabelPrintApiTests
     }
 
     [Fact]
-    public async Task GraphQl_qr_read_uses_same_lineage_contract()
+    public async Task Legacy_qr_graphQl_root_is_removed()
     {
         using var identityFactory = new IdentityAuthorizationTests.IdentityApiFactory();
         var store = new TestQrLabelStore();
@@ -78,11 +79,10 @@ public sealed class QrLabelPrintApiTests
             variables = new { code = store.Child.QrCode }
         });
 
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
-        Assert.False(json.RootElement.TryGetProperty("errors", out _), json.RootElement.ToString());
-        Assert.Equal(2, json.RootElement.GetProperty("data").GetProperty("qrLabel")
-            .GetProperty("lineage").GetArrayLength());
+        Assert.True(json.RootElement.TryGetProperty("errors", out var errors), json.RootElement.ToString());
+        Assert.NotEmpty(errors.EnumerateArray());
     }
 
     private static AuthenticationHeaderValue Bearer(
@@ -181,6 +181,8 @@ public sealed class QrLabelPrintApiTests
             Task.FromResult<QrLabelEvent?>(null);
         public Task<Batch?> FindBatchAsync(Guid batchId, CancellationToken cancellationToken) =>
             Task.FromResult<Batch?>(Batch.Id == batchId ? Batch : null);
+        public Task<Guid?> FindGoodsReceiptIdForBatchAsync(Guid batchId, CancellationToken cancellationToken) =>
+            Task.FromResult<Guid?>(null);
         public Task<InventoryBalance?> FindBalanceAsync(Guid batchId, CancellationToken cancellationToken) =>
             Task.FromResult<InventoryBalance?>(new() { BatchId = batchId, PhysicalQuantity = 100, AvailableQuantity = 100 });
         public Task<decimal> SumActiveQuantityAsync(Guid batchId, CancellationToken cancellationToken) =>
@@ -191,8 +193,10 @@ public sealed class QrLabelPrintApiTests
         public void AddEvent(QrLabelEvent labelEvent) => throw new NotSupportedException();
         public Task SaveChangesAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 
+        public const string ReceiptCode = "GRN-000042";
+
         private QrLabelView? ToView(BatchQrLabel? label) => label is null ? null : new(
             label, Batch, warehouse, product,
-            label.ParentLabelId == Parent.Id ? Parent.QrCode : null, Parent.QrCode);
+            label.ParentLabelId == Parent.Id ? Parent.QrCode : null, Parent.QrCode, ReceiptCode);
     }
 }

@@ -19,6 +19,9 @@ public sealed record CategoryResult(
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt);
 
+/// <summary>Outcome of deleting a category: either a hard delete or an inactivation (soft delete).</summary>
+public sealed record DeleteCategoryResult(Guid CategoryId, bool Deleted, bool Inactivated);
+
 public sealed record ProductResult(
     Guid Id,
     Guid ProductCategoryId,
@@ -90,4 +93,13 @@ public sealed record CreateReplacementProductData(
     string Unit,
     int ShelfLifeHours,
     int NearDateThresholdHours,
+    decimal? InitialUnitPrice);
+
+public sealed record CloneProductData(
+    string Sku,
+    Guid? ProductCategoryId,
+    string? Name,
+    string? Unit,
+    int? ShelfLifeHours,
+    int? NearDateThresholdHours,
     decimal? InitialUnitPrice);

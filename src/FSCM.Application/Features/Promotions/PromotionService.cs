@@ -258,7 +258,8 @@ public sealed class PromotionService(IPromotionStore store, TimeProvider timePro
         return new PriceSnapshotResult(productId, productView.Product.Sku, productView.Product.Name,
             batch?.Id, batch?.BatchCode, retailerId, quantity, unitPrice, gross,
             discountPercent, discountAmount, Math.Round(net / quantity, 2), net,
-            applied, ordered, pricedAt, batch is null);
+            applied, ordered, pricedAt, batch is null, productView.Price.Id,
+            productView.Price.EffectiveFrom, productView.Price.EffectiveTo);
     }
 
     public Task<PriceSnapshotResult> CalculateIndicativePriceAsync(
@@ -367,5 +368,6 @@ public sealed class PromotionService(IPromotionStore store, TimeProvider timePro
 
     private static AppliedPromotionSnapshot ToSnapshot(Promotion promotion) =>
         new(promotion.Id, promotion.Code, promotion.Name,
-            promotion.PromotionType, promotion.DiscountPercent);
+            promotion.PromotionType, promotion.DiscountPercent, promotion.MinimumQuantity,
+            promotion.StartAt, promotion.EndAt);
 }

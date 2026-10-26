@@ -11,6 +11,25 @@ public sealed record CreateAssistedOrderRequest(
 
 public sealed record CreateAssistedOrderLineRequest(Guid ProductId, int Quantity);
 
+public sealed record SubmitOfflineOrderRequest(
+    Guid ClientOrderKey,
+    Guid RetailerId,
+    string PaymentMethod,
+    DateOnly? RequestedDeliveryDate,
+    string? DeliveryAddress,
+    string? Note,
+    decimal OfflineEstimatedAmount,
+    IReadOnlyCollection<CreateAssistedOrderLineRequest> Lines,
+    string? SnapshotVersion = null,
+    bool ConfirmConditionChanges = false,
+    IReadOnlyCollection<OfflineExpectedConditionRequest>? ExpectedConditions = null);
+
+public sealed record OfflineExpectedConditionRequest(
+    Guid ProductId,
+    decimal ExpectedBaseUnitPrice,
+    int ExpectedMlorVersion,
+    decimal ExpectedMlorRatio);
+
 public sealed record OrderDecisionRequest(int ExpectedVersion);
 
 public sealed record RejectOrderRequest(int ExpectedVersion, string Reason);

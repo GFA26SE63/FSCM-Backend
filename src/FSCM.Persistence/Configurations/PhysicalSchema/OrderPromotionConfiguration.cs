@@ -13,6 +13,12 @@ public sealed class OrderPromotionConfiguration : IEntityTypeConfiguration<Order
         builder.Property(entity => entity.Id).HasColumnType("uuid").IsRequired();
         builder.Property(entity => entity.SalesOrderLineId).HasColumnType("uuid").IsRequired();
         builder.Property(entity => entity.PromotionId).HasColumnType("uuid").IsRequired();
+        builder.Property(entity => entity.PromotionCodeSnapshot).HasMaxLength(40).IsRequired();
+        builder.Property(entity => entity.PromotionNameSnapshot).HasMaxLength(200).IsRequired();
+        builder.Property(entity => entity.PromotionTypeSnapshot).HasMaxLength(30).IsRequired();
+        builder.Property(entity => entity.MinimumQuantitySnapshot).HasPrecision(18, 3).IsRequired();
+        builder.Property(entity => entity.EffectiveFromSnapshot).HasColumnType("timestamp with time zone").IsRequired();
+        builder.Property(entity => entity.EffectiveToSnapshot).HasColumnType("timestamp with time zone").IsRequired();
         builder.Property(entity => entity.DiscountPercent).HasPrecision(5, 2).IsRequired();
         builder.Property(entity => entity.DiscountAmount).HasPrecision(18, 2).IsRequired();
         builder.Property(entity => entity.IsServerFinal).IsRequired();

@@ -11,17 +11,28 @@ public sealed class ReservationConfiguration : IEntityTypeConfiguration<Reservat
         builder.ToTable("RESERVATION");
         builder.HasKey(entity => entity.Id);
         builder.Property(entity => entity.Id).HasColumnType("uuid").IsRequired();
-        builder.Property(entity => entity.AllocationId).HasColumnType("uuid").IsRequired();
+        builder.Property(entity => entity.AllocationId).HasColumnType("uuid").IsRequired(false);
+        builder.Property(entity => entity.AllocationRunAllocationId).HasColumnType("uuid").IsRequired(false);
         builder.Property(entity => entity.BatchId).HasColumnType("uuid").IsRequired();
         builder.Property(entity => entity.Quantity).HasPrecision(18, 3).IsRequired();
         builder.Property(entity => entity.Status).HasMaxLength(30).IsRequired();
         builder.Property(entity => entity.ReservedAt).HasColumnType("timestamp with time zone").IsRequired();
         builder.Property(entity => entity.ReleasedAt).HasColumnType("timestamp with time zone").IsRequired(false);
         builder.Property(entity => entity.ConsumedAt).HasColumnType("timestamp with time zone").IsRequired(false);
-        builder.HasIndex(entity => entity.AllocationId).IsUnique();
+        // One reservation per allocation on either path; the filters keep the two apart.
+        builder.HasIndex(entity => entity.AllocationId)
+            .IsUnique()
+            .HasFilter("\"AllocationId\" IS NOT NULL");
+        builder.HasIndex(entity => entity.AllocationRunAllocationId)
+            .IsUnique()
+            .HasFilter("\"AllocationRunAllocationId\" IS NOT NULL");
         builder.HasOne<Allocation>()
             .WithMany()
             .HasForeignKey(entity => entity.AllocationId)
+            .OnDelete(DeleteBehavior.Restrict);
+        builder.HasOne<AllocationRunAllocation>()
+            .WithMany()
+            .HasForeignKey(entity => entity.AllocationRunAllocationId)
             .OnDelete(DeleteBehavior.Restrict);
         builder.HasOne<Batch>()
             .WithMany()

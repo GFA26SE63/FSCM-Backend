@@ -16,9 +16,14 @@ public interface ICatalogStore
 
     Task<ProductCategory?> FindCategoryAsync(Guid categoryId, CancellationToken cancellationToken);
     Task<ProductCategory?> FindCategoryByCodeAsync(string code, CancellationToken cancellationToken);
+    Task<ProductCategory?> FindCategoryByNameAsync(string name, CancellationToken cancellationToken);
     Task<bool> CategoryHasActiveChildrenAsync(Guid categoryId, CancellationToken cancellationToken);
     Task<bool> CategoryHasActiveProductsAsync(Guid categoryId, CancellationToken cancellationToken);
+    Task<bool> CategoryHasAnyChildrenAsync(Guid categoryId, CancellationToken cancellationToken);
+    Task<bool> CategoryHasAnyProductsAsync(Guid categoryId, CancellationToken cancellationToken);
+    Task<string> NextCategoryCodeAsync(CancellationToken cancellationToken);
     void AddCategory(ProductCategory category);
+    void RemoveCategory(ProductCategory category);
 
     Task<(IReadOnlyCollection<ProductView> Items, int TotalCount)> ListProductsAsync(
         ProductSearch search,

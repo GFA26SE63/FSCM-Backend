@@ -342,6 +342,9 @@ public sealed class IdentityServiceTests
         public Task<IdentityScope> GetScopeAsync(Guid userId, CancellationToken cancellationToken) =>
             Task.FromResult(Scopes.GetValueOrDefault(userId, IdentityScope.Empty));
 
+        public Task<IdentityScopeLabels> GetScopeLabelsAsync(IdentityScope scope, CancellationToken cancellationToken) =>
+            Task.FromResult(IdentityScopeLabels.Empty);
+
         public Task<bool> WarehouseExistsAsync(Guid warehouseId, CancellationToken cancellationToken) =>
             Task.FromResult(Warehouses.Contains(warehouseId));
 

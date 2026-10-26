@@ -62,6 +62,12 @@ public sealed class QrLabelStore(AppDbContext dbContext) : IQrLabelStore
     public Task<Batch?> FindBatchAsync(Guid batchId, CancellationToken cancellationToken) =>
         dbContext.BatchRecords.AsNoTracking().SingleOrDefaultAsync(item => item.Id == batchId, cancellationToken);
 
+    public Task<Guid?> FindGoodsReceiptIdForBatchAsync(Guid batchId, CancellationToken cancellationToken) =>
+        (from batch in dbContext.BatchRecords.AsNoTracking()
+         where batch.Id == batchId && batch.GoodsReceiptLineId != null
+         join line in dbContext.GoodsReceiptLineRecords.AsNoTracking() on batch.GoodsReceiptLineId equals line.Id
+         select (Guid?)line.GoodsReceiptId).SingleOrDefaultAsync(cancellationToken);
+
     public Task<InventoryBalance?> FindBalanceAsync(Guid batchId, CancellationToken cancellationToken) =>
         dbContext.InventoryBalanceRecords.AsNoTracking().SingleOrDefaultAsync(item => item.BatchId == batchId, cancellationToken);
 
@@ -117,6 +123,9 @@ public sealed class QrLabelStore(AppDbContext dbContext) : IQrLabelStore
         from parent in parents.DefaultIfEmpty()
         join root in dbContext.BatchQrLabelRecords.AsNoTracking() on label.RootLabelId equals root.Id into roots
         from root in roots.DefaultIfEmpty()
+        join receipt in dbContext.GoodsReceiptRecords.AsNoTracking() on label.GoodsReceiptId equals receipt.Id into receipts
+        from receipt in receipts.DefaultIfEmpty()
         select new QrLabelView(label, batch, warehouse, product,
-            parent == null ? null : parent.QrCode, root == null ? label.QrCode : root.QrCode);
+            parent == null ? null : parent.QrCode, root == null ? label.QrCode : root.QrCode,
+            receipt == null ? null : receipt.ReceiptCode);
 }

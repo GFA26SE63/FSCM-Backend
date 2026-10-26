@@ -9,13 +9,28 @@ public sealed class InventoryServiceTests
     private static readonly DateTimeOffset Now = new(2026, 10, 13, 5, 0, 0, TimeSpan.Zero);
 
     [Fact]
-    public async Task Receipt_creates_business_batch_and_inventory_ledger()
+    public async Task Creating_receipt_keeps_inventory_unchanged_until_approval()
     {
         var fixture = new Fixture();
 
-        var result = await fixture.ReceiveAsync("receipt-key-0001", 25, new DateOnly(2027, 4, 30));
+        var result = await fixture.CreateAsync("receipt-key-0001", 25, new DateOnly(2027, 4, 30));
 
         Assert.Equal("PN-261013-01", result.ReceiptCode);
+        Assert.Equal(GoodsReceiptStatuses.Pending, result.Status);
+        Assert.Null(result.Lines.Single().BatchId);
+        Assert.Empty(fixture.Store.Balances);
+        Assert.Empty(fixture.Store.Transactions);
+    }
+
+    [Fact]
+    public async Task Approval_creates_business_batch_and_inventory_ledger()
+    {
+        var fixture = new Fixture();
+        var pending = await fixture.CreateAsync("receipt-key-0001", 25, new DateOnly(2027, 4, 30));
+
+        var result = await fixture.ApproveAsync(pending.Id);
+
+        Assert.Equal(GoodsReceiptStatuses.Received, result.Status);
         Assert.Equal("WH-TA-SKU001-30042027", result.Lines.Single().BatchCode);
         Assert.Equal(25, fixture.Store.Balances.Single().PhysicalQuantity);
         Assert.Equal(25, fixture.Store.Balances.Single().AvailableQuantity);
@@ -23,12 +38,14 @@ public sealed class InventoryServiceTests
     }
 
     [Fact]
-    public async Task Same_warehouse_sku_and_expiry_merges_into_existing_batch()
+    public async Task Same_warehouse_sku_and_expiry_merges_into_existing_batch_on_approval()
     {
         var fixture = new Fixture();
-        await fixture.ReceiveAsync("receipt-key-0001", 25, new DateOnly(2027, 4, 30));
+        var first = await fixture.CreateAsync("receipt-key-0001", 25, new DateOnly(2027, 4, 30));
+        await fixture.ApproveAsync(first.Id);
 
-        await fixture.ReceiveAsync("receipt-key-0002", 15, new DateOnly(2027, 4, 30));
+        var second = await fixture.CreateAsync("receipt-key-0002", 15, new DateOnly(2027, 4, 30));
+        await fixture.ApproveAsync(second.Id);
 
         Assert.Single(fixture.Store.Batches);
         Assert.Equal(40, fixture.Store.Balances.Single().PhysicalQuantity);
@@ -36,12 +53,14 @@ public sealed class InventoryServiceTests
     }
 
     [Fact]
-    public async Task Repeated_idempotency_key_returns_original_receipt_without_adding_stock()
+    public async Task Repeated_create_and_approval_are_idempotent_without_adding_stock_twice()
     {
         var fixture = new Fixture();
-        var first = await fixture.ReceiveAsync("receipt-key-0001", 25, new DateOnly(2027, 4, 30));
+        var first = await fixture.CreateAsync("receipt-key-0001", 25, new DateOnly(2027, 4, 30));
 
-        var second = await fixture.ReceiveAsync("receipt-key-0001", 25, new DateOnly(2027, 4, 30));
+        var second = await fixture.CreateAsync("receipt-key-0001", 25, new DateOnly(2027, 4, 30));
+        await fixture.ApproveAsync(first.Id);
+        await fixture.ApproveAsync(first.Id);
 
         Assert.Equal(first.Id, second.Id);
         Assert.Equal(25, fixture.Store.Balances.Single().PhysicalQuantity);
@@ -51,10 +70,10 @@ public sealed class InventoryServiceTests
     public async Task Reusing_idempotency_key_for_changed_payload_is_rejected()
     {
         var fixture = new Fixture();
-        await fixture.ReceiveAsync("receipt-key-0001", 25, new DateOnly(2027, 4, 30));
+        await fixture.CreateAsync("receipt-key-0001", 25, new DateOnly(2027, 4, 30));
 
         var exception = await Assert.ThrowsAsync<InventoryOperationException>(() =>
-            fixture.ReceiveAsync("receipt-key-0001", 30, new DateOnly(2027, 4, 30)));
+            fixture.CreateAsync("receipt-key-0001", 30, new DateOnly(2027, 4, 30)));
 
         Assert.Equal("conflict", exception.Code);
     }
@@ -63,11 +82,11 @@ public sealed class InventoryServiceTests
     public async Task Receipt_retry_revalidates_current_warehouse_scope()
     {
         var fixture = new Fixture();
-        await fixture.ReceiveAsync("receipt-key-0001", 25, new DateOnly(2027, 4, 30));
+        await fixture.CreateAsync("receipt-key-0001", 25, new DateOnly(2027, 4, 30));
         fixture.Store.CanAccessWarehouse = false;
 
         var exception = await Assert.ThrowsAsync<InventoryOperationException>(() =>
-            fixture.ReceiveAsync("receipt-key-0001", 25, new DateOnly(2027, 4, 30)));
+            fixture.CreateAsync("receipt-key-0001", 25, new DateOnly(2027, 4, 30)));
 
         Assert.Equal("forbidden", exception.Code);
         Assert.Single(fixture.Store.Receipts);
@@ -82,7 +101,27 @@ public sealed class InventoryServiceTests
         var fixture = new Fixture();
 
         var exception = await Assert.ThrowsAsync<InventoryOperationException>(() =>
-            fixture.ReceiveAsync("receipt-key-0001", decimal.Parse(quantity), new DateOnly(year, month, day)));
+            fixture.CreateAsync("receipt-key-0001", decimal.Parse(quantity), new DateOnly(year, month, day)));
+
+        Assert.Equal("validation_error", exception.Code);
+        Assert.Empty(fixture.Store.Receipts);
+    }
+
+    [Theory]
+    [InlineData(2026, 10, 14, 2027, 4, 30)]
+    [InlineData(2027, 4, 30, 2027, 4, 30)]
+    public async Task Receipt_rejects_future_or_nonchronological_production_date(
+        int productionYear, int productionMonth, int productionDay,
+        int expiryYear, int expiryMonth, int expiryDay)
+    {
+        var fixture = new Fixture();
+
+        var exception = await Assert.ThrowsAsync<InventoryOperationException>(() =>
+            fixture.Service.CreateReceiptAsync(fixture.UserId, SystemRoles.WarehouseKeeper,
+                fixture.Store.Warehouse.Id, "receipt-key-0001",
+                [new ReceiveGoodsLineData(fixture.Store.Product.Id, "LÔ-THỬ-NGHIỆM", 2,
+                    new DateOnly(productionYear, productionMonth, productionDay),
+                    new DateOnly(expiryYear, expiryMonth, expiryDay))], CancellationToken.None));
 
         Assert.Equal("validation_error", exception.Code);
         Assert.Empty(fixture.Store.Receipts);
@@ -99,10 +138,14 @@ public sealed class InventoryServiceTests
             Service = new InventoryService(Store, new FixedTimeProvider(Now));
         }
 
-        public Task<GoodsReceiptResult> ReceiveAsync(string key, decimal quantity, DateOnly expirationDate) =>
-            Service.ReceiveAsync(UserId, SystemRoles.WarehouseKeeper, Store.Warehouse.Id, key,
-                [new ReceiveGoodsLineData(Store.Product.Id, "LÔ-THỬ-NGHIỆM", quantity, expirationDate)],
+        public Task<GoodsReceiptResult> CreateAsync(string key, decimal quantity, DateOnly expirationDate) =>
+            Service.CreateReceiptAsync(UserId, SystemRoles.WarehouseKeeper, Store.Warehouse.Id, key,
+                [new ReceiveGoodsLineData(Store.Product.Id, "LÔ-THỬ-NGHIỆM", quantity,
+                    new DateOnly(2026, 10, 1), expirationDate)],
                 CancellationToken.None);
+
+        public Task<GoodsReceiptResult> ApproveAsync(Guid receiptId) =>
+            Service.ApproveReceiptAsync(receiptId, UserId, SystemRoles.WarehouseKeeper, CancellationToken.None);
     }
 
     private sealed class FakeStore : IInventoryStore
@@ -125,6 +168,13 @@ public sealed class InventoryServiceTests
             Task.FromResult(ToReceiptView(Receipts.SingleOrDefault(item => item.IdempotencyKey == key)));
         public Task<GoodsReceiptView?> FindReceiptAsync(Guid receiptId, CancellationToken cancellationToken) =>
             Task.FromResult(ToReceiptView(Receipts.SingleOrDefault(item => item.Id == receiptId)));
+        public Task<GoodsReceiptApprovalView?> FindReceiptForApprovalAsync(Guid receiptId, CancellationToken cancellationToken)
+        {
+            var receipt = Receipts.SingleOrDefault(item => item.Id == receiptId);
+            return Task.FromResult(receipt is null ? null : new GoodsReceiptApprovalView(receipt, Warehouse,
+                Lines.Where(item => item.GoodsReceiptId == receiptId)
+                    .Select(item => new GoodsReceiptApprovalLine(item, Product)).ToArray()));
+        }
         public Task<IReadOnlyCollection<GoodsReceiptView>> ListReceiptsAsync(Guid actorUserId, string actorRole, Guid? warehouseId, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyCollection<GoodsReceiptView>>(Receipts.Select(item => ToReceiptView(item)!).ToArray());
         public Task<Batch?> FindBatchForUpdateAsync(Guid warehouseId, Guid productId, DateOnly expirationDate, CancellationToken cancellationToken) =>
@@ -155,9 +205,9 @@ public sealed class InventoryServiceTests
             if (receipt is null) return null;
             var lines = Lines.Where(item => item.GoodsReceiptId == receipt.Id).Select(line =>
             {
-                var batch = Batches.Single(item => item.WarehouseId == receipt.WarehouseId &&
+                var batch = Batches.SingleOrDefault(item => item.WarehouseId == receipt.WarehouseId &&
                     item.ProductId == line.ProductId && item.ExpirationDate == line.ExpirationDate);
-                return new GoodsReceiptLineView(line, Product.Sku, Product.Name, batch.Id, batch.BatchCode);
+                return new GoodsReceiptLineView(line, Product.Sku, Product.Name, batch?.Id, batch?.BatchCode);
             }).ToArray();
             return new GoodsReceiptView(receipt, Warehouse.Code, Warehouse.Name, lines);
         }

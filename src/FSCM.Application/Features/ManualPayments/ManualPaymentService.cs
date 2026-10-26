@@ -212,11 +212,11 @@ public sealed class ManualPaymentService(
     private static void ApplyLedgerConfirmation(
         Payment ledger, ManualPayment payment, Guid actorUserId, DateTimeOffset now)
     {
-        if (ledger.ConfirmedAmount + payment.Amount > ledger.Amount)
+        if (ledger.ConfirmedAmount + payment.Amount > ledger.AdjustedAmount)
             throw ManualPaymentOperationException.Conflict(
                 "Confirmed payments would exceed the final approved amount.");
         ledger.ConfirmedAmount += payment.Amount;
-        ledger.Status = ledger.ConfirmedAmount == ledger.Amount
+        ledger.Status = ledger.ConfirmedAmount == ledger.AdjustedAmount
             ? PaymentStatuses.Paid
             : PaymentStatuses.Unpaid;
         ledger.PaidDate = ledger.Status == PaymentStatuses.Paid
@@ -252,7 +252,8 @@ public sealed class ManualPaymentService(
                 payment.Version,
                 finalApprovedAmount = ledger.Amount,
                 totalConfirmedAmount = ledger.ConfirmedAmount,
-                outstandingAmount = ledger.Amount - ledger.ConfirmedAmount
+                adjustedAmount = ledger.AdjustedAmount,
+                outstandingAmount = Math.Max(0, ledger.AdjustedAmount - ledger.ConfirmedAmount)
             }),
             Reason = payment.Note,
             CreatedAt = now
@@ -283,7 +284,7 @@ public sealed class ManualPaymentService(
 
     private static void ValidateFullOutstandingAmount(decimal amount, Payment ledger)
     {
-        var outstanding = ledger.Amount - ledger.ConfirmedAmount;
+        var outstanding = Math.Max(0, ledger.AdjustedAmount - ledger.ConfirmedAmount);
         if (amount != outstanding)
             throw ManualPaymentOperationException.Conflict(
                 $"Only full payment is supported; outstanding amount is {outstanding:0.##} VND.");
@@ -368,7 +369,7 @@ public sealed class ManualPaymentService(
         view.Payment.Id, view.Payment.SalesOrderId, view.OrderCode, view.Payment.Method,
         view.Payment.Status, view.Payment.Amount, view.Payment.ConfirmedByUserId,
         view.Payment.ConfirmedAt, view.Payment.Note, view.Payment.Version,
-        view.FinalApprovedAmount, view.TotalConfirmedAmount,
-        view.FinalApprovedAmount - view.TotalConfirmedAmount,
+        view.FinalApprovedAmount, view.AdjustedAmount, view.TotalConfirmedAmount,
+        Math.Max(0, view.AdjustedAmount - view.TotalConfirmedAmount),
         view.Payment.CreatedAt, view.Payment.UpdatedAt);
 }

@@ -43,6 +43,24 @@ public sealed class InventoryStore(AppDbContext dbContext) : IInventoryStore, II
         return new GoodsReceiptView(header.Receipt, header.WarehouseCode, header.WarehouseName, lines);
     }
 
+    public async Task<GoodsReceiptApprovalView?> FindReceiptForApprovalAsync(
+        Guid receiptId, CancellationToken cancellationToken)
+    {
+        var receipt = await dbContext.GoodsReceiptRecords
+            .SingleOrDefaultAsync(item => item.Id == receiptId, cancellationToken);
+        if (receipt is null) return null;
+        var warehouse = await dbContext.WarehouseRecords.AsNoTracking()
+            .SingleAsync(item => item.Id == receipt.WarehouseId, cancellationToken);
+        var lines = await (
+            from line in dbContext.GoodsReceiptLineRecords.AsNoTracking()
+            join product in dbContext.ProductRecords.AsNoTracking() on line.ProductId equals product.Id
+            where line.GoodsReceiptId == receiptId
+            orderby product.Sku, line.CreatedAt
+            select new GoodsReceiptApprovalLine(line, product))
+            .ToArrayAsync(cancellationToken);
+        return new GoodsReceiptApprovalView(receipt, warehouse, lines);
+    }
+
     public async Task<IReadOnlyCollection<GoodsReceiptView>> ListReceiptsAsync(
         Guid actorUserId, string actorRole, Guid? warehouseId, CancellationToken cancellationToken)
     {
@@ -51,7 +69,7 @@ public sealed class InventoryStore(AppDbContext dbContext) : IInventoryStore, II
         if (actorRole == SystemRoles.WarehouseKeeper)
             receipts = receipts.Where(item => dbContext.UserWarehouseAssignmentRecords.Any(assignment =>
                 assignment.UserAccountId == actorUserId && assignment.WarehouseId == item.WarehouseId && assignment.IsActive));
-        var ids = await receipts.OrderByDescending(item => item.ReceivedAt).Select(item => item.Id).ToArrayAsync(cancellationToken);
+        var ids = await receipts.OrderByDescending(item => item.CreatedAt).Select(item => item.Id).ToArrayAsync(cancellationToken);
         var results = new List<GoodsReceiptView>(ids.Length);
         foreach (var id in ids)
         {
@@ -152,13 +170,20 @@ public sealed class InventoryStore(AppDbContext dbContext) : IInventoryStore, II
         await (
             from batch in dbContext.BatchRecords
             join product in dbContext.ProductRecords.AsNoTracking() on batch.ProductId equals product.Id
+            join balance in dbContext.InventoryBalanceRecords.AsNoTracking() on batch.Id equals balance.BatchId
             where batch.ExpiryStatus != BatchExpiryStatuses.Expired
-            select new BatchExpiryCandidate(batch, product.NearDateThresholdHours))
+            select new BatchExpiryCandidate(batch, product.NearDateThresholdHours,
+                balance.PhysicalQuantity, balance.ReservedQuantity,
+                dbContext.InventoryLockRecords.AsNoTracking()
+                    .Where(item => item.BatchId == batch.Id && item.Status == "Active")
+                    .Sum(item => (decimal?)item.LockedQuantity) ?? 0m))
             .ToArrayAsync(cancellationToken);
 
     public void AddSweepRun(ExpirySweepRun run) => dbContext.ExpirySweepRunRecords.Add(run);
 
     public void AddOutboxMessage(OutboxMessage message) => dbContext.OutboxMessageRecords.Add(message);
+
+    public void AddInventoryLock(InventoryLock inventoryLock) => dbContext.InventoryLockRecords.Add(inventoryLock);
 
     public Task<ExpirySweepRun?> FindLatestExpirySweepRunAsync(CancellationToken cancellationToken) =>
         dbContext.ExpirySweepRunRecords.AsNoTracking()
@@ -196,11 +221,14 @@ public sealed class InventoryStore(AppDbContext dbContext) : IInventoryStore, II
     private IQueryable<GoodsReceiptLineView> CreateReceiptLinesQuery(Guid receiptId, Guid warehouseId) =>
         from line in dbContext.GoodsReceiptLineRecords.AsNoTracking()
         join product in dbContext.ProductRecords.AsNoTracking() on line.ProductId equals product.Id
-        join batch in dbContext.BatchRecords.AsNoTracking() on new { WarehouseId = warehouseId, line.ProductId, line.ExpirationDate }
-            equals new { batch.WarehouseId, batch.ProductId, batch.ExpirationDate }
+        join batch in dbContext.BatchRecords.AsNoTracking()
+            on new { WarehouseId = warehouseId, line.ProductId, line.ExpirationDate }
+            equals new { batch.WarehouseId, batch.ProductId, batch.ExpirationDate } into matchingBatches
+        from batch in matchingBatches.DefaultIfEmpty()
         where line.GoodsReceiptId == receiptId
         orderby product.Sku, line.CreatedAt
-        select new GoodsReceiptLineView(line, product.Sku, product.Name, batch.Id, batch.BatchCode);
+        select new GoodsReceiptLineView(line, product.Sku, product.Name,
+            batch == null ? null : batch.Id, batch == null ? null : batch.BatchCode);
 
     private IQueryable<BatchInventoryView> CreateInventoryQuery(IQueryable<Batch> batches) =>
         from batch in batches
@@ -208,5 +236,10 @@ public sealed class InventoryStore(AppDbContext dbContext) : IInventoryStore, II
         join warehouse in dbContext.WarehouseRecords.AsNoTracking() on batch.WarehouseId equals warehouse.Id
         join product in dbContext.ProductRecords.AsNoTracking() on batch.ProductId equals product.Id
         select new BatchInventoryView(batch, balance, warehouse.Code, warehouse.Name,
-            product.Sku, product.Name, product.NearDateThresholdHours);
+            product.Sku, product.Name, product.NearDateThresholdHours,
+            dbContext.InventoryLockRecords.AsNoTracking()
+                .Where(item => item.BatchId == batch.Id && item.Status == "Active")
+                .Sum(item => (decimal?)item.LockedQuantity) ?? 0m,
+            dbContext.InventoryLockRecords.AsNoTracking()
+                .Any(item => item.BatchId == batch.Id && item.Status == "Active" && item.RequiresResolution));
 }

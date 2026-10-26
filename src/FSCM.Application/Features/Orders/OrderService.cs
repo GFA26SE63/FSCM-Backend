@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using FSCM.Application.Features.AllocationRuns;
 using FSCM.Application.Features.Inventory;
 using FSCM.Application.Features.Picking;
 using FSCM.Domain.Authorization;
@@ -79,6 +80,108 @@ public sealed class OrderService(
         return await GetAsync(plan.Order.Id, salesUserId, SystemRoles.Sales, cancellationToken);
     }
 
+    /// <summary>
+    /// F30: accepts an offline-drafted order a Sales rep submits once back online. Resubmission with
+    /// the same client key is idempotent (no duplicate order). Permission, MLOR and base price are
+    /// re-checked; a gap between the offline estimate and the server total is flagged for Sales to
+    /// confirm. The server-accept time is stamped as the cutoff; momentary stock is not reserved or
+    /// used to reject the order.
+    /// </summary>
+    public async Task<OrderDetailResult> SubmitOfflineAsync(
+        SubmitOfflineOrderData data,
+        Guid salesUserId,
+        CancellationToken cancellationToken)
+    {
+        if (data.OfflineEstimatedAmount < 0)
+            throw OrderOperationException.Validation("Offline estimated amount cannot be negative.");
+        var assisted = new CreateAssistedOrderData(
+            data.ClientOrderKey, data.RetailerId, data.PaymentMethod, data.RequestedDeliveryDate,
+            data.DeliveryAddress, data.Note, data.Lines);
+        var normalized = Normalize(assisted);
+        var requestHash = ComputeOfflineRequestHash(normalized, data, salesUserId);
+        var existing = await store.FindByClientOrderKeyAsync(normalized.ClientOrderKey, cancellationToken);
+        if (existing is not null)
+        {
+            var legacyOfflineHash = ComputeRequestHash(normalized, salesUserId);
+            if (existing.CreatedByUserId != salesUserId ||
+                existing.RequestHash != requestHash &&
+                !(existing.Source == OrderSources.Offline && existing.RequestHash == legacyOfflineHash))
+                throw OrderOperationException.Conflict("Client order key was already used for a different request.");
+            return await GetAsync(existing.Id, salesUserId, SystemRoles.Sales, cancellationToken);
+        }
+
+        var retailerContext = await store.FindRetailerContextAsync(
+            salesUserId, normalized.RetailerId, cancellationToken)
+            ?? throw OrderOperationException.Forbidden(
+                "Sales can only create orders for an active retailer in the assigned territory.");
+        if (retailerContext.Retailer.Status != "Active")
+            throw OrderOperationException.Conflict("Retailer is not active.");
+
+        ValidatePayment(normalized.PaymentMethod, retailerContext.Retailer.CreditTermDays);
+        var now = timeProvider.GetUtcNow();
+        var today = GetVietnamDate(now);
+        if (normalized.RequestedDeliveryDate < today)
+            throw OrderOperationException.Validation("Requested delivery date cannot be in the past.");
+
+        var orderCode = await store.NextOrderCodeAsync(cancellationToken);
+        var plan = await BuildCaptureAsync(
+            normalized, retailerContext, salesUserId, orderCode, requestHash, now, cancellationToken,
+            OrderSources.Offline, data.OfflineEstimatedAmount);
+        var expectedConditions = data.ExpectedConditions ?? [];
+        if (expectedConditions.Any(item => item.ProductId == Guid.Empty ||
+            item.ExpectedBaseUnitPrice < 0 || item.ExpectedMlorVersion < 1 ||
+            item.ExpectedMlorRatio is <= 0 or >= 1) ||
+            expectedConditions.GroupBy(item => item.ProductId).Any(group => group.Count() != 1))
+        {
+            throw OrderOperationException.Validation("Expected offline price and MLOR conditions are invalid.");
+        }
+        var expectedByProduct = expectedConditions.ToDictionary(item => item.ProductId);
+        if (expectedByProduct.Count != plan.Lines.Count)
+            throw OrderOperationException.Validation(
+                "Expected conditions must contain exactly one entry for every submitted product.");
+        var differences = plan.Lines.Select(line =>
+        {
+            if (!expectedByProduct.TryGetValue(line.ProductId, out var expected)) return null;
+            var currentBaseUnitPrice = line.OrderedQuantity == 0 ? 0 :
+                decimal.Round(line.NetAmount / line.OrderedQuantity, 2, MidpointRounding.AwayFromZero);
+            return expected.ExpectedBaseUnitPrice == currentBaseUnitPrice &&
+                   expected.ExpectedMlorVersion == line.MlorSourceVersion &&
+                   expected.ExpectedMlorRatio == line.MlorMinimumLifeRatio
+                ? null
+                : new OfflineConditionDifference(line.ProductId, line.SkuSnapshot,
+                    expected.ExpectedBaseUnitPrice, currentBaseUnitPrice,
+                    expected.ExpectedMlorVersion, line.MlorSourceVersion,
+                    expected.ExpectedMlorRatio, line.MlorMinimumLifeRatio);
+        }).Where(item => item is not null).Cast<OfflineConditionDifference>().ToArray();
+        var totalChanged = data.OfflineEstimatedAmount != plan.Order.FinalAmount;
+        if ((totalChanged || differences.Length != 0) && !data.ConfirmConditionChanges)
+        {
+            throw OrderOperationException.Conflict(
+                "Base-price or MLOR conditions changed. Sales must explicitly confirm before the draft is accepted.",
+                new OfflineConditionConflictResult(data.ClientOrderKey, data.SnapshotVersion,
+                    data.OfflineEstimatedAmount, plan.Order.FinalAmount, differences));
+        }
+        try
+        {
+            await store.ExecuteInTransactionAsync(async transactionCancellationToken =>
+            {
+                Persist(plan);
+                await store.SaveChangesAsync(transactionCancellationToken);
+            }, cancellationToken);
+        }
+        catch (OrderOperationException exception) when (exception.Code == "conflict")
+        {
+            store.ClearTracking();
+            var concurrent = await store.FindByClientOrderKeyAsync(normalized.ClientOrderKey, cancellationToken);
+            if (concurrent is null || concurrent.CreatedByUserId != salesUserId || concurrent.RequestHash != requestHash)
+                throw;
+            return await GetAsync(concurrent.Id, salesUserId, SystemRoles.Sales, cancellationToken);
+        }
+
+        store.ClearTracking();
+        return await GetAsync(plan.Order.Id, salesUserId, SystemRoles.Sales, cancellationToken);
+    }
+
     public async Task<PagedOrderResult> ListAsync(
         Guid actorUserId,
         string actorRole,
@@ -116,16 +219,6 @@ public sealed class OrderService(
         return ToDetail(view);
     }
 
-    public async Task<OrderTraceResult> GetTraceAsync(
-        Guid orderId,
-        Guid actorUserId,
-        string actorRole,
-        CancellationToken cancellationToken)
-    {
-        var order = await GetViewableAsync(orderId, actorUserId, actorRole, cancellationToken);
-        return new(order.Order.Id, order.Order.OrderCode, order.Order.AllocationTraceJson);
-    }
-
     public async Task<OrderTimelineResult> GetTimelineAsync(
         Guid orderId,
         Guid actorUserId,
@@ -133,7 +226,8 @@ public sealed class OrderService(
         CancellationToken cancellationToken)
     {
         var view = await GetViewableAsync(orderId, actorUserId, actorRole, cancellationToken);
-        return new(view.Order.Id, view.Order.OrderCode, view.Order.Status, AllocationState(view), null, null, null,
+        return new(view.Order.Id, view.Order.OrderCode, view.Order.Status, AllocationState(view),
+            view.AllocationContext?.RunId, view.AllocationContext?.PlanStatus, view.AllocationContext?.OrderResult,
             ToHistory(view.History), ToShipments(view.Deliveries));
     }
 
@@ -152,24 +246,31 @@ public sealed class OrderService(
                 "Sales can only request retailer pricing inside the assigned territory.");
     }
 
+    /// <summary>
+    /// Reviewing an order parks it for the next 12:00 run. It holds no stock: the run picks the
+    /// batches and only run approval reserves them, so two approved orders can still compete for
+    /// the same batch and the earlier acceptance time wins.
+    /// </summary>
     public Task<OrderDetailResult> ApproveAsync(
         Guid orderId,
         int expectedVersion,
-        Guid operatorUserId,
+        Guid reviewerUserId,
+        string actorRole,
         CancellationToken cancellationToken) =>
-        TransitionAsync(orderId, expectedVersion, operatorUserId, SystemRoles.Operator,
-            OrderStatuses.Approved, null, cancellationToken);
+        TransitionAsync(orderId, expectedVersion, reviewerUserId, actorRole,
+            OrderStatuses.PendingAllocation, null, cancellationToken);
 
     public Task<OrderDetailResult> RejectAsync(
         Guid orderId,
         int expectedVersion,
         string reason,
-        Guid operatorUserId,
+        Guid reviewerUserId,
+        string actorRole,
         CancellationToken cancellationToken)
     {
         reason = CleanOptional(reason, 1_000)
             ?? throw OrderOperationException.Validation("Rejection reason is required.");
-        return TransitionAsync(orderId, expectedVersion, operatorUserId, SystemRoles.Operator,
+        return TransitionAsync(orderId, expectedVersion, reviewerUserId, actorRole,
             OrderStatuses.Rejected, reason, cancellationToken);
     }
 
@@ -198,9 +299,10 @@ public sealed class OrderService(
                 throw OrderOperationException.Forbidden("Sales can only cancel their own pending order.");
             }
 
-            if (view.Order.Status is not (OrderStatuses.PendingApproval or OrderStatuses.Approved))
+            if (view.Order.Status is not (OrderStatuses.PendingApproval or OrderStatuses.PendingAllocation))
             {
-                throw OrderOperationException.Conflict("Only pending or approved orders can be cancelled.");
+                throw OrderOperationException.Conflict(
+                    "Only an order that has not entered an allocation run can be cancelled here.");
             }
 
             EnsureOrderVersion(view.Order, expectedVersion);
@@ -228,25 +330,17 @@ public sealed class OrderService(
         string? reason,
         CancellationToken cancellationToken)
     {
-        if (actorRole != SystemRoles.Operator)
+        if (actorRole is not (SystemRoles.Operator or SystemRoles.Admin))
         {
-            throw OrderOperationException.Forbidden("Only Operator can approve or reject orders.");
+            throw OrderOperationException.Forbidden("Only Admin or Operator can approve or reject orders.");
         }
 
         await store.ExecuteInTransactionAsync(async transactionCancellationToken =>
         {
             var view = await store.FindAsync(orderId, true, transactionCancellationToken)
                 ?? throw OrderOperationException.NotFound("Order was not found.");
-            if (view.Order.Status == targetStatus)
-            {
-                if (targetStatus == OrderStatuses.Approved)
-                {
-                    await pickingPlanService.CreateForApprovedOrderAsync(
-                        view, timeProvider.GetUtcNow(), transactionCancellationToken);
-                    await store.SaveChangesAsync(transactionCancellationToken);
-                }
-                return;
-            }
+            // Re-sending the same decision is a no-op: nothing is reserved or issued here.
+            if (view.Order.Status == targetStatus) return;
             if (view.Order.Status != OrderStatuses.PendingApproval)
             {
                 throw OrderOperationException.Conflict("Only pending orders can be approved or rejected.");
@@ -258,24 +352,8 @@ public sealed class OrderService(
             {
                 await ReleaseInventoryAsync(view, actorUserId, transactionCancellationToken);
             }
-            else
-            {
-                foreach (var allocation in view.Lines.SelectMany(item => item.Allocations)
-                             .OrderBy(item => item.AllocationSequence))
-                {
-                    await inventoryLifecycleService.ReserveAsync(
-                        allocation.Id,
-                        actorUserId,
-                        view.InventoryVersions[allocation.BatchId],
-                        transactionCancellationToken);
-                }
-            }
 
             ApplyTransition(view.Order, targetStatus, actorUserId, reason, now);
-            if (targetStatus == OrderStatuses.Approved)
-            {
-                await pickingPlanService.CreateForApprovedOrderAsync(view, now, transactionCancellationToken);
-            }
             store.AddHistory(NewHistory(view.Order.Id, OrderStatuses.PendingApproval,
                 targetStatus, actorUserId, reason, now));
             await store.SaveChangesAsync(transactionCancellationToken);
@@ -308,7 +386,9 @@ public sealed class OrderService(
         string orderCode,
         string requestHash,
         DateTimeOffset now,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string source = OrderSources.Assisted,
+        decimal? offlineEstimatedAmount = null)
     {
         var orderStep = await GetPositiveConfigurationAsync(OrderStepKey, 1, allowZero: false, cancellationToken);
         var deliveryAddress = data.DeliveryAddress ?? CleanOptional(retailerContext.Retailer.Address, 1_000)
@@ -325,7 +405,7 @@ public sealed class OrderService(
             CreatedByUserId = salesUserId,
             ClientOrderKey = data.ClientOrderKey,
             RequestHash = requestHash,
-            Source = OrderSources.Assisted,
+            Source = source,
             Status = OrderStatuses.PendingApproval,
             PaymentMethod = data.PaymentMethod,
             CreditTermDays = data.PaymentMethod == OrderPaymentMethods.Credit
@@ -335,12 +415,6 @@ public sealed class OrderService(
             RequestedDeliveryDate = data.RequestedDeliveryDate,
             Note = data.Note,
             FinalPricePendingAllocation = true,
-            AllocationTraceJson = JsonSerializer.Serialize(new
-            {
-                state = "PendingRun",
-                finalPricePendingAllocation = true,
-                message = "Đơn hàng chưa chọn lô; giá HSD cuối cùng sẽ được tính sau phân bổ."
-            }, TraceJsonOptions),
             ServerReceivedAt = now,
             CreatedAt = now,
             UpdatedAt = now
@@ -360,6 +434,10 @@ public sealed class OrderService(
 
             var product = await store.FindPublishedProductAsync(requestedLine.ProductId, cancellationToken)
                 ?? throw OrderOperationException.NotFound("Published product was not found.");
+            var mlor = await store.ResolveMlorAsync(
+                data.RetailerId, product.Id, now, cancellationToken)
+                ?? throw OrderOperationException.Conflict(
+                    $"No effective MLOR configuration exists for SKU '{product.Sku}'.");
             var price = await pricingService.CalculateAsync(
                 product.Id, requestedLine.Quantity, data.RetailerId, now, cancellationToken);
 
@@ -373,6 +451,10 @@ public sealed class OrderService(
                 ProductNameSnapshot = product.Name,
                 OrderedQuantity = requestedLine.Quantity,
                 UnitPrice = price.UnitPrice,
+                ProductPriceId = price.ProductPriceId,
+                ProductPriceEffectiveFrom = price.ProductPriceEffectiveFrom,
+                ProductPriceEffectiveTo = price.ProductPriceEffectiveTo,
+                PricedAt = now,
                 GrossAmount = price.GrossAmount,
                 DiscountPercent = price.DiscountPercent,
                 DiscountAmount = price.DiscountAmount,
@@ -380,6 +462,13 @@ public sealed class OrderService(
                 DiscountSourceType = price.DiscountSourceType,
                 DiscountSourceCode = price.DiscountSourceCode,
                 FinalPricePendingAllocation = true,
+                MlorSourceScope = mlor.SourceScope,
+                MlorSourceRuleId = mlor.SourceRuleId,
+                MlorSourceVersion = mlor.SourceVersion,
+                MlorProductCategoryId = mlor.ProductCategoryId,
+                MlorMinimumLifeRatio = mlor.MinimumLifeRatio,
+                MlorMinimumLifeHours = mlor.MinimumLifeHours,
+                MlorResolvedAt = mlor.ResolvedAt,
                 CreatedAt = now
             };
             if (price.PromotionId.HasValue)
@@ -389,6 +478,12 @@ public sealed class OrderService(
                     Id = Guid.NewGuid(),
                     SalesOrderLineId = line.Id,
                     PromotionId = price.PromotionId.Value,
+                    PromotionCodeSnapshot = price.DiscountSourceCode!,
+                    PromotionNameSnapshot = price.PromotionName!,
+                    PromotionTypeSnapshot = price.DiscountSourceType!,
+                    MinimumQuantitySnapshot = price.PromotionMinimumQuantity!.Value,
+                    EffectiveFromSnapshot = price.PromotionEffectiveFrom!.Value,
+                    EffectiveToSnapshot = price.PromotionEffectiveTo!.Value,
                     DiscountPercent = price.DiscountPercent,
                     DiscountAmount = price.DiscountAmount,
                     IsServerFinal = false,
@@ -401,8 +496,17 @@ public sealed class OrderService(
         order.SubtotalAmount = lines.Sum(item => item.GrossAmount);
         order.DiscountAmount = lines.Sum(item => item.DiscountAmount);
         order.FinalAmount = lines.Sum(item => item.NetAmount);
+        if (source == OrderSources.Offline)
+        {
+            // F30: keep the offline quote and flag any gap vs the server-repriced indicative total,
+            // so Sales confirms the condition change. The indicative amount is pre-allocation; the
+            // final HSD-adjusted price is still computed later at allocation, so this is only a hint.
+            order.OfflineEstimatedAmount = offlineEstimatedAmount;
+            order.HasOfflineDifference =
+                offlineEstimatedAmount.HasValue && offlineEstimatedAmount.Value != order.FinalAmount;
+        }
         var history = NewHistory(order.Id, null, OrderStatuses.PendingApproval,
-            salesUserId, "Sales tạo đơn hỗ trợ", now);
+            salesUserId, source == OrderSources.Offline ? "Sales gửi đơn nháp offline" : "Sales tạo đơn hỗ trợ", now);
         var audit = new AuditLog
         {
             Id = Guid.NewGuid(),
@@ -419,7 +523,17 @@ public sealed class OrderService(
                 order.SubtotalAmount,
                 order.DiscountAmount,
                 IndicativeAmount = order.FinalAmount,
-                order.FinalPricePendingAllocation
+                order.FinalPricePendingAllocation,
+                Lines = lines.Select(item => new
+                {
+                    item.ProductId,
+                    item.ProductPriceId,
+                    item.PricedAt,
+                    item.MlorSourceScope,
+                    item.MlorSourceRuleId,
+                    item.MlorSourceVersion,
+                    item.MlorMinimumLifeRatio
+                })
             }, TraceJsonOptions),
             Reason = "Sales tạo đơn trước phân bổ; chưa chọn lô hoặc thay đổi tồn kho.",
             CreatedAt = now
@@ -539,7 +653,7 @@ public sealed class OrderService(
         DateTimeOffset now)
     {
         order.Status = targetStatus;
-        if (targetStatus is OrderStatuses.Approved or OrderStatuses.Rejected)
+        if (targetStatus is OrderStatuses.PendingAllocation or OrderStatuses.Rejected)
         {
             order.ReviewedByUserId = actorUserId;
             order.ReviewedAt = now;
@@ -577,17 +691,20 @@ public sealed class OrderService(
         view.Order.Status,
         view.Order.PaymentMethod,
         view.Order.FinalAmount,
-        view.Order.FinalPricePendingAllocation,
+        FinalPricePendingAllocation(view),
         AllocationState(view),
-        null,
-        null,
-        null,
-        view.Deliveries.Count,
+        view.AllocationContext?.RunId,
+        view.AllocationContext?.PlanStatus,
+        view.AllocationContext?.OrderResult,
+        view.AllocationContext?.WarehouseProgress.Count(item => item.ShipmentId.HasValue) ?? view.Deliveries.Count,
         (int)view.Lines.Sum(item => item.Line.OrderedQuantity),
         view.Lines.Count,
         view.Order.Source,
         view.Order.Version,
-        view.Order.CreatedAt);
+        view.Order.CreatedAt)
+    {
+        OfficialAmount = OfficialAmount(view)
+    };
 
     private static OrderDetailResult ToDetail(OrderView view) => new(
         view.Order.Id,
@@ -608,17 +725,35 @@ public sealed class OrderService(
         view.Order.SubtotalAmount,
         view.Order.DiscountAmount,
         view.Order.FinalAmount,
-        view.Order.FinalPricePendingAllocation,
+        FinalPricePendingAllocation(view),
         AllocationState(view),
-        null,
-        null,
-        null,
-        view.Order.RejectionReason,
+        view.AllocationContext?.RunId,
+        view.AllocationContext?.PlanStatus,
+        view.AllocationContext?.OrderResult,
+        view.Order.RejectionReason ?? view.AllocationContext?.ShortageReason,
+        view.Order.OfflineEstimatedAmount,
+        view.Order.HasOfflineDifference,
         view.Order.Version,
         view.Order.ServerReceivedAt,
         view.Order.CreatedAt,
         view.Order.UpdatedAt,
-        view.Lines.OrderBy(item => item.Line.LineNumber).Select(item => new OrderLineResult(
+        view.Lines.OrderBy(item => item.Line.LineNumber).Select(item => ToLine(view, item)).ToArray(),
+        ToHistory(view.History),
+        ToShipments(view.Deliveries))
+    {
+        OfficialAmount = OfficialAmount(view),
+        AllocationRunCode = view.AllocationContext?.RunCode,
+        AllocationPlanVersion = view.AllocationContext?.PlanVersionNumber,
+        OfficialPricedAt = view.AllocationContext?.PlanStatus == AllocationPlanVersionStatuses.Approved
+            ? view.AllocationContext.PricedAt : null,
+        WarehouseProgress = view.AllocationContext?.WarehouseProgress.Select(item =>
+            new OrderWarehouseProgressResult(
+                item.WarehouseId, item.WarehouseCode, item.PickingListId, item.PickingCode,
+                item.PickingStatus, item.ShipmentId, item.ShipmentCode, item.ShipmentStatus,
+                item.PlannedQuantity, item.PickedQuantity, item.ReceivedQuantity)).ToArray() ?? []
+    };
+
+    private static OrderLineResult ToLine(OrderView view, OrderLineView item) => new(
             item.Line.Id,
             item.Line.LineNumber,
             item.Line.ProductId,
@@ -632,6 +767,29 @@ public sealed class OrderService(
             item.Line.NetAmount,
             item.Line.DiscountSourceType,
             item.Line.DiscountSourceCode,
+            item.Line.ProductPriceId,
+            item.Line.ProductPriceEffectiveFrom,
+            item.Line.ProductPriceEffectiveTo,
+            item.Line.PricedAt,
+            new OrderMlorSnapshotResult(
+                item.Line.MlorSourceScope,
+                item.Line.MlorSourceRuleId,
+                item.Line.MlorSourceVersion,
+                item.Line.MlorProductCategoryId,
+                item.Line.MlorMinimumLifeRatio,
+                item.Line.MlorMinimumLifeHours,
+                item.Line.MlorResolvedAt),
+            item.OrdinaryPromotion is null ? null : new OrderOrdinaryPromotionSnapshotResult(
+                item.OrdinaryPromotion.PromotionId,
+                item.OrdinaryPromotion.PromotionCodeSnapshot,
+                item.OrdinaryPromotion.PromotionNameSnapshot,
+                item.OrdinaryPromotion.PromotionTypeSnapshot,
+                item.OrdinaryPromotion.MinimumQuantitySnapshot,
+                item.OrdinaryPromotion.DiscountPercent,
+                item.OrdinaryPromotion.DiscountAmount,
+                item.OrdinaryPromotion.EffectiveFromSnapshot,
+                item.OrdinaryPromotion.EffectiveToSnapshot,
+                item.OrdinaryPromotion.AppliedAt),
             item.Line.EstimatedArrivalAt,
             item.Line.FinalPricePendingAllocation,
             item.Allocations.OrderBy(allocation => allocation.AllocationSequence).Select(allocation =>
@@ -657,9 +815,26 @@ public sealed class OrderService(
                     allocation.NetAmount,
                     allocation.DiscountSourceType,
                     allocation.DiscountSourceCode,
-                    allocation.Status)).ToArray())).ToArray(),
-        ToHistory(view.History),
-        ToShipments(view.Deliveries));
+                    allocation.Status)).ToArray())
+    {
+        AllocationFragments = view.AllocationContext?.Fragments
+                .Where(fragment => fragment.SalesOrderLineId == item.Line.Id)
+                .OrderBy(fragment => fragment.Sequence)
+                .Select(fragment => new OrderAllocationFragmentResult(
+                    fragment.AllocationId, fragment.PlanPriceId, fragment.BatchId, fragment.BatchCode,
+                    fragment.BatchExpirationDate, fragment.WarehouseId, fragment.WarehouseCode,
+                    fragment.Quantity, fragment.Sequence, fragment.EstimatedArrivalAt,
+                    fragment.RemainingLifeHoursAtArrival, fragment.ListUnitPrice,
+                    fragment.ListUnitPrice - fragment.BaseUnitPrice, fragment.BaseUnitPrice,
+                    fragment.RemainingShelfLifePercent, fragment.DiscountRuleId,
+                    fragment.DiscountRuleScope, fragment.DiscountRuleCode, fragment.DiscountRuleVersion,
+                    fragment.DiscountType, fragment.DiscountValue, fragment.ShelfLifeDiscountPerUnit,
+                    fragment.FinalUnitPrice, fragment.NetAmount, fragment.DiscountReason)).ToArray() ?? [],
+        OfficialNetAmount = view.AllocationContext?.PlanStatus == AllocationPlanVersionStatuses.Approved
+                ? view.AllocationContext.Fragments.Where(fragment => fragment.SalesOrderLineId == item.Line.Id)
+                    .Sum(fragment => fragment.NetAmount)
+                : null
+    };
 
     private static IReadOnlyCollection<OrderStatusHistoryResult> ToHistory(
         IReadOnlyCollection<OrderStatusHistory> history) =>
@@ -675,10 +850,21 @@ public sealed class OrderService(
     private static string AllocationState(OrderView view) => view.Order.Status switch
     {
         OrderStatuses.Cancelled or OrderStatuses.Rejected => "NotApplicable",
+        _ when view.AllocationContext is not null => view.AllocationContext.PlanStatus == AllocationPlanVersionStatuses.Approved
+            ? "Allocated" : "Proposed",
         _ when view.Lines.SelectMany(item => item.Allocations).Any() =>
             view.Order.FinalPricePendingAllocation ? "Proposed" : "Allocated",
         _ => "PendingRun"
     };
+
+    private static decimal? OfficialAmount(OrderView view) =>
+        view.AllocationContext?.PlanStatus == AllocationPlanVersionStatuses.Approved
+            ? view.AllocationContext.Fragments.Sum(item => item.NetAmount)
+            : null;
+
+    private static bool FinalPricePendingAllocation(OrderView view) =>
+        view.AllocationContext?.PlanStatus != AllocationPlanVersionStatuses.Approved &&
+        view.Order.FinalPricePendingAllocation;
 
     private static string ComputeRequestHash(CreateAssistedOrderData data, Guid salesUserId)
     {
@@ -687,6 +873,22 @@ public sealed class OrderService(
         var canonical = string.Join('|', salesUserId.ToString("N"), data.RetailerId.ToString("N"),
             data.PaymentMethod, data.RequestedDeliveryDate?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
             data.DeliveryAddress, data.Note, string.Join(';', lines));
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(canonical)));
+    }
+
+    private static string ComputeOfflineRequestHash(
+        CreateAssistedOrderData normalized,
+        SubmitOfflineOrderData offline,
+        Guid salesUserId)
+    {
+        var conditions = (offline.ExpectedConditions ?? []).OrderBy(item => item.ProductId)
+            .Select(item => string.Join(':', item.ProductId.ToString("N"),
+                item.ExpectedBaseUnitPrice.ToString(CultureInfo.InvariantCulture),
+                item.ExpectedMlorVersion.ToString(CultureInfo.InvariantCulture),
+                item.ExpectedMlorRatio.ToString(CultureInfo.InvariantCulture)));
+        var canonical = string.Join('|', ComputeRequestHash(normalized, salesUserId),
+            offline.OfflineEstimatedAmount.ToString(CultureInfo.InvariantCulture),
+            offline.SnapshotVersion?.Trim(), string.Join(';', conditions));
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(canonical)));
     }
 
@@ -704,6 +906,7 @@ public sealed class OrderService(
     private static readonly HashSet<string> OrderStatusSet =
     [
         OrderStatuses.PendingApproval,
+        OrderStatuses.PendingAllocation,
         OrderStatuses.Approved,
         OrderStatuses.Picking,
         OrderStatuses.Rejected,

@@ -6,6 +6,8 @@ public sealed class ReceiptConfirmation
 {
     public Guid Id { get; set; }
     public Guid SalesOrderId { get; set; }
+    /// <summary>Null only for legacy order-level receipts created before F61 shipment receipt.</summary>
+    public Guid? ShipmentId { get; set; }
     public Guid ConfirmedByRetailerUserId { get; set; }
     public string OperationKey { get; set; } = string.Empty;
     public string RequestHash { get; set; } = string.Empty;

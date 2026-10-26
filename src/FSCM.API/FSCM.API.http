@@ -78,19 +78,7 @@ Accept: application/json
 
 ###
 
-GET {{FSCM.API_HostAddress}}/api/v1/warehouses/{{warehouses.response.body.$.[0].id}}/transit-time-rules
-Authorization: Bearer {{login.response.body.$.accessToken}}
-Accept: application/json
-
-###
-
-GET {{FSCM.API_HostAddress}}/api/v1/warehouses/{{warehouses.response.body.$.[0].id}}/transit-time-rules/history
-Authorization: Bearer {{login.response.body.$.accessToken}}
-Accept: application/json
-
-###
-
-# Admin and Warehouse Keeper can receive stock. Reusing the same key and payload returns the same receipt.
+# Admin and Warehouse Keeper create a pending receipt. Reusing the same key and payload returns the same receipt.
 # @name goodsReceipt
 POST {{FSCM.API_HostAddress}}/api/v1/goods-receipts
 Authorization: Bearer {{login.response.body.$.accessToken}}
@@ -104,10 +92,18 @@ Content-Type: application/json
       "productId": "{{products.response.body.$.items[0].id}}",
       "sourceLotCode": "LOT-S1D-DEMO",
       "quantity": 10,
+      "productionDate": "2026-12-31",
       "expirationDate": "2027-12-31"
     }
   ]
 }
+
+###
+
+# Approval is idempotent. Only this command creates/merges the batch and increases inventory.
+POST {{FSCM.API_HostAddress}}/api/v1/goods-receipts/{{goodsReceipt.response.body.$.id}}/approve
+Authorization: Bearer {{login.response.body.$.accessToken}}
+Accept: application/json
 
 ###
 
@@ -291,7 +287,7 @@ Content-Type: application/json
 
 ###
 
-GET {{FSCM.API_HostAddress}}/api/v1/orders/{{assistedOrder.response.body.$.id}}/allocation-trace
+GET {{FSCM.API_HostAddress}}/api/v1/allocation-runs/orders/{{assistedOrder.response.body.$.id}}/trace
 Authorization: Bearer {{salesLogin.response.body.$.accessToken}}
 Accept: application/json
 
@@ -346,7 +342,7 @@ Content-Type: application/json
 ###
 
 # @name pickingLists
-GET {{FSCM.API_HostAddress}}/api/v1/picking-lists?status=Open
+GET {{FSCM.API_HostAddress}}/api/v1/picking-lists?status=Issued
 Authorization: Bearer {{warehouseKeeperLogin.response.body.$.accessToken}}
 Accept: application/json
 
@@ -385,7 +381,25 @@ Content-Type: application/json
   "qrCode": "TEM-000208",
   "quantity": 5,
   "expectedPickingVersion": {{pickingLists.response.body.$.[0].version}},
-  "expectedLabelVersion": {{pickingLabel.response.body.$.label.version}}
+  "expectedLabelVersion": {{pickingLabel.response.body.$.label.version}},
+  "splits": [
+    {
+      "allocationRunAllocationId": "{{pickingLists.response.body.$.[0].gathers[0].splits[0].allocationRunAllocationId}}",
+      "quantity": 5
+    }
+  ]
+}
+
+###
+
+POST {{FSCM.API_HostAddress}}/api/v1/picking-lists/{{pickingLists.response.body.$.[0].pickingCode}}/complete
+Authorization: Bearer {{warehouseKeeperLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "expectedPickingVersion": {{pickingLists.response.body.$.[0].version}},
+  "exceptionType": null,
+  "note": null
 }
 
 ###
@@ -395,7 +409,7 @@ Authorization: Bearer {{warehouseKeeperLogin.response.body.$.accessToken}}
 Content-Type: application/json
 
 {
-  "query": "{ pickingLists(first: 20) { totalCount nodes { pickingCode orderCode warehouseCode status version items { sku batchCode requestedQuantity pickedQuantity remainingQuantity } } } }"
+  "query": "{ entities { runPickingLists(first: 20) { totalCount nodes { id pickingCode allocationRunId warehouseId status version } } runPickingGathers(first: 50) { nodes { id runPickingListId skuSnapshot batchCodeSnapshot requiredQuantity pickedQuantity status } } runPickingSplits(first: 100) { nodes { id runPickingGatherId allocationRunAllocationId allocationPlanPriceId salesOrderId quantity pickedQuantity } } } }"
 }
 
 ###

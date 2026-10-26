@@ -62,6 +62,7 @@ public sealed class RetailerService(IRetailerStore store, TimeProvider timeProvi
 
         var input = Validate(name, contactName, phone, email, address, retailerType, forecastRevenue,
             storeSizeSquareMeters, purchasingCapacity, purchaseFrequencyPerMonth, requestedCreditTermDays, assessmentNote);
+        await EnsureNoDuplicateAsync(input, null, cancellationToken);
         var now = timeProvider.GetUtcNow();
         var retailer = new Retailer
         {
@@ -119,6 +120,7 @@ public sealed class RetailerService(IRetailerStore store, TimeProvider timeProvi
         var oldValues = GeneralInformationAuditJson(retailer);
         var input = Validate(name, contactName, phone, email, address, retailerType, forecastRevenue,
             storeSizeSquareMeters, purchasingCapacity, purchaseFrequencyPerMonth, requestedCreditTermDays, assessmentNote);
+        await EnsureNoDuplicateAsync(input, retailerId, cancellationToken);
         Apply(retailer, input, actorUserId, now);
         await ApplyLocationAsync(retailer.Id, latitude, longitude, providerPlaceId, now, cancellationToken);
         var activeMlors = mlorDeclarations is null
@@ -170,8 +172,8 @@ public sealed class RetailerService(IRetailerStore store, TimeProvider timeProvi
             throw RetailerOperationException.InvalidTransition("Only a pending declaration can be reviewed.");
         EnsureMlorReadyForReview(await ActiveMlorAsync(retailerId, cancellationToken));
         reason = Clean(reason, 2000, "Review reason");
-        if (!approve && string.IsNullOrWhiteSpace(reason))
-            throw RetailerOperationException.Validation("A rejection reason is required.");
+        if (string.IsNullOrWhiteSpace(reason))
+            throw RetailerOperationException.Validation("A review reason is required for approval or rejection.");
         if (approve && (!creditTermDays.HasValue || !AllowedCreditTerms.Contains(creditTermDays.Value)))
             throw RetailerOperationException.Validation("Admin must select a payment term of 0, 7, 14, or 30 days when approving.");
 
@@ -272,6 +274,23 @@ public sealed class RetailerService(IRetailerStore store, TimeProvider timeProvi
     private async Task<RetailerView> RequireViewAsync(Guid id, CancellationToken cancellationToken) =>
         await store.FindViewAsync(id, cancellationToken)
         ?? throw RetailerOperationException.NotFound("Retailer was not found.");
+
+    private async Task EnsureNoDuplicateAsync(
+        RetailerInput input, Guid? excludedRetailerId, CancellationToken cancellationToken)
+    {
+        var duplicate = await store.FindDuplicateAsync(
+            input.Name.ToLowerInvariant(),
+            input.Phone?.ToLowerInvariant(),
+            input.Email?.ToLowerInvariant(),
+            input.Address?.ToLowerInvariant(),
+            excludedRetailerId,
+            cancellationToken);
+        if (duplicate is not null)
+        {
+            throw RetailerOperationException.Conflict(
+                $"Retailer declaration duplicates existing record '{duplicate.Code}'.");
+        }
+    }
 
     private static RetailerInput Validate(
         string name, string? contactName, string? phone, string? email, string? address,

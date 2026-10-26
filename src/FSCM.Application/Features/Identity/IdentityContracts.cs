@@ -9,6 +9,19 @@ public sealed record IdentityScope(
     public static IdentityScope Empty { get; } = new([], [], [], []);
 }
 
+/// <summary>A scoped entity reference with its code and display name (F08 /me labels).</summary>
+public sealed record ScopeLabel(Guid Id, string Code, string Name);
+
+/// <summary>Human-readable labels for the current user's scope, returned alongside the ID scope.</summary>
+public sealed record IdentityScopeLabels(
+    IReadOnlyCollection<ScopeLabel> Warehouses,
+    IReadOnlyCollection<ScopeLabel> Regions,
+    IReadOnlyCollection<ScopeLabel> SalesGroups,
+    IReadOnlyCollection<ScopeLabel> Retailers)
+{
+    public static IdentityScopeLabels Empty { get; } = new([], [], [], []);
+}
+
 public static class IdentityProviders
 {
     public const string Local = "Local";
@@ -61,7 +74,8 @@ public sealed record AuthenticatedUser(
     string FullName,
     string Role,
     bool MustChangePassword,
-    IdentityScope Scope);
+    IdentityScope Scope,
+    IdentityScopeLabels ScopeLabels);
 
 public sealed record CreatedUserResult(
     Guid UserId,
