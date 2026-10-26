@@ -1,5 +1,6 @@
 using FSCM.Application.Features.Orders;
 using FSCM.Application.Features.Reports;
+using FSCM.Application.Features.AllocationRuns;
 using FSCM.Persistence.DbContexts;
 using FSCM.Application.Features.WarehouseConfiguration;
 using Microsoft.EntityFrameworkCore;
@@ -144,5 +145,94 @@ public sealed class ReportStore(AppDbContext dbContext) : IReportStore
             .ThenByDescending(item => item.Version)
             .Select(item => new SalesKpiConfigurationRow(item.ConfigValue, item.Version, item.EffectiveFrom))
             .FirstOrDefaultAsync(cancellationToken);
+    }
+
+    public async Task<IReadOnlyCollection<ProductSalesRow>> AggregateProductSalesAsync(
+        DateOnly fromDate, DateOnly toDate, IReadOnlyCollection<Guid>? salesGroupIds,
+        CancellationToken cancellationToken)
+    {
+        var groupSet = salesGroupIds?.ToHashSet();
+        var orderLines = await (
+            from order in dbContext.SalesOrderRecords.AsNoTracking()
+            where order.Status == OrderStatuses.Delivered
+            join payment in dbContext.PaymentRecords.AsNoTracking()
+                on order.Id equals payment.SalesOrderId into payments
+            from payment in payments.DefaultIfEmpty()
+            join line in dbContext.SalesOrderLineRecords.AsNoTracking()
+                on order.Id equals line.SalesOrderId
+            join product in dbContext.ProductRecords.AsNoTracking()
+                on line.ProductId equals product.Id
+            select new
+            {
+                Order = order, Payment = payment, Line = line,
+                ProductSku = product.Sku, ProductName = product.Name
+            }).ToArrayAsync(cancellationToken);
+
+        var recognized = orderLines
+            .Where(row => groupSet == null || groupSet.Contains(row.Order.SalesGroupId))
+            .Where(row =>
+            {
+                var recognitionDate = row.Payment?.DeliveredDate
+                    ?? DateOnly.FromDateTime(row.Order.ServerReceivedAt.ToOffset(VietnamOffset).DateTime);
+                return recognitionDate >= fromDate && recognitionDate <= toDate;
+            })
+            .ToArray();
+        if (recognized.Length == 0) return [];
+
+        var orderIds = recognized.Select(row => row.Order.Id).Distinct().ToArray();
+        var approvedPrices = await (
+            from runOrder in dbContext.AllocationRunOrderRecords.AsNoTracking()
+            where orderIds.Contains(runOrder.SalesOrderId)
+            join runLine in dbContext.AllocationRunLineRecords.AsNoTracking()
+                on runOrder.Id equals runLine.AllocationRunOrderId
+            join version in dbContext.AllocationPlanVersionRecords.AsNoTracking()
+                on runOrder.AllocationRunId equals version.AllocationRunId
+            where version.Status == AllocationPlanVersionStatuses.Approved
+            join price in dbContext.AllocationPlanPriceRecords.AsNoTracking()
+                on new { VersionId = version.Id, LineId = runLine.Id }
+                equals new { VersionId = price.AllocationPlanVersionId, LineId = price.AllocationRunLineId }
+            select new { runOrder.SalesOrderId, runLine.SalesOrderLineId, price.Quantity, price.Amount })
+            .ToArrayAsync(cancellationToken);
+
+        var approvedByLine = approvedPrices
+            .GroupBy(row => new { row.SalesOrderId, row.SalesOrderLineId })
+            .ToDictionary(group => (group.Key.SalesOrderId, group.Key.SalesOrderLineId), group => new
+            {
+                Quantity = group.Sum(row => row.Quantity),
+                Amount = group.Sum(row => row.Amount)
+            });
+
+        var normalized = recognized.Select(row =>
+        {
+            approvedByLine.TryGetValue((row.Order.Id, row.Line.Id), out var approved);
+            return new
+            {
+                row.Order.Id,
+                row.Line.ProductId,
+                Sku = string.IsNullOrWhiteSpace(row.Line.SkuSnapshot) ? row.ProductSku : row.Line.SkuSnapshot,
+                Name = string.IsNullOrWhiteSpace(row.Line.ProductNameSnapshot) ? row.ProductName : row.Line.ProductNameSnapshot,
+                Quantity = approved?.Quantity ?? row.Line.OrderedQuantity,
+                LineNet = approved?.Amount ?? row.Line.NetAmount,
+                AdjustedOrderAmount = row.Payment?.AdjustedAmount ?? row.Order.FinalAmount
+            };
+        }).ToArray();
+
+        var allocated = normalized.GroupBy(row => row.Id).SelectMany(orderGroup =>
+        {
+            var canonicalOrderNet = orderGroup.Sum(row => row.LineNet);
+            return orderGroup.Select(row => new
+            {
+                row.ProductId, row.Sku, row.Name, row.Quantity,
+                Revenue = canonicalOrderNet <= 0 ? 0 : decimal.Round(
+                    row.AdjustedOrderAmount * row.LineNet / canonicalOrderNet, 2,
+                    MidpointRounding.AwayFromZero)
+            });
+        });
+
+        return allocated.GroupBy(row => new { row.ProductId, row.Sku, row.Name })
+            .Select(group => new ProductSalesRow(
+                group.Key.ProductId, group.Key.Sku, group.Key.Name,
+                group.Sum(row => row.Quantity), group.Sum(row => row.Revenue)))
+            .ToArray();
     }
 }

@@ -45,3 +45,21 @@ public sealed record SalesKpiResult(
     DateOnly FromDate, DateOnly ToDate, string Scope, int ConfigurationVersion,
     DateTimeOffset ConfigurationEffectiveFrom, string RecognitionRule,
     IReadOnlyCollection<SalesKpiEntryResult> Entries);
+
+public static class ProductRankingCriteria
+{
+    public const string Quantity = "Quantity";
+    public const string Revenue = "Revenue";
+}
+
+public sealed record ProductRankingQuery(
+    DateOnly FromDate, DateOnly ToDate, string Criterion, Guid? SalesGroupId);
+
+public sealed record ProductRankingEntryResult(
+    int Rank, Guid ProductId, string Sku, string ProductName,
+    decimal NormalizedSoldQuantity, string QuantityUnit, decimal AdjustedNetRevenue);
+
+public sealed record ProductRankingResult(
+    DateOnly FromDate, DateOnly ToDate, string Criterion, string Scope,
+    string QuantityUnit, string RecognitionRule,
+    IReadOnlyCollection<ProductRankingEntryResult> Entries);

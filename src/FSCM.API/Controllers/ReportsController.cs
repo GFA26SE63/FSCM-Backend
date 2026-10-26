@@ -34,6 +34,18 @@ public sealed class ReportsController(ReportService service) : ControllerBase
             new SalesKpiQuery(fromDate, toDate, salesGroupId, salesUserId),
             GetActorUserId(), GetActorRole(), cancellationToken);
 
+    /// <summary>F78: Best-selling products by normalized carton quantity or adjusted net revenue.</summary>
+    [HttpGet("best-selling-products")]
+    public Task<ProductRankingResult> BestSellingProducts(
+        [FromQuery] DateOnly fromDate,
+        [FromQuery] DateOnly toDate,
+        [FromQuery] string criterion = ProductRankingCriteria.Quantity,
+        [FromQuery] Guid? salesGroupId = null,
+        CancellationToken cancellationToken = default) =>
+        service.GetProductRankingAsync(
+            new ProductRankingQuery(fromDate, toDate, criterion, salesGroupId),
+            GetActorUserId(), GetActorRole(), cancellationToken);
+
     private Guid GetActorUserId() =>
         Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var userId)
             ? userId
