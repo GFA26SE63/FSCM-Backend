@@ -29,7 +29,7 @@ public sealed class ComplaintsController(ComplaintService service) : ControllerB
     [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator}")]
     [HttpPost("{id:guid}/resolve")]
     public Task<ComplaintResult> Resolve(Guid id, ResolveComplaintRequest request, CancellationToken ct) =>
-        service.ResolveAsync(id, ActorId(), new(request.Result), ct);
+        service.ResolveAsync(id, ActorId(), new(request.Result, request.Approved), ct);
 
     private Guid ActorId() => Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var id)
         ? id : throw ComplaintOperationException.Validation("Authenticated user identifier is invalid.");

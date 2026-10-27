@@ -95,12 +95,13 @@ public sealed class ComplaintStore(AppDbContext db) : IComplaintStore
                          join b in db.BatchRecords on i.BatchId equals b.Id join p in db.ProductRecords on b.ProductId equals p.Id
                          where d.Id == id select new { d, o, r, i, p }).SingleOrDefaultAsync(ct)
             ?? throw ComplaintOperationException.NotFound("Complaint was not found.");
-        if (row.d.Status == "Resolved") return ToResult(row.d, row.o.OrderCode, row.r.Code, row.r.Name, row.p.Sku, row.p.Name, row.i, null, row.i.EvidenceBlobUrl);
-        row.d.Status = "Resolved"; row.d.ReviewedByUserId = actor; row.d.ReviewedAt = now; row.d.ResolvedAt = now; row.d.Note = data.Result;
+        if (row.d.Status is "Approved" or "Rejected" or "Resolved") return ToResult(row.d, row.o.OrderCode, row.r.Code, row.r.Name, row.p.Sku, row.p.Name, row.i, null, row.i.EvidenceBlobUrl);
+        row.d.Status = data.Approved ? "Approved" : "Rejected";
+        row.d.ReviewedByUserId = actor; row.d.ReviewedAt = now; row.d.ResolvedAt = now; row.d.Note = data.Result;
         await db.SaveChangesAsync(ct);
         return ToResult(row.d, row.o.OrderCode, row.r.Code, row.r.Name, row.p.Sku, row.p.Name, row.i, null, row.i.EvidenceBlobUrl);
     }
 
     private static ComplaintResult ToResult(ReceiptDiscrepancy d, string order, string retailerCode, string retailerName, string sku, string product, ReceiptDiscrepancyItem i, string? label, string? evidence) =>
-        new(d.Id, $"KN-{d.Id.ToString("N")[..8].ToUpperInvariant()}", order, retailerCode, retailerName, sku, product, i.ExpectedQuantity, i.ActualReceivedQuantity, i.IssueType, d.Status, label, i.Note ?? d.Note, evidence, d.ReportedAt, d.Status == "Resolved" ? d.Note : null, i.ShipmentId, i.AllocationPlanPriceId, i.FinalUnitPrice, i.AdjustmentAmount);
+        new(d.Id, $"KN-{d.Id.ToString("N")[..8].ToUpperInvariant()}", order, retailerCode, retailerName, sku, product, i.ExpectedQuantity, i.ActualReceivedQuantity, i.IssueType, d.Status, label, i.Note ?? d.Note, evidence, d.ReportedAt, d.Status is "Approved" or "Rejected" or "Resolved" ? d.Note : null, i.ShipmentId, i.AllocationPlanPriceId, i.FinalUnitPrice, i.AdjustmentAmount);
 }
