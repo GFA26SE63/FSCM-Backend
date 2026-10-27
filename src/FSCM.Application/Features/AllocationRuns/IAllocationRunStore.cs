@@ -190,6 +190,7 @@ public interface IAllocationRunStore
 
     void AddReservation(Reservation reservation);
     void AddInventoryTransaction(InventoryTransaction transaction);
+    void AddAuditLog(AuditLog auditLog);
 
     Task<AllocationSettings> GetSettingsAsync(CancellationToken cancellationToken);
     Task<string> NextRunCodeAsync(DateOnly businessDate, CancellationToken cancellationToken);

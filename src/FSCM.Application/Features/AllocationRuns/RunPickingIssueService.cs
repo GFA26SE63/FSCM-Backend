@@ -1,4 +1,5 @@
 using FSCM.Domain.Entities;
+using FSCM.Application.Features.Quotes;
 
 namespace FSCM.Application.Features.AllocationRuns;
 
@@ -76,7 +77,7 @@ public sealed record RunPickingListResult(
 ///
 /// Issuing moves no stock. The plan already holds it (F88); the goods leave on dispatch (F96).
 /// </summary>
-public sealed class RunPickingIssueService(IAllocationRunStore store, TimeProvider timeProvider)
+public sealed class RunPickingIssueService(IAllocationRunStore store, TimeProvider timeProvider, IQuoteStore? quotes = null)
 {
     /// <summary>
     /// Issues every warehouse's sheet for an approved run. Re-running returns what already exists
@@ -114,6 +115,19 @@ public sealed class RunPickingIssueService(IAllocationRunStore store, TimeProvid
             {
                 throw AllocationRunOperationException.Conflict(
                     $"Run {run.RunCode} allocated nothing, so there is nothing to pick.");
+            }
+            if (quotes is not null)
+            {
+                var quoteByOrder = (await quotes.ListForRunAsync(runId, transactionCancellationToken))
+                    .ToDictionary(item => item.Quote.SalesOrderId);
+                var notReady = allocations.Select(item => item.SalesOrderId).Distinct()
+                    .Where(orderId => !quoteByOrder.TryGetValue(orderId, out var quote)
+                        || quote.Quote.Status != SalesOrderQuoteStatuses.Accepted
+                        || quote.PurchaseOrder is null)
+                    .ToArray();
+                if (notReady.Length > 0)
+                    throw AllocationRunOperationException.Conflict(
+                        $"Run {run.RunCode} has orders without a retailer-accepted quote and PO: {notReady.Length}.");
             }
 
             var now = timeProvider.GetUtcNow();
