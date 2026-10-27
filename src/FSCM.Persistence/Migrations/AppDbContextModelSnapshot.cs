@@ -3130,6 +3130,13 @@ namespace FSCM.Persistence.Migrations
                         .HasPrecision(18, 3)
                         .HasColumnType("numeric(18,3)");
 
+                    b.Property<decimal>("AdjustmentAmount")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<Guid?>("AllocationPlanPriceId")
+                        .HasColumnType("uuid");
+
                     b.Property<Guid?>("BatchId")
                         .HasColumnType("uuid");
 
@@ -3140,6 +3147,10 @@ namespace FSCM.Persistence.Migrations
                         .HasPrecision(18, 3)
                         .HasColumnType("numeric(18,3)");
 
+                    b.Property<decimal>("FinalUnitPrice")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
                     b.Property<string>("IssueType")
                         .IsRequired()
                         .HasMaxLength(30)
@@ -3149,6 +3160,9 @@ namespace FSCM.Persistence.Migrations
                         .HasColumnType("text");
 
                     b.Property<Guid>("ReceiptDiscrepancyId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("ShipmentId")
                         .HasColumnType("uuid");
 
                     b.HasKey("Id");

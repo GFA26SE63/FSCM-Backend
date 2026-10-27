@@ -384,6 +384,16 @@ answered from the chosen ones, and a score means nothing without the scores it b
 outcome distinguishes `Released` - it drew its stock and lost it to a later line's shortfall - from
 `Short`, the line that actually failed.
 
+## Closing an allocation run (F95)
+
+An Admin closes an approved run with
+`POST /api/v1/allocation-runs/{runId}/close`, passing the current `expectedVersion`
+and an optional reason. Closing changes only the run workflow state to `Closed`;
+reservations, approved plan rows, prices and picking history remain immutable.
+The action is recorded as `AllocationRunClosed` in the existing `AuditLog` table,
+so no migration is needed. A run that is still awaiting approval, planning,
+failed or already closed cannot create a second close audit.
+
 ## Cancelling an order that is already holding stock (F94)
 
 Two models in this schema can hold stock, and only one of them is still written:
@@ -458,6 +468,12 @@ inclusive Vietnam-local period by either `Quantity` or `Revenue`. Quantity is no
 canonical order unit `carton`. Revenue starts from the approved allocation-fragment net price and
 allocates approved order-level adjustments proportionally to each product. Admin/Operator may use
 all or a selected Sales group; Sales Manager/Sales access is restricted to active group membership.
+
+## Promotion and complaint fixes (CH-08 / CH-13)
+
+- Ordinary campaign minimum quantity is aggregated across matching SKU/category lines in one order only; quantities never combine across orders.
+- The selected campaign is deterministic: highest percentage wins, then promotion code breaks ties. The chosen discount is snapshotted on each order line; allocation pricing remains the source of truth for batch/HSD pricing.
+- Complaints retain the shipment part, allocation plan price, frozen final unit price and calculated adjustment for the affected quantity. The API accepts `shipmentId` and `allocationPlanPriceId` and validates that they belong to the received batch; evidence remains attached to the same discrepancy item.
 
 ## Validation
 

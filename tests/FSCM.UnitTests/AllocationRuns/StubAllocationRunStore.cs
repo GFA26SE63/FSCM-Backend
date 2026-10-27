@@ -50,6 +50,7 @@ internal abstract class StubAllocationRunStore : IAllocationRunStore
     public virtual void AddRunPickingSplits(IEnumerable<RunPickingSplit> splits) => throw NotSetUp();
     public virtual void AddReservation(Reservation reservation) => throw NotSetUp();
     public virtual void AddInventoryTransaction(InventoryTransaction transaction) => throw NotSetUp();
+    public virtual void AddAuditLog(AuditLog auditLog) => throw NotSetUp();
     public virtual Task<AllocationSettings> GetSettingsAsync(CancellationToken cancellationToken) => throw NotSetUp();
     public virtual Task<string> NextRunCodeAsync(DateOnly businessDate, CancellationToken cancellationToken) => throw NotSetUp();
     public virtual void AddRun(AllocationRun run) => throw NotSetUp();

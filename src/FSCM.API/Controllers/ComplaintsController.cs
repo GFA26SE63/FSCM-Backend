@@ -20,7 +20,8 @@ public sealed class ComplaintsController(ComplaintService service) : ControllerB
     public async Task<IActionResult> Create(CreateComplaintRequest request, CancellationToken ct)
     {
         var created = await service.CreateAsync(ActorId(), new(request.OrderCode, request.Sku, request.LabelCode,
-            request.ActualQty, request.Note, request.EvidenceUrl), ct);
+            request.ActualQty, request.Note, request.EvidenceUrl, request.ShipmentId,
+            request.AllocationPlanPriceId), ct);
         var result = (await service.ListAsync(ActorId(), SystemRoles.Retailer, ct)).Single(x => x.Id == created.Id);
         return CreatedAtAction(nameof(List), new { id = result.Id }, result);
     }

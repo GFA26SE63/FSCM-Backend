@@ -430,6 +430,9 @@ public sealed class OrderService(
         var lines = new List<SalesOrderLine>();
         var promotions = new List<OrderPromotion>();
         var lineNumber = 0;
+        var requestedLines = data.Lines.Select(item => (item.ProductId, item.Quantity)).ToArray();
+        var prices = await pricingService.CalculateAsync(
+            requestedLines, data.RetailerId, now, cancellationToken);
 
         foreach (var requestedLine in data.Lines.OrderBy(item => item.ProductId))
         {
@@ -446,8 +449,7 @@ public sealed class OrderService(
                 data.RetailerId, product.Id, now, cancellationToken)
                 ?? throw OrderOperationException.Conflict(
                     $"No effective MLOR configuration exists for SKU '{product.Sku}'.");
-            var price = await pricingService.CalculateAsync(
-                product.Id, requestedLine.Quantity, data.RetailerId, now, cancellationToken);
+            var price = prices[product.Id];
 
             var line = new SalesOrderLine
             {
