@@ -2,7 +2,9 @@ name: Backend CI
 
 on:
   push:
+    branches: [main, staging]
   pull_request:
+    branches: [main, staging]
   workflow_dispatch:
 
 permissions:
@@ -33,4 +35,16 @@ jobs:
         run: dotnet build FSCM.slnx --configuration Release --no-restore
 
       - name: Test
-        run: dotnet test FSCM.slnx --configuration Release --no-build
+        run: dotnet test FSCM.slnx --configuration Release --no-build --logger "trx;LogFileName=test-results.trx" --results-directory artifacts/test-results
+
+      - name: Publish API
+        run: dotnet publish src/FSCM.API/FSCM.API.csproj --configuration Release --no-restore --output artifacts/publish
+
+      - name: Upload CI artifacts
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-ci-${{ github.run_id }}
+          path: artifacts/**
+          if-no-files-found: warn
+          retention-days: 14
