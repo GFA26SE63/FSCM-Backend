@@ -11,6 +11,18 @@ public sealed record SalesRevenueRow(
     int OrderCount,
     decimal RecognizedRevenue);
 
+public sealed record SalesKpiOrderRow(
+    Guid OrderId, string OrderCode, Guid RetailerId, string RetailerCode, string RetailerName,
+    Guid SalesUserId, string SalesUserName, Guid SalesGroupId, string SalesGroupCode, string SalesGroupName,
+    Guid RegionId, DateOnly RecognitionDate, DateOnly RetailerCreatedDate, decimal RevenueBeforePromotion, decimal PromotionAmount,
+    decimal RevenueAfterPromotion, decimal ApprovedAdjustmentAmount, decimal RecognizedRevenue);
+
+public sealed record SalesKpiConfigurationRow(string Json, int Version, DateTimeOffset EffectiveFrom);
+
+public sealed record ProductSalesRow(
+    Guid ProductId, string Sku, string ProductName,
+    decimal NormalizedSoldQuantity, decimal AdjustedNetRevenue);
+
 public interface IReportStore
 {
     /// <summary>Active SalesGroup ids the user is a member of (used for SalesManager scoping).</summary>
@@ -29,5 +41,16 @@ public interface IReportStore
         DateOnly fromDate,
         DateOnly toDate,
         IReadOnlyCollection<Guid>? salesGroupIds,
+        CancellationToken cancellationToken);
+
+    Task<IReadOnlyCollection<SalesKpiOrderRow>> ListRecognizedOrdersAsync(
+        DateOnly fromDate, DateOnly toDate, IReadOnlyCollection<Guid>? salesGroupIds,
+        Guid? salesUserId, CancellationToken cancellationToken);
+
+    Task<SalesKpiConfigurationRow?> FindSalesKpiConfigurationAsync(
+        DateOnly periodEnd, CancellationToken cancellationToken);
+
+    Task<IReadOnlyCollection<ProductSalesRow>> AggregateProductSalesAsync(
+        DateOnly fromDate, DateOnly toDate, IReadOnlyCollection<Guid>? salesGroupIds,
         CancellationToken cancellationToken);
 }

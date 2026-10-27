@@ -897,6 +897,9 @@ namespace FSCM.Persistence.Migrations
                     b.Property<Guid>("ProductId")
                         .HasColumnType("uuid");
 
+                    b.Property<DateOnly>("ProductionDate")
+                        .HasColumnType("date");
+
                     b.Property<decimal>("Quantity")
                         .HasPrecision(18, 3)
                         .HasColumnType("numeric(18,3)");
@@ -932,11 +935,13 @@ namespace FSCM.Persistence.Migrations
 
                     b.HasIndex("RootBatchId");
 
-                    b.HasIndex("WarehouseId", "ProductId", "ExpirationDate")
+                    b.HasIndex("WarehouseId", "ProductId", "ProductionDate", "ExpirationDate")
                         .IsUnique();
 
                     b.ToTable("BATCH", null, t =>
                         {
+                            t.HasCheckConstraint("CK_BATCH_Dates", "\"ProductionDate\" < \"ExpirationDate\"");
+
                             t.HasCheckConstraint("CK_BATCH_Quantity", "\"Quantity\" >= 0 AND TRUNC(\"Quantity\") = \"Quantity\"");
                         });
                 });
@@ -2138,6 +2143,10 @@ namespace FSCM.Persistence.Migrations
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<string>("DeepLink")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
                     b.Property<bool>("IsRead")
                         .HasColumnType("boolean");
 
@@ -2150,6 +2159,13 @@ namespace FSCM.Persistence.Migrations
 
                     b.Property<DateTimeOffset?>("ReadAt")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("RelatedEntityId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("RelatedEntityType")
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
 
                     b.Property<Guid?>("SalesOrderId")
                         .HasColumnType("uuid");
@@ -2176,6 +2192,8 @@ namespace FSCM.Persistence.Migrations
                     b.HasIndex("UserAccountId", "OutboxMessageId")
                         .IsUnique()
                         .HasFilter("\"OutboxMessageId\" IS NOT NULL");
+
+                    b.HasIndex("UserAccountId", "IsRead", "CreatedAt");
 
                     b.ToTable("NOTIFICATION", (string)null);
                 });

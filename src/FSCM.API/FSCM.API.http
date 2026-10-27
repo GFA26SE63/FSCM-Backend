@@ -309,6 +309,22 @@ Content-Type: application/json
 
 ###
 
+# F75 Sales KPI with versioned targets/weights and order-GUID drill-down.
+GET {{FSCM.API_HostAddress}}/api/v1/reports/sales-kpis?fromDate=2026-10-01&toDate=2026-10-31
+Authorization: Bearer {{salesLogin.response.body.$.accessToken}}
+
+###
+
+POST {{FSCM.API_HostAddress}}/graphql
+Authorization: Bearer {{salesLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "query": "query { salesKpis(query: { fromDate: \"2026-10-01\", toDate: \"2026-10-31\" }) { fromDate toDate scope configurationVersion recognitionRule entries { salesUserId salesUserName overallCompletionRate recognizedRevenue metrics { code target actual completionRate weight weightedScore unit } orders { orderId orderCode recognitionDate recognizedRevenue } } } }"
+}
+
+###
+
 # @name operatorLogin
 POST {{FSCM.API_HostAddress}}/api/v1/auth/login
 Content-Type: application/json
@@ -521,6 +537,29 @@ Content-Type: application/json
 
 ###
 
+# F68 Retailer-only receivable list. Use the Retailer account token.
+GET {{FSCM.API_HostAddress}}/api/v1/retailer/receivables?page=1&pageSize=20&overdue=true
+Authorization: Bearer {{retailerLogin.response.body.$.accessToken}}
+
+###
+
+# F68 detail uses immutable order GUID, not the display order code.
+GET {{FSCM.API_HostAddress}}/api/v1/retailer/receivables/orders/00000000-0000-0000-0000-000000000000
+Authorization: Bearer {{retailerLogin.response.body.$.accessToken}}
+
+###
+
+POST {{FSCM.API_HostAddress}}/graphql
+Authorization: Bearer {{retailerLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "query": "query($filter: RetailerReceivableFilterInput!) { retailerReceivables(filter: $filter) { page pageSize totalCount totalPages items { orderId orderCode originalOrderAmount finalApprovedAmount approvedAdjustmentAmount adjustedAmount confirmedCollectedAmount outstandingAmount pendingDisputedAmount collectibleAmount dueDate isOverdue pendingRefundAmount completedRefundAmount refundDueAmount collections { method amount status confirmedAt reference } disputes { id status disputedAmount reportedAt resolvedAt } refunds { id amount status transferredAt transactionReference verifiedAt reason } } } }",
+  "variables": { "filter": { "page": 1, "pageSize": 20, "overdue": true } }
+}
+
+###
+
 # Admin/Operator only. COD requires complete delivery; prepaid requires final approval.
 POST {{FSCM.API_HostAddress}}/api/v1/manual-payments
 Authorization: Bearer {{operatorLogin.response.body.$.accessToken}}
@@ -544,4 +583,54 @@ Content-Type: application/json
 {
   "query": "query($orderId: UUID!) { manualPaymentsBySalesOrder(salesOrderId: $orderId, first: 20) { totalCount nodes { id orderCode method status amount totalConfirmedAmount outstandingAmount version } } }",
   "variables": { "orderId": "00000000-0000-0000-0000-000000000000" }
+}
+
+###
+
+# F78 product ranking. criterion is Quantity or Revenue; dates are inclusive Vietnam-local days.
+GET {{FSCM.API_HostAddress}}/api/v1/reports/best-selling-products?fromDate=2026-10-01&toDate=2026-10-31&criterion=Quantity
+Authorization: Bearer {{salesLogin.response.body.$.accessToken}}
+
+###
+
+POST {{FSCM.API_HostAddress}}/graphql
+Authorization: Bearer {{salesLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "query": "query($query: ProductRankingQueryInput!) { bestSellingProducts(query: $query) { fromDate toDate criterion scope quantityUnit recognitionRule entries { rank productId sku productName normalizedSoldQuantity quantityUnit adjustedNetRevenue } } }",
+  "variables": { "query": { "fromDate": "2026-10-01", "toDate": "2026-10-31", "criterion": "Revenue" } }
+}
+
+###
+
+# F80 recipient-scoped notification list and unread badge.
+GET {{FSCM.API_HostAddress}}/api/v1/notifications?isRead=false&page=1&pageSize=20
+Authorization: Bearer {{salesLogin.response.body.$.accessToken}}
+
+###
+
+GET {{FSCM.API_HostAddress}}/api/v1/notifications/badges
+Authorization: Bearer {{salesLogin.response.body.$.accessToken}}
+
+###
+
+# Notification identity is a GUID; another recipient's GUID returns 404.
+PATCH {{FSCM.API_HostAddress}}/api/v1/notifications/00000000-0000-0000-0000-000000000000/read
+Authorization: Bearer {{salesLogin.response.body.$.accessToken}}
+
+###
+
+PATCH {{FSCM.API_HostAddress}}/api/v1/notifications/read-all
+Authorization: Bearer {{salesLogin.response.body.$.accessToken}}
+
+###
+
+POST {{FSCM.API_HostAddress}}/graphql
+Authorization: Bearer {{salesLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "query": "query($filter: NotificationFilterInput!) { notifications(filter: $filter) { page pageSize totalCount items { id type title message isRead createdAt readAt relatedEntityType relatedEntityId deepLink } } notificationBadges { unreadCount hasUnread } }",
+  "variables": { "filter": { "isRead": false, "page": 1, "pageSize": 20 } }
 }

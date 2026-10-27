@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Globalization;
+using FSCM.Application.Features.AllocationRuns;
 using FSCM.Application.Features.Deliveries;
 using FSCM.Application.Features.Orders;
 using FSCM.Application.Features.Inventory;
@@ -149,15 +150,49 @@ public sealed class ShipmentService(
         return await BuildReadinessAsync(views, cancellationToken);
     }
 
+    /// <summary>
+    /// Whether a whole order may leave, and what is holding it.
+    ///
+    /// The set of shipment parts is not the set of warehouses the order is waiting on. A part is
+    /// created only when its warehouse closes its picking sheet, so a warehouse still picking has
+    /// no row here at all - and reading the verdict from the rows alone meant an order whose first
+    /// warehouse had finished reported ready while the second had not started. Issuing is gated on
+    /// this same answer, so that was partial delivery: the first warehouse's goods left and the
+    /// retailer was left to chase the rest. The expected warehouses are therefore read from the
+    /// sheets the approved plan produced, and a missing one holds the order.
+    /// </summary>
     private async Task<OrderShipmentReadinessResult> BuildReadinessAsync(
         IReadOnlyCollection<ShipmentView> views, CancellationToken cancellationToken)
     {
         var order = views.First().Order;
-        var parts = views
-            .OrderBy(item => item.Warehouse.Code, StringComparer.Ordinal)
+        var existing = views
             .Select(item => new ShipmentReadinessPartResult(
                 item.Shipment.Id, item.Shipment.ShipmentCode, item.Warehouse.Id, item.Warehouse.Code,
                 item.Shipment.Status, item.Shipment.ExceptionReason))
+            .ToArray();
+
+        var covered = existing.Select(item => item.WarehouseId).ToHashSet();
+        var expected = await store.ListExpectedWarehousesAsync(order.Id, cancellationToken);
+        var pending = expected
+            .Where(item => !covered.Contains(item.WarehouseId))
+            .Select(item => new ShipmentReadinessPartResult(
+                null,
+                null,
+                item.WarehouseId,
+                item.WarehouseCode,
+                // A sheet closed with an exception holds the order the same way a damaged part
+                // does, so it is reported as one rather than as merely unfinished.
+                item.PickingStatus == RunPickingListStatuses.NeedsHandling
+                    ? ShipmentStatuses.Exception
+                    : ShipmentStatuses.WaitingToPick,
+                item.PickingStatus == RunPickingListStatuses.NeedsHandling
+                    ? $"phieu soan {item.PickingCode} dang co ngoai le"
+                    : null))
+            .ToArray();
+
+        var parts = existing
+            .Concat(pending)
+            .OrderBy(item => item.WarehouseCode, StringComparer.Ordinal)
             .ToArray();
 
         var reasons = new List<string>();

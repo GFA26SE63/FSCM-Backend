@@ -95,6 +95,84 @@ public sealed class ReportServiceTests
         Assert.Equal("validation_error", exception.Code);
     }
 
+    [Fact]
+    public async Task Sales_kpi_uses_versioned_targets_adjusted_revenue_and_order_drill_down()
+    {
+        var fixture = new Fixture();
+        var salesId = Guid.NewGuid();
+        fixture.Store.MemberGroups[salesId] = [fixture.GroupA];
+        fixture.Store.KpiRows.Add(KpiOrder(salesId, fixture.GroupA, "DH-001", 1_000_000, 100_000, 50_000));
+        fixture.Store.KpiRows.Add(KpiOrder(salesId, fixture.GroupA, "DH-002", 500_000, 0, 25_000));
+
+        var result = await fixture.Service.GetSalesKpiAsync(
+            new SalesKpiQuery(From, To, null, null), salesId, SystemRoles.Sales, default);
+
+        var entry = Assert.Single(result.Entries);
+        Assert.Equal(1_325_000, entry.RecognizedRevenue);
+        Assert.Equal(2, entry.Orders.Count);
+        Assert.Equal(7, result.ConfigurationVersion);
+        Assert.Equal("successfulOrders", entry.Metrics.First().Code);
+        Assert.Equal(2, entry.Metrics.First().Actual);
+        Assert.All(entry.Orders, order => Assert.NotEqual(Guid.Empty, order.OrderId));
+    }
+
+    [Fact]
+    public async Task Sales_cannot_request_another_users_kpi()
+    {
+        var fixture = new Fixture();
+        var salesId = Guid.NewGuid();
+        fixture.Store.MemberGroups[salesId] = [fixture.GroupA];
+
+        var exception = await Assert.ThrowsAsync<ReportOperationException>(() => fixture.Service.GetSalesKpiAsync(
+            new SalesKpiQuery(From, To, null, Guid.NewGuid()), salesId, SystemRoles.Sales, default));
+
+        Assert.Equal("forbidden", exception.Code);
+    }
+
+    [Theory]
+    [InlineData(ProductRankingCriteria.Quantity, "SKU-A")]
+    [InlineData(ProductRankingCriteria.Revenue, "SKU-B")]
+    public async Task Product_ranking_uses_requested_criterion_and_canonical_units(
+        string criterion, string expectedFirstSku)
+    {
+        var fixture = new Fixture();
+        fixture.Store.ProductRows.AddRange([
+            new(Guid.NewGuid(), "SKU-A", "Sữa chua", 30, 300_000),
+            new(Guid.NewGuid(), "SKU-B", "Nước ép", 20, 500_000)
+        ]);
+
+        var result = await fixture.Service.GetProductRankingAsync(
+            new ProductRankingQuery(From, To, criterion, null),
+            Guid.NewGuid(), SystemRoles.Admin, default);
+
+        Assert.Equal(expectedFirstSku, result.Entries.First().Sku);
+        Assert.Equal([1, 2], result.Entries.Select(entry => entry.Rank));
+        Assert.All(result.Entries, entry => Assert.Equal("carton", entry.QuantityUnit));
+        Assert.Equal("All", result.Scope);
+    }
+
+    [Fact]
+    public async Task Product_ranking_rejects_unknown_criterion()
+    {
+        var fixture = new Fixture();
+        var exception = await Assert.ThrowsAsync<ReportOperationException>(() =>
+            fixture.Service.GetProductRankingAsync(
+                new ProductRankingQuery(From, To, "Profit", null),
+                Guid.NewGuid(), SystemRoles.Admin, default));
+        Assert.Equal("validation_error", exception.Code);
+    }
+
+    private static SalesKpiOrderRow KpiOrder(
+        Guid salesId, Guid groupId, string code, decimal beforePromotion, decimal promotion, decimal adjustment)
+    {
+        var retailerId = Guid.NewGuid();
+        var afterPromotion = beforePromotion - promotion;
+        return new(Guid.NewGuid(), code, retailerId, "10000001", "Điểm bán", salesId, "Nhân viên Sales",
+            groupId, "HCM-A", "Nhóm HCM A", Guid.Empty, new DateOnly(2026, 10, 15),
+            new DateOnly(2026, 10, 2), beforePromotion, promotion, afterPromotion, adjustment,
+            afterPromotion - adjustment);
+    }
+
     private sealed class Fixture
     {
         public Guid GroupA { get; } = Guid.NewGuid();
@@ -117,6 +195,8 @@ public sealed class ReportServiceTests
     {
         public List<SalesRevenueRow> Rows { get; } = [];
         public Dictionary<Guid, Guid[]> MemberGroups { get; } = [];
+        public List<SalesKpiOrderRow> KpiRows { get; } = [];
+        public List<ProductSalesRow> ProductRows { get; } = [];
 
         public Task<IReadOnlyCollection<Guid>> ListActiveGroupIdsAsync(Guid userId, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyCollection<Guid>>(
@@ -133,6 +213,27 @@ public sealed class ReportServiceTests
             return Task.FromResult<IReadOnlyCollection<SalesRevenueRow>>(
                 Rows.Where(row => set == null || set.Contains(row.SalesGroupId)).ToArray());
         }
+
+        public Task<IReadOnlyCollection<SalesKpiOrderRow>> ListRecognizedOrdersAsync(
+            DateOnly fromDate, DateOnly toDate, IReadOnlyCollection<Guid>? salesGroupIds,
+            Guid? salesUserId, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyCollection<SalesKpiOrderRow>>(KpiRows
+                .Where(row => salesGroupIds == null || salesGroupIds.Contains(row.SalesGroupId))
+                .Where(row => !salesUserId.HasValue || row.SalesUserId == salesUserId)
+                .ToArray());
+
+        public Task<SalesKpiConfigurationRow?> FindSalesKpiConfigurationAsync(
+            DateOnly periodEnd, CancellationToken cancellationToken) =>
+            Task.FromResult<SalesKpiConfigurationRow?>(new(
+                "{\"successfulOrdersTarget\":15,\"retailersServedTarget\":5,\"newRetailersTarget\":1," +
+                "\"promotionRevenueRatioMaximum\":0.05,\"successfulOrdersWeight\":0.25," +
+                "\"retailersServedWeight\":0.25,\"newRetailersWeight\":0.25," +
+                "\"promotionRevenueRatioWeight\":0.25}", 7, Now));
+
+        public Task<IReadOnlyCollection<ProductSalesRow>> AggregateProductSalesAsync(
+            DateOnly fromDate, DateOnly toDate, IReadOnlyCollection<Guid>? salesGroupIds,
+            CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyCollection<ProductSalesRow>>(ProductRows);
     }
 
     private sealed class FixedTimeProvider(DateTimeOffset now) : TimeProvider

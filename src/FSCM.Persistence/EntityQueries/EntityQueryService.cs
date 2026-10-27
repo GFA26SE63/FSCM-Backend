@@ -219,7 +219,12 @@ public sealed class EntityQueryService(AppDbContext dbContext) : IEntityQuerySer
         SystemRoles.WarehouseKeeper => dbContext.SalesOrderRecords.Where(order =>
             dbContext.PickingListRecords.Any(list => list.SalesOrderId == order.Id && access.Scope.WarehouseIds.Contains(list.WarehouseId)) ||
             dbContext.AllocationRecords.Any(allocation => access.Scope.WarehouseIds.Contains(allocation.WarehouseId) &&
-                dbContext.SalesOrderLineRecords.Any(line => line.Id == allocation.SalesOrderLineId && line.SalesOrderId == order.Id))),
+                dbContext.SalesOrderLineRecords.Any(line => line.Id == allocation.SalesOrderLineId && line.SalesOrderId == order.Id)) ||
+            // The run allocates into its own table; without this a keeper's GraphQL order scope is
+            // limited to whatever the older allocation path happened to write.
+            dbContext.AllocationRunAllocationRecords.Any(allocation => access.Scope.WarehouseIds.Contains(allocation.WarehouseId) &&
+                dbContext.AllocationRunLineRecords.Any(runLine => runLine.Id == allocation.AllocationRunLineId &&
+                    dbContext.SalesOrderLineRecords.Any(line => line.Id == runLine.SalesOrderLineId && line.SalesOrderId == order.Id)))),
         _ => dbContext.SalesOrderRecords.Where(_ => false)
     };
 

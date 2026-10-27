@@ -29,12 +29,24 @@ public sealed class ShipmentStore(AppDbContext dbContext) : IShipmentStore
                 order.Id == orderId && dbContext.SalesGroupMemberRecords.Any(membership =>
                     membership.UserAccountId == userId && membership.SalesGroupId == order.SalesGroupId &&
                     membership.IsActive), cancellationToken),
+            // Either allocation table puts the order in this keeper's warehouse. The run writes
+            // ALLOCATION_RUN_ALLOCATION and never the older ALLOCATION, so a rule that reads only
+            // the latter cannot see a single order the run produced - which is every order now.
             SystemRoles.WarehouseKeeper => dbContext.SalesOrderLineRecords.AsNoTracking().AnyAsync(line =>
-                line.SalesOrderId == orderId && dbContext.AllocationRecords.Any(allocation =>
-                    allocation.SalesOrderLineId == line.Id &&
-                    dbContext.UserWarehouseAssignmentRecords.Any(assignment =>
-                        assignment.UserAccountId == userId && assignment.IsActive &&
-                        assignment.WarehouseId == allocation.WarehouseId)), cancellationToken),
+                line.SalesOrderId == orderId &&
+                (dbContext.AllocationRecords.Any(allocation =>
+                        allocation.SalesOrderLineId == line.Id &&
+                        dbContext.UserWarehouseAssignmentRecords.Any(assignment =>
+                            assignment.UserAccountId == userId && assignment.IsActive &&
+                            assignment.WarehouseId == allocation.WarehouseId)) ||
+                 dbContext.AllocationRunAllocationRecords.Any(allocation =>
+                        dbContext.AllocationRunLineRecords.Any(runLine =>
+                            runLine.Id == allocation.AllocationRunLineId &&
+                            runLine.SalesOrderLineId == line.Id) &&
+                        dbContext.UserWarehouseAssignmentRecords.Any(assignment =>
+                            assignment.UserAccountId == userId && assignment.IsActive &&
+                            assignment.WarehouseId == allocation.WarehouseId))),
+                cancellationToken),
             SystemRoles.Retailer => dbContext.SalesOrderRecords.AsNoTracking().AnyAsync(order =>
                 order.Id == orderId && dbContext.RetailerRecords.Any(retailer =>
                     retailer.Id == order.RetailerId && retailer.UserAccountId == userId), cancellationToken),
@@ -107,6 +119,37 @@ public sealed class ShipmentStore(AppDbContext dbContext) : IShipmentStore
         if (!forUpdate) query = query.AsNoTracking();
         return (await query.OrderBy(item => item.QrCode).ToArrayAsync(cancellationToken))
             .Select(item => new ShipmentLabelView(item, item.BatchId)).ToArray();
+    }
+
+    public async Task<IReadOnlyCollection<ExpectedWarehousePart>> ListExpectedWarehousesAsync(
+        Guid orderId, CancellationToken cancellationToken)
+    {
+        // Every run picking sheet that carries a split of this order, which is one sheet per
+        // warehouse the approved plan drew from. A sheet that has not closed yet has produced no
+        // shipment part, and that is precisely the warehouse readiness has to keep waiting for.
+        var rows = await (
+                from list in dbContext.RunPickingListRecords.AsNoTracking()
+                join gather in dbContext.RunPickingGatherRecords.AsNoTracking()
+                    on list.Id equals gather.RunPickingListId
+                join split in dbContext.RunPickingSplitRecords.AsNoTracking()
+                    on gather.Id equals split.RunPickingGatherId
+                join warehouse in dbContext.WarehouseRecords.AsNoTracking()
+                    on list.WarehouseId equals warehouse.Id
+                where split.SalesOrderId == orderId
+                select new
+                {
+                    list.WarehouseId,
+                    WarehouseCode = warehouse.Code,
+                    list.PickingCode,
+                    list.Status
+                })
+            .Distinct()
+            .ToArrayAsync(cancellationToken);
+
+        return rows
+            .Select(row => new ExpectedWarehousePart(
+                row.WarehouseId, row.WarehouseCode, row.PickingCode, row.Status))
+            .ToArray();
     }
 
     public async Task<IReadOnlyCollection<PendingShipmentSource>> ListPendingSourcesAsync(

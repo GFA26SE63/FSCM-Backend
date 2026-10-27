@@ -159,13 +159,23 @@ public sealed class DeliveryStore(AppDbContext dbContext) : IDeliveryStore
                 order.Id == item.SalesOrderId && dbContext.SalesGroupMemberRecords.Any(membership =>
                     membership.UserAccountId == actorUserId && membership.SalesGroupId == order.SalesGroupId &&
                     membership.IsActive))),
+            // See the note in ShipmentStore: both allocation tables, or a keeper sees no delivery
+            // for any order the run produced.
             SystemRoles.WarehouseKeeper => query.Where(item => dbContext.SalesOrderRecords.Any(order =>
                 order.Id == item.SalesOrderId && dbContext.SalesOrderLineRecords.Any(line =>
-                    line.SalesOrderId == order.Id && dbContext.AllocationRecords.Any(allocation =>
-                        allocation.SalesOrderLineId == line.Id &&
-                        dbContext.UserWarehouseAssignmentRecords.Any(assignment =>
-                            assignment.UserAccountId == actorUserId && assignment.IsActive &&
-                            assignment.WarehouseId == allocation.WarehouseId))))),
+                    line.SalesOrderId == order.Id &&
+                    (dbContext.AllocationRecords.Any(allocation =>
+                            allocation.SalesOrderLineId == line.Id &&
+                            dbContext.UserWarehouseAssignmentRecords.Any(assignment =>
+                                assignment.UserAccountId == actorUserId && assignment.IsActive &&
+                                assignment.WarehouseId == allocation.WarehouseId)) ||
+                     dbContext.AllocationRunAllocationRecords.Any(allocation =>
+                            dbContext.AllocationRunLineRecords.Any(runLine =>
+                                runLine.Id == allocation.AllocationRunLineId &&
+                                runLine.SalesOrderLineId == line.Id) &&
+                            dbContext.UserWarehouseAssignmentRecords.Any(assignment =>
+                                assignment.UserAccountId == actorUserId && assignment.IsActive &&
+                                assignment.WarehouseId == allocation.WarehouseId)))))),
             SystemRoles.Retailer => query.Where(item => dbContext.SalesOrderRecords.Any(order =>
                 order.Id == item.SalesOrderId && dbContext.RetailerRecords.Any(retailer =>
                     retailer.Id == order.RetailerId && retailer.UserAccountId == actorUserId))),

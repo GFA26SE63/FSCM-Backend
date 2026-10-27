@@ -214,11 +214,15 @@ Final allocation approval creates one canonical payment ledger from the approved
 
 `GET /api/v1/manual-payments/{id}` and `GET /api/v1/manual-payments?salesOrderId=...` provide use-case-shaped reads; scoped payment entities are also available below GraphQL `entities`. Manual writes require Admin or Operator; creation requires `Idempotency-Key`, while confirm/cancel commands require the current manual-payment version. Payment reads expose `amount`, `confirmedAmount`, and `outstandingAmount` without exposing provider secrets or raw webhook payloads.
 
+F75 Sales KPI is exposed by `GET /api/v1/reports/sales-kpis` and the GraphQL `salesKpis` query. Admin and Operator may view all Sales or filter by Sales-group/user GUID; Sales Managers are restricted to their active groups, and Sales can only read their own KPI. Results include the configuration version, period, targets, weights, actual values, completion rates, weighted score, adjusted recognized revenue, and contributing order-GUID drill-down. Admin configures the versioned `reporting.sales_kpi` object through `/api/v1/configurations`; development seed supplies the approved monthly defaults. Revenue uses delivered orders, the delivery date (with Vietnam-local server-received fallback), and the canonical adjusted payment amount without recomputing historical promotion or HSD prices.
+
+F80 in-app notifications are recipient-scoped for every authenticated role. `GET /api/v1/notifications` supports read-state/type filters and pagination, `GET /api/v1/notifications/badges` returns the unread count, and `PATCH /api/v1/notifications/{notificationId}/read` plus `PATCH /api/v1/notifications/read-all` update server read state idempotently. The GraphQL `notifications` and `notificationBadges` fields use the same application service as the REST reads. Results include a related-entity GUID and server-provided deep link when the producing event has an addressable object; clients must still authorize the destination resource when opening that link.
+
 Configure `PayOS:ClientId`, `PayOS:ApiKey`, `PayOS:ChecksumKey`, `PayOS:ReturnUrl`, and `PayOS:CancelUrl` through user secrets or environment variables. Register the public `POST /api/v1/payments/payos/webhook` URL in the payOS dashboard; the endpoint accepts anonymous delivery but verifies every payload signature before changing payment state.
 
 Use [the HTTP request collection](src/FSCM.API/FSCM.API.http) after seeding to log in, exercise receipt and QR workflows, inspect inventory/expiry health, query the catalog, and request a historical-price suggestion.
 
-## The 12:00 allocation run
+## The daily allocation run
 
 Orders are not allocated when they arrive. A background job opens one run per Vietnam business date
 at the cutoff, draws every eligible order from one shared stock pool, and puts the result to an
@@ -247,19 +251,33 @@ job reads its cutoff before every wait, and the portal shows it. Recommended tim
 | --- | --- | --- |
 | `sales_submission_advice` | 11:00 | **Advice, not a gate.** An order accepted after it and before the cutoff is still in the run |
 | `order_review_reminder` | 11:30 | Orders still waiting for review will miss the cutoff |
-| `allocation_run` | 12:00 | The cutoff: the run takes what was accepted and reviewed before it |
+| `allocation_run` | 00:00 | The cutoff: the run takes what was accepted and reviewed before it |
 | `plan_approval_reminder` | 13:30 | A proposal is still undecided |
 | `plan_approval_deadline` | 14:00 | A decision is expected. **Nothing approves itself after it** |
 
-Reminders are validated against what they remind about: the two before the cutoff must fall before
-it, and the plan reminder must fall between the cutoff and the deadline. A schedule published before
-the reminders existed still loads, falling back to the defaults above.
+**The day closes at midnight.** The run allocates what came in during the day that has just ended,
+which is why the advice and the review reminder read as 11:00 and 11:30 *of that day* while the
+approval milestones belong to the day the run is on. The five stored values are times of day; each
+one is placed around the cutoff, so a milestone that belongs before it and would otherwise land
+after it moves back a day, and one that belongs after it moves forward. A midday cutoff, where all
+five sit on the business date itself, resolves exactly as it always did.
+
+That placement is also what makes a midnight cutoff expressible at all. Compared as plain times of
+day, nothing can precede 00:00, so the rule "the reminders must fall before the cutoff" rejected
+every schedule that closed the day at midnight - including one whose advice sat perfectly sensibly
+at 11:00 the morning before. The ordering is now checked on the resolved instants, which is the
+rule that was always meant.
+
+Reminders are still validated against what they remind about: the advice comes before the review
+reminder, both come before the cutoff, and the plan reminder falls between the cutoff and the
+deadline. A schedule published before the reminders existed still loads, falling back to the
+defaults above.
 
 The run job is **on unless switched off**: `AllocationRunOptions.Enabled` defaults to true, so a
-configuration file that omits `BackgroundJobs:AllocationRun` entirely still runs the job at 12:00.
-Anyone whose local `appsettings.json` predates that key should copy it across from the example, and
-disable it in `appsettings.Development.json` while pointing at a shared database - otherwise simply
-leaving the API running past noon opens a run and writes to it.
+configuration file that omits `BackgroundJobs:AllocationRun` entirely still runs the job at the
+cutoff. Anyone whose local `appsettings.json` predates that key should copy it across from the
+example, and disable it in `appsettings.Development.json` while pointing at a shared database -
+otherwise simply leaving the API running past the cutoff opens a run and writes to it.
 
 `BackgroundJobs:AllocationRun:CutoffLocalTime` is only a fallback for a deployment with no published
 schedule. Two independent cutoffs would let the ETA promise one time while the job keeps another.
@@ -277,9 +295,15 @@ The cutoff is not a parameter by default: it is read from the published schedule
 button cannot quietly change which orders belong to the run. An Admin may pass a later moment on
 the same business date, for the case where the run was down while orders kept arriving, and the
 moment actually used is stored on the run - the boundary that was applied stays readable instead of
-being inferred from when someone pressed it. A cutoff still in the future is refused (`conflict`),
-and one earlier than the published time is refused (`validation_error`), because moving it back
-would drop orders that belong to this run.
+being inferred from when someone pressed it.
+
+Three refusals, and they are checked in this order on purpose. A cutoff on any day but today is
+refused first (`validation_error`), because the published time it would otherwise be measured
+against is today's: yesterday's cutoff is earlier than it and tomorrow's is later than now, so
+either would be reported as a time out of range when the caller actually named the wrong day. Then
+a cutoff still in the future (`conflict`), and last one earlier than the published time
+(`validation_error`), because moving it back would drop orders that belong to this run. Times in
+these messages are written in Vietnam time whatever offset they arrived in.
 
 Opening is idempotent on the business date, so pressing twice joins the run that already exists
 rather than splitting the day across two plans. That also means the button cannot repair a run that
@@ -312,6 +336,13 @@ perfectly well, and holds no opinion about what Npgsql will bind.
 - **An order is all or nothing at the door too.** Every warehouse part must be picked, and the
   payment condition met, before any part leaves. One warehouse short or damaged stops the whole
   order rather than sending what happens to be ready and leaving the retailer to chase the rest.
+  The trap here is that **the shipment rows are not the list of warehouses an order is waiting
+  on**: a part is created only when its warehouse closes its picking sheet, so a warehouse still
+  picking has no row at all. Readiness therefore reads the expected warehouses from the sheets the
+  approved plan produced (`ListExpectedWarehousesAsync`) and reports a warehouse with no part yet
+  as one still to come, with a null shipment id. Deciding it from the rows alone made the first
+  warehouse to finish look like the whole order, and issuing is gated on the same answer - which is
+  partial delivery, arrived at by accident.
 - **Stock moves once, at issue.** Approval raises Reserved and leaves OnHand alone; issuing takes
   both down together and consumes the hold that paid for it. Confirming twice returns the part
   unchanged, because a duplicated deduction stays invisible until someone counts the shelf.
@@ -375,6 +406,14 @@ stock is short.
 The snapshot GET intentionally has no GraphQL twin: it is a bulk device-cache synchronization
 transport with HTTP ETag/checksum semantics, not a persisted business read model. Order reads remain
 available via the shared REST/GraphQL order read services.
+
+## Product ranking (F78)
+
+`GET /api/v1/reports/best-selling-products` and GraphQL `bestSellingProducts` rank delivered products for an
+inclusive Vietnam-local period by either `Quantity` or `Revenue`. Quantity is normalized to the
+canonical order unit `carton`. Revenue starts from the approved allocation-fragment net price and
+allocates approved order-level adjustments proportionally to each product. Admin/Operator may use
+all or a selected Sales group; Sales Manager/Sales access is restricted to active group membership.
 
 ## Validation
 

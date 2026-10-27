@@ -286,6 +286,26 @@ public sealed class AllocationScenarioTests
     }
 
     [Fact]
+    public async Task A_cutoff_on_another_day_is_refused_as_a_wrong_day_not_a_wrong_time()
+    {
+        var fixture = new ScenarioFixture();
+
+        var yesterday = await Assert.ThrowsAsync<AllocationRunOperationException>(() =>
+            fixture.Service.RunNowAsync(Cutoff.AddDays(-1), CancellationToken.None));
+        var tomorrow = await Assert.ThrowsAsync<AllocationRunOperationException>(() =>
+            fixture.Service.RunNowAsync(Cutoff.AddDays(1), CancellationToken.None));
+
+        // Both would fail a time check too - yesterday's cutoff is earlier than the published one,
+        // tomorrow's is still in the future - and that is exactly the message that must not win:
+        // the caller named the wrong day, and being told their time is out of range sends them to
+        // adjust the clock instead.
+        Assert.Equal("validation_error", yesterday.Code);
+        Assert.Contains("business date", yesterday.Message);
+        Assert.Equal("validation_error", tomorrow.Code);
+        Assert.Contains("business date", tomorrow.Message);
+    }
+
+    [Fact]
     public async Task Pressing_it_twice_joins_the_run_that_already_exists()
     {
         var fixture = new ScenarioFixture();

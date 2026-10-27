@@ -26,7 +26,8 @@ public interface IInventoryStore
     Task<GoodsReceiptView?> FindReceiptAsync(Guid receiptId, CancellationToken cancellationToken);
     Task<GoodsReceiptApprovalView?> FindReceiptForApprovalAsync(Guid receiptId, CancellationToken cancellationToken);
     Task<IReadOnlyCollection<GoodsReceiptView>> ListReceiptsAsync(Guid actorUserId, string actorRole, Guid? warehouseId, CancellationToken cancellationToken);
-    Task<Batch?> FindBatchForUpdateAsync(Guid warehouseId, Guid productId, DateOnly expirationDate, CancellationToken cancellationToken);
+    Task<Batch?> FindBatchForUpdateAsync(Guid warehouseId, Guid productId, DateOnly productionDate,
+        DateOnly expirationDate, CancellationToken cancellationToken);
     Task<InventoryBalance?> FindBalanceForUpdateAsync(Guid batchId, CancellationToken cancellationToken);
     Task<IReadOnlyCollection<BatchInventoryView>> ListInventoryAsync(Guid actorUserId, string actorRole, Guid? warehouseId, Guid? productId, CancellationToken cancellationToken);
     Task<BatchInventoryView?> FindBatchInventoryAsync(Guid batchId, CancellationToken cancellationToken);
