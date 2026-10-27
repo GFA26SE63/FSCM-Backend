@@ -15,6 +15,7 @@ public sealed class OrderService(
     IOrderPricingService pricingService,
     IInventoryLifecycleService inventoryLifecycleService,
     IPickingPlanService pickingPlanService,
+    OrderReleaseService releaseService,
     TimeProvider timeProvider)
 {
     private const string OrderStepKey = "order.order_step_cartons";
@@ -308,7 +309,14 @@ public sealed class OrderService(
             EnsureOrderVersion(view.Order, expectedVersion);
             await pickingPlanService.CancelForOrderAsync(
                 view.Order.Id, timeProvider.GetUtcNow(), transactionCancellationToken);
+            // Two models can hold stock here. The older per-order one is what ReleaseInventoryAsync
+            // walks, and it is still right for orders captured before the daily runs; every order
+            // since holds its stock through the run, which is what the release service lets go of.
+            // Both run inside this transaction: an order marked cancelled while its stock is still
+            // held would be invisible to the next run and have no screen that explains it.
             await ReleaseInventoryAsync(view, actorUserId, transactionCancellationToken);
+            await releaseService.ReleaseAsync(
+                view.Order.Id, actorUserId, view.Order.OrderCode, transactionCancellationToken);
             var fromStatus = view.Order.Status;
             var now = timeProvider.GetUtcNow();
             ApplyTransition(view.Order, OrderStatuses.Cancelled, actorUserId, reason, now);

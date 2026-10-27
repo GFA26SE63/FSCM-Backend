@@ -384,6 +384,50 @@ answered from the chosen ones, and a score means nothing without the scores it b
 outcome distinguishes `Released` - it drew its stock and lost it to a later line's shortfall - from
 `Short`, the line that actually failed.
 
+## Cancelling an order that is already holding stock (F94)
+
+Two models in this schema can hold stock, and only one of them is still written:
+
+| Holder | Reservation link | Written by |
+| --- | --- | --- |
+| `Allocation` (per order line) | `Reservation.AllocationId` | nothing any more; rows survive from before the daily runs |
+| `AllocationRunAllocation` | `Reservation.AllocationRunAllocationId` | every run since |
+
+An order is not moved to a new status when its run is approved - it stays `PendingAllocation` while
+the plan is approved, priced and reserved - so cancelling is allowed for the whole of that window,
+exactly as F94 intends. The release has to find the stock through the run:
+
+```
+SALES_ORDER -> ALLOCATION_RUN_ORDER -> ALLOCATION_RUN_LINE -> ALLOCATION_RUN_ALLOCATION -> RESERVATION
+```
+
+`OrderReleaseService` walks that path, sets each active reservation to `Released`, takes the
+quantity off `ReservedQuantity`, recomputes `AvailableQuantity` and writes an `OrderRelease` row to
+the stock ledger. It runs **inside the cancellation's transaction**: an order marked cancelled whose
+stock is still held would be invisible to the next run, with no screen left that could explain the
+missing quantity.
+
+### Taking the order off the picking sheets
+
+A sheet is one warehouse's work for one *run*, shared by every order in it, so a cancellation
+reduces the gather row by this order's share and removes only a gather that has nothing left to
+collect. The other orders on the sheet are untouched.
+
+Cancelling is refused once a warehouse has started - any of this order's splits with
+`PickedQuantity > 0`, or a sheet past `Issued`. Someone is standing at a shelf with that sheet in
+hand, and deleting their rows under them is how a picked carton goes missing. The sheet is checked
+**before** any stock moves, so a refused cancellation leaves the hold exactly as it was.
+
+### Rules that are easy to get wrong
+
+- **An order holding nothing is not an error.** One cancelled before it ever reached a run, and a
+  cancellation sent twice, both arrive here and release nothing.
+- **Only active reservations.** One already released or consumed is not ours to touch, which is what
+  makes a second cancellation a no-op rather than a double release.
+- **A balance holding less than the order claims is refused, not clamped.** No sequence of releases
+  produces it; writing a negative reservation would bury it.
+- **Everything is read tracked.** `AsNoTracking` here would make every release a silent no-op.
+
 ## Offline mobile snapshot and manual send
 
 Sales devices explicitly request `GET /api/v1/mobile/snapshot`. The response is scoped from the

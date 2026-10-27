@@ -70,6 +70,7 @@ public static class DependencyInjection
         services.AddScoped<MobileSnapshotService>();
         services.AddScoped<NotificationService>();
         services.AddScoped<OrderService>();
+        services.AddScoped<OrderReleaseService>();
         services.AddScoped<IOrderPricingService, OrderPricingService>();
         services.AddScoped<PaymentService>();
         services.AddScoped<RetailerReceivableService>();
