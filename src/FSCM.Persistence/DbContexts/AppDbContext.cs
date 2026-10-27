@@ -30,6 +30,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<AllocationRunStock> AllocationRunStockRecords => Set<AllocationRunStock>();
     public DbSet<AllocationRunAllocation> AllocationRunAllocationRecords => Set<AllocationRunAllocation>();
     public DbSet<AllocationPlanVersion> AllocationPlanVersionRecords => Set<AllocationPlanVersion>();
+    public DbSet<SalesOrderQuote> SalesOrderQuoteRecords => Set<SalesOrderQuote>();
+    public DbSet<PurchaseOrder> PurchaseOrderRecords => Set<PurchaseOrder>();
     public DbSet<AllocationPlanPrice> AllocationPlanPriceRecords => Set<AllocationPlanPrice>();
     public DbSet<AllocationLineTrace> AllocationLineTraceRecords => Set<AllocationLineTrace>();
     public DbSet<AllocationTraceCandidate> AllocationTraceCandidateRecords => Set<AllocationTraceCandidate>();

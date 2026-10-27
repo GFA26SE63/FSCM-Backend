@@ -19,6 +19,7 @@ using FSCM.Application.Features.Payments;
 using FSCM.Application.Features.Picking;
 using FSCM.Application.Features.Retailers;
 using FSCM.Application.Features.Refunds;
+using FSCM.Application.Features.Quotes;
 using FSCM.Application.Features.QrLabels;
 using FSCM.Application.Features.Promotions;
 using FSCM.Application.Features.Reports;
@@ -75,6 +76,7 @@ public static class DependencyInjection
         services.AddScoped<PaymentService>();
         services.AddScoped<RetailerReceivableService>();
         services.AddScoped<PaymentPlanService>();
+        services.AddScoped<QuoteService>();
         services.AddScoped<IPaymentPlanService>(provider => provider.GetRequiredService<PaymentPlanService>());
         services.AddScoped<PickingService>();
         services.AddScoped<PickingPlanService>();

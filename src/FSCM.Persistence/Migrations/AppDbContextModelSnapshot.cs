@@ -2872,6 +2872,59 @@ namespace FSCM.Persistence.Migrations
                     b.ToTable("PROMOTION_RETAILER", (string)null);
                 });
 
+            modelBuilder.Entity("FSCM.Domain.Entities.PurchaseOrder", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset>("IssuedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("IssuedByUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("PaymentMethod")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)");
+
+                    b.Property<string>("PurchaseOrderCode")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
+
+                    b.Property<Guid>("SalesOrderId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("SalesOrderQuoteId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("Version")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("PurchaseOrderCode")
+                        .IsUnique();
+
+                    b.HasIndex("SalesOrderQuoteId")
+                        .IsUnique();
+
+                    b.ToTable("PURCHASE_ORDER", (string)null);
+                });
+
             modelBuilder.Entity("FSCM.Domain.Entities.QrLabelEvent", b =>
                 {
                     b.Property<Guid>("Id")
@@ -4178,6 +4231,70 @@ namespace FSCM.Persistence.Migrations
                         {
                             t.HasCheckConstraint("CK_SALES_ORDER_LINE_MLOR_RATIO", "\"MlorMinimumLifeRatio\" > 0 AND \"MlorMinimumLifeRatio\" < 1");
                         });
+                });
+
+            modelBuilder.Entity("FSCM.Domain.Entities.SalesOrderQuote", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset?>("AcceptedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("AcceptedByUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("AllocationPlanVersionId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("AllocationRunId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset>("IssuedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("PurchaseOrderId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("RejectionReason")
+                        .HasColumnType("text");
+
+                    b.Property<int>("RevisionNumber")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid>("SalesOrderId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
+
+                    b.Property<decimal>("TotalAmount")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("Version")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AllocationPlanVersionId", "Status");
+
+                    b.HasIndex("SalesOrderId", "RevisionNumber")
+                        .IsUnique();
+
+                    b.ToTable("SALES_ORDER_QUOTE", (string)null);
                 });
 
             modelBuilder.Entity("FSCM.Domain.Entities.ShelfLifeDiscountTable", b =>

@@ -394,6 +394,15 @@ The action is recorded as `AllocationRunClosed` in the existing `AuditLog` table
 so no migration is needed. A run that is still awaiting approval, planning,
 failed or already closed cannot create a second close audit.
 
+## Quote acceptance and PO gate (CH-02/03/05/10)
+
+After an Admin approves a plan version, the API creates a 24-hour `SalesOrderQuote` revision
+for every fully allocated order. The retailer reads it through `GET /api/v1/quotes/orders/{orderId}`
+and must call `POST /api/v1/quotes/{id}/accept` (or `/reject`) with the current version before
+execution. Accepting creates one `PurchaseOrder` snapshot using the order's payment method;
+`POST /api/v1/allocation-runs/{runId}/picking-lists` refuses any order without an accepted quote
+and PO. Expired or rejected quotes never auto-approve and do not hold a new reservation.
+
 ## Cancelling an order that is already holding stock (F94)
 
 Two models in this schema can hold stock, and only one of them is still written:
