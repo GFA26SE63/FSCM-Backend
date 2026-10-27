@@ -67,6 +67,7 @@ public static class DependencyInjection
         services.AddScoped<RedemptionWorkflowService>();
         services.AddScoped<LoyaltyCardService>();
         services.AddScoped<LoyaltyAccrualService>();
+        services.AddScoped<OrderCompletionService>();
         services.AddScoped<MapService>();
         services.AddScoped<MobileSnapshotService>();
         services.AddScoped<NotificationService>();

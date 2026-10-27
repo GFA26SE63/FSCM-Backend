@@ -22,11 +22,9 @@ namespace FSCM.Application.Features.Loyalty;
 /// </summary>
 public sealed class LoyaltyAccrualService(ILoyaltyAccrualStore store, TimeProvider timeProvider)
 {
-    /// <summary>
-    /// Delivered is the end of the line for an order: there is no later "completed" state, so this
-    /// is the one that means every warehouse part reached the retailer.
-    /// </summary>
-    private static readonly string[] ReceivedStatuses = [OrderStatuses.Delivered];
+    /// <summary>Statuses in which every warehouse part has reached the retailer.</summary>
+    private static readonly string[] ReceivedStatuses =
+        [OrderStatuses.Delivered, OrderStatuses.Completed];
 
     public async Task<LoyaltyAccrualResult> EvaluateAsync(
         Guid salesOrderId, Guid? actorUserId, CancellationToken cancellationToken)
@@ -54,22 +52,23 @@ public sealed class LoyaltyAccrualService(ILoyaltyAccrualStore store, TimeProvid
 
         var points = PointsFor(view.ApprovedFinalAmount, view.Program.SpendAmountPerPoint);
 
-        if (!ReceivedStatuses.Contains(view.OrderStatus))
+        // The gate is the order's own status, not a second copy of the three conditions behind
+        // it (CH-14). OrderCompletionService decides when an order is settled; checking the same
+        // facts again here is how the two would eventually disagree about the same order.
+        //
+        // The facts are still read, but only to say *why* the order is waiting: a retailer looking
+        // at "Chờ cộng" on their card deserves a reason, not a blank.
+        if (view.OrderStatus != OrderStatuses.Completed)
         {
-            return await HoldAsync(view, points, LoyaltyAccrualBlock.NotFullyReceived,
-                "Đơn chưa nhận đủ mọi phần giao.", actorUserId, cancellationToken);
-        }
-
-        if (!view.PaymentSettled)
-        {
-            return await HoldAsync(view, points, LoyaltyAccrualBlock.NotFullyPaid,
-                "Đơn chưa thanh toán đủ giá trị thực.", actorUserId, cancellationToken);
-        }
-
-        if (view.HasOpenComplaint)
-        {
-            return await HoldAsync(view, points, LoyaltyAccrualBlock.ComplaintOpen,
-                "Đơn còn khiếu nại đang xử lý.", actorUserId, cancellationToken);
+            var (block, why) =
+                !ReceivedStatuses.Contains(view.OrderStatus)
+                    ? (LoyaltyAccrualBlock.NotFullyReceived, "Đơn chưa nhận đủ mọi phần giao.")
+                    : !view.PaymentSettled
+                        ? (LoyaltyAccrualBlock.NotFullyPaid, "Đơn chưa thanh toán đủ giá trị thực.")
+                        : view.HasOpenComplaint
+                            ? (LoyaltyAccrualBlock.ComplaintOpen, "Đơn còn khiếu nại đang xử lý.")
+                            : (LoyaltyAccrualBlock.NotCompleted, "Đơn chưa được chốt hoàn tất.");
+            return await HoldAsync(view, points, block, why, actorUserId, cancellationToken);
         }
 
         if (points <= 0)

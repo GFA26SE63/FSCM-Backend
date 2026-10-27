@@ -10,9 +10,14 @@ public sealed class LoyaltyAccrualServiceTests
     private static readonly Guid RetailerId = Guid.Parse("22222222-2222-2222-2222-222222222222");
     private static readonly Guid ProgramId = Guid.Parse("33333333-3333-3333-3333-333333333333");
 
-    /// <summary>An order that meets every condition, unless a caller says otherwise.</summary>
+    /// <summary>
+    /// An order that meets every condition, unless a caller says otherwise.
+    ///
+    /// Completed is the condition now: OrderCompletionService owns the three facts behind it, and
+    /// this service trusts the status rather than checking them a second time.
+    /// </summary>
     private static LoyaltyAccrualView Qualifying(
-        string status = OrderStatuses.Delivered,
+        string status = OrderStatuses.Completed,
         decimal amount = 1_000_000m,
         bool paid = true,
         bool complaint = false,
@@ -92,7 +97,7 @@ public sealed class LoyaltyAccrualServiceTests
     [Fact]
     public async Task An_unpaid_order_waits_even_though_it_has_arrived()
     {
-        var (service, _) = Build(Qualifying(paid: false));
+        var (service, _) = Build(Qualifying(status: OrderStatuses.Delivered, paid: false));
 
         var result = await service.EvaluateAsync(OrderId, null, CancellationToken.None);
 
@@ -102,7 +107,7 @@ public sealed class LoyaltyAccrualServiceTests
     [Fact]
     public async Task An_order_under_complaint_waits_until_the_complaint_is_settled()
     {
-        var (service, _) = Build(Qualifying(complaint: true));
+        var (service, _) = Build(Qualifying(status: OrderStatuses.Delivered, complaint: true));
 
         var result = await service.EvaluateAsync(OrderId, null, CancellationToken.None);
 
@@ -113,11 +118,12 @@ public sealed class LoyaltyAccrualServiceTests
     [Fact]
     public async Task A_hold_is_written_once_however_often_the_order_is_asked_about()
     {
-        var (service, store) = Build(Qualifying(paid: false));
+        var (service, store) = Build(Qualifying(status: OrderStatuses.Delivered, paid: false));
         await service.EvaluateAsync(OrderId, null, CancellationToken.None);
 
         // A credit order sits unpaid for weeks; every receipt and payment touch asks again.
-        store.Views[OrderId] = Qualifying(paid: false, pending: true);
+        store.Views[OrderId] = Qualifying(
+            status: OrderStatuses.Delivered, paid: false, pending: true);
         await service.EvaluateAsync(OrderId, null, CancellationToken.None);
         await service.EvaluateAsync(OrderId, null, CancellationToken.None);
 
@@ -135,6 +141,19 @@ public sealed class LoyaltyAccrualServiceTests
         Assert.Contains(store.Rows, row => row.Type == LoyaltyTransactionTypes.PendingEarnCancelled);
         Assert.Contains(store.Rows, row => row.Type == LoyaltyTransactionTypes.Earned);
         Assert.Equal(10, store.Balances[RetailerId]);
+    }
+
+    [Fact]
+    public async Task An_order_that_meets_the_facts_but_is_not_yet_completed_waits_for_the_status()
+    {
+        var (service, _) = Build(Qualifying(status: OrderStatuses.Delivered));
+
+        var result = await service.EvaluateAsync(OrderId, null, CancellationToken.None);
+
+        // Nothing is wrong with it; completion simply has not run yet. Earning here anyway would
+        // put the points ahead of the status that is supposed to authorise them.
+        Assert.False(result.Earned);
+        Assert.Equal(LoyaltyAccrualBlock.NotCompleted, result.Block);
     }
 
     [Fact]

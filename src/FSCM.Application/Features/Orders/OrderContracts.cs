@@ -298,6 +298,18 @@ public static class OrderStatuses
     public const string Issued = "Issued";
     public const string Delivering = "Delivering";
     public const string Delivered = "Delivered";
+
+    /// <summary>
+    /// Everything about the order is settled: every warehouse part was received, the money is in,
+    /// and nothing is in dispute. This is the end of the commercial line and the only moment an
+    /// order earns its loyalty points (F70, CH-14).
+    ///
+    /// Deliberately not the same as <see cref="Delivered"/>. A prepaid order that arrived but whose
+    /// receipt is being disputed is delivered and not settled; a credit order delivered on terms is
+    /// delivered and not yet paid. Collapsing the two would pay points on money that has not
+    /// arrived and on quantities that are still being argued about.
+    /// </summary>
+    public const string Completed = "Completed";
 }
 
 public static class OrderSources

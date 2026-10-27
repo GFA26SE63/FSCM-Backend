@@ -407,11 +407,12 @@ The snapshot GET intentionally has no GraphQL twin: it is a bulk device-cache sy
 transport with HTTP ETag/checksum semantics, not a persisted business read model. Order reads remain
 available via the shared REST/GraphQL order read services.
 
-## Loyalty points (F70)
+## Completing an order, and the points it earns (F70, CH-14)
 
-An order earns its points once, when it has actually been delivered **and** paid for **and** nothing
-about it is in dispute. Which of those three is the last to happen depends on the payment method, so
-this is written as one evaluation that three callers ask rather than as three separate rules:
+An order is **Completed** when it has actually been delivered **and** paid for in full **and**
+nothing about it is in dispute. Which of those three is the last to happen depends on the payment
+method, so this is written as one evaluation that three callers ask rather than as three separate
+rules:
 
 | Caller | Why it asks |
 | --- | --- |
@@ -419,10 +420,31 @@ this is written as one evaluation that three callers ask rather than as three se
 | `ManualPaymentService.ConfirmAsync` | the money just landed - a credit order is delivered long before this |
 | `ComplaintService.ResolveAsync` | the dispute that was holding it is closed, and nothing else will ask |
 
-`LoyaltyAccrualService.EvaluateAsync` is idempotent: an order that has already earned is returned
-unchanged, so every caller may ask after every event without guarding. All three ask **outside**
-their own transaction - the receipt and the payment are facts, points are a consequence, and a
-loyalty failure must not roll back a delivery the retailer has already taken.
+`OrderCompletionService.EvaluateAsync` owns those three conditions. When they all hold it promotes
+the order to `Completed` - writing an `OrderStatusHistory` row like any other transition - and only
+then counts the points. `LoyaltyAccrualService` gates on the **status**, not on the three facts:
+
+```
+receipt / payment / complaint-resolve
+        -> OrderCompletionService          (the three conditions live here, once)
+              -> status becomes Completed
+                   -> LoyaltyAccrualService  (gates on status == Completed)
+```
+
+Two rules exist for one reason only: the three conditions must not be written down twice. A second
+copy inside the accrual is how the ledger and the status would eventually disagree about the same
+order - points paid on an order the status still calls open, or an order closed with no points. The
+accrual still *reads* the three facts, but only to say **why** an order is waiting, so the retailer's
+card can show "Chờ cộng" with a reason instead of a blank.
+
+`Delivered` is therefore no longer the end of the line. It means every part arrived; `Completed`
+means the order is settled and nothing further is expected of either side.
+
+Both services are idempotent: an order already `Completed` is returned with
+`OrderCompletionBlock.AlreadyCompleted`, and one that already earned is returned unchanged, so every
+caller may ask after every event without guarding. All three ask **outside** their own transaction -
+the receipt and the payment are facts, completion and points are consequences, and a failure here
+must not roll back a delivery the retailer has already taken.
 
 ### Rules that are easy to get wrong
 

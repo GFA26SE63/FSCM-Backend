@@ -1,4 +1,5 @@
 using FSCM.Application.Features.ManualPayments;
+using FSCM.UnitTests.Orders;
 using FSCM.Application.Features.Loyalty;
 using FSCM.UnitTests.Loyalty;
 using FSCM.Application.Features.Orders;
@@ -170,9 +171,12 @@ public sealed class ManualPaymentServiceTests
                 UpdatedAt = Now.AddHours(-2)
             };
             Store = new FakeStore(Order, Retailer, Ledger);
-            // Same here: the fake ledger knows no orders, so the accrual call does nothing.
+            // Same here: both fakes know no orders, so the completion call does nothing.
             Service = new ManualPaymentService(Store, Store,
-                new LoyaltyAccrualService(new FakeLoyaltyAccrualStore(), new FixedTimeProvider(Now)),
+                new OrderCompletionService(
+                    new FakeOrderCompletionStore(),
+                    new LoyaltyAccrualService(new FakeLoyaltyAccrualStore(), new FixedTimeProvider(Now)),
+                    new FixedTimeProvider(Now)),
                 new FixedTimeProvider(Now));
         }
 

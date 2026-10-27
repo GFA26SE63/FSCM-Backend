@@ -42,6 +42,7 @@ public enum LoyaltyAccrualBlock
     NotFullyReceived,
     NotFullyPaid,
     ComplaintOpen,
+    NotCompleted,
     NothingToEarn,
 }
 

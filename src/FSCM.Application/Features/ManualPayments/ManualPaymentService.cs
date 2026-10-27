@@ -2,7 +2,6 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using FSCM.Application.Features.Orders;
-using FSCM.Application.Features.Loyalty;
 using FSCM.Application.Features.Payments;
 using FSCM.Domain.Authorization;
 using FSCM.Domain.Entities;
@@ -16,7 +15,7 @@ namespace FSCM.Application.Features.ManualPayments;
 public sealed class ManualPaymentService(
     IManualPaymentStore store,
     IPaymentStore paymentStore,
-    LoyaltyAccrualService accrual,
+    OrderCompletionService completion,
     TimeProvider timeProvider)
 {
     private static readonly TimeSpan VietnamOffset = TimeSpan.FromHours(7);
@@ -152,7 +151,7 @@ public sealed class ManualPaymentService(
         // transaction, and idempotent, so it cannot undo a payment that was recorded.
         if (settledOrderId is { } paidOrderId)
         {
-            await accrual.EvaluateAsync(paidOrderId, actorUserId, cancellationToken);
+            await completion.EvaluateAsync(paidOrderId, actorUserId, cancellationToken);
         }
 
         return ToResult(await store.FindAsync(paymentId, cancellationToken)

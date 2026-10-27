@@ -24,7 +24,7 @@ public sealed class ShipmentService(
     IShipmentStore store,
     IPaymentStore paymentStore,
     IPaymentPlanService paymentPlanService,
-    LoyaltyAccrualService accrual,
+    OrderCompletionService completion,
     TimeProvider timeProvider)
 {
     private static readonly TimeSpan VietnamOffset = TimeSpan.FromHours(7);
@@ -612,7 +612,7 @@ public sealed class ShipmentService(
         // Evaluating is idempotent, so the next payment or complaint settles it if this misses.
         if (fullyReceivedOrderId is { } earnedOrderId)
         {
-            await accrual.EvaluateAsync(earnedOrderId, retailerUserId, cancellationToken);
+            await completion.EvaluateAsync(earnedOrderId, retailerUserId, cancellationToken);
         }
 
         return ToResult(await store.FindByIdAsync(id, false, cancellationToken)
