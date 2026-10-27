@@ -10,9 +10,11 @@ public sealed class QuoteService(IQuoteStore store, TimeProvider timeProvider)
         var now = timeProvider.GetUtcNow();
         foreach (var order in await store.ListOrdersForPlanAsync(allocationPlanVersionId, ct))
         {
-            var existing = (await store.ListForOrderAsync(order.SalesOrderId, ct)).FirstOrDefault(x => x.Quote.AllocationPlanVersionId == allocationPlanVersionId);
+            var orderQuotes = await store.ListForOrderAsync(order.SalesOrderId, ct);
+            var existing = orderQuotes.FirstOrDefault(x => x.Quote.AllocationPlanVersionId == allocationPlanVersionId);
             if (existing is not null) continue;
-            store.Add(new SalesOrderQuote { Id = Guid.NewGuid(), SalesOrderId = order.SalesOrderId, AllocationRunId = order.AllocationRunId, AllocationPlanVersionId = allocationPlanVersionId, RevisionNumber = 1, Status = SalesOrderQuoteStatuses.PendingRetailerAcceptance, TotalAmount = order.TotalAmount, IssuedAt = now, ExpiresAt = now.AddHours(24), Version = 0, CreatedAt = now, UpdatedAt = now });
+            var revision = orderQuotes.Select(x => x.Quote.RevisionNumber).DefaultIfEmpty(0).Max() + 1;
+            store.Add(new SalesOrderQuote { Id = Guid.NewGuid(), SalesOrderId = order.SalesOrderId, AllocationRunId = order.AllocationRunId, AllocationPlanVersionId = allocationPlanVersionId, RevisionNumber = revision, Status = SalesOrderQuoteStatuses.PendingRetailerAcceptance, TotalAmount = order.TotalAmount, IssuedAt = now, ExpiresAt = now.AddHours(24), Version = 0, CreatedAt = now, UpdatedAt = now });
         }
         await store.SaveChangesAsync(ct);
     }
@@ -47,7 +49,7 @@ public sealed class QuoteService(IQuoteStore store, TimeProvider timeProvider)
         }
         view.Quote.Status = SalesOrderQuoteStatuses.Accepted;
         view.Quote.AcceptedByUserId = actor; view.Quote.AcceptedAt = now; view.Quote.Version++; view.Quote.UpdatedAt = now;
-        var po = new PurchaseOrder { Id = Guid.NewGuid(), PurchaseOrderCode = $"PO-{view.Order.OrderCode}", SalesOrderId = view.Order.Id, SalesOrderQuoteId = view.Quote.Id, Status = PurchaseOrderStatuses.Issued, PaymentMethod = view.Order.PaymentMethod, IssuedAt = now, IssuedByUserId = actor, Version = 0, CreatedAt = now, UpdatedAt = now };
+        var po = new PurchaseOrder { Id = Guid.NewGuid(), PurchaseOrderCode = $"PO-{view.Order.OrderCode}-{view.Quote.RevisionNumber:00}", SalesOrderId = view.Order.Id, SalesOrderQuoteId = view.Quote.Id, Status = PurchaseOrderStatuses.Issued, PaymentMethod = view.Order.PaymentMethod, IssuedAt = now, IssuedByUserId = actor, Version = 0, CreatedAt = now, UpdatedAt = now };
         view.Quote.PurchaseOrderId = po.Id;
         store.AddPurchaseOrder(po);
         await store.SaveChangesAsync(ct);
