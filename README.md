@@ -474,6 +474,7 @@ all or a selected Sales group; Sales Manager/Sales access is restricted to activ
 - Ordinary campaign minimum quantity is aggregated across matching SKU/category lines in one order only; quantities never combine across orders.
 - The selected campaign is deterministic: highest percentage wins, then promotion code breaks ties. The chosen discount is snapshotted on each order line; allocation pricing remains the source of truth for batch/HSD pricing.
 - Complaints retain the shipment part, allocation plan price, frozen final unit price and calculated adjustment for the affected quantity. The API accepts `shipmentId` and `allocationPlanPriceId` and validates that they belong to the received batch; evidence remains attached to the same discrepancy item.
+- F62 resolution records an explicit `Approved` or `Rejected` decision with a reason. The adjustment remains pending review for receivables/refund handling; actual transfer and verification stay in F101.
 
 ## Validation
 
