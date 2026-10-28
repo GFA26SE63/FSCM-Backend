@@ -490,6 +490,8 @@ public sealed class AllocationRunStore(AppDbContext dbContext) : IAllocationRunS
     public void AddInventoryTransaction(InventoryTransaction transaction) =>
         dbContext.InventoryTransactionRecords.Add(transaction);
 
+    public void AddAuditLog(AuditLog auditLog) => dbContext.AuditLogRecords.Add(auditLog);
+
     private IQueryable<AllocationPlanVersionView> CreatePlanVersionQuery(
         IQueryable<AllocationPlanVersion> versions) =>
         versions.Join(dbContext.AllocationRunRecords.AsNoTracking(),

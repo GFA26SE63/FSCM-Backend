@@ -1,4 +1,5 @@
 using FSCM.Domain.Entities;
+using FSCM.Application.Features.Quotes;
 
 namespace FSCM.Application.Features.AllocationRuns;
 
@@ -13,7 +14,8 @@ namespace FSCM.Application.Features.AllocationRuns;
 public sealed class AllocationPlanApprovalService(
     IAllocationRunStore store,
     AllocationReservationService reservations,
-    TimeProvider timeProvider)
+    TimeProvider timeProvider,
+    QuoteService? quotes = null)
 {
     public async Task<AllocationPlanVersionResult> GetAsync(Guid versionId, CancellationToken cancellationToken) =>
         ToResult(await store.FindPlanVersionViewAsync(versionId, cancellationToken)
@@ -69,6 +71,7 @@ public sealed class AllocationPlanApprovalService(
         }, cancellationToken);
 
         store.ClearTracking();
+        if (quotes is not null) await quotes.IssueForPlanAsync(versionId, cancellationToken);
         return await GetAsync(versionId, cancellationToken);
     }
 

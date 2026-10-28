@@ -574,6 +574,55 @@ public sealed class AllocationRunService(
                 $"No allocation run exists for {businessDate:yyyy-MM-dd}."));
 
     /// <summary>
+    /// F95: closes an approved run and publishes its final run report. Closing is a workflow
+    /// transition only; all reservations and picking rows remain immutable. The existing AuditLog
+    /// table records who closed it, so this does not require a schema change.
+    /// </summary>
+    public async Task<AllocationRunResult> CloseAsync(
+        Guid runId, int expectedVersion, Guid actorUserId, string? reason,
+        CancellationToken cancellationToken)
+    {
+        await store.ExecuteInTransactionAsync(async transactionCancellationToken =>
+        {
+            var run = await store.FindRunForUpdateAsync(runId, transactionCancellationToken)
+                ?? throw AllocationRunOperationException.NotFound("Allocation run was not found.");
+
+            if (run.Version != expectedVersion)
+            {
+                throw AllocationRunOperationException.Conflict(
+                    $"Allocation run {run.RunCode} changed. Reload it before closing.");
+            }
+
+            if (run.Status == AllocationRunStatuses.Closed) return;
+            if (run.Status != AllocationRunStatuses.Approved)
+            {
+                throw AllocationRunOperationException.Conflict(
+                    "Only an approved allocation run can be closed.");
+            }
+
+            var now = timeProvider.GetUtcNow();
+            run.Status = AllocationRunStatuses.Closed;
+            run.Version++;
+            run.UpdatedAt = now;
+            store.AddAuditLog(new AuditLog
+            {
+                Id = Guid.NewGuid(),
+                UserAccountId = actorUserId,
+                EntityName = nameof(AllocationRun),
+                EntityId = run.Id,
+                Action = "AllocationRunClosed",
+                OldValues = JsonSerializer.Serialize(new { Status = AllocationRunStatuses.Approved }),
+                NewValues = JsonSerializer.Serialize(new { Status = AllocationRunStatuses.Closed }),
+                Reason = string.IsNullOrWhiteSpace(reason) ? null : reason.Trim(),
+                CreatedAt = now
+            });
+            await store.SaveChangesAsync(transactionCancellationToken);
+        }, cancellationToken);
+
+        return await GetAsync(runId, cancellationToken);
+    }
+
+    /// <summary>
     /// The same instant in Vietnam, for a message someone reads. A cutoff arrives in whatever offset
     /// its caller built it in - the schedule in local time, an API client quite possibly in UTC - and
     /// a refusal that says 05:00 about a 12:00 cutoff is worse than no message at all.

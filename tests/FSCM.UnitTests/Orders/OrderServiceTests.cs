@@ -368,12 +368,19 @@ public sealed class OrderServiceTests
         public OrderService Service { get; }
         public bool TerritoryAllowed { get => Store.TerritoryAllowed; set => Store.TerritoryAllowed = value; }
 
+        public FakeOrderReleaseStore Release { get; }
+
         public Fixture(decimal physicalQuantity = 50)
         {
             Store = new FakeStore(SalesUserId, physicalQuantity);
             Inventory = new FakeInventoryLifecycle(Store);
             PickingPlan = new FakePickingPlan();
-            Service = new OrderService(Store, new FakePricing(), Inventory, PickingPlan, new FixedTimeProvider(Now));
+            Release = new FakeOrderReleaseStore();
+            // Releasing what a run holds is covered by OrderReleaseServiceTests; here the fake
+            // holds nothing, so cancelling reports zero released and these tests stay about the
+            // order's own state machine.
+            Service = new OrderService(Store, new FakePricing(), Inventory, PickingPlan,
+                new OrderReleaseService(Release, new FixedTimeProvider(Now)), new FixedTimeProvider(Now));
         }
 
         public CreateAssistedOrderData Request(int quantity) => new(

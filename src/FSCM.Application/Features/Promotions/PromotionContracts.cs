@@ -41,6 +41,8 @@ public sealed record AppliedPromotionSnapshot(
     decimal DiscountPercent, decimal MinimumQuantity,
     DateTimeOffset EffectiveFrom, DateTimeOffset EffectiveTo);
 
+public sealed record PromotionPriceLineInput(Guid ProductId, decimal Quantity);
+
 public sealed record PriceSnapshotResult(
     Guid ProductId, string Sku, string ProductName, Guid? BatchId, string? BatchCode,
     Guid? RetailerId, decimal Quantity, decimal UnitPrice, decimal GrossAmount,
