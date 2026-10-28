@@ -27,6 +27,16 @@ public interface IOrderPricingService
         Guid retailerId,
         DateTimeOffset pricedAt,
         CancellationToken cancellationToken);
+
+    async Task<IReadOnlyDictionary<Guid, OrderPriceSnapshot>> CalculateAsync(
+        IReadOnlyCollection<(Guid ProductId, int Quantity)> lines,
+        Guid retailerId, DateTimeOffset pricedAt, CancellationToken cancellationToken)
+    {
+        var result = new Dictionary<Guid, OrderPriceSnapshot>();
+        foreach (var line in lines)
+            result[line.ProductId] = await CalculateAsync(line.ProductId, line.Quantity, retailerId, pricedAt, cancellationToken);
+        return result;
+    }
 }
 
 public sealed class OrderPricingService(PromotionService promotionService) : IOrderPricingService
@@ -57,4 +67,22 @@ public sealed class OrderPricingService(PromotionService promotionService) : IOr
             result.AppliedPromotion?.EffectiveFrom,
             result.AppliedPromotion?.EffectiveTo);
     }
+
+    public async Task<IReadOnlyDictionary<Guid, OrderPriceSnapshot>> CalculateAsync(
+        IReadOnlyCollection<(Guid ProductId, int Quantity)> lines,
+        Guid retailerId, DateTimeOffset pricedAt, CancellationToken cancellationToken)
+    {
+        var results = await promotionService.CalculateIndicativePricesAsync(
+            lines.Select(item => new PromotionPriceLineInput(item.ProductId, item.Quantity)).ToArray(),
+            retailerId, pricedAt, cancellationToken);
+        return results.ToDictionary(item => item.Key, item => ToSnapshot(item.Value));
+    }
+
+    private static OrderPriceSnapshot ToSnapshot(PriceSnapshotResult result) => new(
+        result.UnitPrice, result.GrossAmount, result.DiscountPercent, result.DiscountAmount,
+        result.NetAmount, result.ProductPriceId, result.ProductPriceEffectiveFrom,
+        result.ProductPriceEffectiveTo, result.AppliedPromotion?.PromotionId,
+        result.AppliedPromotion?.PromotionType, result.AppliedPromotion?.Code,
+        result.AppliedPromotion?.Name, result.AppliedPromotion?.MinimumQuantity,
+        result.AppliedPromotion?.EffectiveFrom, result.AppliedPromotion?.EffectiveTo);
 }

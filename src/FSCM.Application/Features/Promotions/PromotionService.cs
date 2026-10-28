@@ -267,6 +267,55 @@ public sealed class PromotionService(IPromotionStore store, TimeProvider timePro
         DateTimeOffset? at, CancellationToken cancellationToken) =>
         CalculatePriceAsync(productId, quantity, null, retailerId, at, cancellationToken);
 
+    public async Task<IReadOnlyDictionary<Guid, PriceSnapshotResult>> CalculateIndicativePricesAsync(
+        IReadOnlyCollection<PromotionPriceLineInput> lines, Guid retailerId,
+        DateTimeOffset at, CancellationToken cancellationToken)
+    {
+        var pricedAt = at.ToUniversalTime();
+        var products = new Dictionary<Guid, PriceProductView>();
+        var candidates = new Dictionary<Guid, IReadOnlyCollection<PromotionView>>();
+        foreach (var line in lines)
+        {
+            if (line.Quantity <= 0 || line.Quantity != decimal.Truncate(line.Quantity))
+                throw PromotionOperationException.Validation("Quantity must be a positive whole number of cartons.");
+            var product = await store.FindPriceProductAsync(line.ProductId, pricedAt, cancellationToken)
+                ?? throw PromotionOperationException.NotFound("Published product or effective price was not found.");
+            products[line.ProductId] = product;
+            candidates[line.ProductId] = await store.ListEligibleCampaignsAsync(
+                line.ProductId, product.Product.ProductCategoryId, retailerId,
+                decimal.MaxValue, pricedAt, cancellationToken);
+        }
+
+        var totals = new Dictionary<Guid, decimal>();
+        // Quantity is calculated from matching lines in this order only; it never crosses orders.
+        foreach (var promotion in candidates.Values.SelectMany(x => x).GroupBy(x => x.Promotion.Id))
+        {
+            totals[promotion.Key] = lines.Where(line => candidates.TryGetValue(line.ProductId, out var eligible) &&
+                    eligible.Any(item => item.Promotion.Id == promotion.Key)).Sum(line => line.Quantity);
+        }
+
+        var result = new Dictionary<Guid, PriceSnapshotResult>();
+        foreach (var line in lines)
+        {
+            var product = products[line.ProductId];
+            var eligible = candidates[line.ProductId]
+                .Where(item => totals[item.Promotion.Id] >= item.Promotion.MinimumQuantity)
+                .Select(item => ToSnapshot(item.Promotion)).ToArray();
+            var applied = eligible.OrderByDescending(item => item.DiscountPercent)
+                .ThenBy(item => item.Code, StringComparer.Ordinal).FirstOrDefault();
+            var gross = Math.Round(product.Price.UnitPrice * line.Quantity, 0, MidpointRounding.AwayFromZero);
+            var discount = Math.Round(gross * (applied?.DiscountPercent ?? 0m) / 100m, 0,
+                MidpointRounding.AwayFromZero);
+            var net = gross - discount;
+            result[line.ProductId] = new PriceSnapshotResult(line.ProductId, product.Product.Sku,
+                product.Product.Name, null, null, retailerId, line.Quantity, product.Price.UnitPrice,
+                gross, applied?.DiscountPercent ?? 0m, discount, Math.Round(net / line.Quantity, 2), net,
+                applied, eligible, pricedAt, true, product.Price.Id, product.Price.EffectiveFrom,
+                product.Price.EffectiveTo);
+        }
+        return result;
+    }
+
     private async Task<PromotionResult> SetCampaignActiveAsync(
         Guid id, bool isActive, Guid actorUserId, CancellationToken cancellationToken)
     {
