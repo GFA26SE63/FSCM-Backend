@@ -4,6 +4,7 @@ using System.Globalization;
 using FSCM.Application.Features.AllocationRuns;
 using FSCM.Application.Features.Deliveries;
 using FSCM.Application.Features.Orders;
+using FSCM.Application.Features.Loyalty;
 using FSCM.Application.Features.Inventory;
 using FSCM.Application.Features.Payments;
 using FSCM.Application.Features.QrLabels;
@@ -23,6 +24,7 @@ public sealed class ShipmentService(
     IShipmentStore store,
     IPaymentStore paymentStore,
     IPaymentPlanService paymentPlanService,
+    OrderCompletionService completion,
     TimeProvider timeProvider)
 {
     private static readonly TimeSpan VietnamOffset = TimeSpan.FromHours(7);
@@ -462,6 +464,9 @@ public sealed class ShipmentService(
         operationKey = NormalizeOperationKey(operationKey);
         var note = NormalizeNote(data.Note);
         var qrCodes = NormalizeQrCodes(data.QrCodes);
+        // Set inside the transaction, read after it: this receipt may be the one that completes
+        // the order, and that is when its points become possible.
+        Guid? fullyReceivedOrderId = null;
         var lines = NormalizeReceiptLines(data.Lines);
         var requestHash = HashReceipt(id, qrCodes, lines, note);
 
@@ -581,6 +586,7 @@ public sealed class ShipmentService(
                 item.Id == view.Shipment.Id || item.Status == ShipmentStatuses.Received);
             if (allReceived)
             {
+                fullyReceivedOrderId = view.Order.Id;
                 var order = await store.FindOrderForUpdateAsync(view.Order.Id, transactionCancellationToken)
                     ?? throw ShipmentOperationException.NotFound("Order was not found.");
                 var fromStatus = order.Status;
@@ -600,6 +606,15 @@ public sealed class ShipmentService(
         }, cancellationToken);
 
         store.ClearTracking();
+
+        // Outside the transaction on purpose. The receipt is the fact; points are a consequence of
+        // it, and a loyalty problem must not roll back a delivery the retailer has already taken.
+        // Evaluating is idempotent, so the next payment or complaint settles it if this misses.
+        if (fullyReceivedOrderId is { } earnedOrderId)
+        {
+            await completion.EvaluateAsync(earnedOrderId, retailerUserId, cancellationToken);
+        }
+
         return ToResult(await store.FindByIdAsync(id, false, cancellationToken)
             ?? throw ShipmentOperationException.Conflict("Receipt was committed but could not be reloaded."));
     }

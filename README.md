@@ -470,6 +470,61 @@ The snapshot GET intentionally has no GraphQL twin: it is a bulk device-cache sy
 transport with HTTP ETag/checksum semantics, not a persisted business read model. Order reads remain
 available via the shared REST/GraphQL order read services.
 
+## Completing an order, and the points it earns (F70, CH-14)
+
+An order is **Completed** when it has actually been delivered **and** paid for in full **and**
+nothing about it is in dispute. Which of those three is the last to happen depends on the payment
+method, so this is written as one evaluation that three callers ask rather than as three separate
+rules:
+
+| Caller | Why it asks |
+| --- | --- |
+| `ShipmentService.ConfirmReceiptAsync` | the final warehouse part has been received |
+| `ManualPaymentService.ConfirmAsync` | the money just landed - a credit order is delivered long before this |
+| `ComplaintService.ResolveAsync` | the dispute that was holding it is closed, and nothing else will ask |
+
+`OrderCompletionService.EvaluateAsync` owns those three conditions. When they all hold it promotes
+the order to `Completed` - writing an `OrderStatusHistory` row like any other transition - and only
+then counts the points. `LoyaltyAccrualService` gates on the **status**, not on the three facts:
+
+```
+receipt / payment / complaint-resolve
+        -> OrderCompletionService          (the three conditions live here, once)
+              -> status becomes Completed
+                   -> LoyaltyAccrualService  (gates on status == Completed)
+```
+
+Two rules exist for one reason only: the three conditions must not be written down twice. A second
+copy inside the accrual is how the ledger and the status would eventually disagree about the same
+order - points paid on an order the status still calls open, or an order closed with no points. The
+accrual still *reads* the three facts, but only to say **why** an order is waiting, so the retailer's
+card can show "Chờ cộng" with a reason instead of a blank.
+
+`Delivered` is therefore no longer the end of the line. It means every part arrived; `Completed`
+means the order is settled and nothing further is expected of either side.
+
+Both services are idempotent: an order already `Completed` is returned with
+`OrderCompletionBlock.AlreadyCompleted`, and one that already earned is returned unchanged, so every
+caller may ask after every event without guarding. All three ask **outside** their own transaction -
+the receipt and the payment are facts, completion and points are consequences, and a failure here
+must not roll back a delivery the retailer has already taken.
+
+### Rules that are easy to get wrong
+
+- **The value is the approved final amount**, not the list price and not what today's discount table
+  would say. The run froze that number; a table published next week must not change what an order
+  that shipped last week was worth.
+- **Whole points, rounded down.** A part point is not a point, and rounding up mints value the order
+  never paid for.
+- **An order that does not qualify yet is held, not dropped.** A `PendingEarn` row carries no
+  balance and exists so the card can show "Chờ cộng" without a second table. It is written once, not
+  once per evaluation - a credit order sits unpaid for a whole term and would otherwise collect a
+  row per touch.
+- **A correction is a row, not an edit.** After a refund or a complaint, `AdjustAsync` writes the
+  difference against the same order and leaves the original earning readable. The balance is allowed
+  to go negative: points already spent cannot be un-spent, and redemption refuses while the balance
+  is short, which is what stops the difference being handed out twice.
+
 ## Product ranking (F78)
 
 `GET /api/v1/reports/best-selling-products` and GraphQL `bestSellingProducts` rank delivered products for an

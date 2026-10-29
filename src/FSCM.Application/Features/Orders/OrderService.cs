@@ -923,7 +923,8 @@ public sealed class OrderService(
         OrderStatuses.Cancelled,
         OrderStatuses.Issued,
         OrderStatuses.Delivering,
-        OrderStatuses.Delivered
+        OrderStatuses.Delivered,
+        OrderStatuses.Completed
     ];
 
     private sealed record CapturePlan(
