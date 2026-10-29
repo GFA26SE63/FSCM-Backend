@@ -36,7 +36,6 @@ public sealed class SalesOrderConfiguration : IEntityTypeConfiguration<SalesOrde
         builder.Property(entity => entity.ServerReceivedAt).HasColumnType("timestamp with time zone").IsRequired();
         builder.Property(entity => entity.ReviewedAt).HasColumnType("timestamp with time zone").IsRequired(false);
         builder.Property(entity => entity.RejectionReason).HasColumnType("text").IsRequired(false);
-        builder.Property(entity => entity.AllocationTraceJson).HasColumnType("jsonb").IsRequired();
         builder.Property(entity => entity.Version).IsRequired().IsConcurrencyToken();
         builder.Property(entity => entity.CreatedAt).HasColumnType("timestamp with time zone").IsRequired();
         builder.Property(entity => entity.UpdatedAt).HasColumnType("timestamp with time zone").IsRequired();

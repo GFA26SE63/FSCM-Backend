@@ -13,9 +13,13 @@ public sealed class ReceiptDiscrepancyItemConfiguration : IEntityTypeConfigurati
         builder.Property(entity => entity.Id).HasColumnType("uuid").IsRequired();
         builder.Property(entity => entity.ReceiptDiscrepancyId).HasColumnType("uuid").IsRequired();
         builder.Property(entity => entity.BatchId).HasColumnType("uuid").IsRequired(false);
+        builder.Property(entity => entity.ShipmentId).HasColumnType("uuid").IsRequired(false);
+        builder.Property(entity => entity.AllocationPlanPriceId).HasColumnType("uuid").IsRequired(false);
         builder.Property(entity => entity.IssueType).HasMaxLength(30).IsRequired();
         builder.Property(entity => entity.ExpectedQuantity).HasPrecision(18, 3).IsRequired();
         builder.Property(entity => entity.ActualReceivedQuantity).HasPrecision(18, 3).IsRequired();
+        builder.Property(entity => entity.FinalUnitPrice).HasPrecision(18, 2).IsRequired();
+        builder.Property(entity => entity.AdjustmentAmount).HasPrecision(18, 2).IsRequired();
         builder.Property(entity => entity.EvidenceBlobUrl).HasColumnType("text").IsRequired(false);
         builder.Property(entity => entity.Note).HasColumnType("text").IsRequired(false);
         builder.HasOne<ReceiptDiscrepancy>()

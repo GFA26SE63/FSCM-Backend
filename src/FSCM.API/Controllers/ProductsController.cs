@@ -111,6 +111,32 @@ public sealed class ProductsController(CatalogService catalogService) : Controll
         return CreatedAtAction(nameof(Get), new { productId = result.Id }, result);
     }
 
+    /// <summary>
+    /// Copies allowed product master data into an independent Draft with a caller-supplied new SKU.
+    /// Inventory, batches, reservations, transactions, and replacement lineage are never copied.
+    /// </summary>
+    [Authorize(Roles = SystemRoles.Admin)]
+    [HttpPost("{productId:guid}/clone")]
+    [ProducesResponseType<ProductResult>(StatusCodes.Status201Created)]
+    public async Task<IActionResult> Clone(
+        Guid productId,
+        CloneProductRequest request,
+        CancellationToken cancellationToken)
+    {
+        var result = await catalogService.CloneProductAsync(
+            productId,
+            new CloneProductData(
+                request.Sku,
+                request.ProductCategoryId,
+                request.Name,
+                request.Unit,
+                request.ShelfLifeHours,
+                request.NearDateThresholdHours,
+                request.InitialUnitPrice),
+            cancellationToken);
+        return CreatedAtAction(nameof(Get), new { productId = result.Id }, result);
+    }
+
     [HttpGet("{productId:guid}/prices")]
     [ProducesResponseType<IReadOnlyCollection<ProductPriceResult>>(StatusCodes.Status200OK)]
     public Task<IReadOnlyCollection<ProductPriceResult>> ListPrices(

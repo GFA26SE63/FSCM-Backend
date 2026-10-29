@@ -27,4 +27,15 @@ public sealed class MlorConfigurationsController(WarehouseConfigurationService s
         return service.SetMlorAsync(request.RetailerId, request.ProductCategoryId, request.ProductId,
             request.MinimumLifeRatio, request.MinimumLifeHours, userId, cancellationToken);
     }
+
+    [HttpDelete("{mlorId:guid}")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    public async Task<IActionResult> Deactivate(Guid mlorId, CancellationToken cancellationToken)
+    {
+        var rawUserId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+        if (!Guid.TryParse(rawUserId, out var userId))
+            throw WarehouseConfigurationOperationException.Validation("Authenticated user identifier is invalid.");
+        await service.DeactivateMlorAsync(mlorId, userId, cancellationToken);
+        return NoContent();
+    }
 }

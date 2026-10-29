@@ -18,6 +18,7 @@ public sealed class LoyaltyProgramConfiguration : IEntityTypeConfiguration<Loyal
         builder.Property(entity => entity.MinimumRedeemPoints).IsRequired();
         builder.Property(entity => entity.StartAt).HasColumnType("timestamp with time zone").IsRequired();
         builder.Property(entity => entity.EndAt).HasColumnType("timestamp with time zone").IsRequired();
+        builder.Property(entity => entity.PointsExpireAt).HasColumnType("timestamp with time zone").IsRequired(false);
         builder.Property(entity => entity.IsActive).IsRequired();
         builder.Property(entity => entity.CreatedByUserId).HasColumnType("uuid").IsRequired();
         builder.Property(entity => entity.CreatedAt).HasColumnType("timestamp with time zone").IsRequired();

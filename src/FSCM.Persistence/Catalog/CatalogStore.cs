@@ -1,3 +1,4 @@
+using System.Data;
 using FSCM.Application.Features.Catalog;
 using FSCM.Domain.Entities;
 using FSCM.Persistence.DbContexts;
@@ -30,6 +31,11 @@ public sealed class CatalogStore(AppDbContext dbContext) : ICatalogStore
             category => category.Code == code,
             cancellationToken);
 
+    public Task<ProductCategory?> FindCategoryByNameAsync(string name, CancellationToken cancellationToken) =>
+        dbContext.ProductCategoryRecords.FirstOrDefaultAsync(
+            category => category.Name.ToLower() == name.ToLower(),
+            cancellationToken);
+
     public Task<bool> CategoryHasActiveChildrenAsync(Guid categoryId, CancellationToken cancellationToken) =>
         dbContext.ProductCategoryRecords.AnyAsync(
             category => category.ParentCategoryId == categoryId && category.IsActive,
@@ -40,7 +46,35 @@ public sealed class CatalogStore(AppDbContext dbContext) : ICatalogStore
             product => product.ProductCategoryId == categoryId && product.Status != ProductStatuses.Inactive,
             cancellationToken);
 
+    public Task<bool> CategoryHasAnyChildrenAsync(Guid categoryId, CancellationToken cancellationToken) =>
+        dbContext.ProductCategoryRecords.AnyAsync(
+            category => category.ParentCategoryId == categoryId, cancellationToken);
+
+    public Task<bool> CategoryHasAnyProductsAsync(Guid categoryId, CancellationToken cancellationToken) =>
+        dbContext.ProductRecords.AnyAsync(
+            product => product.ProductCategoryId == categoryId, cancellationToken);
+
+    public async Task<string> NextCategoryCodeAsync(CancellationToken cancellationToken)
+    {
+        var connection = dbContext.Database.GetDbConnection();
+        var openedHere = connection.State != ConnectionState.Open;
+        if (openedHere) await connection.OpenAsync(cancellationToken);
+        try
+        {
+            await using var command = connection.CreateCommand();
+            command.CommandText = "SELECT nextval('\"CategoryCodeSequence\"');";
+            var number = Convert.ToInt64(await command.ExecuteScalarAsync(cancellationToken));
+            return $"CAT-{number:00}";
+        }
+        finally
+        {
+            if (openedHere) await connection.CloseAsync();
+        }
+    }
+
     public void AddCategory(ProductCategory category) => dbContext.ProductCategoryRecords.Add(category);
+
+    public void RemoveCategory(ProductCategory category) => dbContext.ProductCategoryRecords.Remove(category);
 
     public async Task<(IReadOnlyCollection<ProductView> Items, int TotalCount)> ListProductsAsync(
         ProductSearch search,

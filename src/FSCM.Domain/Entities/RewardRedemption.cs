@@ -9,6 +9,7 @@ public sealed class RewardRedemption
     public Guid LoyaltyRewardId { get; set; }
     public Guid? LoyaltyTransactionId { get; set; }
     public Guid? SalesOrderId { get; set; }
+    public string ClientRequestId { get; set; } = string.Empty;
     public int RedeemedPoints { get; set; }
     public string Status { get; set; } = string.Empty;
     public Guid RedeemedByUserId { get; set; }

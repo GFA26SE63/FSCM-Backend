@@ -136,6 +136,28 @@ public sealed class IdentityStore(AppDbContext dbContext) : IIdentityStore
             retailerIds.Concat(ownedRetailerIds).Distinct().ToArray());
     }
 
+    public async Task<IdentityScopeLabels> GetScopeLabelsAsync(
+        IdentityScope scope, CancellationToken cancellationToken)
+    {
+        var warehouses = await dbContext.WarehouseRecords.AsNoTracking()
+            .Where(item => scope.WarehouseIds.Contains(item.Id))
+            .Select(item => new ScopeLabel(item.Id, item.Code, item.Name))
+            .ToArrayAsync(cancellationToken);
+        var regions = await dbContext.RegionRecords.AsNoTracking()
+            .Where(item => scope.RegionIds.Contains(item.Id))
+            .Select(item => new ScopeLabel(item.Id, item.Code, item.Name))
+            .ToArrayAsync(cancellationToken);
+        var salesGroups = await dbContext.SalesGroupRecords.AsNoTracking()
+            .Where(item => scope.SalesGroupIds.Contains(item.Id))
+            .Select(item => new ScopeLabel(item.Id, item.Code, item.Name))
+            .ToArrayAsync(cancellationToken);
+        var retailers = await dbContext.RetailerRecords.AsNoTracking()
+            .Where(item => scope.RetailerIds.Contains(item.Id))
+            .Select(item => new ScopeLabel(item.Id, item.Code, item.Name))
+            .ToArrayAsync(cancellationToken);
+        return new IdentityScopeLabels(warehouses, regions, salesGroups, retailers);
+    }
+
     public Task<bool> WarehouseExistsAsync(Guid warehouseId, CancellationToken cancellationToken) =>
         dbContext.WarehouseRecords.AnyAsync(
             warehouse => warehouse.Id == warehouseId && warehouse.IsActive,

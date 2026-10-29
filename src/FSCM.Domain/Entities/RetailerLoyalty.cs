@@ -7,6 +7,7 @@ public sealed class RetailerLoyalty
     public Guid Id { get; set; }
     public Guid RetailerId { get; set; }
     public int CurrentPoints { get; set; }
+    public int HeldPoints { get; set; }
     public int LifetimeEarnedPoints { get; set; }
     public int LifetimeRedeemedPoints { get; set; }
     public DateTimeOffset CreatedAt { get; set; }

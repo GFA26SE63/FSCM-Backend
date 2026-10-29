@@ -23,17 +23,42 @@ public sealed partial class CatalogService(ICatalogStore store, TimeProvider tim
 
     public async Task<CategoryResult> CreateCategoryAsync(
         Guid? parentCategoryId,
-        string code,
+        string? code,
         string name,
         string? description,
         CancellationToken cancellationToken)
     {
-        var normalizedCode = NormalizeCategoryCode(code);
-        ValidateCategoryFields(normalizedCode, name, description);
+        ValidateCategoryName(name);
+        ValidateCategoryDescription(description);
 
-        if (await store.FindCategoryByCodeAsync(normalizedCode, cancellationToken) is not null)
+        // Auto-generate the next CAT-NN code when the client does not supply one; otherwise
+        // validate and de-duplicate the supplied code (F14).
+        string normalizedCode;
+        if (string.IsNullOrWhiteSpace(code))
         {
-            throw CatalogOperationException.Conflict($"Category code '{normalizedCode}' already exists.");
+            normalizedCode = await store.NextCategoryCodeAsync(cancellationToken);
+            while (await store.FindCategoryByCodeAsync(normalizedCode, cancellationToken) is not null)
+            {
+                normalizedCode = await store.NextCategoryCodeAsync(cancellationToken);
+            }
+        }
+        else
+        {
+            normalizedCode = NormalizeCategoryCode(code);
+            if (!CategoryCodePattern().IsMatch(normalizedCode))
+            {
+                throw CatalogOperationException.Validation("Category code must use the CAT-00 format.");
+            }
+
+            if (await store.FindCategoryByCodeAsync(normalizedCode, cancellationToken) is not null)
+            {
+                throw CatalogOperationException.Conflict($"Category code '{normalizedCode}' already exists.");
+            }
+        }
+
+        if (await store.FindCategoryByNameAsync(name.Trim(), cancellationToken) is not null)
+        {
+            throw CatalogOperationException.Conflict($"Category name '{name.Trim()}' already exists.");
         }
 
         if (parentCategoryId.HasValue)
@@ -71,7 +96,14 @@ public sealed partial class CatalogService(ICatalogStore store, TimeProvider tim
         CancellationToken cancellationToken)
     {
         var category = await RequireCategoryAsync(categoryId, cancellationToken);
-        ValidateCategoryFields(category.Code, name, description);
+        ValidateCategoryName(name);
+        ValidateCategoryDescription(description);
+
+        var duplicateName = await store.FindCategoryByNameAsync(name.Trim(), cancellationToken);
+        if (duplicateName is not null && duplicateName.Id != categoryId)
+        {
+            throw CatalogOperationException.Conflict($"Category name '{name.Trim()}' already exists.");
+        }
 
         if (parentCategoryId == categoryId)
         {
@@ -129,6 +161,41 @@ public sealed partial class CatalogService(ICatalogStore store, TimeProvider tim
         category.IsActive = isActive;
         category.UpdatedAt = timeProvider.GetUtcNow();
         await store.SaveChangesAsync(cancellationToken);
+    }
+
+    /// <summary>
+    /// Deletes a category (F14). Hard-deletes when the category has no child categories and no
+    /// products at all; otherwise it is inactivated (soft delete) so existing references stay valid.
+    /// </summary>
+    public async Task<DeleteCategoryResult> DeleteCategoryAsync(Guid categoryId, CancellationToken cancellationToken)
+    {
+        var category = await RequireCategoryAsync(categoryId, cancellationToken);
+        var hasChildren = await store.CategoryHasAnyChildrenAsync(categoryId, cancellationToken);
+        var hasProducts = await store.CategoryHasAnyProductsAsync(categoryId, cancellationToken);
+
+        if (!hasChildren && !hasProducts)
+        {
+            store.RemoveCategory(category);
+            await store.SaveChangesAsync(cancellationToken);
+            return new DeleteCategoryResult(categoryId, true, false);
+        }
+
+        // In use → inactivate instead of hard delete. Block if active children exist.
+        if (await store.CategoryHasActiveChildrenAsync(categoryId, cancellationToken))
+        {
+            throw CatalogOperationException.InvalidTransition(
+                "A category with active child categories cannot be deleted; inactivate the children first.");
+        }
+
+        if (!category.IsActive)
+        {
+            return new DeleteCategoryResult(categoryId, false, true);
+        }
+
+        category.IsActive = false;
+        category.UpdatedAt = timeProvider.GetUtcNow();
+        await store.SaveChangesAsync(cancellationToken);
+        return new DeleteCategoryResult(categoryId, false, true);
     }
 
     public async Task<CatalogPage<ProductResult>> ListProductsAsync(
@@ -328,6 +395,52 @@ public sealed partial class CatalogService(ICatalogStore store, TimeProvider tim
         return await GetProductAsync(replacement.Id, cancellationToken);
     }
 
+    public async Task<ProductResult> CloneProductAsync(
+        Guid productId,
+        CloneProductData data,
+        CancellationToken cancellationToken)
+    {
+        var source = await RequireProductAsync(productId, cancellationToken);
+        var sku = NormalizeSku(data.Sku);
+        var categoryId = data.ProductCategoryId ?? source.ProductCategoryId;
+        var name = data.Name ?? source.Name;
+        var unit = data.Unit ?? source.Unit;
+        var shelfLifeHours = data.ShelfLifeHours ?? source.ShelfLifeHours;
+        var nearDateThresholdHours = data.NearDateThresholdHours ?? source.NearDateThresholdHours;
+
+        ValidateProductFields(sku, name, unit, shelfLifeHours, nearDateThresholdHours);
+        ValidatePrice(data.InitialUnitPrice);
+        await EnsureSkuAvailableAsync(sku, cancellationToken);
+        await RequireActiveCategoryAsync(categoryId, cancellationToken);
+
+        var now = timeProvider.GetUtcNow();
+        var clone = new Product
+        {
+            Id = Guid.NewGuid(),
+            ProductCategoryId = categoryId,
+            ReplacesProductId = null,
+            Sku = sku,
+            Name = name.Trim(),
+            Unit = unit.Trim(),
+            ShelfLifeHours = shelfLifeHours,
+            NearDateThresholdHours = nearDateThresholdHours,
+            Status = ProductStatuses.Draft,
+            CreatedAt = now,
+            UpdatedAt = now
+        };
+        store.AddProduct(clone);
+
+        var initialPrice = data.InitialUnitPrice ??
+            (await store.FindActivePriceAsync(source.Id, cancellationToken))?.UnitPrice;
+        if (initialPrice.HasValue)
+        {
+            store.AddPrice(CreatePrice(clone.Id, initialPrice.Value, now));
+        }
+
+        await store.SaveChangesAsync(cancellationToken);
+        return await GetProductAsync(clone.Id, cancellationToken);
+    }
+
     public async Task<ProductPriceResult> SetPriceAsync(
         Guid productId,
         decimal unitPrice,
@@ -493,14 +606,11 @@ public sealed partial class CatalogService(ICatalogStore store, TimeProvider tim
         return search with { Search = NormalizeOptional(search.Search), Status = status };
     }
 
-    private static void ValidateCategoryFields(string code, string name, string? description)
-    {
-        if (!CategoryCodePattern().IsMatch(code))
-        {
-            throw CatalogOperationException.Validation("Category code must use the CAT-00 format.");
-        }
-
+    private static void ValidateCategoryName(string name) =>
         ValidateRequiredLength(name, 150, "Category name");
+
+    private static void ValidateCategoryDescription(string? description)
+    {
         if (description?.Length > 4000)
         {
             throw CatalogOperationException.Validation("Category description cannot exceed 4000 characters.");

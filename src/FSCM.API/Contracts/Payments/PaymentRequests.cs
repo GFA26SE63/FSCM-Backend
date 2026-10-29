@@ -1,12 +1,16 @@
 namespace FSCM.API.Contracts.Payments;
 
 public sealed record CollectPaymentRequest(
-    decimal Amount,
     string CollectionMethod,
     int ExpectedVersion,
     string? Note);
 
 public sealed record CreatePayOsCheckoutRequest(int ExpectedVersion);
+
+public sealed record AdjustReceivableRequest(
+    decimal Amount,
+    string Reason,
+    int ExpectedVersion);
 
 public sealed record PayOsWebhookRequest(
     string Code,

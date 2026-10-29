@@ -13,6 +13,10 @@ namespace FSCM.API.Controllers;
 public sealed class PricingController(PromotionService service, OrderService orderService) : ControllerBase
 {
     [HttpGet("snapshot")]
+    [ProducesResponseType<PriceSnapshotResult>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
     public async Task<PriceSnapshotResult> Snapshot(
         [FromQuery] Guid productId, [FromQuery] decimal quantity,
         [FromQuery] Guid? retailerId,

@@ -6,10 +6,14 @@ public sealed record GoodsReceiptView(
     GoodsReceipt Receipt, string WarehouseCode, string WarehouseName,
     IReadOnlyCollection<GoodsReceiptLineView> Lines);
 public sealed record GoodsReceiptLineView(
-    GoodsReceiptLine Line, string Sku, string ProductName, Guid BatchId, string BatchCode);
+    GoodsReceiptLine Line, string Sku, string ProductName, Guid? BatchId, string? BatchCode);
+public sealed record GoodsReceiptApprovalLine(GoodsReceiptLine Line, Product Product);
+public sealed record GoodsReceiptApprovalView(
+    GoodsReceipt Receipt, Warehouse Warehouse, IReadOnlyCollection<GoodsReceiptApprovalLine> Lines);
 public sealed record BatchInventoryView(
     Batch Batch, InventoryBalance Balance, string WarehouseCode, string WarehouseName,
-    string Sku, string ProductName, int NearDateThresholdHours);
+    string Sku, string ProductName, int NearDateThresholdHours,
+    decimal ActiveLockedQuantity, bool HasLockRequiringResolution);
 public sealed record InventoryHistoryView(
     InventoryTransaction Transaction, string BatchCode, string WarehouseCode, string Sku);
 
@@ -20,8 +24,10 @@ public interface IInventoryStore
     Task<Product?> FindProductAsync(Guid productId, CancellationToken cancellationToken);
     Task<GoodsReceiptView?> FindReceiptByIdempotencyKeyAsync(string key, CancellationToken cancellationToken);
     Task<GoodsReceiptView?> FindReceiptAsync(Guid receiptId, CancellationToken cancellationToken);
+    Task<GoodsReceiptApprovalView?> FindReceiptForApprovalAsync(Guid receiptId, CancellationToken cancellationToken);
     Task<IReadOnlyCollection<GoodsReceiptView>> ListReceiptsAsync(Guid actorUserId, string actorRole, Guid? warehouseId, CancellationToken cancellationToken);
-    Task<Batch?> FindBatchForUpdateAsync(Guid warehouseId, Guid productId, DateOnly expirationDate, CancellationToken cancellationToken);
+    Task<Batch?> FindBatchForUpdateAsync(Guid warehouseId, Guid productId, DateOnly productionDate,
+        DateOnly expirationDate, CancellationToken cancellationToken);
     Task<InventoryBalance?> FindBalanceForUpdateAsync(Guid batchId, CancellationToken cancellationToken);
     Task<IReadOnlyCollection<BatchInventoryView>> ListInventoryAsync(Guid actorUserId, string actorRole, Guid? warehouseId, Guid? productId, CancellationToken cancellationToken);
     Task<BatchInventoryView?> FindBatchInventoryAsync(Guid batchId, CancellationToken cancellationToken);

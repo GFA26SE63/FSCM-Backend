@@ -251,8 +251,9 @@ public sealed class IdentityService(
             ?? throw IdentityOperationException.NotFound("User account was not found.");
         var credential = await store.FindCredentialAsync(userId, cancellationToken);
         var scope = await store.GetScopeAsync(userId, cancellationToken);
+        var scopeLabels = await store.GetScopeLabelsAsync(scope, cancellationToken);
 
-        return ToAuthenticatedUser(user, credential?.MustChangePassword ?? false, scope);
+        return ToAuthenticatedUser(user, credential?.MustChangePassword ?? false, scope, scopeLabels);
     }
 
     public async Task<PagedUserResult> ListUsersAsync(
@@ -682,8 +683,10 @@ public sealed class IdentityService(
     private static AuthenticatedUser ToAuthenticatedUser(
         UserAccount user,
         bool mustChangePassword,
-        IdentityScope scope) =>
-        new(user.Id, user.Email, user.FullName, user.Role, mustChangePassword, scope);
+        IdentityScope scope,
+        IdentityScopeLabels? scopeLabels = null) =>
+        new(user.Id, user.Email, user.FullName, user.Role, mustChangePassword, scope,
+            scopeLabels ?? IdentityScopeLabels.Empty);
 
     private static UserSummary ToUserSummary(UserAccount user) =>
         new(user.Id, user.Email, user.FullName, user.Role, user.IsActive,

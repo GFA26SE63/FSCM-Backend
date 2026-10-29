@@ -25,6 +25,8 @@ public interface IIdentityStore
 
     Task<IdentityScope> GetScopeAsync(Guid userId, CancellationToken cancellationToken);
 
+    Task<IdentityScopeLabels> GetScopeLabelsAsync(IdentityScope scope, CancellationToken cancellationToken);
+
     Task<bool> WarehouseExistsAsync(Guid warehouseId, CancellationToken cancellationToken);
 
     Task<bool> SalesGroupExistsAsync(Guid salesGroupId, CancellationToken cancellationToken);

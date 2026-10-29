@@ -15,6 +15,7 @@ public sealed class LoyaltyRewardConfiguration : IEntityTypeConfiguration<Loyalt
         builder.Property(entity => entity.Code).HasMaxLength(40).IsRequired();
         builder.Property(entity => entity.Name).HasMaxLength(200).IsRequired();
         builder.Property(entity => entity.Description).HasColumnType("text").IsRequired(false);
+        builder.Property(entity => entity.ImageUrl).HasMaxLength(500).IsRequired(false);
         builder.Property(entity => entity.RewardType).HasMaxLength(30).IsRequired();
         builder.Property(entity => entity.RequiredPoints).IsRequired();
         builder.Property(entity => entity.DiscountAmount).HasPrecision(18, 2).IsRequired(false);

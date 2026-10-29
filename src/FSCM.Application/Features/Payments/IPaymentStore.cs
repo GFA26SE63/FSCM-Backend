@@ -2,7 +2,9 @@ using FSCM.Domain.Entities;
 
 namespace FSCM.Application.Features.Payments;
 
-public sealed record PaymentView(Payment Payment, SalesOrder Order, Retailer Retailer);
+public sealed record PaymentView(
+    Payment Payment, SalesOrder Order, Retailer Retailer,
+    decimal PendingRefundAmount = 0, decimal RefundedAmount = 0, bool HasOpenDispute = false);
 
 public interface IPaymentPlanService
 {

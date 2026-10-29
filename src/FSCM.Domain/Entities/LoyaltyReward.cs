@@ -9,6 +9,7 @@ public sealed class LoyaltyReward
     public string Code { get; set; } = string.Empty;
     public string Name { get; set; } = string.Empty;
     public string? Description { get; set; }
+    public string? ImageUrl { get; set; }
     public string RewardType { get; set; } = string.Empty;
     public int RequiredPoints { get; set; }
     public decimal? DiscountAmount { get; set; }

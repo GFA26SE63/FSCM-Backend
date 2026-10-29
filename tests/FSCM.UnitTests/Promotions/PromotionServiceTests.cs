@@ -117,6 +117,28 @@ public sealed class PromotionServiceTests
         Assert.Single(result.EligiblePromotions);
     }
 
+    [Fact]
+    public async Task Campaign_minimum_quantity_aggregates_matching_lines_inside_one_order()
+    {
+        var fixture = new Fixture();
+        var campaign = new Promotion
+        {
+            Id = Guid.NewGuid(), Code = "KM-GROUP", Name = "Nhóm SKU", PromotionType = PromotionTypes.Campaign,
+            MinimumQuantity = 10, DiscountPercent = 12, StartAt = Now.AddDays(-1), EndAt = Now.AddDays(5),
+            IsActive = true, CreatedAt = Now, UpdatedAt = Now
+        };
+        fixture.Store.Promotions.Add(campaign);
+        fixture.Store.CategoryLinks.Add(new() { Id = Guid.NewGuid(), PromotionId = campaign.Id,
+            ProductCategoryId = fixture.Store.Category.Id });
+
+        var result = await fixture.Service.CalculateIndicativePricesAsync(
+            [new(fixture.Store.Product.Id, 6), new(fixture.Store.Product2.Id, 4)],
+            fixture.Store.Retailer.Id, Now, CancellationToken.None);
+
+        Assert.Equal(12m, result[fixture.Store.Product.Id].DiscountPercent);
+        Assert.Equal(12m, result[fixture.Store.Product2.Id].DiscountPercent);
+    }
+
     [Theory]
     [InlineData(30, "15")]
     [InlineData(40, "10")]
@@ -148,10 +170,12 @@ public sealed class PromotionServiceTests
     {
         public ProductCategory Category { get; } = new() { Id = Guid.NewGuid(), Code = "CAT-02", Name = "Sữa", IsActive = true };
         public Product Product { get; } = new() { Id = Guid.NewGuid(), Sku = "SKU001", Name = "Sữa tươi", Status = ProductStatuses.Published, ShelfLifeHours = 100 * 24 };
+        public Product Product2 { get; } = new() { Id = Guid.NewGuid(), Sku = "SKU002", Name = "Sữa chua", Status = ProductStatuses.Published, ShelfLifeHours = 100 * 24 };
         public Retailer Retailer { get; } = new() { Id = Guid.NewGuid(), Code = "10004127", Name = "Tạp hóa An Khang" };
         public Warehouse Warehouse { get; } = new() { Id = Guid.NewGuid(), Code = "WH-TD", Name = "Kho Thủ Đức", IsActive = true };
         public Batch Batch { get; } = new() { Id = Guid.NewGuid(), BatchCode = "WH-TD-SKU001-31122026", ExpirationDate = new DateOnly(2026, 12, 31) };
         public ProductPrice Price { get; } = new() { Id = Guid.NewGuid(), UnitPrice = 252_000m, IsActive = true, EffectiveFrom = Now.AddMonths(-1) };
+        public ProductPrice Price2 { get; } = new() { Id = Guid.NewGuid(), UnitPrice = 100_000m, IsActive = true, EffectiveFrom = Now.AddMonths(-1) };
         public List<Promotion> Promotions { get; } = [];
         public List<PromotionProduct> ProductLinks { get; } = [];
         public List<PromotionCategory> CategoryLinks { get; } = [];
@@ -162,9 +186,11 @@ public sealed class PromotionServiceTests
         public FakeStore()
         {
             Product.ProductCategoryId = Category.Id;
+            Product2.ProductCategoryId = Category.Id;
             Batch.ProductId = Product.Id;
             Batch.WarehouseId = Warehouse.Id;
             Price.ProductId = Product.Id;
+            Price2.ProductId = Product2.Id;
         }
 
         public void AddCampaign(decimal percent, DateTimeOffset start, DateTimeOffset end)
@@ -221,7 +247,8 @@ public sealed class PromotionServiceTests
             Task.FromResult(Assignments.Any(item => item.BatchId == batchId && item.IsActive && item.Id != excludingAssignmentId &&
                 Promotions.Single(promotion => promotion.Id == item.PromotionId) is var promotion && promotion.IsActive && promotion.StartAt < endAt && startAt < promotion.EndAt));
         public Task<PriceProductView?> FindPriceProductAsync(Guid productId, DateTimeOffset at, CancellationToken cancellationToken) =>
-            Task.FromResult<PriceProductView?>(productId == Product.Id ? new(Product, Price) : null);
+            Task.FromResult<PriceProductView?>(productId == Product.Id ? new(Product, Price) :
+                productId == Product2.Id ? new(Product2, Price2) : null);
         public Task<Batch?> FindPriceBatchAsync(Guid batchId, CancellationToken cancellationToken) => Task.FromResult<Batch?>(batchId == Batch.Id ? Batch : null);
         public Task<IReadOnlyCollection<PromotionView>> ListEligibleCampaignsAsync(Guid productId, Guid categoryId, Guid? retailerId, decimal quantity, DateTimeOffset at, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyCollection<PromotionView>>(Promotions.Where(item => item.PromotionType == PromotionTypes.Campaign && item.IsActive && item.StartAt <= at && item.EndAt >= at && item.MinimumQuantity <= quantity &&

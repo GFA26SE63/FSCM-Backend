@@ -25,16 +25,18 @@ public sealed class OrderExceptionHandler(
         logger.LogWarning("Order request failed with code {ErrorCode}: {ErrorMessage}",
             operationException.Code, operationException.Message);
         context.Response.StatusCode = statusCode;
+        var problem = new ProblemDetails
+        {
+            Status = statusCode,
+            Title = operationException.Message,
+            Type = $"https://fscm.dev/problems/{operationException.Code}",
+            Extensions = { ["code"] = operationException.Code }
+        };
+        if (operationException.Details is not null) problem.Extensions["details"] = operationException.Details;
         return await problemDetailsService.TryWriteAsync(new ProblemDetailsContext
         {
             HttpContext = context,
-            ProblemDetails = new ProblemDetails
-            {
-                Status = statusCode,
-                Title = operationException.Message,
-                Type = $"https://fscm.dev/problems/{operationException.Code}",
-                Extensions = { ["code"] = operationException.Code }
-            },
+            ProblemDetails = problem,
             Exception = operationException
         });
     }

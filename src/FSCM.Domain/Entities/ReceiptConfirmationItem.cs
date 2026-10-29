@@ -6,9 +6,12 @@ public sealed class ReceiptConfirmationItem
 {
     public Guid Id { get; set; }
     public Guid ReceiptConfirmationId { get; set; }
+    public Guid? SalesOrderLineId { get; set; }
     public Guid BatchId { get; set; }
     public Guid BatchQrLabelId { get; set; }
     public decimal ExpectedQuantity { get; set; }
     public decimal ReceivedQuantity { get; set; }
+    public decimal DamagedQuantity { get; set; }
+    public decimal MissingQuantity { get; set; }
     public DateTimeOffset ScannedAt { get; set; }
 }

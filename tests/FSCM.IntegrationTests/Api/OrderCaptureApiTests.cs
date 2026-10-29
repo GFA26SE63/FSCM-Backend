@@ -3,6 +3,7 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
 using FSCM.Application.Features.Orders;
+using FSCM.Application.Features.MobileSnapshots;
 using FSCM.Application.Features.Promotions;
 using FSCM.Domain.Authorization;
 using FSCM.Domain.Entities;
@@ -15,7 +16,66 @@ namespace FSCM.IntegrationTests.Api;
 public sealed class OrderCaptureApiTests
 {
     [Fact]
-    public async Task Pricing_snapshot_rest_and_graphql_never_apply_client_batch_discount()
+    public async Task Mobile_snapshot_is_sales_only_and_sync_conflict_does_not_create_order()
+    {
+        using var identityFactory = new IdentityAuthorizationTests.IdentityApiFactory();
+        var orderStore = new TestOrderStore(identityFactory.Sales.Id);
+        var snapshotStore = new TestMobileSnapshotStore();
+        using var factory = identityFactory.WithWebHostBuilder(builder =>
+            builder.ConfigureTestServices(services =>
+            {
+                services.RemoveAll<IOrderStore>();
+                services.AddSingleton<IOrderStore>(orderStore);
+                services.RemoveAll<IOrderPricingService>();
+                services.AddSingleton<IOrderPricingService, TestPricingService>();
+                services.RemoveAll<IMobileSnapshotStore>();
+                services.AddSingleton<IMobileSnapshotStore>(snapshotStore);
+            }));
+        using var client = factory.CreateClient();
+
+        client.DefaultRequestHeaders.Authorization = Bearer(identityFactory.Admin, identityFactory);
+        Assert.Equal(HttpStatusCode.Forbidden,
+            (await client.GetAsync("/api/v1/mobile/snapshot")).StatusCode);
+        client.DefaultRequestHeaders.Authorization = Bearer(identityFactory.Sales, identityFactory);
+        var snapshot = await client.GetFromJsonAsync<JsonElement>("/api/v1/mobile/snapshot");
+        Assert.Equal("Full", snapshot.GetProperty("deltaMode").GetString());
+        Assert.Contains("tham khảo", snapshot.GetProperty("stockDisclaimer").GetString());
+        var version = snapshot.GetProperty("version").GetString();
+        using var cacheRequest = new HttpRequestMessage(HttpMethod.Get, "/api/v1/mobile/snapshot");
+        cacheRequest.Headers.IfNoneMatch.ParseAdd($"\"{version}\"");
+        Assert.Equal(HttpStatusCode.NotModified, (await client.SendAsync(cacheRequest)).StatusCode);
+
+        var key = Guid.NewGuid();
+        var response = await client.PostAsJsonAsync("/api/v1/orders/sync", new
+        {
+            clientOrderKey = key,
+            retailerId = orderStore.Retailer.Id,
+            paymentMethod = OrderPaymentMethods.Cod,
+            requestedDeliveryDate = "2027-01-10",
+            offlineEstimatedAmount = 1_000m,
+            snapshotVersion = snapshot.GetProperty("version").GetString(),
+            expectedConditions = new[]
+            {
+                new
+                {
+                    productId = orderStore.Product.Id,
+                    expectedBaseUnitPrice = 90m,
+                    expectedMlorVersion = 2,
+                    expectedMlorRatio = 0.25m
+                }
+            },
+            lines = new[] { new { productId = orderStore.Product.Id, quantity = 10 } }
+        });
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.True(problem.GetProperty("details").GetProperty("requiresExplicitConfirmation").GetBoolean());
+        Assert.Equal(900m, problem.GetProperty("details").GetProperty("currentIndicativeAmount").GetDecimal());
+        Assert.Empty(orderStore.Orders);
+    }
+
+    [Fact]
+    public async Task Pricing_snapshot_rest_and_graphql_share_the_guid_contract_without_batch_pricing()
     {
         using var identityFactory = new IdentityAuthorizationTests.IdentityApiFactory();
         var store = new TestQuoteStore();
@@ -37,22 +97,48 @@ public sealed class OrderCaptureApiTests
         Assert.Equal(JsonValueKind.Null, rest.GetProperty("batchId").ValueKind);
         Assert.Equal(8m, rest.GetProperty("discountPercent").GetDecimal());
 
+        Assert.Equal(0, store.BatchDiscountQueryCount);
+
         var graphQlResponse = await client.PostAsJsonAsync("/graphql", new
         {
-            query = "query($productId: UUID!, $retailerId: UUID!) { priceSnapshot(productId: $productId, retailerId: $retailerId, quantity: 10) { batchId discountPercent finalPricePendingAllocation appliedPromotion { promotionType } } }",
-            variables = new { productId = store.Product.Id, retailerId = orderStore.Retailer.Id }
+            query = $$"""
+                query {
+                  entities {
+                    pricingSnapshot(
+                      productId: "{{store.Product.Id}}"
+                      quantity: 10
+                      retailerId: "{{orderStore.Retailer.Id}}") {
+                      productId sku quantity unitPrice grossAmount discountPercent
+                      discountAmount baseUnitPrice indicativeNetAmount
+                      finalPricePendingAllocation batchId productPriceId
+                      appliedPromotion { code minimumQuantity discountPercent }
+                    }
+                  }
+                }
+                """
         });
-        var graphQl = JsonDocument.Parse(await graphQlResponse.Content.ReadAsStringAsync()).RootElement;
-        Assert.False(graphQl.TryGetProperty("errors", out _), graphQl.ToString());
-        var quote = graphQl.GetProperty("data").GetProperty("priceSnapshot");
-        Assert.True(quote.GetProperty("finalPricePendingAllocation").GetBoolean());
-        Assert.Equal(PromotionTypes.Campaign, quote.GetProperty("appliedPromotion").GetProperty("promotionType").GetString());
-        Assert.Equal(0, store.BatchDiscountQueryCount);
+        var graphQlBody = await graphQlResponse.Content.ReadAsStringAsync();
+        Assert.True(graphQlResponse.StatusCode == HttpStatusCode.OK, graphQlBody);
+        var graphQl = JsonDocument.Parse(graphQlBody).RootElement;
+        Assert.False(graphQl.TryGetProperty("errors", out _), graphQlBody);
+        var graphQlSnapshot = graphQl.GetProperty("data").GetProperty("entities")
+            .GetProperty("pricingSnapshot");
+        Assert.Equal(store.Product.Id, graphQlSnapshot.GetProperty("productId").GetGuid());
+        Assert.True(graphQlSnapshot.GetProperty("finalPricePendingAllocation").GetBoolean());
+        Assert.Equal(JsonValueKind.Null, graphQlSnapshot.GetProperty("batchId").ValueKind);
+        Assert.Equal(rest.GetProperty("productPriceId").GetGuid(),
+            graphQlSnapshot.GetProperty("productPriceId").GetGuid());
+        Assert.Equal(rest.GetProperty("indicativeNetAmount").GetDecimal(),
+            graphQlSnapshot.GetProperty("indicativeNetAmount").GetDecimal());
 
         orderStore.TerritoryAllowed = false;
         var denied = await client.GetAsync(
             $"/api/v1/pricing/snapshot?productId={store.Product.Id}&quantity=10&retailerId={orderStore.Retailer.Id}");
         Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
+
+        var deniedProblem = await denied.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("forbidden", deniedProblem.GetProperty("code").GetString());
+        Assert.Contains("assigned territory", deniedProblem.GetProperty("title").GetString());
     }
 
     [Fact]
@@ -92,28 +178,69 @@ public sealed class OrderCaptureApiTests
         var created = JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement;
         var orderId = created.GetProperty("id").GetGuid();
         Assert.True(created.GetProperty("finalPricePendingAllocation").GetBoolean());
-        Assert.Empty(created.GetProperty("lines")[0].GetProperty("allocations").EnumerateArray());
+        var createdLine = created.GetProperty("lines")[0];
+        Assert.Empty(createdLine.GetProperty("allocations").EnumerateArray());
+        Assert.Equal("Sku", createdLine.GetProperty("mlor").GetProperty("sourceScope").GetString());
+        Assert.Equal(2, createdLine.GetProperty("mlor").GetProperty("sourceVersion").GetInt32());
+        Assert.Equal("KM-001", createdLine.GetProperty("ordinaryPromotion").GetProperty("code").GetString());
+        Assert.NotEqual(Guid.Empty, createdLine.GetProperty("productPriceId").GetGuid());
         Assert.Equal(900m, created.GetProperty("finalAmount").GetDecimal());
         Assert.Equal("OrderCaptured", Assert.Single(store.Audits).Action);
+
+        var originalPromotion = Assert.Single(store.Promotions);
+        store.Promotions.Add(new OrderPromotion
+        {
+            Id = Guid.NewGuid(),
+            SalesOrderLineId = originalPromotion.SalesOrderLineId,
+            PromotionId = Guid.NewGuid(),
+            PromotionCodeSnapshot = "KM-LEGACY",
+            PromotionNameSnapshot = "Khuyến mãi dữ liệu cũ",
+            PromotionTypeSnapshot = "Campaign",
+            MinimumQuantitySnapshot = 1m,
+            EffectiveFromSnapshot = originalPromotion.EffectiveFromSnapshot,
+            EffectiveToSnapshot = originalPromotion.EffectiveToSnapshot,
+            DiscountPercent = 5m,
+            DiscountAmount = 50m,
+            IsServerFinal = false,
+            AppliedAt = originalPromotion.AppliedAt.AddMinutes(-1)
+        });
 
         var list = await client.GetFromJsonAsync<JsonElement>(
             "/api/v1/orders?createdByMe=true&page=1&pageSize=10&search=DH-");
         Assert.Equal(1, list.GetProperty("totalCount").GetInt32());
         Assert.Equal("PendingRun", list.GetProperty("items")[0].GetProperty("allocationState").GetString());
 
+        var detail = await client.GetFromJsonAsync<JsonElement>($"/api/v1/orders/{orderId}");
+        Assert.Equal("KM-001", detail.GetProperty("lines")[0]
+            .GetProperty("ordinaryPromotion").GetProperty("code").GetString());
+
+        var graphQlResponse = await client.PostAsJsonAsync("/graphql", new
+        {
+            query = $$"""
+                query {
+                  entities {
+                    orderRead(id: "{{orderId}}") {
+                      id orderCode allocationState officialAmount
+                      lines { id allocationFragments { batchId finalUnitPrice netAmount } }
+                    }
+                    orderReads(createdByMe: true, search: "DH-") {
+                      totalCount items { id orderCode }
+                    }
+                  }
+                }
+                """
+        });
+        var graphQlBody = await graphQlResponse.Content.ReadAsStringAsync();
+        Assert.True(graphQlResponse.IsSuccessStatusCode, graphQlBody);
+        var graphQl = JsonDocument.Parse(graphQlBody).RootElement;
+        Assert.False(graphQl.TryGetProperty("errors", out _), graphQlBody);
+        Assert.Equal(orderId, graphQl.GetProperty("data").GetProperty("entities")
+            .GetProperty("orderRead").GetProperty("id").GetGuid());
+
         var timeline = await client.GetFromJsonAsync<JsonElement>($"/api/v1/orders/{orderId}/timeline");
         Assert.Equal("PendingApproval", timeline.GetProperty("currentStatus").GetString());
         Assert.Single(timeline.GetProperty("events").EnumerateArray());
 
-        var graphQlResponse = await client.PostAsJsonAsync("/graphql", new
-        {
-            query = "query($id: UUID!) { orders(createdByMe: true, page: 1, pageSize: 10) { totalCount items { id allocationState finalPricePendingAllocation } } orderTimeline(id: $id) { currentStatus events { toStatus } } }",
-            variables = new { id = orderId }
-        });
-        Assert.Equal(HttpStatusCode.OK, graphQlResponse.StatusCode);
-        var graphQl = JsonDocument.Parse(await graphQlResponse.Content.ReadAsStringAsync()).RootElement;
-        Assert.False(graphQl.TryGetProperty("errors", out _), graphQl.ToString());
-        Assert.Equal(1, graphQl.GetProperty("data").GetProperty("orders").GetProperty("totalCount").GetInt32());
     }
 
     [Fact]
@@ -142,7 +269,88 @@ public sealed class OrderCaptureApiTests
         });
 
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("forbidden", problem.GetProperty("code").GetString());
+        Assert.Contains("assigned territory", problem.GetProperty("title").GetString());
         Assert.Empty(store.Orders);
+    }
+
+    [Fact]
+    public async Task Direct_and_synced_order_contracts_require_resource_guids_and_reject_inactive_retailers()
+    {
+        using var identityFactory = new IdentityAuthorizationTests.IdentityApiFactory();
+        var store = new TestOrderStore(identityFactory.Sales.Id);
+        using var factory = identityFactory.WithWebHostBuilder(builder =>
+            builder.ConfigureTestServices(services =>
+            {
+                services.RemoveAll<IOrderStore>();
+                services.AddSingleton<IOrderStore>(store);
+                services.RemoveAll<IOrderPricingService>();
+                services.AddSingleton<IOrderPricingService, TestPricingService>();
+            }));
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization = Bearer(identityFactory.Sales, identityFactory);
+
+        var businessCodePayload = new
+        {
+            clientOrderKey = Guid.NewGuid(),
+            retailerId = store.Retailer.Code,
+            paymentMethod = OrderPaymentMethods.Cod,
+            requestedDeliveryDate = "2027-01-10",
+            lines = new[] { new { productId = store.Product.Sku, quantity = 10 } }
+        };
+        var invalidGuid = await client.PostAsJsonAsync("/api/v1/orders", businessCodePayload);
+        Assert.Equal(HttpStatusCode.BadRequest, invalidGuid.StatusCode);
+        Assert.Empty(store.Orders);
+
+        store.Retailer.Status = "Inactive";
+        var canonicalPayload = new
+        {
+            clientOrderKey = Guid.NewGuid(),
+            retailerId = store.Retailer.Id,
+            paymentMethod = OrderPaymentMethods.Cod,
+            requestedDeliveryDate = "2027-01-10",
+            lines = new[] { new { productId = store.Product.Id, quantity = 10 } }
+        };
+        var inactive = await client.PostAsJsonAsync("/api/v1/orders", canonicalPayload);
+        Assert.Equal(HttpStatusCode.Conflict, inactive.StatusCode);
+        var inactiveProblem = await inactive.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("conflict", inactiveProblem.GetProperty("code").GetString());
+        Assert.Contains("not active", inactiveProblem.GetProperty("title").GetString());
+        Assert.Empty(store.Orders);
+
+        store.Retailer.Status = "Active";
+        var syncPayload = new
+        {
+            clientOrderKey = Guid.NewGuid(),
+            retailerId = store.Retailer.Id,
+            paymentMethod = OrderPaymentMethods.Prepaid,
+            requestedDeliveryDate = "2027-01-10",
+            offlineEstimatedAmount = 900m,
+            snapshotVersion = "mobile-contract-v1",
+            confirmConditionChanges = false,
+            expectedConditions = new[]
+            {
+                new
+                {
+                    productId = store.Product.Id,
+                    expectedBaseUnitPrice = 90m,
+                    expectedMlorVersion = 2,
+                    expectedMlorRatio = 0.25m
+                }
+            },
+            lines = new[] { new { productId = store.Product.Id, quantity = 10 } }
+        };
+        var synced = await client.PostAsJsonAsync("/api/v1/orders/sync", syncPayload);
+        Assert.Equal(HttpStatusCode.Created, synced.StatusCode);
+        var syncedOrder = await synced.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(store.Retailer.Id, syncedOrder.GetProperty("retailerId").GetGuid());
+        Assert.Equal(OrderPaymentMethods.Prepaid,
+            syncedOrder.GetProperty("paymentMethod").GetString());
+        Assert.Equal(OrderStatuses.PendingApproval, syncedOrder.GetProperty("status").GetString());
+        Assert.True(syncedOrder.GetProperty("finalPricePendingAllocation").GetBoolean());
+        Assert.Equal(900m, syncedOrder.GetProperty("finalAmount").GetDecimal());
+        Assert.Empty(syncedOrder.GetProperty("lines")[0].GetProperty("allocations").EnumerateArray());
     }
 
     private static AuthenticationHeaderValue Bearer(
@@ -157,9 +365,19 @@ public sealed class OrderCaptureApiTests
         {
             var gross = quantity * 100m;
             return Task.FromResult(new OrderPriceSnapshot(100m, gross, 10m, gross * 0.1m,
-                gross * 0.9m, Guid.Parse("40000000-0000-0000-0000-000000000001"),
-                "Campaign", "KM-001"));
+                gross * 0.9m, Guid.Parse("50000000-0000-0000-0000-000000000001"),
+                pricedAt.AddDays(-30), null,
+                Guid.Parse("40000000-0000-0000-0000-000000000001"),
+                "Campaign", "KM-001", "Khuyến mãi tháng mười", 5m,
+                pricedAt.AddDays(-1), pricedAt.AddDays(10)));
         }
+    }
+
+    private sealed class TestMobileSnapshotStore : IMobileSnapshotStore
+    {
+        public Task<MobileSnapshotData> LoadAsync(Guid salesUserId, DateTimeOffset effectiveAt,
+            CancellationToken cancellationToken) => Task.FromResult(new MobileSnapshotData(
+                [], [], [], [], [], [], [], null));
     }
 
     private sealed class TestQuoteStore : IPromotionStore
@@ -277,8 +495,11 @@ public sealed class OrderCaptureApiTests
             CancellationToken cancellationToken) => throw new InvalidOperationException("Capture must not query stock.");
         public Task<MapLocation?> FindRetailerLocationAsync(Guid retailerId, CancellationToken cancellationToken) =>
             throw new InvalidOperationException("Capture must not query allocation distance.");
-        public Task<decimal?> FindMlorRatioAsync(Guid retailerId, Guid productId,
-            CancellationToken cancellationToken) => throw new InvalidOperationException("Capture must not resolve allocation MLOR.");
+        public Task<OrderMlorSnapshot?> ResolveMlorAsync(
+            Guid retailerId, Guid productId, DateTimeOffset at,
+            CancellationToken cancellationToken) => Task.FromResult<OrderMlorSnapshot?>(new(
+                "Sku", Guid.Parse("30000000-0000-0000-0000-000000000001"), 2,
+                null, 0.25m, null, at));
         public Task<string?> FindConfigurationAsync(string key, CancellationToken cancellationToken) =>
             Task.FromResult<string?>(key == "order.order_step_cartons" ? "1" : null);
         public Task<string> NextOrderCodeAsync(CancellationToken cancellationToken) => Task.FromResult("DH-001100");
@@ -317,7 +538,12 @@ public sealed class OrderCaptureApiTests
         {
             if (order is null) return null;
             var lines = Lines.Where(item => item.SalesOrderId == order.Id)
-                .Select(item => new OrderLineView(item, [])).ToArray();
+                .Select(item => new OrderLineView(item, [],
+                    Promotions.Where(promotion => promotion.SalesOrderLineId == item.Id)
+                        .OrderByDescending(promotion => promotion.IsServerFinal)
+                        .ThenByDescending(promotion => promotion.AppliedAt)
+                        .ThenBy(promotion => promotion.Id)
+                        .FirstOrDefault())).ToArray();
             return new(order, lines, History.Where(item => item.SalesOrderId == order.Id).ToArray(), [],
                 new Dictionary<Guid, string>(), new Dictionary<Guid, string>(), new Dictionary<Guid, int>());
         }

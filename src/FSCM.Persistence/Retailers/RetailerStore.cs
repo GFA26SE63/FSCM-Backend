@@ -44,6 +44,19 @@ public sealed class RetailerStore(AppDbContext dbContext) : IRetailerStore
     public Task<Retailer?> FindForUpdateAsync(Guid retailerId, CancellationToken cancellationToken) =>
         dbContext.RetailerRecords.SingleOrDefaultAsync(item => item.Id == retailerId, cancellationToken);
 
+    public Task<Retailer?> FindDuplicateAsync(
+        string name, string? phone, string? email, string? address,
+        Guid? excludedRetailerId, CancellationToken cancellationToken)
+    {
+        var query = dbContext.RetailerRecords.AsNoTracking()
+            .Where(item => !excludedRetailerId.HasValue || item.Id != excludedRetailerId.Value);
+        return query.FirstOrDefaultAsync(item =>
+            (phone != null && item.Phone != null && item.Phone.ToLower() == phone) ||
+            (email != null && item.Email != null && item.Email.ToLower() == email) ||
+            (item.Name.ToLower() == name && address != null && item.Address != null &&
+                item.Address.ToLower() == address), cancellationToken);
+    }
+
     public async Task<IReadOnlyCollection<RetailerMlorView>> ListMlorDeclarationsAsync(
         IReadOnlyCollection<Guid> retailerIds, bool includeInactive, bool tracking,
         CancellationToken cancellationToken)

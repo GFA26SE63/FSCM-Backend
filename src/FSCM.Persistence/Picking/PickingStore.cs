@@ -139,11 +139,31 @@ public sealed class PickingStore(AppDbContext dbContext) : IPickingStore
         }
     }
 
+    public async Task<string> NextShipmentCodeAsync(CancellationToken cancellationToken)
+    {
+        var connection = dbContext.Database.GetDbConnection();
+        var openedHere = connection.State != ConnectionState.Open;
+        if (openedHere) await connection.OpenAsync(cancellationToken);
+        try
+        {
+            await using var command = connection.CreateCommand();
+            command.CommandText = "SELECT nextval('\"ShipmentCodeSequence\"');";
+            command.Transaction = dbContext.Database.CurrentTransaction?.GetDbTransaction();
+            var number = Convert.ToInt64(await command.ExecuteScalarAsync(cancellationToken));
+            return $"SHIP-{number:000000}";
+        }
+        finally
+        {
+            if (openedHere) await connection.CloseAsync();
+        }
+    }
+
     public void AddList(PickingList list) => dbContext.PickingListRecords.Add(list);
     public void AddItem(PickingItem item) => dbContext.PickingItemRecords.Add(item);
     public void AddLabel(BatchQrLabel label) => dbContext.BatchQrLabelRecords.Add(label);
     public void AddLabelEvent(QrLabelEvent labelEvent) => dbContext.QrLabelEventRecords.Add(labelEvent);
     public void AddOrderHistory(OrderStatusHistory history) => dbContext.OrderStatusHistoryRecords.Add(history);
+    public void AddShipment(Shipment shipment) => dbContext.ShipmentRecords.Add(shipment);
 
     public async Task SaveChangesAsync(CancellationToken cancellationToken)
     {

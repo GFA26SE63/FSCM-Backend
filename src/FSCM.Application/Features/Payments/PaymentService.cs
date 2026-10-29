@@ -55,11 +55,10 @@ public sealed class PaymentService(
         CancellationToken cancellationToken)
     {
         operationKey = NormalizeOperationKey(operationKey);
-        ValidateAmount(data.Amount);
         var collectionMethod = NormalizeCollectionMethod(data.CollectionMethod);
         ValidateCollectionAuthority(actorRole, collectionMethod);
         ValidateNote(data.Note);
-        var requestHash = Hash(orderId, data.Amount, collectionMethod, NormalizeNote(data.Note));
+        var requestHash = Hash(orderId, collectionMethod, data.ExpectedVersion, NormalizeNote(data.Note));
 
         var prior = await store.FindByOperationKeyAsync(operationKey, cancellationToken);
         if (prior is not null)
@@ -85,16 +84,18 @@ public sealed class PaymentService(
             if (view.Payment.PayOsPaymentLinkId is not null)
                 throw PaymentOperationException.Conflict(
                     "Payment has an active payOS checkout and cannot be collected manually.");
+            if (view.HasOpenDispute)
+                throw PaymentOperationException.Conflict(
+                    "Payment cannot be collected while the order has an unresolved dispute.");
             if (view.Payment.Version != data.ExpectedVersion)
                 throw PaymentOperationException.Conflict(
                     $"Payment version is {view.Payment.Version}; refresh and retry.");
             if (actorRole == SystemRoles.Sales && view.Order.CreatedByUserId != actorUserId)
                 throw PaymentOperationException.Forbidden(
                     "Sales can only record cash collection for their own order.");
-            var outstanding = view.Payment.Amount - view.Payment.ConfirmedAmount;
-            if (data.Amount != outstanding)
-                throw PaymentOperationException.Conflict(
-                    $"Only full collection is supported; outstanding amount is {outstanding:0.##} VND.");
+            var outstanding = Math.Max(0, view.Payment.AdjustedAmount - view.Payment.ConfirmedAmount);
+            if (outstanding <= 0)
+                throw PaymentOperationException.Conflict("Payment has no outstanding amount to collect.");
 
             var now = timeProvider.GetUtcNow();
             var oldValues = new
@@ -108,7 +109,7 @@ public sealed class PaymentService(
                 view.Payment.Version
             };
             view.Payment.Status = PaymentStatuses.Paid;
-            view.Payment.ConfirmedAmount = view.Payment.Amount;
+            view.Payment.ConfirmedAmount = view.Payment.AdjustedAmount;
             view.Payment.PaidDate = DateOnly.FromDateTime(now.ToOffset(VietnamOffset).DateTime);
             view.Payment.CollectionMethod = collectionMethod;
             view.Payment.OperationKey = operationKey;
@@ -137,6 +138,107 @@ public sealed class PaymentService(
                     view.Payment.Version
                 }),
                 Reason = view.Payment.Note,
+                CreatedAt = now
+            });
+            await store.SaveChangesAsync(transactionCancellationToken);
+        }, cancellationToken);
+
+        store.ClearTracking();
+        return ToResult(await store.FindByOrderAsync(orderId, false, cancellationToken)
+            ?? throw PaymentOperationException.Conflict(
+                "Payment was committed but could not be reloaded."), Today());
+    }
+
+    /// <summary>
+    /// F64: adjusts a credit receivable from an approved claim (positive amount reduces the
+    /// collectable total against the final price of the affected goods) or a rejected claim
+    /// (negative amount restores a prior reduction). Never recomputes shelf-life discounts; the
+    /// change applies to the adjusted collectable base only and keeps disputed money separate.
+    /// </summary>
+    public async Task<PaymentResult> AdjustReceivableAsync(
+        Guid orderId,
+        AdjustReceivableData data,
+        string operationKey,
+        Guid actorUserId,
+        string actorRole,
+        CancellationToken cancellationToken)
+    {
+        if (actorRole is not (SystemRoles.Admin or SystemRoles.Operator))
+            throw PaymentOperationException.Forbidden("Only Admin or Operator can adjust a receivable.");
+        operationKey = NormalizeOperationKey(operationKey);
+        var reason = string.IsNullOrWhiteSpace(data.Reason)
+            ? throw PaymentOperationException.Validation("Adjustment reason is required.")
+            : data.Reason.Trim();
+        if (reason.Length > 500)
+            throw PaymentOperationException.Validation("Adjustment reason cannot exceed 500 characters.");
+        if (data.Amount == 0 || decimal.Round(data.Amount, 2) != data.Amount)
+            throw PaymentOperationException.Validation(
+                "Adjustment amount must be a non-zero value with at most two decimal places.");
+        var requestHash = Hash(orderId, data.Amount, "adjust", reason);
+
+        var prior = await store.FindByOperationKeyAsync(operationKey, cancellationToken);
+        if (prior is not null)
+        {
+            if (prior.Order.Id != orderId || prior.Payment.RequestHash != requestHash)
+                throw PaymentOperationException.Conflict(
+                    "Operation key was already used for a different adjustment request.");
+            if (!await store.CanViewAsync(prior, actorUserId, actorRole, cancellationToken))
+                throw PaymentOperationException.Forbidden("You cannot adjust this receivable.");
+            return ToResult(prior, Today());
+        }
+
+        await store.ExecuteInTransactionAsync(async transactionCancellationToken =>
+        {
+            var view = await store.FindByOrderAsync(orderId, true, transactionCancellationToken)
+                ?? throw PaymentOperationException.NotFound("Payment was not found.");
+            if (view.Payment.Method != OrderPaymentMethods.Credit)
+                throw PaymentOperationException.Conflict("Only a credit receivable can be adjusted.");
+            if (!view.Payment.DeliveredDate.HasValue)
+                throw PaymentOperationException.Conflict(
+                    "A receivable can only be adjusted after complete receipt.");
+            if (view.Payment.Version != data.ExpectedVersion)
+                throw PaymentOperationException.Conflict(
+                    $"Payment version is {view.Payment.Version}; refresh and retry.");
+
+            // Positive amount reduces the collectable base (approved claim); negative restores it.
+            var adjusted = view.Payment.AdjustedAmount - data.Amount;
+            if (adjusted < view.Payment.ConfirmedAmount)
+                throw PaymentOperationException.Conflict(
+                    "Adjustment cannot reduce the receivable below the amount already collected.");
+            if (adjusted > view.Payment.Amount)
+                throw PaymentOperationException.Conflict(
+                    "Adjustment cannot restore the receivable above the approved final total.");
+
+            var now = timeProvider.GetUtcNow();
+            var oldValues = new { view.Payment.AdjustedAmount, view.Payment.Status, view.Payment.Version };
+            view.Payment.AdjustedAmount = adjusted;
+            // If the remaining collectable is fully covered by collections, the receivable is settled.
+            if (view.Payment.Status != PaymentStatuses.Paid &&
+                view.Payment.ConfirmedAmount >= adjusted && adjusted >= 0 && view.Payment.ConfirmedAmount > 0)
+            {
+                view.Payment.Status = PaymentStatuses.Paid;
+                view.Payment.PaidDate ??= DateOnly.FromDateTime(now.ToOffset(VietnamOffset).DateTime);
+            }
+            view.Payment.OperationKey = operationKey;
+            view.Payment.RequestHash = requestHash;
+            view.Payment.Note = reason;
+            view.Payment.Version++;
+            view.Payment.UpdatedAt = now;
+            store.AddAuditLog(new AuditLog
+            {
+                Id = Guid.NewGuid(),
+                UserAccountId = actorUserId,
+                EntityName = nameof(Payment),
+                EntityId = view.Payment.Id,
+                Action = "ReceivableAdjusted",
+                OldValues = JsonSerializer.Serialize(oldValues),
+                NewValues = JsonSerializer.Serialize(new
+                {
+                    view.Payment.AdjustedAmount,
+                    view.Payment.Status,
+                    view.Payment.Version
+                }),
+                Reason = reason,
                 CreatedAt = now
             });
             await store.SaveChangesAsync(transactionCancellationToken);
@@ -320,8 +422,10 @@ public sealed class PaymentService(
             view.Payment.Id, view.Order.Id, view.Order.OrderCode, view.Retailer.Id,
             view.Order.RetailerCodeSnapshot, view.Order.RetailerNameSnapshot,
             view.Order.CreatedByUserId, view.Payment.Method, effectiveStatus,
-            view.Payment.Amount, view.Payment.ConfirmedAmount,
-            view.Payment.Amount - view.Payment.ConfirmedAmount,
+            view.Payment.Amount, view.Payment.AdjustedAmount, view.Payment.ConfirmedAmount,
+            Math.Max(0, view.Payment.AdjustedAmount - view.Payment.ConfirmedAmount),
+            view.PendingRefundAmount, view.RefundedAmount,
+            Math.Max(0, view.Payment.ConfirmedAmount - view.Payment.AdjustedAmount - view.RefundedAmount),
             view.Order.CreditTermDays, view.Payment.FinalApprovedAt,
             view.Payment.FinalApprovalReference, view.Payment.DeliveredDate,
             view.Payment.DueDate, daysOverdue, view.Payment.PaidDate,
@@ -383,6 +487,12 @@ public sealed class PaymentService(
 
     private static string? NormalizeNote(string? note) =>
         string.IsNullOrWhiteSpace(note) ? null : note.Trim();
+
+    private static string Hash(Guid orderId, string method, int expectedVersion, string? note)
+    {
+        var canonical = $"{orderId:N}|{method}|{expectedVersion}|{note}";
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(canonical))).ToLowerInvariant();
+    }
 
     private static string Hash(Guid orderId, decimal amount, string method, string? note)
     {

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using FSCM.Application.Features.InventoryLocks;
 using FSCM.Domain.Entities;
 
 namespace FSCM.Application.Features.Inventory;
@@ -53,6 +54,15 @@ public sealed class InventoryExpirySweepService(IBatchExpiryStore store, TimePro
                 {
                     expired++;
                     store.AddOutboxMessage(BuildBatchExpiredMessage(batch, now));
+
+                    // F42 → F100: withhold the still-issuable (unreserved, not-yet-locked) portion
+                    // through an inventory lock instead of touching OnHand. The reserved portion is
+                    // flagged for a privileged user to resolve and is not double-counted.
+                    var freeUnreserved = Math.Max(0,
+                        candidate.PhysicalQuantity - candidate.ReservedQuantity - candidate.ActiveLockedQuantity);
+                    var remainingToLock = Math.Max(0, candidate.PhysicalQuantity - candidate.ActiveLockedQuantity);
+                    if (remainingToLock > 0)
+                        store.AddInventoryLock(BuildExpiryLock(batch, remainingToLock, freeUnreserved, now));
                 }
             }
 
@@ -93,6 +103,24 @@ public sealed class InventoryExpirySweepService(IBatchExpiryStore store, TimePro
             CreatedAt = now
         };
     }
+
+    private static InventoryLock BuildExpiryLock(Batch batch, decimal quantity, decimal freeUnreserved, DateTimeOffset now) => new()
+    {
+        Id = Guid.NewGuid(),
+        BatchId = batch.Id,
+        WarehouseId = batch.WarehouseId,
+        ProductId = batch.ProductId,
+        LockedQuantity = quantity,
+        Status = InventoryLockStatuses.Active,
+        Reason = InventoryLockReasons.Expired,
+        // Anything beyond the free unreserved stock overlaps reserved quantity and needs resolution.
+        RequiresResolution = quantity > freeUnreserved,
+        LockedByUserId = null, // created by the automated nightly job, no human actor
+        Note = "Khóa tự động do hết hạn (date tracker)",
+        Version = 0,
+        CreatedAt = now,
+        UpdatedAt = now
+    };
 
     private static string CalculateExpiryStatus(DateOnly expirationDate, int nearDateThresholdHours, DateOnly today)
     {

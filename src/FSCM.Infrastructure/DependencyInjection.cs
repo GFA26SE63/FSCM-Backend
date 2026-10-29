@@ -29,6 +29,8 @@ public static class DependencyInjection
 
         services.Configure<DateTrackerOptions>(configuration.GetSection(DateTrackerOptions.SectionName));
         services.AddHostedService<DateTrackerHostedService>();
+        services.Configure<AllocationRunOptions>(configuration.GetSection(AllocationRunOptions.SectionName));
+        services.AddHostedService<AllocationRunHostedService>();
         services.Configure<InventoryOutboxOptions>(configuration.GetSection(InventoryOutboxOptions.SectionName));
         services.AddHostedService<InventoryOutboxHostedService>();
         services.AddSingleton<IPayOsGateway>(_ => new PayOsGateway(configuration));

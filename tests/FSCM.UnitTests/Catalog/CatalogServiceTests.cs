@@ -45,6 +45,104 @@ public sealed class CatalogServiceTests
     }
 
     [Fact]
+    public async Task Clone_creates_independent_draft_and_copies_only_allowed_master_data()
+    {
+        var fixture = new CatalogFixture();
+        var category = fixture.AddCategory("CAT-01");
+        var source = fixture.AddProduct(category.Id, "SKU001", ProductStatuses.Published);
+        var sourcePrice = fixture.AddPrice(source.Id, 100_000m);
+        fixture.Store.ProductsWithHistory.Add(source.Id);
+
+        var result = await fixture.Service.CloneProductAsync(
+            source.Id,
+            new CloneProductData("sku002", null, null, null, null, null, null),
+            CancellationToken.None);
+
+        var clone = Assert.Single(fixture.Store.Products, product => product.Id == result.Id);
+        Assert.Equal(ProductStatuses.Draft, clone.Status);
+        Assert.Equal("SKU002", clone.Sku);
+        Assert.Equal(source.ProductCategoryId, clone.ProductCategoryId);
+        Assert.Equal(source.Name, clone.Name);
+        Assert.Equal(source.Unit, clone.Unit);
+        Assert.Equal(source.ShelfLifeHours, clone.ShelfLifeHours);
+        Assert.Equal(source.NearDateThresholdHours, clone.NearDateThresholdHours);
+        Assert.Null(clone.ReplacesProductId);
+        Assert.Null(clone.PublishedAt);
+        Assert.Null(clone.InactivatedAt);
+        Assert.Equal(ProductStatuses.Published, source.Status);
+        Assert.Null(source.InactivatedAt);
+        Assert.DoesNotContain(clone.Id, fixture.Store.ProductsWithHistory);
+        var clonedPrice = Assert.Single(fixture.Store.Prices, price => price.ProductId == clone.Id);
+        Assert.Equal(sourcePrice.UnitPrice, clonedPrice.UnitPrice);
+        Assert.Equal(sourcePrice.Id, Assert.Single(fixture.Store.Prices, price => price.ProductId == source.Id).Id);
+    }
+
+    [Fact]
+    public async Task Clone_accepts_editable_master_data_without_creating_replacement_lineage()
+    {
+        var fixture = new CatalogFixture();
+        var sourceCategory = fixture.AddCategory("CAT-01");
+        var targetCategory = fixture.AddCategory("CAT-02");
+        var source = fixture.AddProduct(sourceCategory.Id, "SKU001", ProductStatuses.Inactive);
+
+        var result = await fixture.Service.CloneProductAsync(
+            source.Id,
+            new CloneProductData("SKU002", targetCategory.Id, "Sữa chua mới", "Thùng", 240, 24, 125_000m),
+            CancellationToken.None);
+
+        Assert.Equal(targetCategory.Id, result.ProductCategoryId);
+        Assert.Equal("Sữa chua mới", result.Name);
+        Assert.Equal("Thùng", result.Unit);
+        Assert.Equal(240, result.ShelfLifeHours);
+        Assert.Equal(24, result.NearDateThresholdHours);
+        Assert.Equal(125_000m, result.CurrentUnitPrice);
+        Assert.Equal(ProductStatuses.Draft, result.Status);
+        Assert.Null(result.ReplacesProductId);
+        Assert.Equal(ProductStatuses.Inactive, source.Status);
+    }
+
+    [Fact]
+    public async Task Clone_rejects_duplicate_sku_before_saving()
+    {
+        var fixture = new CatalogFixture();
+        var category = fixture.AddCategory("CAT-01");
+        var source = fixture.AddProduct(category.Id, "SKU001", ProductStatuses.Published);
+        fixture.AddProduct(category.Id, "SKU002", ProductStatuses.Draft);
+
+        var exception = await Assert.ThrowsAsync<CatalogOperationException>(() =>
+            fixture.Service.CloneProductAsync(
+                source.Id,
+                new CloneProductData("sku002", null, null, null, null, null, null),
+                CancellationToken.None));
+
+        Assert.Equal("conflict", exception.Code);
+        Assert.Equal(2, fixture.Store.Products.Count);
+        Assert.Empty(fixture.Store.Prices);
+    }
+
+    [Fact]
+    public async Task Editing_clone_does_not_change_source_product()
+    {
+        var fixture = new CatalogFixture();
+        var category = fixture.AddCategory("CAT-01");
+        var source = fixture.AddProduct(category.Id, "SKU001", ProductStatuses.Published);
+        var originalName = source.Name;
+        var clone = await fixture.Service.CloneProductAsync(
+            source.Id,
+            new CloneProductData("SKU002", null, null, null, null, null, null),
+            CancellationToken.None);
+
+        await fixture.Service.UpdateProductAsync(
+            clone.Id,
+            new UpdateProductData(category.Id, "Tên bản nháp đã sửa", "Carton", 144, 18),
+            CancellationToken.None);
+
+        Assert.Equal(originalName, source.Name);
+        Assert.Equal(120, source.ShelfLifeHours);
+        Assert.Equal(ProductStatuses.Published, source.Status);
+    }
+
+    [Fact]
     public async Task Publishing_without_price_is_rejected()
     {
         var fixture = new CatalogFixture();
@@ -120,6 +218,56 @@ public sealed class CatalogServiceTests
 
         Assert.Equal("conflict", exception.Code);
         Assert.Contains(product, fixture.Store.Products);
+    }
+
+    [Fact]
+    public async Task Create_category_auto_generates_code_when_omitted()
+    {
+        var fixture = new CatalogFixture();
+
+        var result = await fixture.Service.CreateCategoryAsync(null, null, "Sữa", null, CancellationToken.None);
+
+        Assert.Matches("^CAT-[0-9]{2}$", result.Code);
+    }
+
+    [Fact]
+    public async Task Create_category_rejects_duplicate_name()
+    {
+        var fixture = new CatalogFixture();
+        await fixture.Service.CreateCategoryAsync(null, null, "Sữa", null, CancellationToken.None);
+
+        var exception = await Assert.ThrowsAsync<CatalogOperationException>(() =>
+            fixture.Service.CreateCategoryAsync(null, null, "sữa", null, CancellationToken.None));
+
+        Assert.Equal("conflict", exception.Code);
+    }
+
+    [Fact]
+    public async Task Delete_category_hard_deletes_when_unused()
+    {
+        var fixture = new CatalogFixture();
+        var created = await fixture.Service.CreateCategoryAsync(null, null, "Sữa", null, CancellationToken.None);
+
+        var result = await fixture.Service.DeleteCategoryAsync(created.Id, CancellationToken.None);
+
+        Assert.True(result.Deleted);
+        Assert.False(result.Inactivated);
+        Assert.Empty(fixture.Store.Categories);
+    }
+
+    [Fact]
+    public async Task Delete_category_inactivates_when_in_use()
+    {
+        var fixture = new CatalogFixture();
+        var category = fixture.AddCategory("CAT-20");
+        fixture.AddProduct(category.Id, "SKU001", ProductStatuses.Published);
+
+        var result = await fixture.Service.DeleteCategoryAsync(category.Id, CancellationToken.None);
+
+        Assert.False(result.Deleted);
+        Assert.True(result.Inactivated);
+        Assert.False(category.IsActive);
+        Assert.Single(fixture.Store.Categories);
     }
 
     private sealed class CatalogFixture
@@ -211,6 +359,10 @@ public sealed class CatalogServiceTests
         public Task<ProductCategory?> FindCategoryByCodeAsync(string code, CancellationToken cancellationToken) =>
             Task.FromResult(Categories.SingleOrDefault(category => category.Code == code));
 
+        public Task<ProductCategory?> FindCategoryByNameAsync(string name, CancellationToken cancellationToken) =>
+            Task.FromResult(Categories.FirstOrDefault(category =>
+                string.Equals(category.Name, name, StringComparison.OrdinalIgnoreCase)));
+
         public Task<bool> CategoryHasActiveChildrenAsync(Guid categoryId, CancellationToken cancellationToken) =>
             Task.FromResult(Categories.Any(category =>
                 category.ParentCategoryId == categoryId && category.IsActive));
@@ -219,7 +371,19 @@ public sealed class CatalogServiceTests
             Task.FromResult(Products.Any(product =>
                 product.ProductCategoryId == categoryId && product.Status != ProductStatuses.Inactive));
 
+        public Task<bool> CategoryHasAnyChildrenAsync(Guid categoryId, CancellationToken cancellationToken) =>
+            Task.FromResult(Categories.Any(category => category.ParentCategoryId == categoryId));
+
+        public Task<bool> CategoryHasAnyProductsAsync(Guid categoryId, CancellationToken cancellationToken) =>
+            Task.FromResult(Products.Any(product => product.ProductCategoryId == categoryId));
+
+        private int categoryCodeCounter = 10;
+        public Task<string> NextCategoryCodeAsync(CancellationToken cancellationToken) =>
+            Task.FromResult($"CAT-{categoryCodeCounter++:00}");
+
         public void AddCategory(ProductCategory category) => Categories.Add(category);
+
+        public void RemoveCategory(ProductCategory category) => Categories.Remove(category);
 
         public Task<(IReadOnlyCollection<ProductView> Items, int TotalCount)> ListProductsAsync(
             ProductSearch search,

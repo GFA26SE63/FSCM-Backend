@@ -9,6 +9,7 @@ public sealed class Payment
     public string Method { get; set; } = string.Empty;
     public string Status { get; set; } = string.Empty;
     public decimal Amount { get; set; }
+    public decimal AdjustedAmount { get; set; }
     public decimal ConfirmedAmount { get; set; }
     public DateTimeOffset FinalApprovedAt { get; set; }
     public string FinalApprovalReference { get; set; } = string.Empty;

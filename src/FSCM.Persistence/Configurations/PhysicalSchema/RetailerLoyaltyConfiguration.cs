@@ -13,6 +13,7 @@ public sealed class RetailerLoyaltyConfiguration : IEntityTypeConfiguration<Reta
         builder.Property(entity => entity.Id).HasColumnType("uuid").IsRequired();
         builder.Property(entity => entity.RetailerId).HasColumnType("uuid").IsRequired();
         builder.Property(entity => entity.CurrentPoints).IsRequired();
+        builder.Property(entity => entity.HeldPoints).IsRequired();
         builder.Property(entity => entity.LifetimeEarnedPoints).IsRequired();
         builder.Property(entity => entity.LifetimeRedeemedPoints).IsRequired();
         builder.Property(entity => entity.CreatedAt).HasColumnType("timestamp with time zone").IsRequired();

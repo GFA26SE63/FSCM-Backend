@@ -42,6 +42,7 @@ public sealed class QrLabelPrintApiTests
         Assert.Contains(store.Parent.QrCode, html);
         Assert.Contains("70 thùng", html);
         Assert.Contains("<svg", html);
+        Assert.Contains(TestQrLabelStore.ReceiptCode, html);
 
         var batch = await client.GetAsync($"/api/v1/qr-labels/batches/{store.Batch.Id}/print");
         Assert.Equal(HttpStatusCode.OK, batch.StatusCode);
@@ -51,13 +52,25 @@ public sealed class QrLabelPrintApiTests
 
         var detail = await client.GetFromJsonAsync<JsonElement>(
             $"/api/v1/qr-labels/{store.Child.QrCode}");
+        var label = detail.GetProperty("label");
+        Assert.Equal("Sữa tươi tiệt trùng", label.GetProperty("productName").GetString());
+        Assert.Equal("2026-08-30", label.GetProperty("productionDate").GetString());
+        Assert.Equal("2026-11-30", label.GetProperty("expirationDate").GetString());
+        Assert.Equal(TestQrLabelStore.ReceiptCode, label.GetProperty("receiptCode").GetString());
         Assert.Equal(2, detail.GetProperty("lineage").GetArrayLength());
         Assert.Equal(100m, detail.GetProperty("lineage").EnumerateArray()
             .Sum(item => item.GetProperty("quantity").GetDecimal()));
+
+        client.DefaultRequestHeaders.Authorization = Bearer(identityFactory.WarehouseKeeper, identityFactory);
+        Assert.Equal(HttpStatusCode.OK,
+            (await client.GetAsync($"/api/v1/qr-labels/{store.Child.QrCode}")).StatusCode);
+        store.AllowWarehouseAccess = false;
+        Assert.Equal(HttpStatusCode.Forbidden,
+            (await client.GetAsync($"/api/v1/qr-labels/{store.Child.QrCode}")).StatusCode);
     }
 
     [Fact]
-    public async Task GraphQl_qr_read_uses_same_lineage_contract()
+    public async Task Legacy_qr_graphQl_root_is_removed()
     {
         using var identityFactory = new IdentityAuthorizationTests.IdentityApiFactory();
         var store = new TestQrLabelStore();
@@ -78,11 +91,10 @@ public sealed class QrLabelPrintApiTests
             variables = new { code = store.Child.QrCode }
         });
 
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
-        Assert.False(json.RootElement.TryGetProperty("errors", out _), json.RootElement.ToString());
-        Assert.Equal(2, json.RootElement.GetProperty("data").GetProperty("qrLabel")
-            .GetProperty("lineage").GetArrayLength());
+        Assert.True(json.RootElement.TryGetProperty("errors", out var errors), json.RootElement.ToString());
+        Assert.NotEmpty(errors.EnumerateArray());
     }
 
     private static AuthenticationHeaderValue Bearer(
@@ -119,6 +131,7 @@ public sealed class QrLabelPrintApiTests
                 WarehouseId = warehouse.Id,
                 ProductId = product.Id,
                 BatchCode = "WH-TA-SKU001-30112026",
+                ProductionDate = new DateOnly(2026, 8, 30),
                 ExpirationDate = new DateOnly(2026, 11, 30)
             };
             var rootId = Guid.NewGuid();
@@ -154,10 +167,11 @@ public sealed class QrLabelPrintApiTests
         public Batch Batch { get; }
         public BatchQrLabel Parent { get; }
         public BatchQrLabel Child { get; }
+        public bool AllowWarehouseAccess { get; set; } = true;
         private IReadOnlyCollection<BatchQrLabel> Labels => [Parent, Child];
 
         public Task<bool> CanAccessWarehouseAsync(Guid userId, string role, Guid warehouseId, CancellationToken cancellationToken) =>
-            Task.FromResult(warehouseId == warehouse.Id);
+            Task.FromResult(AllowWarehouseAccess && warehouseId == warehouse.Id);
         public Task<QrLabelView?> FindByCodeAsync(string qrCode, CancellationToken cancellationToken) =>
             Task.FromResult(ToView(Labels.SingleOrDefault(item => item.QrCode == qrCode)));
         public Task<BatchQrLabel?> FindForUpdateAsync(string qrCode, CancellationToken cancellationToken) =>
@@ -181,6 +195,8 @@ public sealed class QrLabelPrintApiTests
             Task.FromResult<QrLabelEvent?>(null);
         public Task<Batch?> FindBatchAsync(Guid batchId, CancellationToken cancellationToken) =>
             Task.FromResult<Batch?>(Batch.Id == batchId ? Batch : null);
+        public Task<Guid?> FindGoodsReceiptIdForBatchAsync(Guid batchId, CancellationToken cancellationToken) =>
+            Task.FromResult<Guid?>(null);
         public Task<InventoryBalance?> FindBalanceAsync(Guid batchId, CancellationToken cancellationToken) =>
             Task.FromResult<InventoryBalance?>(new() { BatchId = batchId, PhysicalQuantity = 100, AvailableQuantity = 100 });
         public Task<decimal> SumActiveQuantityAsync(Guid batchId, CancellationToken cancellationToken) =>
@@ -191,8 +207,10 @@ public sealed class QrLabelPrintApiTests
         public void AddEvent(QrLabelEvent labelEvent) => throw new NotSupportedException();
         public Task SaveChangesAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 
+        public const string ReceiptCode = "GRN-000042";
+
         private QrLabelView? ToView(BatchQrLabel? label) => label is null ? null : new(
             label, Batch, warehouse, product,
-            label.ParentLabelId == Parent.Id ? Parent.QrCode : null, Parent.QrCode);
+            label.ParentLabelId == Parent.Id ? Parent.QrCode : null, Parent.QrCode, ReceiptCode);
     }
 }

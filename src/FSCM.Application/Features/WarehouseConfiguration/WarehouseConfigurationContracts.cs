@@ -12,9 +12,15 @@ public sealed record WarehouseResult(
     decimal Longitude,
     string? ProviderPlaceId,
     int MinimumStockThresholdCartons,
+    IReadOnlyCollection<WarehouseKeeperResult> Keepers,
     bool IsActive,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt);
+
+public sealed record WarehouseKeeperResult(
+    Guid UserId,
+    string FullName,
+    string Email);
 
 public sealed record SaveWarehouseData(
     string Code,
@@ -91,6 +97,7 @@ public static class BusinessConfigurationKeys
     public const string OrderBufferStockCartons = "order.buffer_stock_cartons";
     public const string OrderStepCartons = "order.order_step_cartons";
     public const string EtaSchedule = "eta.schedule";
+    public const string SalesKpi = "reporting.sales_kpi";
 
     public static readonly IReadOnlyDictionary<string, BusinessConfigurationDefinition> Supported =
         new Dictionary<string, BusinessConfigurationDefinition>(StringComparer.Ordinal)
@@ -98,7 +105,8 @@ public static class BusinessConfigurationKeys
             [AllocationWeights] = new("object", "Trọng số chấm điểm phân bổ theo hạn sử dụng, khoảng cách và độ phủ"),
             [ServiceRadiusMeters] = new("integer", "Bán kính phục vụ tối đa mặc định, tính bằng mét"),
             [DefaultMlorRatio] = new("decimal", "Tỷ lệ hạn sử dụng còn lại tối thiểu mặc định"),
-            [EtaSchedule] = new("object", "Lịch dùng để tính ETA: giờ chạy đợt, hạn duyệt, thời gian soạn, đệm và mốc xuất"),
+            [EtaSchedule] = new("object", "Lịch ngày chạy đợt: khuyến nghị gửi đơn, nhắc duyệt đơn, giờ chốt, nhắc duyệt phương án, hạn duyệt, thời gian soạn, đệm và mốc xuất"),
+            [SalesKpi] = new("object", "Mục tiêu và trọng số KPI Sales theo kỳ báo cáo"),
             [OrderBufferStockCartons] = new("integer", "Số thùng tồn kho đệm không dùng để phân bổ đơn hàng"),
             [OrderStepCartons] = new("integer", "Bước số lượng thùng hợp lệ khi tạo đơn hàng")
         };

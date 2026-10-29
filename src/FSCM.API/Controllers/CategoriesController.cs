@@ -64,4 +64,10 @@ public sealed class CategoriesController(CatalogService catalogService) : Contro
         await catalogService.SetCategoryStatusAsync(categoryId, request.IsActive, cancellationToken);
         return NoContent();
     }
+
+    [Authorize(Roles = SystemRoles.Admin)]
+    [HttpDelete("{categoryId:guid}")]
+    [ProducesResponseType<DeleteCategoryResult>(StatusCodes.Status200OK)]
+    public Task<DeleteCategoryResult> Delete(Guid categoryId, CancellationToken cancellationToken) =>
+        catalogService.DeleteCategoryAsync(categoryId, cancellationToken);
 }

@@ -20,7 +20,7 @@ public sealed class ManualPaymentStore(AppDbContext dbContext) : IManualPaymentS
          join order in dbContext.SalesOrderRecords.AsNoTracking() on payment.SalesOrderId equals order.Id
          join ledger in dbContext.PaymentRecords.AsNoTracking() on payment.SalesOrderId equals ledger.SalesOrderId
          where payment.Id == paymentId
-         select new ManualPaymentView(payment, order.OrderCode, ledger.Amount, ledger.ConfirmedAmount))
+         select new ManualPaymentView(payment, order.OrderCode, ledger.Amount, ledger.AdjustedAmount, ledger.ConfirmedAmount))
         .SingleOrDefaultAsync(cancellationToken);
 
     public Task<ManualPaymentView?> FindByOperationKeyAsync(
@@ -29,7 +29,7 @@ public sealed class ManualPaymentStore(AppDbContext dbContext) : IManualPaymentS
          join order in dbContext.SalesOrderRecords.AsNoTracking() on payment.SalesOrderId equals order.Id
          join ledger in dbContext.PaymentRecords.AsNoTracking() on payment.SalesOrderId equals ledger.SalesOrderId
          where payment.OperationKey == operationKey
-         select new ManualPaymentView(payment, order.OrderCode, ledger.Amount, ledger.ConfirmedAmount))
+         select new ManualPaymentView(payment, order.OrderCode, ledger.Amount, ledger.AdjustedAmount, ledger.ConfirmedAmount))
         .SingleOrDefaultAsync(cancellationToken);
 
     public async Task<IReadOnlyCollection<ManualPaymentView>> ListByOrderAsync(Guid salesOrderId, CancellationToken cancellationToken) =>
@@ -38,7 +38,7 @@ public sealed class ManualPaymentStore(AppDbContext dbContext) : IManualPaymentS
                join ledger in dbContext.PaymentRecords.AsNoTracking() on payment.SalesOrderId equals ledger.SalesOrderId
                where payment.SalesOrderId == salesOrderId
                orderby payment.CreatedAt, payment.Id
-               select new ManualPaymentView(payment, order.OrderCode, ledger.Amount, ledger.ConfirmedAmount))
+               select new ManualPaymentView(payment, order.OrderCode, ledger.Amount, ledger.AdjustedAmount, ledger.ConfirmedAmount))
             .ToArrayAsync(cancellationToken);
 
     public async Task<bool> CanAccessOrderAsync(

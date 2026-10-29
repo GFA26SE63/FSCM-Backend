@@ -6,7 +6,13 @@ public sealed record ManualPaymentView(
     ManualPayment Payment,
     string OrderCode,
     decimal FinalApprovedAmount,
-    decimal TotalConfirmedAmount);
+    decimal AdjustedAmount,
+    decimal TotalConfirmedAmount)
+{
+    public ManualPaymentView(ManualPayment payment, string orderCode,
+        decimal finalApprovedAmount, decimal totalConfirmedAmount)
+        : this(payment, orderCode, finalApprovedAmount, finalApprovedAmount, totalConfirmedAmount) { }
+}
 
 public interface IManualPaymentStore
 {

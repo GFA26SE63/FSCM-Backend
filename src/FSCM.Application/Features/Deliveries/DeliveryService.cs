@@ -32,6 +32,126 @@ public sealed class DeliveryService(
             .Select(ToResult).ToArray();
     }
 
+    public async Task<DriverResult> CreateDriverAsync(
+        CreateDriverData data, string actorRole, CancellationToken cancellationToken)
+    {
+        EnsureOperator(actorRole);
+        if (data.WarehouseId == Guid.Empty || !await store.WarehouseExistsAsync(data.WarehouseId, cancellationToken))
+            throw DeliveryOperationException.Validation("A valid warehouse is required.");
+        var fullName = NormalizeRequired(data.FullName, "Driver name", 150);
+        var phone = NormalizeRequired(data.Phone, "Driver phone", 30);
+        var licenseNumber = NormalizeRequired(data.LicenseNumber, "Driver license number", 80);
+        var code = string.IsNullOrWhiteSpace(data.Code)
+            ? await store.NextDriverCodeAsync(cancellationToken)
+            : NormalizeRequired(data.Code, "Driver code", 20).ToUpperInvariant();
+        if (await store.DriverCodeExistsAsync(code, null, cancellationToken))
+            throw DeliveryOperationException.Conflict($"Driver code '{code}' already exists.");
+
+        var now = timeProvider.GetUtcNow();
+        var driver = new Driver
+        {
+            Id = Guid.NewGuid(),
+            WarehouseId = data.WarehouseId,
+            Code = code,
+            FullName = fullName,
+            Phone = phone,
+            LicenseNumber = licenseNumber,
+            IsActive = true,
+            CreatedAt = now,
+            UpdatedAt = now
+        };
+        store.AddDriver(driver);
+        await store.SaveChangesAsync(cancellationToken);
+        return ToResult(driver);
+    }
+
+    public async Task<DriverResult> UpdateDriverAsync(
+        Guid id, UpdateDriverData data, string actorRole, CancellationToken cancellationToken)
+    {
+        EnsureOperator(actorRole);
+        var driver = await store.FindDriverForUpdateAsync(id, cancellationToken)
+            ?? throw DeliveryOperationException.NotFound("Driver was not found.");
+        driver.FullName = NormalizeRequired(data.FullName, "Driver name", 150);
+        driver.Phone = NormalizeRequired(data.Phone, "Driver phone", 30);
+        driver.LicenseNumber = NormalizeRequired(data.LicenseNumber, "Driver license number", 80);
+        driver.UpdatedAt = timeProvider.GetUtcNow();
+        await store.SaveChangesAsync(cancellationToken);
+        return ToResult(driver);
+    }
+
+    public async Task<DriverResult> SetDriverActiveAsync(
+        Guid id, bool isActive, string actorRole, CancellationToken cancellationToken)
+    {
+        EnsureOperator(actorRole);
+        var driver = await store.FindDriverForUpdateAsync(id, cancellationToken)
+            ?? throw DeliveryOperationException.NotFound("Driver was not found.");
+        if (driver.IsActive != isActive)
+        {
+            driver.IsActive = isActive;
+            driver.UpdatedAt = timeProvider.GetUtcNow();
+            await store.SaveChangesAsync(cancellationToken);
+        }
+        return ToResult(driver);
+    }
+
+    public async Task<VehicleResult> CreateVehicleAsync(
+        CreateVehicleData data, string actorRole, CancellationToken cancellationToken)
+    {
+        EnsureOperator(actorRole);
+        if (data.WarehouseId == Guid.Empty || !await store.WarehouseExistsAsync(data.WarehouseId, cancellationToken))
+            throw DeliveryOperationException.Validation("A valid warehouse is required.");
+        var plateNumber = NormalizeRequired(data.PlateNumber, "Plate number", 30).ToUpperInvariant();
+        var vehicleType = NormalizeRequired(data.VehicleType, "Vehicle type", 50);
+        ValidateCapacity(data.Capacity);
+        if (await store.VehiclePlateExistsAsync(plateNumber, null, cancellationToken))
+            throw DeliveryOperationException.Conflict($"Plate number '{plateNumber}' already exists.");
+
+        var now = timeProvider.GetUtcNow();
+        var vehicle = new Vehicle
+        {
+            Id = Guid.NewGuid(),
+            WarehouseId = data.WarehouseId,
+            PlateNumber = plateNumber,
+            VehicleType = vehicleType,
+            Capacity = data.Capacity,
+            IsActive = true,
+            CreatedAt = now,
+            UpdatedAt = now
+        };
+        store.AddVehicle(vehicle);
+        await store.SaveChangesAsync(cancellationToken);
+        return ToResult(vehicle);
+    }
+
+    public async Task<VehicleResult> UpdateVehicleAsync(
+        Guid id, UpdateVehicleData data, string actorRole, CancellationToken cancellationToken)
+    {
+        EnsureOperator(actorRole);
+        var vehicle = await store.FindVehicleForUpdateAsync(id, cancellationToken)
+            ?? throw DeliveryOperationException.NotFound("Vehicle was not found.");
+        vehicle.VehicleType = NormalizeRequired(data.VehicleType, "Vehicle type", 50);
+        ValidateCapacity(data.Capacity);
+        vehicle.Capacity = data.Capacity;
+        vehicle.UpdatedAt = timeProvider.GetUtcNow();
+        await store.SaveChangesAsync(cancellationToken);
+        return ToResult(vehicle);
+    }
+
+    public async Task<VehicleResult> SetVehicleActiveAsync(
+        Guid id, bool isActive, string actorRole, CancellationToken cancellationToken)
+    {
+        EnsureOperator(actorRole);
+        var vehicle = await store.FindVehicleForUpdateAsync(id, cancellationToken)
+            ?? throw DeliveryOperationException.NotFound("Vehicle was not found.");
+        if (vehicle.IsActive != isActive)
+        {
+            vehicle.IsActive = isActive;
+            vehicle.UpdatedAt = timeProvider.GetUtcNow();
+            await store.SaveChangesAsync(cancellationToken);
+        }
+        return ToResult(vehicle);
+    }
+
     public async Task<IReadOnlyCollection<DeliveryResult>> ListAsync(
         Guid actorUserId, string actorRole, string? status, CancellationToken cancellationToken)
     {
@@ -366,6 +486,22 @@ public sealed class DeliveryService(
 
     private static string? NormalizeNote(string? note) =>
         string.IsNullOrWhiteSpace(note) ? null : note.Trim();
+
+    private static string NormalizeRequired(string value, string field, int maxLength)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            throw DeliveryOperationException.Validation($"{field} is required.");
+        value = value.Trim();
+        if (value.Length > maxLength)
+            throw DeliveryOperationException.Validation($"{field} cannot exceed {maxLength} characters.");
+        return value;
+    }
+
+    private static void ValidateCapacity(decimal capacity)
+    {
+        if (capacity <= 0)
+            throw DeliveryOperationException.Validation("Vehicle capacity must be greater than zero.");
+    }
 
     private static void TransitionOrder(SalesOrder order, string status, DateTimeOffset now)
     {

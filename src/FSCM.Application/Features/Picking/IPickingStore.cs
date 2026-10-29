@@ -37,11 +37,13 @@ public interface IPickingStore
     Task<BatchQrLabel?> FindLabelForUpdateAsync(string qrCode, CancellationToken cancellationToken);
     Task<BatchQrLabel?> FindLabelByIdAsync(Guid id, CancellationToken cancellationToken);
     Task<string> NextQrCodeAsync(CancellationToken cancellationToken);
+    Task<string> NextShipmentCodeAsync(CancellationToken cancellationToken);
     void AddList(PickingList list);
     void AddItem(PickingItem item);
     void AddLabel(BatchQrLabel label);
     void AddLabelEvent(QrLabelEvent labelEvent);
     void AddOrderHistory(OrderStatusHistory history);
+    void AddShipment(Shipment shipment);
     Task SaveChangesAsync(CancellationToken cancellationToken);
     Task ExecuteInTransactionAsync(Func<CancellationToken, Task> operation, CancellationToken cancellationToken);
     void ClearTracking();

@@ -89,10 +89,11 @@ public sealed class DevelopmentDataSeeder(
         var paymentSeedReference = "CHỜ-PHÂN-BỔ";
         if (!demoOrder.FinalPricePendingAllocation)
         {
-            if (demoOrder.Status is OrderStatuses.PendingApproval or OrderStatuses.Approved)
+            if (demoOrder.Status is OrderStatuses.PendingApproval)
             {
                 demoOrder = await orderService.ApproveAsync(
-                    demoOrder.Id, demoOrder.Version, users[SystemRoles.Operator].Id, cancellationToken);
+                    demoOrder.Id, demoOrder.Version, users[SystemRoles.Operator].Id,
+                    SystemRoles.Operator, cancellationToken);
             }
             paymentSeedReference = $"SEED-S1E-{demoOrder.OrderCode}";
             var existingPayment = await dbContext.PaymentRecords.SingleOrDefaultAsync(
@@ -264,7 +265,7 @@ public sealed class DevelopmentDataSeeder(
         await dbContext.SaveChangesAsync(cancellationToken);
 
         var batch = await dbContext.BatchRecords.SingleAsync(
-            item => item.BatchCode == "WH-TD-SKU002-28102026", cancellationToken);
+            item => item.BatchCode == "WH-TD-SKU002-14102026-28102026", cancellationToken);
         var batchPromotion = await dbContext.PromotionRecords.SingleOrDefaultAsync(
             item => item.Code == "KM-003", cancellationToken);
         if (batchPromotion is null)
@@ -312,11 +313,11 @@ public sealed class DevelopmentDataSeeder(
     {
         var definitions = new[]
         {
-            new QrLabelSeed("TEM-000204", "WH-HCM-01-SKU001-30042027", 300m, null, QrLabelStatuses.Available, "Tem gốc cho lô sữa tiệt trùng"),
-            new QrLabelSeed("TEM-000205", "WH-HCM-01-SKU001-30042027", 100m, "TEM-000204", QrLabelStatuses.Available, "Tem con tách từ tem TEM-000204"),
-            new QrLabelSeed("TEM-000206", "WH-TD-SKU002-28102026", 80m, null, QrLabelStatuses.Available, "Tem cho lô sữa chua gần hạn"),
-            new QrLabelSeed("TEM-000207", "WH-Q7-SKU003-10102026", 20m, null, QrLabelStatuses.Invalidated, "Tem lô thực phẩm hết hạn đã vô hiệu hóa"),
-            new QrLabelSeed("TEM-000208", "WH-TD-SKU001-31032027", 200m, null, QrLabelStatuses.Available, "Tem gốc cho lô sữa tươi phục vụ soạn đơn tại kho Thủ Đức")
+            new QrLabelSeed("TEM-000204", "WH-HCM-01-SKU001-23042027-30042027", 300m, null, QrLabelStatuses.Available, "Tem gốc cho lô sữa tiệt trùng"),
+            new QrLabelSeed("TEM-000205", "WH-HCM-01-SKU001-23042027-30042027", 100m, "TEM-000204", QrLabelStatuses.Available, "Tem con tách từ tem TEM-000204"),
+            new QrLabelSeed("TEM-000206", "WH-TD-SKU002-14102026-28102026", 80m, null, QrLabelStatuses.Available, "Tem cho lô sữa chua gần hạn"),
+            new QrLabelSeed("TEM-000207", "WH-Q7-SKU003-07102026-10102026", 20m, null, QrLabelStatuses.Invalidated, "Tem lô thực phẩm hết hạn đã vô hiệu hóa"),
+            new QrLabelSeed("TEM-000208", "WH-TD-SKU001-24032027-31032027", 200m, null, QrLabelStatuses.Available, "Tem gốc cho lô sữa tươi phục vụ soạn đơn tại kho Thủ Đức")
         };
         var labels = new Dictionary<string, BatchQrLabel>(StringComparer.Ordinal);
         foreach (var definition in definitions.Where(item => item.ParentQrCode is null))
@@ -855,10 +856,20 @@ public sealed class DevelopmentDataSeeder(
             new ConfigurationSeed(BusinessConfigurationKeys.OrderStepCartons, "1", "integer",
                 "Bước số lượng đặt hàng mặc định là một thùng"),
             new ConfigurationSeed(BusinessConfigurationKeys.EtaSchedule,
-                "{\"timeZone\":\"Asia/Ho_Chi_Minh\",\"allocationRunLocalTime\":\"12:00\"," +
+                "{\"timeZone\":\"Asia/Ho_Chi_Minh\",\"salesSubmissionAdviceLocalTime\":\"11:00\"," +
+                "\"orderReviewReminderLocalTime\":\"11:30\",\"allocationRunLocalTime\":\"00:00\"," +
+                "\"planApprovalReminderLocalTime\":\"13:30\"," +
                 "\"planApprovalDeadlineLocalTime\":\"14:00\",\"preparationMinutes\":240," +
                 "\"bufferMinutes\":60,\"dispatchSlotsLocalTime\":[\"06:00\",\"14:00\"]}", "object",
-                "Lịch tính ETA: chạy đợt 12:00, hạn duyệt 14:00, soạn 4 giờ, đệm 1 giờ, xuất 06:00 và 14:00")
+                "Lịch ngày chạy đợt: chốt đợt lúc 00:00 (đóng ngày vừa kết thúc); trong ngày đó khuyến nghị " +
+                "gửi đơn trước 11:00, nhắc duyệt đơn 11:30; sau khi chốt thì " +
+                "nhắc duyệt phương án 13:30, hạn duyệt 14:00, soạn 4 giờ, đệm 1 giờ, xuất 06:00 và 14:00"),
+            new ConfigurationSeed(BusinessConfigurationKeys.SalesKpi,
+                "{\"successfulOrdersTarget\":15,\"retailersServedTarget\":5,\"newRetailersTarget\":1," +
+                "\"promotionRevenueRatioMaximum\":0.05,\"successfulOrdersWeight\":0.25," +
+                "\"retailersServedWeight\":0.25,\"newRetailersWeight\":0.25," +
+                "\"promotionRevenueRatioWeight\":0.25}", "object",
+                "Mục tiêu KPI tháng: 15 đơn thành công, 5 điểm bán phục vụ, 1 điểm bán mới và tỷ lệ khuyến mãi tối đa 5 phần trăm")
         };
         foreach (var definition in configurations)
         {
@@ -1190,8 +1201,11 @@ public sealed class DevelopmentDataSeeder(
             receipt.RequestHash = new string('0', 64);
             receipt.WarehouseId = warehouse.Id;
             receipt.CreatedByUserId = warehouseKeeperId;
+            receipt.ApprovedByUserId = warehouseKeeperId;
             receipt.Status = GoodsReceiptStatuses.Received;
             receipt.ReceivedAt = receivedAt;
+            receipt.ApprovedAt = receivedAt;
+            receipt.Version = Math.Max(receipt.Version, 1);
             receipt.UpdatedAt = now;
             await dbContext.SaveChangesAsync(cancellationToken);
 
@@ -1205,10 +1219,12 @@ public sealed class DevelopmentDataSeeder(
             }
             line.SourceLotCode = definition.SourceLotCode;
             line.ReceivedQuantity = definition.OnHand;
+            line.ProductionDate = definition.ExpirationDate.AddDays(
+                -(int)Math.Ceiling(product.ShelfLifeHours / 24m));
             line.ExpirationDate = definition.ExpirationDate;
             await dbContext.SaveChangesAsync(cancellationToken);
 
-            var batchCode = $"{warehouse.Code}-{product.Sku}-{definition.ExpirationDate:ddMMyyyy}";
+            var batchCode = $"{warehouse.Code}-{product.Sku}-{line.ProductionDate:ddMMyyyy}-{definition.ExpirationDate:ddMMyyyy}";
             var batch = await dbContext.BatchRecords.SingleOrDefaultAsync(item => item.BatchCode == batchCode, cancellationToken);
             var isNewBatch = batch is null;
             if (batch is null)
@@ -1221,6 +1237,7 @@ public sealed class DevelopmentDataSeeder(
             batch.ProductId = product.Id;
             batch.GoodsReceiptLineId = line.Id;
             if (isNewBatch) batch.Quantity = definition.OnHand;
+            batch.ProductionDate = line.ProductionDate;
             batch.ExpirationDate = definition.ExpirationDate;
             batch.ExpiryStatus = definition.ExpiryStatus;
             batch.StockStatus = BatchStockStatuses.InStock;

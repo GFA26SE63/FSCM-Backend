@@ -21,10 +21,13 @@ public sealed class GoodsReceiptConfiguration : IEntityTypeConfiguration<GoodsRe
         builder.Property(entity => entity.ReceivedAt).HasColumnType("timestamp with time zone").IsRequired(false);
         builder.Property(entity => entity.ApprovedAt).HasColumnType("timestamp with time zone").IsRequired(false);
         builder.Property(entity => entity.RejectionReason).HasColumnType("text").IsRequired(false);
+        builder.Property(entity => entity.Version).IsRequired().IsConcurrencyToken();
         builder.Property(entity => entity.CreatedAt).HasColumnType("timestamp with time zone").IsRequired();
         builder.Property(entity => entity.UpdatedAt).HasColumnType("timestamp with time zone").IsRequired();
         builder.HasIndex(entity => entity.ReceiptCode).IsUnique();
         builder.HasIndex(entity => entity.IdempotencyKey).IsUnique().HasFilter("\"IdempotencyKey\" IS NOT NULL");
+        builder.ToTable(table => table.HasCheckConstraint(
+            "CK_GOODS_RECEIPT_Status", "\"Status\" IN ('Pending', 'Received')"));
         builder.HasOne<Warehouse>()
             .WithMany()
             .HasForeignKey(entity => entity.WarehouseId)

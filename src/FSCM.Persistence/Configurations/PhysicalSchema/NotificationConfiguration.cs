@@ -14,6 +14,9 @@ public sealed class NotificationConfiguration : IEntityTypeConfiguration<Notific
         builder.Property(entity => entity.UserAccountId).HasColumnType("uuid").IsRequired();
         builder.Property(entity => entity.OutboxMessageId).HasColumnType("uuid").IsRequired(false);
         builder.Property(entity => entity.SalesOrderId).HasColumnType("uuid").IsRequired(false);
+        builder.Property(entity => entity.RelatedEntityType).HasMaxLength(50).IsRequired(false);
+        builder.Property(entity => entity.RelatedEntityId).HasColumnType("uuid").IsRequired(false);
+        builder.Property(entity => entity.DeepLink).HasMaxLength(500).IsRequired(false);
         builder.Property(entity => entity.Type).HasMaxLength(50).IsRequired();
         builder.Property(entity => entity.Title).HasMaxLength(200).IsRequired();
         builder.Property(entity => entity.Message).HasColumnType("text").IsRequired();
@@ -23,6 +26,7 @@ public sealed class NotificationConfiguration : IEntityTypeConfiguration<Notific
         builder.HasIndex(entity => new { entity.UserAccountId, entity.OutboxMessageId })
             .IsUnique()
             .HasFilter("\"OutboxMessageId\" IS NOT NULL");
+        builder.HasIndex(entity => new { entity.UserAccountId, entity.IsRead, entity.CreatedAt });
         builder.HasOne<UserAccount>()
             .WithMany()
             .HasForeignKey(entity => entity.UserAccountId)

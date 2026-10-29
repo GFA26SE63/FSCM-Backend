@@ -23,16 +23,21 @@ public sealed class GoodsReceiptsController(InventoryService service) : Controll
 
     [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.WarehouseKeeper}")]
     [HttpPost]
-    public async Task<IActionResult> Receive(
-        ReceiveGoodsRequest request,
+    public async Task<IActionResult> Create(
+        CreateGoodsReceiptRequest request,
         [FromHeader(Name = "Idempotency-Key")] string idempotencyKey,
         CancellationToken cancellationToken)
     {
-        var result = await service.ReceiveAsync(GetActorUserId(), GetActorRole(), request.WarehouseId,
+        var result = await service.CreateReceiptAsync(GetActorUserId(), GetActorRole(), request.WarehouseId,
             idempotencyKey, request.Lines.Select(item => new ReceiveGoodsLineData(item.ProductId,
-                item.SourceLotCode, item.Quantity, item.ExpirationDate)).ToArray(), cancellationToken);
+                item.SourceLotCode, item.Quantity, item.ProductionDate, item.ExpirationDate)).ToArray(), cancellationToken);
         return CreatedAtAction(nameof(Get), new { receiptId = result.Id }, result);
     }
+
+    [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.WarehouseKeeper}")]
+    [HttpPost("{receiptId:guid}/approve")]
+    public Task<GoodsReceiptResult> Approve(Guid receiptId, CancellationToken cancellationToken) =>
+        service.ApproveReceiptAsync(receiptId, GetActorUserId(), GetActorRole(), cancellationToken);
 
     private Guid GetActorUserId() => Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var userId)
         ? userId : throw InventoryOperationException.Validation("Authenticated user identifier is invalid.");
