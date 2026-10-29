@@ -51,6 +51,7 @@ public static class ServiceCollectionExtensions
         services.AddExceptionHandler<PromotionExceptionHandler>();
         services.AddExceptionHandler<RetailerExceptionHandler>();
         services.AddExceptionHandler<RefundExceptionHandler>();
+        services.AddExceptionHandler<QuoteExceptionHandler>();
         services.AddExceptionHandler<TerritoryExceptionHandler>();
         services.AddExceptionHandler<ShelfLifeDiscountExceptionHandler>();
         services.AddExceptionHandler<TransitTableExceptionHandler>();

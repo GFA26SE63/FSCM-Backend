@@ -23,6 +23,8 @@ public sealed class ComplaintStore(AppDbContext db) : IComplaintStore
             ?? throw ComplaintOperationException.NotFound("The SKU was not found in this order.");
         var receipt = await db.ReceiptConfirmationRecords.SingleOrDefaultAsync(x => x.SalesOrderId == order.Id && x.Status == ReceiptConfirmationStatuses.Confirmed, ct)
             ?? throw ComplaintOperationException.Conflict("The order has not been confirmed as received.");
+        var shipment = await db.ShipmentRecords.SingleOrDefaultAsync(x => x.Id == receipt.ShipmentId && x.SalesOrderId == order.Id, ct)
+            ?? throw ComplaintOperationException.Conflict("The receipt shipment part was not found.");
         var label = await (from l in db.BatchQrLabelRecords join b in db.BatchRecords on l.BatchId equals b.Id
                            where l.QrCode == data.LabelCode && b.ProductId == line.Product.Id select new { Label = l, Batch = b }).SingleOrDefaultAsync(ct)
             ?? throw ComplaintOperationException.NotFound("The label does not belong to this order SKU.");
@@ -30,14 +32,34 @@ public sealed class ComplaintStore(AppDbContext db) : IComplaintStore
             ?? throw ComplaintOperationException.Conflict("The label was not recorded on the receipt.");
         if (data.ActualQuantity > receiptItem.ExpectedQuantity)
             throw ComplaintOperationException.Validation("Actual quantity cannot exceed the received expectation.");
+        if (receipt.ShipmentId is not Guid shipmentId)
+            throw ComplaintOperationException.Conflict("The receipt is not linked to a shipment part.");
+        if (data.ShipmentId.HasValue && data.ShipmentId.Value != shipmentId)
+            throw ComplaintOperationException.Validation("Shipment part does not belong to the receipt.");
+        var priceRow = await (from split in db.RunPickingSplitRecords.AsNoTracking()
+                              join gather in db.RunPickingGatherRecords.AsNoTracking() on split.RunPickingGatherId equals gather.Id
+                              join price in db.AllocationPlanPriceRecords.AsNoTracking() on split.AllocationPlanPriceId equals price.Id
+                              where gather.RunPickingListId == shipment.RunPickingListId
+                                    && split.SalesOrderId == order.Id
+                                    && split.SalesOrderLineId == receiptItem.SalesOrderLineId
+                                    && gather.BatchId == receiptItem.BatchId
+                              select new { price.Id, price.FinalNetUnitPrice }).SingleOrDefaultAsync(ct)
+            ?? throw ComplaintOperationException.Conflict("The received batch is not linked to an allocation price.");
+        if (data.AllocationPlanPriceId.HasValue && data.AllocationPlanPriceId.Value != priceRow.Id)
+            throw ComplaintOperationException.Validation("Allocation price does not belong to the shipment batch.");
+        var adjustment = Math.Round((receiptItem.ExpectedQuantity - data.ActualQuantity) * priceRow.FinalNetUnitPrice, 0,
+            MidpointRounding.AwayFromZero);
         if (await db.ReceiptDiscrepancyRecords.AnyAsync(x => x.SalesOrderId == order.Id && x.ReceiptConfirmationId == receipt.Id && x.Status != "Resolved" && x.Note == data.Note, ct))
             throw ComplaintOperationException.Conflict("A matching complaint is already open.");
         var discrepancy = new ReceiptDiscrepancy { Id = Guid.NewGuid(), SalesOrderId = order.Id, ReceiptConfirmationId = receipt.Id,
             ReportedByRetailerUserId = actor, Status = "Open", Note = data.Note, ReportedAt = now };
         db.ReceiptDiscrepancyRecords.Add(discrepancy);
         db.ReceiptDiscrepancyItemRecords.Add(new ReceiptDiscrepancyItem { Id = Guid.NewGuid(), ReceiptDiscrepancyId = discrepancy.Id,
-            BatchId = label.Batch.Id, IssueType = data.ActualQuantity < receiptItem.ExpectedQuantity ? "Shortage" : "Damaged",
-            ExpectedQuantity = receiptItem.ExpectedQuantity, ActualReceivedQuantity = data.ActualQuantity, EvidenceBlobUrl = data.EvidenceUrl, Note = data.Note });
+            BatchId = label.Batch.Id, ShipmentId = shipmentId, AllocationPlanPriceId = priceRow.Id,
+            IssueType = data.ActualQuantity < receiptItem.ExpectedQuantity ? "Shortage" : "Damaged",
+            ExpectedQuantity = receiptItem.ExpectedQuantity, ActualReceivedQuantity = data.ActualQuantity,
+            FinalUnitPrice = priceRow.FinalNetUnitPrice, AdjustmentAmount = adjustment,
+            EvidenceBlobUrl = data.EvidenceUrl, Note = data.Note });
         await db.SaveChangesAsync(ct);
         return discrepancy;
     }
@@ -73,12 +95,13 @@ public sealed class ComplaintStore(AppDbContext db) : IComplaintStore
                          join b in db.BatchRecords on i.BatchId equals b.Id join p in db.ProductRecords on b.ProductId equals p.Id
                          where d.Id == id select new { d, o, r, i, p }).SingleOrDefaultAsync(ct)
             ?? throw ComplaintOperationException.NotFound("Complaint was not found.");
-        if (row.d.Status == "Resolved") return ToResult(row.d, row.o.OrderCode, row.r.Code, row.r.Name, row.p.Sku, row.p.Name, row.i, null, row.i.EvidenceBlobUrl);
-        row.d.Status = "Resolved"; row.d.ReviewedByUserId = actor; row.d.ReviewedAt = now; row.d.ResolvedAt = now; row.d.Note = data.Result;
+        if (row.d.Status is "Approved" or "Rejected" or "Resolved") return ToResult(row.d, row.o.OrderCode, row.r.Code, row.r.Name, row.p.Sku, row.p.Name, row.i, null, row.i.EvidenceBlobUrl);
+        row.d.Status = data.Approved ? "Approved" : "Rejected";
+        row.d.ReviewedByUserId = actor; row.d.ReviewedAt = now; row.d.ResolvedAt = now; row.d.Note = data.Result;
         await db.SaveChangesAsync(ct);
         return ToResult(row.d, row.o.OrderCode, row.r.Code, row.r.Name, row.p.Sku, row.p.Name, row.i, null, row.i.EvidenceBlobUrl);
     }
 
     private static ComplaintResult ToResult(ReceiptDiscrepancy d, string order, string retailerCode, string retailerName, string sku, string product, ReceiptDiscrepancyItem i, string? label, string? evidence) =>
-        new(d.Id, $"KN-{d.Id.ToString("N")[..8].ToUpperInvariant()}", order, retailerCode, retailerName, sku, product, i.ExpectedQuantity, i.ActualReceivedQuantity, i.IssueType, d.Status, label, i.Note ?? d.Note, evidence, d.ReportedAt, d.Status == "Resolved" ? d.Note : null, d.SalesOrderId);
+        new(d.Id, $"KN-{d.Id.ToString("N")[..8].ToUpperInvariant()}", order, retailerCode, retailerName, sku, product, i.ExpectedQuantity, i.ActualReceivedQuantity, i.IssueType, d.Status, label, i.Note ?? d.Note, evidence, d.ReportedAt, d.Status is "Approved" or "Rejected" or "Resolved" ? d.Note : null, i.ShipmentId, i.AllocationPlanPriceId, i.FinalUnitPrice, i.AdjustmentAmount, d.SalesOrderId);
 }

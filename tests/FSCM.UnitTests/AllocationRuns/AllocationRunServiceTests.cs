@@ -139,6 +139,48 @@ public sealed class AllocationRunServiceTests
         Assert.Empty(run.Pool);
     }
 
+    [Fact]
+    public async Task An_approved_run_can_be_closed_and_is_audited()
+    {
+        var fixture = new Fixture();
+        var run = new AllocationRun
+        {
+            Id = Guid.NewGuid(), RunCode = "DOT-20261022-01", BusinessDate = new(2026, 10, 22),
+            Status = AllocationRunStatuses.Approved, Version = 4,
+            AlgorithmSettings = "{}"
+        };
+        fixture.Store.Runs.Add(run);
+
+        var result = await fixture.Service.CloseAsync(
+            run.Id, 4, Guid.NewGuid(), "Đã đối soát đợt", CancellationToken.None);
+
+        Assert.Equal(AllocationRunStatuses.Closed, result.Status);
+        Assert.Equal(AllocationRunStatuses.Closed, run.Status);
+        var audit = Assert.Single(fixture.Store.Audits);
+        Assert.Equal("AllocationRunClosed", audit.Action);
+        Assert.Equal(run.Id, audit.EntityId);
+        Assert.Equal("Đã đối soát đợt", audit.Reason);
+    }
+
+    [Fact]
+    public async Task An_unapproved_run_cannot_be_closed()
+    {
+        var fixture = new Fixture();
+        var run = new AllocationRun
+        {
+            Id = Guid.NewGuid(), RunCode = "DOT-20261022-01", BusinessDate = new(2026, 10, 22),
+            Status = AllocationRunStatuses.AwaitingApproval, Version = 1,
+            AlgorithmSettings = "{}"
+        };
+        fixture.Store.Runs.Add(run);
+
+        await Assert.ThrowsAsync<AllocationRunOperationException>(() => fixture.Service.CloseAsync(
+            run.Id, 1, Guid.NewGuid(), null, CancellationToken.None));
+
+        Assert.Equal(AllocationRunStatuses.AwaitingApproval, run.Status);
+        Assert.Empty(fixture.Store.Audits);
+    }
+
     internal class Fixture
     {
         public FakeStore Store { get; } = new();
@@ -209,6 +251,9 @@ public sealed class AllocationRunServiceTests
         public List<AllocationRunOrder> Orders { get; } = [];
         public List<AllocationRunLine> Lines { get; } = [];
         public List<AllocationRunStock> Pool { get; } = [];
+        public List<AuditLog> Audits { get; } = [];
+
+        public override void AddAuditLog(AuditLog auditLog) => Audits.Add(auditLog);
 
         public override Task<AllocationRun?> FindByBusinessDateAsync(DateOnly businessDate, CancellationToken cancellationToken) =>
             Task.FromResult(Runs.SingleOrDefault(item => item.BusinessDate == businessDate));

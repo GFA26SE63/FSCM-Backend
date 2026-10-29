@@ -39,6 +39,13 @@ public sealed class AllocationRunsController(
     public Task<AllocationRunResult> ByDate(DateOnly businessDate, CancellationToken cancellationToken) =>
         runs.GetByBusinessDateAsync(businessDate, cancellationToken);
 
+    /// <summary>F95: closes an approved run and freezes its auditable run report.</summary>
+    [Authorize(Roles = SystemRoles.Admin)]
+    [HttpPost("{runId:guid}/close")]
+    public Task<AllocationRunResult> Close(
+        Guid runId, CloseAllocationRunRequest request, CancellationToken cancellationToken) =>
+        runs.CloseAsync(runId, request.ExpectedVersion, ActorId(), request.Reason, cancellationToken);
+
     [HttpGet("{runId:guid}/plan-versions")]
     public Task<IReadOnlyCollection<AllocationPlanVersionResult>> PlanVersions(
         Guid runId, CancellationToken cancellationToken) =>

@@ -109,7 +109,7 @@ public sealed class PhysicalSchemaModelTests
         Assert.Equal(ExpectedTables, tableNames);
         Assert.Equal(83, entityTypes.Length);
         // Develop's run-picking shape plus loyalty scope, notification metadata and batch production date.
-        Assert.Equal(930, entityTypes.Sum(entityType => entityType.GetProperties().Count()));
+        Assert.Equal(934, entityTypes.Sum(entityType => entityType.GetProperties().Count()));
         Assert.Equal(189, entityTypes.Sum(entityType => entityType.GetForeignKeys().Count()));
         Assert.All(
             entityTypes.SelectMany(entityType => entityType.GetForeignKeys()),
