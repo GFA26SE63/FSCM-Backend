@@ -4752,14 +4752,14 @@ namespace FSCM.Persistence.Migrations
                         .HasMaxLength(150)
                         .HasColumnType("character varying(150)");
 
-                    b.Property<string>("EntraObjectId")
-                        .HasMaxLength(150)
-                        .HasColumnType("character varying(150)");
-
                     b.Property<string>("FullName")
                         .IsRequired()
                         .HasMaxLength(150)
                         .HasColumnType("character varying(150)");
+
+                    b.Property<string>("GoogleSubject")
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)");
 
                     b.Property<string>("IdentityProvider")
                         .IsRequired()
@@ -4782,9 +4782,9 @@ namespace FSCM.Persistence.Migrations
                     b.HasIndex("Email")
                         .IsUnique();
 
-                    b.HasIndex("EntraObjectId")
+                    b.HasIndex("GoogleSubject")
                         .IsUnique()
-                        .HasFilter("\"EntraObjectId\" IS NOT NULL");
+                        .HasFilter("\"GoogleSubject\" IS NOT NULL");
 
                     b.ToTable("USER_ACCOUNT", (string)null);
                 });

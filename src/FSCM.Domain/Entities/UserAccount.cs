@@ -5,7 +5,7 @@ namespace FSCM.Domain.Entities;
 public sealed class UserAccount
 {
     public Guid Id { get; set; }
-    public string? EntraObjectId { get; set; }
+    public string? GoogleSubject { get; set; }
     public string IdentityProvider { get; set; } = string.Empty;
     public string Email { get; set; } = string.Empty;
     public string FullName { get; set; } = string.Empty;

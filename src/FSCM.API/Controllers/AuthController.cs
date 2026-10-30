@@ -23,22 +23,24 @@ public sealed class AuthController(IdentityService identityService, IWebHostEnvi
             GetRemoteIpAddress(),
             cancellationToken);
 
-    [Authorize(Policy = AuthorizationPolicies.EntraExchange)]
-    [HttpPost("entra/exchange")]
+    [Authorize(Policy = AuthorizationPolicies.GoogleExchange)]
+    [HttpPost("google/exchange")]
     [ProducesResponseType<AuthenticationResult>(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
-    public Task<AuthenticationResult> ExchangeEntra(CancellationToken cancellationToken)
+    public Task<AuthenticationResult> ExchangeGoogle(CancellationToken cancellationToken)
     {
-        var objectId = User.FindFirstValue("oid");
-        var email = User.FindFirstValue("preferred_username")
-            ?? User.FindFirstValue("email")
+        var subject = User.FindFirstValue("sub");
+        var email = User.FindFirstValue("email")
             ?? User.FindFirstValue(ClaimTypes.Email);
-        if (string.IsNullOrWhiteSpace(objectId) || string.IsNullOrWhiteSpace(email))
+        var emailVerified = User.FindFirstValue("email_verified");
+        if (string.IsNullOrWhiteSpace(subject) ||
+            string.IsNullOrWhiteSpace(email) ||
+            !string.Equals(emailVerified, "true", StringComparison.OrdinalIgnoreCase))
             throw IdentityOperationException.InvalidToken();
 
-        return identityService.ExchangeEntraAsync(
-            new EntraIdentity(objectId, email),
+        return identityService.ExchangeGoogleAsync(
+            new GoogleIdentity(subject, email),
             GetRemoteIpAddress(),
             cancellationToken);
     }

@@ -8,7 +8,7 @@ public interface IIdentityStore
 
     Task<UserAccount?> FindUserByIdAsync(Guid userId, CancellationToken cancellationToken);
 
-    Task<UserAccount?> FindUserByEntraObjectIdAsync(string entraObjectId, CancellationToken cancellationToken);
+    Task<UserAccount?> FindUserByGoogleSubjectAsync(string googleSubject, CancellationToken cancellationToken);
 
     Task<(IReadOnlyCollection<UserAccount> Items, int TotalCount)> ListUsersAsync(
         UserListQuery query,

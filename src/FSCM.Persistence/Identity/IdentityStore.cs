@@ -17,11 +17,11 @@ public sealed class IdentityStore(AppDbContext dbContext) : IIdentityStore
     public Task<UserAccount?> FindUserByIdAsync(Guid userId, CancellationToken cancellationToken) =>
         dbContext.UserAccountRecords.SingleOrDefaultAsync(user => user.Id == userId, cancellationToken);
 
-    public Task<UserAccount?> FindUserByEntraObjectIdAsync(
-        string entraObjectId,
+    public Task<UserAccount?> FindUserByGoogleSubjectAsync(
+        string googleSubject,
         CancellationToken cancellationToken) =>
         dbContext.UserAccountRecords.SingleOrDefaultAsync(
-            user => user.EntraObjectId == entraObjectId,
+            user => user.GoogleSubject == googleSubject,
             cancellationToken);
 
     public async Task<(IReadOnlyCollection<UserAccount> Items, int TotalCount)> ListUsersAsync(

@@ -256,7 +256,7 @@ public sealed class PhysicalSchemaModelTests
             index.Properties.SequenceEqual([regionUserId, assignedRegionId])).IsUnique);
 
         var userAccount = context.Model.FindEntityType(typeof(UserAccount))!;
-        Assert.True(userAccount.FindProperty(nameof(UserAccount.EntraObjectId))!.IsNullable);
+        Assert.True(userAccount.FindProperty(nameof(UserAccount.GoogleSubject))!.IsNullable);
         Assert.False(userAccount.FindProperty(nameof(UserAccount.IdentityProvider))!.IsNullable);
     }
 
