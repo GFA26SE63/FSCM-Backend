@@ -14,7 +14,8 @@ public sealed record CreateUserRequest(
     string Email,
     string FullName,
     string Role,
-    string IdentityProvider = "Local");
+    string Phone,
+    string Password);
 
 public sealed record UpdateUserProfileRequest(string Email, string FullName);
 

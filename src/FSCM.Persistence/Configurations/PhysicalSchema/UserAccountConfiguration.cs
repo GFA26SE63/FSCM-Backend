@@ -14,6 +14,7 @@ public sealed class UserAccountConfiguration : IEntityTypeConfiguration<UserAcco
         builder.Property(entity => entity.GoogleSubject).HasMaxLength(255).IsRequired(false);
         builder.Property(entity => entity.IdentityProvider).HasMaxLength(20).IsRequired();
         builder.Property(entity => entity.Email).HasMaxLength(150).IsRequired();
+        builder.Property(entity => entity.Phone).HasMaxLength(20).IsRequired(false);
         builder.Property(entity => entity.FullName).HasMaxLength(150).IsRequired();
         builder.Property(entity => entity.Role).HasMaxLength(30).IsRequired();
         builder.Property(entity => entity.IsActive).IsRequired();

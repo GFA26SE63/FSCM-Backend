@@ -97,7 +97,8 @@ public sealed class IdentityServiceTests
                 "another@fscm.local",
                 "Another User",
                 SystemRoles.Admin,
-                IdentityProviders.Local,
+                "0901234567",
+                "Correct#Pass1",
                 Guid.NewGuid(),
                 CancellationToken.None));
         var promoteException = await Assert.ThrowsAsync<IdentityOperationException>(() =>
@@ -110,6 +111,43 @@ public sealed class IdentityServiceTests
         Assert.Equal("forbidden", createException.Code);
         Assert.Equal("forbidden", promoteException.Code);
         Assert.Single(fixture.Store.Users);
+    }
+
+    [Fact]
+    public async Task Admin_created_account_has_phone_password_and_supports_both_login_methods()
+    {
+        var fixture = new IdentityFixture();
+
+        var created = await fixture.Service.CreateUserAsync(
+            "new.sales@fscm.local",
+            "New Sales",
+            SystemRoles.Sales,
+            "0901234567",
+            "Correct#Pass1",
+            Guid.NewGuid(),
+            CancellationToken.None);
+
+        var user = Assert.Single(fixture.Store.Users);
+        Assert.Equal("0901234567", user.Phone);
+        Assert.True(user.IsActive);
+        Assert.Equal(IdentityProviders.Local, user.IdentityProvider);
+        Assert.Null(created.ActivationToken);
+        Assert.True(fixture.PasswordHasher.Verify(
+            "Correct#Pass1",
+            Assert.Single(fixture.Store.Credentials).PasswordHash));
+
+        var passwordLogin = await fixture.Service.LoginAsync(
+            user.Email,
+            "Correct#Pass1",
+            null,
+            CancellationToken.None);
+        var googleLogin = await fixture.Service.ExchangeGoogleAsync(
+            new GoogleIdentity("new-sales-google", user.Email),
+            null,
+            CancellationToken.None);
+
+        Assert.Equal(user.Id, passwordLogin.User.Id);
+        Assert.Equal(user.Id, googleLogin.User.Id);
     }
 
     [Fact]

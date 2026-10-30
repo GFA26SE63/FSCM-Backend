@@ -40,7 +40,8 @@ public sealed class UsersController(IdentityService identityService) : Controlle
             request.Email,
             request.FullName,
             request.Role,
-            request.IdentityProvider,
+            request.Phone,
+            request.Password,
             GetActorUserId(),
             cancellationToken);
 

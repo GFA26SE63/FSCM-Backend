@@ -304,14 +304,16 @@ public sealed class IdentityService(
         string email,
         string fullName,
         string role,
-        string identityProvider,
+        string phone,
+        string password,
         Guid actorUserId,
         CancellationToken cancellationToken)
     {
         var normalizedEmail = NormalizeEmail(email);
         ValidateFullName(fullName);
+        phone = ValidatePhone(phone);
+        ValidatePassword(password);
         EnsureAssignableRole(role);
-        identityProvider = NormalizeIdentityProvider(identityProvider);
 
         if (await store.FindUserByEmailAsync(normalizedEmail, cancellationToken) is not null)
         {
@@ -323,28 +325,29 @@ public sealed class IdentityService(
         var user = new UserAccount
         {
             Id = userId,
-            IdentityProvider = identityProvider,
+            IdentityProvider = IdentityProviders.Local,
             Email = normalizedEmail,
+            Phone = phone,
             FullName = fullName.Trim(),
             Role = role,
-            IsActive = identityProvider == IdentityProviders.Google,
+            IsActive = true,
             CreatedAt = now,
             UpdatedAt = now
         };
         store.AddUser(user);
-        string? rawToken = null;
-        AccountToken? accountToken = null;
-        if (identityProvider == IdentityProviders.Local)
+        store.AddCredential(new UserCredential
         {
-            (rawToken, accountToken) = CreateAccountToken(
-                userId,
-                AccountTokenPurposes.Activation,
-                now,
-                ActivationTokenLifetime);
-            store.AddAccountToken(accountToken);
-        }
+            Id = Guid.NewGuid(),
+            UserAccountId = userId,
+            PasswordHash = passwordHasher.Hash(password),
+            FailedLoginCount = 0,
+            MustChangePassword = false,
+            PasswordChangedAt = now,
+            CreatedAt = now,
+            UpdatedAt = now
+        });
         AddAudit(user.Id, actorUserId, "Created", null,
-            new { user.Email, user.FullName, user.Role, user.IdentityProvider, user.IsActive });
+            new { user.Email, user.Phone, user.FullName, user.Role, user.IdentityProvider, user.IsActive });
         await store.SaveChangesAsync(cancellationToken);
 
         return new CreatedUserResult(
@@ -352,8 +355,8 @@ public sealed class IdentityService(
             user.Email,
             user.Role,
             user.IdentityProvider,
-            rawToken,
-            accountToken?.ExpiresAt);
+            null,
+            null);
     }
 
     public async Task UpdateRoleAsync(
@@ -735,6 +738,18 @@ public sealed class IdentityService(
             throw IdentityOperationException.Validation(
                 "Password must be at least 12 characters and contain uppercase, lowercase, numeric, and special characters.");
         }
+    }
+
+    private static string ValidatePhone(string phone)
+    {
+        var normalized = phone?.Trim() ?? string.Empty;
+        if (normalized.Length != 10 || normalized[0] != '0' || normalized.Any(character => !char.IsDigit(character)))
+        {
+            throw IdentityOperationException.Validation(
+                "Phone number must contain 10 digits and start with 0.");
+        }
+
+        return normalized;
     }
 
     private static void EnsureAssignableRole(string role)
