@@ -1,4 +1,7 @@
 using FSCM.Application.Features.ManualPayments;
+using FSCM.UnitTests.Orders;
+using FSCM.Application.Features.Loyalty;
+using FSCM.UnitTests.Loyalty;
 using FSCM.Application.Features.Orders;
 using FSCM.Application.Features.Payments;
 using FSCM.Domain.Authorization;
@@ -168,7 +171,13 @@ public sealed class ManualPaymentServiceTests
                 UpdatedAt = Now.AddHours(-2)
             };
             Store = new FakeStore(Order, Retailer, Ledger);
-            Service = new ManualPaymentService(Store, Store, new FixedTimeProvider(Now));
+            // Same here: both fakes know no orders, so the completion call does nothing.
+            Service = new ManualPaymentService(Store, Store,
+                new OrderCompletionService(
+                    new FakeOrderCompletionStore(),
+                    new LoyaltyAccrualService(new FakeLoyaltyAccrualStore(), new FixedTimeProvider(Now)),
+                    new FixedTimeProvider(Now)),
+                new FixedTimeProvider(Now));
         }
 
         public Task<ManualPaymentResult> RecordAsync(

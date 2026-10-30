@@ -217,6 +217,8 @@ public sealed class PaymentApiTests
             services.AddSingleton<IPayOsGateway, TestPayOsGateway>();
             services.RemoveAll<IRefundStore>();
             services.AddSingleton<IRefundStore>(store);
+            services.RemoveAll<IOrderCompletionStore>();
+            services.AddSingleton<IOrderCompletionStore, TestOrderCompletionStore>();
         }));
 
     private static AuthenticationHeaderValue Bearer(
@@ -367,5 +369,15 @@ public sealed class PaymentApiTests
         public Task<PayOsVerifiedWebhook> VerifyWebhookAsync(
             PayOsWebhookEnvelope webhook, CancellationToken cancellationToken) =>
             Task.FromResult(new PayOsVerifiedWebhook(webhook.Code, webhook.Success, webhook.Data));
+    }
+
+    private sealed class TestOrderCompletionStore : IOrderCompletionStore
+    {
+        public Task<OrderCompletionView?> FindAsync(Guid salesOrderId, CancellationToken cancellationToken) =>
+            Task.FromResult<OrderCompletionView?>(null);
+
+        public Task CompleteAsync(
+            Guid salesOrderId, Guid? actorUserId, DateTimeOffset now, CancellationToken cancellationToken) =>
+            Task.CompletedTask;
     }
 }
