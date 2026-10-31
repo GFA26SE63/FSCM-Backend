@@ -33,6 +33,18 @@ public sealed class IdentityServiceTests
     }
 
     [Fact]
+    public async Task Login_accepts_phone_as_the_identifier()
+    {
+        var fixture = new IdentityFixture();
+        var user = fixture.AddActiveUser(SystemRoles.Retailer, "retailer@fscm.local", "Correct#Pass1");
+        user.Phone = "0901234567";
+
+        var result = await fixture.Service.LoginAsync("0901234567", "Correct#Pass1", null, default);
+
+        Assert.Equal(user.Id, result.User.Id);
+    }
+
+    [Fact]
     public async Task Login_locks_account_after_five_failed_attempts()
     {
         var fixture = new IdentityFixture();
@@ -336,6 +348,11 @@ public sealed class IdentityServiceTests
             string normalizedEmail,
             CancellationToken cancellationToken) =>
             Task.FromResult(Users.SingleOrDefault(user => user.Email == normalizedEmail));
+
+        public Task<UserAccount?> FindUserByPhoneAsync(
+            string normalizedPhone,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(Users.SingleOrDefault(user => user.Phone == normalizedPhone));
 
         public Task<UserAccount?> FindUserByIdAsync(Guid userId, CancellationToken cancellationToken) =>
             Task.FromResult(Users.SingleOrDefault(user => user.Id == userId));

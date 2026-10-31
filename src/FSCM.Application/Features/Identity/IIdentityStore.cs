@@ -6,6 +6,8 @@ public interface IIdentityStore
 {
     Task<UserAccount?> FindUserByEmailAsync(string normalizedEmail, CancellationToken cancellationToken);
 
+    Task<UserAccount?> FindUserByPhoneAsync(string normalizedPhone, CancellationToken cancellationToken);
+
     Task<UserAccount?> FindUserByIdAsync(Guid userId, CancellationToken cancellationToken);
 
     Task<UserAccount?> FindUserByGoogleSubjectAsync(string googleSubject, CancellationToken cancellationToken);

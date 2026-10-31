@@ -9,7 +9,10 @@ namespace FSCM.API.Controllers;
 
 [ApiController]
 [Route("api/v1/auth")]
-public sealed class AuthController(IdentityService identityService, IWebHostEnvironment environment) : ControllerBase
+public sealed class AuthController(
+    IdentityService identityService,
+    RetailerActivationService retailerActivationService,
+    IWebHostEnvironment environment) : ControllerBase
 {
     [AllowAnonymous]
     [HttpPost("login")]
@@ -18,7 +21,7 @@ public sealed class AuthController(IdentityService identityService, IWebHostEnvi
         LoginRequest request,
         CancellationToken cancellationToken) =>
         identityService.LoginAsync(
-            request.Email,
+            request.ResolvedIdentifier,
             request.Password,
             GetRemoteIpAddress(),
             cancellationToken);
@@ -52,6 +55,29 @@ public sealed class AuthController(IdentityService identityService, IWebHostEnvi
         RefreshTokenRequest request,
         CancellationToken cancellationToken) =>
         identityService.RefreshAsync(request.RefreshToken, GetRemoteIpAddress(), cancellationToken);
+
+    [AllowAnonymous]
+    [HttpPost("otp/request")]
+    [ProducesResponseType<OtpRequestResult>(StatusCodes.Status202Accepted)]
+    public async Task<ActionResult<OtpRequestResult>> RequestRetailerOtp(
+        RequestRetailerOtpRequest request, CancellationToken cancellationToken) =>
+        Accepted(await retailerActivationService.RequestOtpAsync(
+            request.Phone, GetRemoteIpAddress(), cancellationToken));
+
+    [AllowAnonymous]
+    [HttpPost("otp/verify")]
+    [ProducesResponseType<OtpVerificationResult>(StatusCodes.Status200OK)]
+    public Task<OtpVerificationResult> VerifyRetailerOtp(
+        VerifyRetailerOtpRequest request, CancellationToken cancellationToken) =>
+        retailerActivationService.VerifyOtpAsync(request.Phone, request.Code, cancellationToken);
+
+    [AllowAnonymous]
+    [HttpPost("password")]
+    [ProducesResponseType<AuthenticationResult>(StatusCodes.Status200OK)]
+    public Task<AuthenticationResult> SetRetailerPassword(
+        SetRetailerPasswordRequest request, CancellationToken cancellationToken) =>
+        retailerActivationService.SetPasswordAsync(
+            request.SetupToken, request.Password, GetRemoteIpAddress(), cancellationToken);
 
     [AllowAnonymous]
     [HttpPost("activate")]

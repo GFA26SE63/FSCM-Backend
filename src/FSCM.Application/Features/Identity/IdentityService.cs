@@ -17,13 +17,15 @@ public sealed class IdentityService(
     private static readonly TimeSpan PasswordResetTokenLifetime = TimeSpan.FromMinutes(30);
 
     public async Task<AuthenticationResult> LoginAsync(
-        string email,
+        string identifier,
         string password,
         string? ipAddress,
         CancellationToken cancellationToken)
     {
-        var normalizedEmail = NormalizeEmail(email);
-        var user = await store.FindUserByEmailAsync(normalizedEmail, cancellationToken);
+        var normalizedIdentifier = identifier?.Trim() ?? string.Empty;
+        var user = normalizedIdentifier.Contains('@', StringComparison.Ordinal)
+            ? await store.FindUserByEmailAsync(NormalizeEmail(normalizedIdentifier), cancellationToken)
+            : await store.FindUserByPhoneAsync(ValidatePhone(normalizedIdentifier), cancellationToken);
         var credential = user is null
             ? null
             : await store.FindCredentialAsync(user.Id, cancellationToken);
@@ -739,6 +741,8 @@ public sealed class IdentityService(
                 "Password must be at least 12 characters and contain uppercase, lowercase, numeric, and special characters.");
         }
     }
+
+    internal static void ValidatePasswordForActivation(string password) => ValidatePassword(password);
 
     private static string ValidatePhone(string phone)
     {

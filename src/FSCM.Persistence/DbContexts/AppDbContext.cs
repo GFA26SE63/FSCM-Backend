@@ -9,6 +9,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<AccountToken> AccountTokens => Set<AccountToken>();
     public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
     public DbSet<UserCredential> UserCredentials => Set<UserCredential>();
+    public DbSet<RetailerActivationChallenge> RetailerActivationChallenges => Set<RetailerActivationChallenge>();
 
     public DbSet<UserAccount> UserAccountRecords => Set<UserAccount>();
     public DbSet<Warehouse> WarehouseRecords => Set<Warehouse>();

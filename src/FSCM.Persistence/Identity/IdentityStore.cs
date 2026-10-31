@@ -14,6 +14,13 @@ public sealed class IdentityStore(AppDbContext dbContext) : IIdentityStore
             user => user.Email == normalizedEmail,
             cancellationToken);
 
+    public Task<UserAccount?> FindUserByPhoneAsync(
+        string normalizedPhone,
+        CancellationToken cancellationToken) =>
+        dbContext.UserAccountRecords.SingleOrDefaultAsync(
+            user => user.Phone == normalizedPhone,
+            cancellationToken);
+
     public Task<UserAccount?> FindUserByIdAsync(Guid userId, CancellationToken cancellationToken) =>
         dbContext.UserAccountRecords.SingleOrDefaultAsync(user => user.Id == userId, cancellationToken);
 

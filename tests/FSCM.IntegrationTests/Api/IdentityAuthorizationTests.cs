@@ -210,6 +210,21 @@ public sealed class IdentityAuthorizationTests : IClassFixture<IdentityAuthoriza
     }
 
     [Fact]
+    public async Task Local_login_accepts_a_phone_identifier()
+    {
+        using var client = factory.CreateClient();
+        var response = await client.PostAsJsonAsync("/api/v1/auth/login", new
+        {
+            Identifier = factory.Admin.Phone,
+            Password = IdentityApiFactory.LocalPassword
+        });
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var authentication = await response.Content.ReadFromJsonAsync<AuthenticationResult>();
+        Assert.Equal(factory.Admin.Id, authentication!.User.Id);
+    }
+
+    [Fact]
     public async Task Mobile_local_login_refresh_logout_and_inactive_account_lifecycle_is_enforced()
     {
         using var client = factory.CreateClient();
@@ -406,6 +421,7 @@ public sealed class IdentityAuthorizationTests : IClassFixture<IdentityAuthoriza
             {
                 Id = Guid.NewGuid(),
                 Email = email,
+                Phone = $"09000000{store.Users.Count + 10:D2}",
                 FullName = email,
                 Role = role,
                 IdentityProvider = IdentityProviders.Local,
@@ -462,6 +478,8 @@ public sealed class IdentityAuthorizationTests : IClassFixture<IdentityAuthoriza
 
         public Task<UserAccount?> FindUserByEmailAsync(string normalizedEmail, CancellationToken cancellationToken) =>
             Task.FromResult(Users.SingleOrDefault(user => user.Email == normalizedEmail));
+        public Task<UserAccount?> FindUserByPhoneAsync(string normalizedPhone, CancellationToken cancellationToken) =>
+            Task.FromResult(Users.SingleOrDefault(user => user.Phone == normalizedPhone));
         public Task<UserAccount?> FindUserByIdAsync(Guid userId, CancellationToken cancellationToken) =>
             Task.FromResult(Users.SingleOrDefault(user => user.Id == userId));
         public Task<UserAccount?> FindUserByGoogleSubjectAsync(string googleSubject, CancellationToken cancellationToken) =>
