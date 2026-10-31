@@ -50,7 +50,7 @@ public sealed class OrderCaptureApiTests
         {
             clientOrderKey = key,
             retailerId = orderStore.Retailer.Id,
-            paymentMethod = OrderPaymentMethods.Cod,
+            paymentMethod = OrderPaymentMethods.Prepaid,
             requestedDeliveryDate = "2027-01-10",
             offlineEstimatedAmount = 1_000m,
             snapshotVersion = snapshot.GetProperty("version").GetString(),
@@ -159,7 +159,7 @@ public sealed class OrderCaptureApiTests
         {
             clientOrderKey = Guid.NewGuid(),
             retailerId = store.Retailer.Id,
-            paymentMethod = OrderPaymentMethods.Cod,
+            paymentMethod = OrderPaymentMethods.Prepaid,
             requestedDeliveryDate = "2027-01-10",
             deliveryAddress = "12 Nguyễn Huệ, Thành phố Hồ Chí Minh",
             note = "Giao trong giờ hành chính",
@@ -263,7 +263,7 @@ public sealed class OrderCaptureApiTests
         {
             clientOrderKey = Guid.NewGuid(),
             retailerId = store.Retailer.Id,
-            paymentMethod = OrderPaymentMethods.Cod,
+            paymentMethod = OrderPaymentMethods.Prepaid,
             requestedDeliveryDate = "2027-01-10",
             lines = new[] { new { productId = store.Product.Id, quantity = 10 } }
         });
@@ -295,7 +295,7 @@ public sealed class OrderCaptureApiTests
         {
             clientOrderKey = Guid.NewGuid(),
             retailerId = store.Retailer.Code,
-            paymentMethod = OrderPaymentMethods.Cod,
+            paymentMethod = OrderPaymentMethods.Prepaid,
             requestedDeliveryDate = "2027-01-10",
             lines = new[] { new { productId = store.Product.Sku, quantity = 10 } }
         };
@@ -308,7 +308,7 @@ public sealed class OrderCaptureApiTests
         {
             clientOrderKey = Guid.NewGuid(),
             retailerId = store.Retailer.Id,
-            paymentMethod = OrderPaymentMethods.Cod,
+            paymentMethod = OrderPaymentMethods.Prepaid,
             requestedDeliveryDate = "2027-01-10",
             lines = new[] { new { productId = store.Product.Id, quantity = 10 } }
         };

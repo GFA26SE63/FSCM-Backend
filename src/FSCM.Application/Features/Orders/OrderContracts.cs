@@ -318,11 +318,17 @@ public static class OrderSources
     public const string Offline = "Offline";
 }
 
+/// <summary>
+/// The only order payment methods (SRS BR-51, Review 2): prepaid by bank transfer, or deferred
+/// credit for a Retailer with an approved term. Cash on delivery and prepaid cash are not offered.
+/// </summary>
 public static class OrderPaymentMethods
 {
+    /// <summary>Prepaid by bank transfer (payOS or verified manual transfer) before the order leaves.</summary>
     public const string Prepaid = "Prepaid";
-    public const string Cod = "COD";
+
+    /// <summary>Deferred payment on the Retailer's approved 7/14/30-day term.</summary>
     public const string Credit = "Credit";
 
-    public static bool IsSupported(string value) => value is Prepaid or Cod or Credit;
+    public static bool IsSupported(string value) => value is Prepaid or Credit;
 }

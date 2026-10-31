@@ -79,7 +79,7 @@ public sealed class DevelopmentDataSeeder(
             new CreateAssistedOrderData(
                 DemoOrderClientKey,
                 retailer.Id,
-                OrderPaymentMethods.Cod,
+                OrderPaymentMethods.Credit,
                 null,
                 null,
                 "Đơn hàng hỗ trợ mẫu cho cửa hàng An Khang",

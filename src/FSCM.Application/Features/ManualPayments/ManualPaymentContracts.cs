@@ -1,6 +1,6 @@
 namespace FSCM.Application.Features.ManualPayments;
 
-/// <summary>Records a manual payment (COD or prepaid) against a sales order.</summary>
+/// <summary>Records a manual prepaid bank-transfer payment against a sales order.</summary>
 public sealed record RecordManualPaymentData(
     Guid SalesOrderId, string Method, decimal Amount, bool MarkPaid, string? Note);
 

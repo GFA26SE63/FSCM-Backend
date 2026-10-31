@@ -9,8 +9,9 @@ using FSCM.Domain.Entities;
 namespace FSCM.Application.Features.ManualPayments;
 
 /// <summary>
-/// Records evidence-based COD or prepaid collections while updating the same locked payment
+/// Records evidence-based prepaid bank-transfer collections while updating the same locked payment
 /// ledger used by PayOS. Confirmed collections can therefore never exceed the final approved amount.
+/// COD and prepaid cash are refused (SRS BR-51); credit receivables use the receivables API.
 /// </summary>
 public sealed class ManualPaymentService(
     IManualPaymentStore store,
@@ -63,7 +64,7 @@ public sealed class ManualPaymentService(
                     "Final allocation approval must create the payment ledger before collection.");
 
             ValidateMethodMatchesOrder(method, ledger.Payment.Method);
-            ValidateCollectionTiming(method, ledger.Payment);
+            ValidateCollectionTiming(ledger.Payment);
             ValidateFullOutstandingAmount(data.Amount, ledger.Payment);
             if (data.MarkPaid) EnsureNoActivePayOsCheckout(ledger.Payment);
 
@@ -127,7 +128,7 @@ public sealed class ManualPaymentService(
                     order.Id, true, transactionCancellationToken)
                 ?? throw ManualPaymentOperationException.Conflict("Payment ledger was not found.");
             ValidateMethodMatchesOrder(payment.Method, ledger.Payment.Method);
-            ValidateCollectionTiming(payment.Method, ledger.Payment);
+            ValidateCollectionTiming(ledger.Payment);
             ValidateFullOutstandingAmount(payment.Amount, ledger.Payment);
             EnsureNoActivePayOsCheckout(ledger.Payment);
 
@@ -236,9 +237,7 @@ public sealed class ManualPaymentService(
         ledger.PaidDate = ledger.Status == PaymentStatuses.Paid
             ? DateOnly.FromDateTime(now.ToOffset(VietnamOffset).DateTime)
             : null;
-        ledger.CollectionMethod = payment.Method == ManualPaymentMethods.PrepaidTransfer
-            ? PaymentCollectionMethods.BankTransfer
-            : PaymentCollectionMethods.Cash;
+        ledger.CollectionMethod = PaymentCollectionMethods.BankTransfer;
         ledger.ConfirmedByUserId = actorUserId;
         ledger.ConfirmedAt = now;
         ledger.Note = payment.Note;
@@ -275,25 +274,20 @@ public sealed class ManualPaymentService(
 
     private static void ValidateMethodMatchesOrder(string method, string orderMethod)
     {
-        var valid = orderMethod switch
-        {
-            OrderPaymentMethods.Cod => method == ManualPaymentMethods.CashOnDelivery,
-            OrderPaymentMethods.Prepaid => method is ManualPaymentMethods.PrepaidTransfer or ManualPaymentMethods.PrepaidCash,
-            _ => false
-        };
+        // Only a prepaid order is collected here. A credit order is settled through receivables, and
+        // a legacy COD order no longer has a valid manual collection path.
+        var valid = orderMethod == OrderPaymentMethods.Prepaid
+            && method == ManualPaymentMethods.PrepaidTransfer;
         if (!valid)
             throw ManualPaymentOperationException.Conflict(
                 "Manual payment method does not match the final approved order payment method.");
     }
 
-    private static void ValidateCollectionTiming(string method, Payment ledger)
+    private static void ValidateCollectionTiming(Payment ledger)
     {
         if (ledger.FinalApprovedAt == default || string.IsNullOrWhiteSpace(ledger.FinalApprovalReference))
             throw ManualPaymentOperationException.Conflict(
                 "Collection requires a final allocation approval snapshot.");
-        if (method == ManualPaymentMethods.CashOnDelivery && !ledger.DeliveredDate.HasValue)
-            throw ManualPaymentOperationException.Conflict(
-                "COD can only be recorded or confirmed after complete delivery.");
     }
 
     private static void ValidateFullOutstandingAmount(decimal amount, Payment ledger)
@@ -348,12 +342,9 @@ public sealed class ManualPaymentService(
         var value = method.Trim();
         return value.ToLowerInvariant() switch
         {
-            "cod" or "cashondelivery" => ManualPaymentMethods.CashOnDelivery,
-            "prepaidtransfer" or "transfer" => ManualPaymentMethods.PrepaidTransfer,
-            "prepaidcash" or "cash" => ManualPaymentMethods.PrepaidCash,
-            _ when ManualPaymentMethods.All.Contains(value) => value,
+            "prepaidtransfer" or "transfer" or "banktransfer" => ManualPaymentMethods.PrepaidTransfer,
             _ => throw ManualPaymentOperationException.Validation(
-                "Payment method must be COD, PrepaidTransfer, or PrepaidCash.")
+                "Payment method must be PrepaidTransfer; COD and prepaid cash are not supported.")
         };
     }
 

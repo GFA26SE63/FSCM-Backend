@@ -1,4 +1,4 @@
-// Manual payment record for ad-hoc COD / prepaid collection against a sales order.
+// Manual payment record for a verified prepaid bank transfer against a sales order (no COD / prepaid cash, BR-51).
 // Independent of the PayOS receivable on PAYMENT; multiple manual records may exist per order.
 
 namespace FSCM.Domain.Entities;

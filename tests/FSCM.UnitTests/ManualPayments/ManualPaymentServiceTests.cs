@@ -14,13 +14,13 @@ public sealed class ManualPaymentServiceTests
     private static readonly DateTimeOffset Now = new(2026, 10, 20, 8, 0, 0, TimeSpan.Zero);
 
     [Fact]
-    public async Task Record_cod_creates_pending_payment_after_delivery()
+    public async Task Record_prepaid_transfer_creates_pending_payment()
     {
         var fixture = new Fixture();
 
-        var result = await fixture.RecordAsync("manual-cod-001", markPaid: false);
+        var result = await fixture.RecordAsync("manual-transfer-001", markPaid: false);
 
-        Assert.Equal(ManualPaymentMethods.CashOnDelivery, result.Method);
+        Assert.Equal(ManualPaymentMethods.PrepaidTransfer, result.Method);
         Assert.Equal(ManualPaymentStatuses.Pending, result.Status);
         Assert.Equal(fixture.Ledger.Amount, result.OutstandingAmount);
         Assert.Null(result.ConfirmedAt);
@@ -41,14 +41,51 @@ public sealed class ManualPaymentServiceTests
     }
 
     [Fact]
-    public async Task Cod_is_rejected_before_complete_delivery()
+    public void Only_prepaid_transfer_is_a_manual_payment_method()
     {
-        var fixture = new Fixture(delivered: false);
+        Assert.Equal([ManualPaymentMethods.PrepaidTransfer], ManualPaymentMethods.All);
+    }
+
+    [Theory]
+    [InlineData("COD")]
+    [InlineData("CashOnDelivery")]
+    [InlineData("PrepaidCash")]
+    [InlineData("cash")]
+    public async Task Cod_and_prepaid_cash_are_rejected(string method)
+    {
+        var fixture = new Fixture();
 
         var exception = await Assert.ThrowsAsync<ManualPaymentOperationException>(() =>
-            fixture.RecordAsync("manual-cod-early", markPaid: false));
+            fixture.RecordAsync($"manual-forbidden-{method}", markPaid: true, method: method));
+
+        Assert.Equal("validation_error", exception.Code);
+        Assert.Empty(fixture.Store.Payments);
+        Assert.Equal(0, fixture.Ledger.ConfirmedAmount);
+    }
+
+    [Theory]
+    [InlineData(OrderPaymentMethods.Credit)]
+    [InlineData("COD")]
+    public async Task Non_prepaid_order_cannot_be_collected_as_manual_payment(string orderMethod)
+    {
+        // Credit is settled through receivables; a legacy COD order has no manual path any more.
+        var fixture = new Fixture(orderMethod, delivered: true);
+
+        var exception = await Assert.ThrowsAsync<ManualPaymentOperationException>(() =>
+            fixture.RecordAsync("manual-non-prepaid-001", markPaid: true));
 
         Assert.Equal("conflict", exception.Code);
+        Assert.Equal(0, fixture.Ledger.ConfirmedAmount);
+    }
+
+    [Fact]
+    public async Task Confirmed_transfer_is_recorded_as_bank_transfer_collection()
+    {
+        var fixture = new Fixture();
+
+        await fixture.RecordAsync("manual-transfer-collection", markPaid: true);
+
+        Assert.Equal(PaymentCollectionMethods.BankTransfer, fixture.Ledger.CollectionMethod);
     }
 
     [Fact]
@@ -58,7 +95,7 @@ public sealed class ManualPaymentServiceTests
 
         var exception = await Assert.ThrowsAsync<ManualPaymentOperationException>(() =>
             fixture.Service.RecordAsync(fixture.OperatorId, SystemRoles.Operator,
-                new(fixture.Order.Id, ManualPaymentMethods.CashOnDelivery, 50_000m, false, null),
+                new(fixture.Order.Id, ManualPaymentMethods.PrepaidTransfer, 50_000m, false, null),
                 "manual-partial-001", default));
 
         Assert.Equal("conflict", exception.Code);
@@ -74,7 +111,7 @@ public sealed class ManualPaymentServiceTests
         Assert.Equal(first.Id, replay.Id);
         var exception = await Assert.ThrowsAsync<ManualPaymentOperationException>(() =>
             fixture.Service.RecordAsync(fixture.OperatorId, SystemRoles.Operator,
-                new(fixture.Order.Id, ManualPaymentMethods.CashOnDelivery,
+                new(fixture.Order.Id, ManualPaymentMethods.PrepaidTransfer,
                     fixture.Ledger.Amount, false, "Nội dung khác"),
                 "manual-idempotent-001", default));
         Assert.Equal("conflict", exception.Code);
@@ -104,7 +141,7 @@ public sealed class ManualPaymentServiceTests
 
         var exception = await Assert.ThrowsAsync<ManualPaymentOperationException>(() =>
             fixture.Service.RecordAsync(fixture.Order.CreatedByUserId, SystemRoles.Sales,
-                new(fixture.Order.Id, ManualPaymentMethods.CashOnDelivery,
+                new(fixture.Order.Id, ManualPaymentMethods.PrepaidTransfer,
                     fixture.Ledger.Amount, false, null), "manual-sales-001", default));
 
         Assert.Equal("forbidden", exception.Code);
@@ -134,7 +171,7 @@ public sealed class ManualPaymentServiceTests
         public FakeStore Store { get; }
         public ManualPaymentService Service { get; }
 
-        public Fixture(string paymentMethod = OrderPaymentMethods.Cod, bool delivered = true)
+        public Fixture(string paymentMethod = OrderPaymentMethods.Prepaid, bool delivered = false)
         {
             Retailer = new Retailer
             {
@@ -181,7 +218,7 @@ public sealed class ManualPaymentServiceTests
         }
 
         public Task<ManualPaymentResult> RecordAsync(
-            string key, bool markPaid, string method = ManualPaymentMethods.CashOnDelivery) =>
+            string key, bool markPaid, string method = ManualPaymentMethods.PrepaidTransfer) =>
             Service.RecordAsync(OperatorId, SystemRoles.Operator,
                 new(Order.Id, method, Ledger.Amount, markPaid, "Ghi nhận thanh toán thủ công"),
                 key, default);

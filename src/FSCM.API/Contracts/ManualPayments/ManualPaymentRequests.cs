@@ -1,9 +1,10 @@
 namespace FSCM.API.Contracts.ManualPayments;
 
 /// <summary>
-/// Records a manual payment against a sales order. <c>Method</c> accepts COD, PrepaidTransfer or PrepaidCash.
-/// Set <c>MarkPaid</c> to true to record an already-received payment (prepaid or cash-in-hand);
-/// leave it false to register an expected COD amount that is confirmed later on delivery.
+/// Records a manual prepaid payment against a sales order. <c>Method</c> accepts only
+/// <c>PrepaidTransfer</c>; COD and prepaid cash are rejected (SRS BR-51).
+/// Set <c>MarkPaid</c> to true when the transfer is already verified; leave it false to register
+/// the transfer evidence and confirm it later.
 /// </summary>
 public sealed record RecordManualPaymentRequest(
     Guid SalesOrderId, string Method, decimal Amount, bool MarkPaid = false, string? Note = null);

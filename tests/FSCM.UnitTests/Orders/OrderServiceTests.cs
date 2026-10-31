@@ -69,6 +69,25 @@ public sealed class OrderServiceTests
         Assert.Empty(fixture.Store.Orders);
     }
 
+    [Theory]
+    [InlineData("COD")]
+    [InlineData("cod")]
+    [InlineData("PrepaidCash")]
+    [InlineData("Cash")]
+    public async Task Cod_and_prepaid_cash_are_not_order_payment_methods(string method)
+    {
+        // SRS BR-51: only Prepaid (bank transfer) and approved Credit are allowed.
+        var fixture = new Fixture();
+        var request = fixture.Request(10) with { PaymentMethod = method };
+
+        var exception = await Assert.ThrowsAsync<OrderOperationException>(() =>
+            fixture.Service.CreateAsync(request, fixture.SalesUserId, default));
+
+        Assert.Equal("validation_error", exception.Code);
+        Assert.Empty(fixture.Store.Orders);
+        Assert.False(OrderPaymentMethods.IsSupported(method));
+    }
+
     [Fact]
     public async Task Repeated_client_order_key_returns_original_order_without_inventory_side_effect()
     {
@@ -386,7 +405,7 @@ public sealed class OrderServiceTests
         public CreateAssistedOrderData Request(int quantity) => new(
             Guid.Parse("10000000-0000-0000-0000-000000000001"),
             Store.Retailer.Id,
-            OrderPaymentMethods.Cod,
+            OrderPaymentMethods.Prepaid,
             new DateOnly(2026, 10, 20),
             null,
             "Giao trong giờ hành chính",
@@ -398,7 +417,7 @@ public sealed class OrderServiceTests
         public SubmitOfflineOrderData OfflineRequest(int quantity, decimal estimate) => new(
             Guid.Parse("10000000-0000-0000-0000-000000000002"),
             Store.Retailer.Id,
-            OrderPaymentMethods.Cod,
+            OrderPaymentMethods.Prepaid,
             new DateOnly(2026, 10, 20),
             null,
             "Đơn nháp offline",
