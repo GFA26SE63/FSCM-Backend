@@ -181,7 +181,7 @@ public sealed class IdentityAuthorizationTests : IClassFixture<IdentityAuthoriza
     }
 
     [Fact]
-    public async Task Local_and_entra_login_can_run_in_parallel_for_the_same_account()
+    public async Task Local_and_google_login_can_run_in_parallel_for_the_same_account()
     {
         using var client = factory.CreateClient();
 
@@ -192,12 +192,12 @@ public sealed class IdentityAuthorizationTests : IClassFixture<IdentityAuthoriza
         });
         Assert.Equal(HttpStatusCode.OK, localResponse.StatusCode);
 
-        const string entraObjectId = "4c45f3a1-36fe-43a3-a21b-a763495134e4";
+        const string googleSubject = "google-subject-4c45f3a1";
         client.DefaultRequestHeaders.Authorization = Bearer(
-            factory.CreateEntraToken(factory.Admin, entraObjectId));
-        var entraResponse = await client.PostAsync("/api/v1/auth/entra/exchange", null);
-        Assert.Equal(HttpStatusCode.OK, entraResponse.StatusCode);
-        Assert.Equal(entraObjectId, factory.Admin.EntraObjectId);
+            factory.CreateGoogleToken(factory.Admin, googleSubject));
+        var googleResponse = await client.PostAsync("/api/v1/auth/google/exchange", null);
+        Assert.Equal(HttpStatusCode.OK, googleResponse.StatusCode);
+        Assert.Equal(googleSubject, factory.Admin.GoogleSubject);
         Assert.Equal(IdentityProviders.Local, factory.Admin.IdentityProvider);
 
         client.DefaultRequestHeaders.Authorization = null;
@@ -207,6 +207,21 @@ public sealed class IdentityAuthorizationTests : IClassFixture<IdentityAuthoriza
             Password = IdentityApiFactory.LocalPassword
         });
         Assert.Equal(HttpStatusCode.OK, secondLocalResponse.StatusCode);
+    }
+
+    [Fact]
+    public async Task Local_login_accepts_a_phone_identifier()
+    {
+        using var client = factory.CreateClient();
+        var response = await client.PostAsJsonAsync("/api/v1/auth/login", new
+        {
+            Identifier = factory.Admin.Phone,
+            Password = IdentityApiFactory.LocalPassword
+        });
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var authentication = await response.Content.ReadFromJsonAsync<AuthenticationResult>();
+        Assert.Equal(factory.Admin.Id, authentication!.User.Id);
     }
 
     [Fact]
@@ -262,8 +277,8 @@ public sealed class IdentityAuthorizationTests : IClassFixture<IdentityAuthoriza
     {
         private const string Issuer = "FSCM.API.Tests";
         private const string Audience = "FSCM.Clients.Tests";
-        private const string EntraIssuer = "https://login.microsoftonline.com/fscm-tests/v2.0";
-        private const string EntraAudience = "fscm-tests-client";
+        private const string GoogleIssuer = "https://accounts.google.com";
+        private const string GoogleAudience = "fscm-tests-client.apps.googleusercontent.com";
         private const string Secret = "identity-tests-signing-key-at-least-32-bytes-long";
         public const string LocalPassword = "Correct#Pass1";
         private readonly TestIdentityStore store = new();
@@ -323,15 +338,16 @@ public sealed class IdentityAuthorizationTests : IClassFixture<IdentityAuthoriza
             return handler.WriteToken(handler.CreateToken(descriptor));
         }
 
-        public string CreateEntraToken(UserAccount user, string entraObjectId)
+        public string CreateGoogleToken(UserAccount user, string googleSubject)
         {
             var descriptor = new SecurityTokenDescriptor
             {
-                Issuer = EntraIssuer,
-                Audience = EntraAudience,
+                Issuer = GoogleIssuer,
+                Audience = GoogleAudience,
                 Subject = new ClaimsIdentity([
-                    new Claim("oid", entraObjectId),
-                    new Claim("preferred_username", user.Email)
+                    new Claim("sub", googleSubject),
+                    new Claim("email", user.Email),
+                    new Claim("email_verified", "true")
                 ]),
                 Expires = DateTime.UtcNow.AddMinutes(10),
                 SigningCredentials = new SigningCredentials(
@@ -378,17 +394,17 @@ public sealed class IdentityAuthorizationTests : IClassFixture<IdentityAuthoriza
                         ClockSkew = TimeSpan.Zero
                     });
                 services.PostConfigure<JwtBearerOptions>(
-                    FSCM.API.Security.AuthenticationSchemes.Entra,
+                    FSCM.API.Security.AuthenticationSchemes.Google,
                     options =>
                     {
                         options.Authority = null;
-                        options.Audience = EntraAudience;
+                        options.Audience = GoogleAudience;
                         options.TokenValidationParameters = new TokenValidationParameters
                         {
                             ValidateIssuer = true,
-                            ValidIssuer = EntraIssuer,
+                            ValidIssuer = GoogleIssuer,
                             ValidateAudience = true,
-                            ValidAudience = EntraAudience,
+                            ValidAudience = GoogleAudience,
                             ValidateIssuerSigningKey = true,
                             IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(Secret)),
                             ValidateLifetime = true,
@@ -405,6 +421,7 @@ public sealed class IdentityAuthorizationTests : IClassFixture<IdentityAuthoriza
             {
                 Id = Guid.NewGuid(),
                 Email = email,
+                Phone = $"09000000{store.Users.Count + 10:D2}",
                 FullName = email,
                 Role = role,
                 IdentityProvider = IdentityProviders.Local,
@@ -461,10 +478,12 @@ public sealed class IdentityAuthorizationTests : IClassFixture<IdentityAuthoriza
 
         public Task<UserAccount?> FindUserByEmailAsync(string normalizedEmail, CancellationToken cancellationToken) =>
             Task.FromResult(Users.SingleOrDefault(user => user.Email == normalizedEmail));
+        public Task<UserAccount?> FindUserByPhoneAsync(string normalizedPhone, CancellationToken cancellationToken) =>
+            Task.FromResult(Users.SingleOrDefault(user => user.Phone == normalizedPhone));
         public Task<UserAccount?> FindUserByIdAsync(Guid userId, CancellationToken cancellationToken) =>
             Task.FromResult(Users.SingleOrDefault(user => user.Id == userId));
-        public Task<UserAccount?> FindUserByEntraObjectIdAsync(string entraObjectId, CancellationToken cancellationToken) =>
-            Task.FromResult(Users.SingleOrDefault(user => user.EntraObjectId == entraObjectId));
+        public Task<UserAccount?> FindUserByGoogleSubjectAsync(string googleSubject, CancellationToken cancellationToken) =>
+            Task.FromResult(Users.SingleOrDefault(user => user.GoogleSubject == googleSubject));
         public Task<(IReadOnlyCollection<UserAccount> Items, int TotalCount)> ListUsersAsync(
             UserListQuery query, CancellationToken cancellationToken)
         {

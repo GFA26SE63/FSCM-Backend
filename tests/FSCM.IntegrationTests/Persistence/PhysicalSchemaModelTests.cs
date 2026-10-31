@@ -109,7 +109,7 @@ public sealed class PhysicalSchemaModelTests
         Assert.Equal(ExpectedTables, tableNames);
         Assert.Equal(83, entityTypes.Length);
         // Develop's run-picking shape plus loyalty scope, notification metadata and batch production date.
-        Assert.Equal(934, entityTypes.Sum(entityType => entityType.GetProperties().Count()));
+        Assert.Equal(935, entityTypes.Sum(entityType => entityType.GetProperties().Count()));
         Assert.Equal(189, entityTypes.Sum(entityType => entityType.GetForeignKeys().Count()));
         Assert.All(
             entityTypes.SelectMany(entityType => entityType.GetForeignKeys()),
@@ -256,8 +256,10 @@ public sealed class PhysicalSchemaModelTests
             index.Properties.SequenceEqual([regionUserId, assignedRegionId])).IsUnique);
 
         var userAccount = context.Model.FindEntityType(typeof(UserAccount))!;
-        Assert.True(userAccount.FindProperty(nameof(UserAccount.EntraObjectId))!.IsNullable);
+        Assert.True(userAccount.FindProperty(nameof(UserAccount.GoogleSubject))!.IsNullable);
         Assert.False(userAccount.FindProperty(nameof(UserAccount.IdentityProvider))!.IsNullable);
+        Assert.True(userAccount.FindProperty(nameof(UserAccount.Phone))!.IsNullable);
+        Assert.Equal(20, userAccount.FindProperty(nameof(UserAccount.Phone))!.GetMaxLength());
     }
 
     [Fact]

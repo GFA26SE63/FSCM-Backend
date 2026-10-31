@@ -22,6 +22,8 @@ public sealed class IdentityExceptionHandler(IProblemDetailsService problemDetai
             // can react differently (re-authenticate vs account locked).
             "invalid_credentials" or "invalid_token" => StatusCodes.Status401Unauthorized,
             "account_locked" => StatusCodes.Status423Locked,
+            "rate_limited" => StatusCodes.Status429TooManyRequests,
+            "email_delivery_failed" => StatusCodes.Status503ServiceUnavailable,
             "forbidden" => StatusCodes.Status403Forbidden,
             "not_found" => StatusCodes.Status404NotFound,
             "conflict" => StatusCodes.Status409Conflict,

@@ -22,7 +22,7 @@ public static class ServiceCollectionExtensions
     {
         services.Configure<CorsOptions>(configuration.GetSection(CorsOptions.SectionName));
         services.Configure<JwtOptions>(configuration.GetSection(JwtOptions.SectionName));
-        services.Configure<EntraOptions>(configuration.GetSection(EntraOptions.SectionName));
+        services.Configure<GoogleOptions>(configuration.GetSection(GoogleOptions.SectionName));
         services.Configure<OpenAiOptions>(configuration.GetSection(OpenAiOptions.SectionName));
 
         services.AddControllers();
@@ -89,9 +89,9 @@ public static class ServiceCollectionExtensions
             options.DefaultPolicy = new AuthorizationPolicyBuilder(JwtBearerDefaults.AuthenticationScheme)
                 .RequireAuthenticatedUser()
                 .Build();
-            options.AddPolicy(AuthorizationPolicies.EntraExchange, policy =>
+            options.AddPolicy(AuthorizationPolicies.GoogleExchange, policy =>
             {
-                policy.AddAuthenticationSchemes(AuthenticationSchemes.Entra);
+                policy.AddAuthenticationSchemes(AuthenticationSchemes.Google);
                 policy.RequireAuthenticatedUser();
             });
         });
@@ -139,9 +139,9 @@ public static class ServiceCollectionExtensions
         var jwtOptions = configuration
             .GetSection(JwtOptions.SectionName)
             .Get<JwtOptions>() ?? new JwtOptions();
-        var entraOptions = configuration
-            .GetSection(EntraOptions.SectionName)
-            .Get<EntraOptions>() ?? new EntraOptions();
+        var googleOptions = configuration
+            .GetSection(GoogleOptions.SectionName)
+            .Get<GoogleOptions>() ?? new GoogleOptions();
         var localKeyBytes = Encoding.UTF8.GetBytes(jwtOptions.Secret);
         var signingKey = new SymmetricSecurityKey(
             localKeyBytes.Length >= 32 ? localKeyBytes : RandomNumberGenerator.GetBytes(32));
@@ -164,25 +164,28 @@ public static class ServiceCollectionExtensions
                     ClockSkew = TimeSpan.FromMinutes(1)
                 };
             })
-            .AddJwtBearer(AuthenticationSchemes.Entra, options =>
+            .AddJwtBearer(AuthenticationSchemes.Google, options =>
             {
-                var configured = !string.IsNullOrWhiteSpace(entraOptions.TenantId) &&
-                    !string.IsNullOrWhiteSpace(entraOptions.ClientId);
+                var clientIds = googleOptions.ClientIds
+                    .Where(clientId => !string.IsNullOrWhiteSpace(clientId))
+                    .Select(clientId => clientId.Trim())
+                    .Distinct(StringComparer.Ordinal)
+                    .ToArray();
+                var configured = clientIds.Length > 0;
                 if (configured)
                 {
-                    options.Authority = $"https://login.microsoftonline.com/{entraOptions.TenantId}/v2.0";
-                    options.Audience = entraOptions.ClientId;
+                    options.Authority = "https://accounts.google.com";
                 }
                 options.RequireHttpsMetadata = true;
                 options.MapInboundClaims = false;
                 options.TokenValidationParameters = new TokenValidationParameters
                 {
                     ValidateIssuer = true,
-                    ValidIssuer = configured
-                        ? $"https://login.microsoftonline.com/{entraOptions.TenantId}/v2.0"
-                        : "__entra_not_configured__",
+                    ValidIssuers = configured
+                        ? ["https://accounts.google.com", "accounts.google.com"]
+                        : ["__google_not_configured__"],
                     ValidateAudience = true,
-                    ValidAudience = configured ? entraOptions.ClientId : "__entra_not_configured__",
+                    ValidAudiences = configured ? clientIds : ["__google_not_configured__"],
                     ValidateIssuerSigningKey = true,
                     ValidateLifetime = true,
                     NameClaimType = "name",

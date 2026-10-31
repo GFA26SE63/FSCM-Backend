@@ -17,19 +17,21 @@ public sealed class IdentityService(
     private static readonly TimeSpan PasswordResetTokenLifetime = TimeSpan.FromMinutes(30);
 
     public async Task<AuthenticationResult> LoginAsync(
-        string email,
+        string identifier,
         string password,
         string? ipAddress,
         CancellationToken cancellationToken)
     {
-        var normalizedEmail = NormalizeEmail(email);
-        var user = await store.FindUserByEmailAsync(normalizedEmail, cancellationToken);
+        var normalizedIdentifier = identifier?.Trim() ?? string.Empty;
+        var user = normalizedIdentifier.Contains('@', StringComparison.Ordinal)
+            ? await store.FindUserByEmailAsync(NormalizeEmail(normalizedIdentifier), cancellationToken)
+            : await store.FindUserByPhoneAsync(ValidatePhone(normalizedIdentifier), cancellationToken);
         var credential = user is null
             ? null
             : await store.FindCredentialAsync(user.Id, cancellationToken);
 
         // Authentication methods are capabilities, not mutually exclusive account types.
-        // A password credential enables local login even after the same account is linked to Entra.
+        // A password credential enables local login even after the same account is linked to Google.
         if (user is null || credential is null || !user.IsActive)
         {
             throw IdentityOperationException.InvalidCredentials();
@@ -62,32 +64,32 @@ public sealed class IdentityService(
         return await IssueAuthenticationResultAsync(user, credential, ipAddress, now, cancellationToken);
     }
 
-    public async Task<AuthenticationResult> ExchangeEntraAsync(
-        EntraIdentity identity,
+    public async Task<AuthenticationResult> ExchangeGoogleAsync(
+        GoogleIdentity identity,
         string? ipAddress,
         CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(identity.ObjectId) || identity.ObjectId.Trim().Length > 150)
+        if (string.IsNullOrWhiteSpace(identity.Subject) || identity.Subject.Trim().Length > 255)
             throw IdentityOperationException.InvalidToken();
 
         var normalizedEmail = NormalizeEmail(identity.Email);
-        var objectId = identity.ObjectId.Trim();
-        var user = await store.FindUserByEntraObjectIdAsync(objectId, cancellationToken);
+        var subject = identity.Subject.Trim();
+        var user = await store.FindUserByGoogleSubjectAsync(subject, cancellationToken);
         if (user is null)
         {
             user = await store.FindUserByEmailAsync(normalizedEmail, cancellationToken);
             if (user is null)
                 throw IdentityOperationException.Forbidden(
-                    "The Entra identity has not been provisioned in FSCM.");
+                    "The Google identity has not been provisioned in FSCM.");
             if (!user.IsActive)
                 throw IdentityOperationException.Forbidden("The FSCM account is inactive.");
-            if (!string.IsNullOrWhiteSpace(user.EntraObjectId))
+            if (!string.IsNullOrWhiteSpace(user.GoogleSubject))
                 throw IdentityOperationException.Conflict(
-                    "The FSCM account is already linked to another Entra identity.");
+                    "The FSCM account is already linked to another Google identity.");
 
-            user.EntraObjectId = objectId;
+            user.GoogleSubject = subject;
             user.UpdatedAt = timeProvider.GetUtcNow();
-            AddAudit(user.Id, user.Id, "EntraIdentityLinked", null, new { EntraObjectId = objectId });
+            AddAudit(user.Id, user.Id, "GoogleIdentityLinked", null, new { GoogleSubject = subject });
         }
 
         if (!user.IsActive)
@@ -304,14 +306,16 @@ public sealed class IdentityService(
         string email,
         string fullName,
         string role,
-        string identityProvider,
+        string phone,
+        string password,
         Guid actorUserId,
         CancellationToken cancellationToken)
     {
         var normalizedEmail = NormalizeEmail(email);
         ValidateFullName(fullName);
+        phone = ValidatePhone(phone);
+        ValidatePassword(password);
         EnsureAssignableRole(role);
-        identityProvider = NormalizeIdentityProvider(identityProvider);
 
         if (await store.FindUserByEmailAsync(normalizedEmail, cancellationToken) is not null)
         {
@@ -323,28 +327,29 @@ public sealed class IdentityService(
         var user = new UserAccount
         {
             Id = userId,
-            IdentityProvider = identityProvider,
+            IdentityProvider = IdentityProviders.Local,
             Email = normalizedEmail,
+            Phone = phone,
             FullName = fullName.Trim(),
             Role = role,
-            IsActive = identityProvider == IdentityProviders.Entra,
+            IsActive = true,
             CreatedAt = now,
             UpdatedAt = now
         };
         store.AddUser(user);
-        string? rawToken = null;
-        AccountToken? accountToken = null;
-        if (identityProvider == IdentityProviders.Local)
+        store.AddCredential(new UserCredential
         {
-            (rawToken, accountToken) = CreateAccountToken(
-                userId,
-                AccountTokenPurposes.Activation,
-                now,
-                ActivationTokenLifetime);
-            store.AddAccountToken(accountToken);
-        }
+            Id = Guid.NewGuid(),
+            UserAccountId = userId,
+            PasswordHash = passwordHasher.Hash(password),
+            FailedLoginCount = 0,
+            MustChangePassword = false,
+            PasswordChangedAt = now,
+            CreatedAt = now,
+            UpdatedAt = now
+        });
         AddAudit(user.Id, actorUserId, "Created", null,
-            new { user.Email, user.FullName, user.Role, user.IdentityProvider, user.IsActive });
+            new { user.Email, user.Phone, user.FullName, user.Role, user.IdentityProvider, user.IsActive });
         await store.SaveChangesAsync(cancellationToken);
 
         return new CreatedUserResult(
@@ -352,8 +357,8 @@ public sealed class IdentityService(
             user.Email,
             user.Role,
             user.IdentityProvider,
-            rawToken,
-            accountToken?.ExpiresAt);
+            null,
+            null);
     }
 
     public async Task UpdateRoleAsync(
@@ -737,6 +742,20 @@ public sealed class IdentityService(
         }
     }
 
+    internal static void ValidatePasswordForActivation(string password) => ValidatePassword(password);
+
+    private static string ValidatePhone(string phone)
+    {
+        var normalized = phone?.Trim() ?? string.Empty;
+        if (normalized.Length != 10 || normalized[0] != '0' || normalized.Any(character => !char.IsDigit(character)))
+        {
+            throw IdentityOperationException.Validation(
+                "Phone number must contain 10 digits and start with 0.");
+        }
+
+        return normalized;
+    }
+
     private static void EnsureAssignableRole(string role)
     {
         if (!SystemRoles.CanBeAssignedThroughApi(role))
@@ -749,12 +768,12 @@ public sealed class IdentityService(
     private static string NormalizeIdentityProvider(string identityProvider)
     {
         if (string.IsNullOrWhiteSpace(identityProvider))
-            throw IdentityOperationException.Validation("Identity provider must be Local or Entra.");
+            throw IdentityOperationException.Validation("Identity provider must be Local or Google.");
         if (identityProvider.Equals(IdentityProviders.Local, StringComparison.OrdinalIgnoreCase))
             return IdentityProviders.Local;
-        if (identityProvider.Equals(IdentityProviders.Entra, StringComparison.OrdinalIgnoreCase))
-            return IdentityProviders.Entra;
-        throw IdentityOperationException.Validation("Identity provider must be Local or Entra.");
+        if (identityProvider.Equals(IdentityProviders.Google, StringComparison.OrdinalIgnoreCase))
+            return IdentityProviders.Google;
+        throw IdentityOperationException.Validation("Identity provider must be Local or Google.");
     }
 
     private static string? LimitIpAddress(string? ipAddress) =>

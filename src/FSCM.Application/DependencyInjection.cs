@@ -54,6 +54,7 @@ public static class DependencyInjection
         services.AddScoped<ShipmentService>();
         services.AddScoped<ReportService>();
         services.AddScoped<IdentityService>();
+        services.AddScoped<RetailerActivationService>();
         services.AddScoped<InventoryService>();
         services.AddScoped<InventoryLifecycleService>();
         services.AddScoped<InventoryLockService>();
