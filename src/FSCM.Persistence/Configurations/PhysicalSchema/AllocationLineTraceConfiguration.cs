@@ -11,7 +11,8 @@ public sealed class AllocationLineTraceConfiguration : IEntityTypeConfiguration<
         builder.ToTable("ALLOCATION_LINE_TRACE");
         builder.HasKey(entity => entity.Id);
         builder.Property(entity => entity.Id).HasColumnType("uuid").IsRequired();
-        builder.Property(entity => entity.AllocationPlanVersionId).HasColumnType("uuid").IsRequired();
+        builder.Ignore(entity => entity.AllocationPlanVersionId);
+        builder.Property(entity => entity.AllocationRunId).HasColumnType("uuid").IsRequired();
         builder.Property(entity => entity.AllocationRunLineId).HasColumnType("uuid").IsRequired();
         builder.Property(entity => entity.Outcome).HasMaxLength(30).IsRequired();
         builder.Property(entity => entity.OrderedQuantity).HasPrecision(18, 3).IsRequired();
@@ -24,10 +25,10 @@ public sealed class AllocationLineTraceConfiguration : IEntityTypeConfiguration<
         builder.Property(entity => entity.MaximumDistanceMeters).HasPrecision(18, 3).IsRequired();
         builder.Property(entity => entity.Note).HasMaxLength(500).IsRequired(false);
         builder.Property(entity => entity.CreatedAt).HasColumnType("timestamp with time zone").IsRequired();
-        builder.HasIndex(entity => new { entity.AllocationPlanVersionId, entity.AllocationRunLineId }).IsUnique();
-        builder.HasOne<AllocationPlanVersion>()
+        builder.HasIndex(entity => new { entity.AllocationRunId, entity.AllocationRunLineId }).IsUnique();
+        builder.HasOne<AllocationRun>()
             .WithMany()
-            .HasForeignKey(entity => entity.AllocationPlanVersionId)
+            .HasForeignKey(entity => entity.AllocationRunId)
             .OnDelete(DeleteBehavior.Restrict);
         builder.HasOne<AllocationRunLine>()
             .WithMany()

@@ -509,12 +509,12 @@ public sealed class ShipmentServiceTests
         await fixture.Service.ConfirmIssueAsync(
             first.Id, new ConfirmShipmentIssueData(first.Version), actor,
             SystemRoles.WarehouseKeeper, CancellationToken.None);
-        Assert.NotEqual(OrderStatuses.Issued, fixture.Order.Status);
+        Assert.Equal(OrderStatuses.ConvertedToPo, fixture.Order.Status);
 
         await fixture.Service.ConfirmIssueAsync(
             second.Id, new ConfirmShipmentIssueData(second.Version), actor,
             SystemRoles.WarehouseKeeper, CancellationToken.None);
-        Assert.Equal(OrderStatuses.Issued, fixture.Order.Status);
+        Assert.Equal(OrderStatuses.ConvertedToPo, fixture.Order.Status);
     }
 
     [Fact]

@@ -180,7 +180,7 @@ public sealed class S1BMasterDataApiTests
                 Id = Guid.NewGuid(),
                 Code = "WH-TD",
                 Name = "Kho Thủ Đức",
-                Type = "Regional",
+                RegionId = Guid.NewGuid(),
                 Address = "Thành phố Thủ Đức",
                 MinimumStockThresholdCartons = 120,
                 IsActive = true,

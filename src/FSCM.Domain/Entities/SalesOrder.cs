@@ -28,6 +28,7 @@ public sealed class SalesOrder
     public decimal? OfflineEstimatedAmount { get; set; }
     public bool HasOfflineDifference { get; set; }
     public DateTimeOffset ServerReceivedAt { get; set; }
+    public DateTimeOffset AcceptedAt { get; set; }
     public DateTimeOffset? ReviewedAt { get; set; }
     public string? RejectionReason { get; set; }
     public int Version { get; set; }

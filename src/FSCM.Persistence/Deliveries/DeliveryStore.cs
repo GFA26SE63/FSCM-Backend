@@ -89,9 +89,10 @@ public sealed class DeliveryStore(AppDbContext dbContext) : IDeliveryStore
     {
         var labelIds = await (
             from list in dbContext.PickingListRecords.AsNoTracking()
+            join po in dbContext.PurchaseOrderRecords.AsNoTracking() on list.PurchaseOrderId equals po.Id
             join labelEvent in dbContext.QrLabelEventRecords.AsNoTracking()
                 on list.PickingCode equals labelEvent.ReferenceCode
-            where list.SalesOrderId == orderId && labelEvent.EventType == QrLabelEventTypes.Picked
+            where po.SalesOrderId == orderId && labelEvent.EventType == QrLabelEventTypes.Picked
             select new { labelEvent.BatchQrLabelId, list.PickingCode })
             .Distinct().ToArrayAsync(cancellationToken);
         var ids = labelIds.Select(item => item.BatchQrLabelId).ToArray();
@@ -107,10 +108,11 @@ public sealed class DeliveryStore(AppDbContext dbContext) : IDeliveryStore
         Guid orderId, CancellationToken cancellationToken) =>
         await (
             from list in dbContext.PickingListRecords.AsNoTracking()
+            join po in dbContext.PurchaseOrderRecords.AsNoTracking() on list.PurchaseOrderId equals po.Id
             join item in dbContext.PickingItemRecords.AsNoTracking() on list.Id equals item.PickingListId
             join allocation in dbContext.AllocationRecords.AsNoTracking() on item.AllocationId equals allocation.Id
             join balance in dbContext.InventoryBalanceRecords.AsNoTracking() on allocation.BatchId equals balance.BatchId
-            where list.SalesOrderId == orderId
+            where po.SalesOrderId == orderId
             orderby allocation.BatchId, allocation.AllocationSequence, allocation.Id
             select new DeliveryInventoryIssue(allocation.Id, allocation.BatchId, balance.Version))
             .ToArrayAsync(cancellationToken);

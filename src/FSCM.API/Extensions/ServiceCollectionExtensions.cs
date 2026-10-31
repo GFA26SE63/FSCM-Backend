@@ -42,7 +42,6 @@ public static class ServiceCollectionExtensions
         services.AddExceptionHandler<InventoryLockExceptionHandler>();
         services.AddExceptionHandler<InternalTransferExceptionHandler>();
         services.AddExceptionHandler<LoyaltyExceptionHandler>();
-        services.AddExceptionHandler<ManualPaymentExceptionHandler>();
         services.AddExceptionHandler<MapExceptionHandler>();
         services.AddExceptionHandler<OrderExceptionHandler>();
         services.AddExceptionHandler<PaymentExceptionHandler>();

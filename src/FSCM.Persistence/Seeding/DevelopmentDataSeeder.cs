@@ -29,7 +29,8 @@ public sealed class DevelopmentDataSeeder(
     private const string DemoSalesGroupCode = "HCM-A";
     private const string DemoRetailerCode = "10004127";
     private const string LegacyDemoRetailerCode = "RTL-HCM-001";
-    private static readonly Guid DemoOrderClientKey = Guid.Parse("10000000-0000-0000-0000-000000001030");
+    // New idempotency identity after Review 2 removed COD from the seeded order contract.
+    private static readonly Guid DemoOrderClientKey = Guid.Parse("10000000-0000-0000-0000-000000001031");
 
     private static readonly (string Email, string FullName, string Role)[] DemoUsers =
     [
@@ -79,7 +80,7 @@ public sealed class DevelopmentDataSeeder(
             new CreateAssistedOrderData(
                 DemoOrderClientKey,
                 retailer.Id,
-                OrderPaymentMethods.Cod,
+                OrderPaymentMethods.Credit,
                 null,
                 null,
                 "Đơn hàng hỗ trợ mẫu cho cửa hàng An Khang",
@@ -264,49 +265,6 @@ public sealed class DevelopmentDataSeeder(
         }
         await dbContext.SaveChangesAsync(cancellationToken);
 
-        var batch = await dbContext.BatchRecords.SingleAsync(
-            item => item.BatchCode == "WH-TD-SKU002-14102026-28102026", cancellationToken);
-        var batchPromotion = await dbContext.PromotionRecords.SingleOrDefaultAsync(
-            item => item.Code == "KM-003", cancellationToken);
-        if (batchPromotion is null)
-        {
-            batchPromotion = new Promotion
-            {
-                Id = Guid.NewGuid(),
-                Code = "KM-003",
-                CreatedByUserId = adminUserId,
-                CreatedAt = now
-            };
-            dbContext.PromotionRecords.Add(batchPromotion);
-        }
-        batchPromotion.Name = "Chiết khấu lô sữa chua gần hạn";
-        batchPromotion.PromotionType = PromotionTypes.BatchDiscount;
-        batchPromotion.MinimumQuantity = 1m;
-        batchPromotion.DiscountPercent = 15m;
-        batchPromotion.StartAt = new DateTimeOffset(2026, 10, 10, 0, 0, 0, TimeSpan.FromHours(7)).ToUniversalTime();
-        batchPromotion.EndAt = new DateTimeOffset(2026, 10, 20, 23, 59, 59, TimeSpan.FromHours(7)).ToUniversalTime();
-        batchPromotion.IsActive = true;
-        batchPromotion.UpdatedAt = now;
-        await dbContext.SaveChangesAsync(cancellationToken);
-
-        var assignment = await dbContext.BatchPromotionRecords.SingleOrDefaultAsync(
-            item => item.BatchId == batch.Id && item.PromotionId == batchPromotion.Id,
-            cancellationToken);
-        if (assignment is null)
-        {
-            assignment = new BatchPromotion
-            {
-                Id = Guid.NewGuid(),
-                BatchId = batch.Id,
-                PromotionId = batchPromotion.Id,
-                AssignedByUserId = adminUserId,
-                AssignedAt = now
-            };
-            dbContext.BatchPromotionRecords.Add(assignment);
-        }
-        assignment.IsActive = true;
-        assignment.RemovedAt = null;
-        await dbContext.SaveChangesAsync(cancellationToken);
     }
 
     private async Task SeedQrLabelDataAsync(Guid warehouseKeeperId, DateTimeOffset now, CancellationToken cancellationToken)
@@ -698,8 +656,8 @@ public sealed class DevelopmentDataSeeder(
             dbContext.WarehouseRecords.Add(warehouse);
         }
 
-        warehouse.Name = "Kho trung tâm Củ Chi";
-        warehouse.Type = WarehouseTypes.Central;
+        warehouse.Name = "Kho Củ Chi";
+        warehouse.RegionId = (await dbContext.RegionRecords.SingleAsync(item => item.Code == DemoRegionCode, cancellationToken)).Id;
         warehouse.Address = "Đường Nguyễn Thị Rành, huyện Củ Chi, Thành phố Hồ Chí Minh";
         warehouse.MinimumStockThresholdCartons = 150;
         warehouse.IsActive = true;
@@ -718,11 +676,11 @@ public sealed class DevelopmentDataSeeder(
     {
         var definitions = new[]
         {
-            new WarehouseSeed(centralWarehouse.Code, "Kho trung tâm Củ Chi", WarehouseTypes.Central,
+            new WarehouseSeed(centralWarehouse.Code, "Kho Củ Chi", DemoRegionCode,
                 "Đường Nguyễn Thị Rành, huyện Củ Chi, Thành phố Hồ Chí Minh", 10.9747000m, 106.4931000m, 150),
-            new WarehouseSeed("WH-TD", "Kho vùng Thủ Đức", WarehouseTypes.Regional,
+            new WarehouseSeed("WH-TD", "Kho Thủ Đức", DemoRegionCode,
                 "Đường Võ Chí Công, thành phố Thủ Đức, Thành phố Hồ Chí Minh", 10.8480000m, 106.7720000m, 100),
-            new WarehouseSeed("WH-Q7", "Kho vùng Quận 7", WarehouseTypes.Regional,
+            new WarehouseSeed("WH-Q7", "Kho Quận 7", DemoRegionCode,
                 "Đường Nguyễn Văn Linh, Quận 7, Thành phố Hồ Chí Minh", 10.7298000m, 106.7219000m, 80)
         };
         var warehouses = new List<Warehouse>();
@@ -737,7 +695,7 @@ public sealed class DevelopmentDataSeeder(
             }
 
             warehouse.Name = definition.Name;
-            warehouse.Type = definition.Type;
+            warehouse.RegionId = (await dbContext.RegionRecords.SingleAsync(item => item.Code == definition.RegionCode, cancellationToken)).Id;
             warehouse.Address = definition.Address;
             warehouse.MinimumStockThresholdCartons = definition.MinimumStockThresholdCartons;
             warehouse.IsActive = true;
@@ -1434,7 +1392,7 @@ public sealed class DevelopmentDataSeeder(
     private sealed record WarehouseSeed(
         string Code,
         string Name,
-        string Type,
+        string RegionCode,
         string Address,
         decimal Latitude,
         decimal Longitude,
