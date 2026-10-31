@@ -13,7 +13,8 @@ public sealed class ShipmentConfiguration : IEntityTypeConfiguration<Shipment>
         builder.Property(entity => entity.Id).HasColumnType("uuid").IsRequired();
         builder.Property(entity => entity.SalesOrderId).HasColumnType("uuid").IsRequired();
         builder.Property(entity => entity.WarehouseId).HasColumnType("uuid").IsRequired();
-        builder.Property(entity => entity.RunPickingListId).HasColumnType("uuid").IsRequired();
+        builder.Ignore(entity => entity.RunPickingListId);
+        builder.Property(entity => entity.PickingListId).HasColumnType("uuid").IsRequired(false);
         builder.Property(entity => entity.ShipmentCode).HasMaxLength(60).IsRequired();
         builder.Property(entity => entity.Status).HasMaxLength(30).IsRequired();
         builder.Property(entity => entity.DriverId).HasColumnType("uuid").IsRequired(false);
@@ -39,12 +40,12 @@ public sealed class ShipmentConfiguration : IEntityTypeConfiguration<Shipment>
         // One shipment per (order, warehouse); a run picking list spans many orders, so its index
         // is intentionally non-unique.
         builder.HasIndex(entity => new { entity.SalesOrderId, entity.WarehouseId }).IsUnique();
-        builder.HasIndex(entity => entity.RunPickingListId);
+        builder.HasIndex(entity => entity.PickingListId);
         builder.HasOne<SalesOrder>().WithMany().HasForeignKey(entity => entity.SalesOrderId)
             .OnDelete(DeleteBehavior.Restrict);
         builder.HasOne<Warehouse>().WithMany().HasForeignKey(entity => entity.WarehouseId)
             .OnDelete(DeleteBehavior.Restrict);
-        builder.HasOne<RunPickingList>().WithMany().HasForeignKey(entity => entity.RunPickingListId)
+        builder.HasOne<PickingList>().WithMany().HasForeignKey(entity => entity.PickingListId)
             .OnDelete(DeleteBehavior.Restrict);
         builder.HasOne<Driver>().WithMany().HasForeignKey(entity => entity.DriverId)
             .OnDelete(DeleteBehavior.Restrict);

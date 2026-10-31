@@ -9,7 +9,6 @@ using FSCM.Application.Features.Inventory;
 using FSCM.Application.Features.InventoryLocks;
 using FSCM.Application.Features.InternalTransfers;
 using FSCM.Application.Features.Loyalty;
-using FSCM.Application.Features.ManualPayments;
 using FSCM.Application.Features.Maps;
 using FSCM.Application.Features.MobileSnapshots;
 using FSCM.Application.Features.Notifications;
@@ -39,7 +38,6 @@ using FSCM.Persistence.Inventory;
 using FSCM.Persistence.InventoryLocks;
 using FSCM.Persistence.InternalTransfers;
 using FSCM.Persistence.Loyalty;
-using FSCM.Persistence.ManualPayments;
 using FSCM.Persistence.Maps;
 using FSCM.Persistence.MobileSnapshots;
 using FSCM.Persistence.Notifications;
@@ -82,8 +80,8 @@ public static class DependencyInjection
             });
         }
 
-        services.AddScoped<IAllocationRunStore, AllocationRunStore>();
         services.AddScoped<IEntityQueryService, EntityQueryService>();
+        services.AddScoped<IRealTimeAllocationStore, RealTimeAllocationStore>();
         services.AddScoped<ICatalogStore, CatalogStore>();
         services.AddScoped<IDeliveryStore, DeliveryStore>();
         services.AddScoped<IShipmentStore, ShipmentStore>();
@@ -94,8 +92,6 @@ public static class DependencyInjection
         services.AddScoped<IInventoryLifecycleStore, InventoryStore>();
         services.AddScoped<IInventoryOutboxStore, InventoryOutboxStore>();
         services.AddScoped<IInventoryLockStore, InventoryLockStore>();
-        services.AddScoped<IInternalTransferStore, InternalTransferStore>();
-        services.AddScoped<IManualPaymentStore, ManualPaymentStore>();
         services.AddScoped<ILoyaltyStore, LoyaltyStore>();
         services.AddScoped<IRewardStore, RewardStore>();
         services.AddScoped<IRedemptionStore, RedemptionStore>();
@@ -110,9 +106,9 @@ public static class DependencyInjection
         services.AddScoped<IOrderStore, OrderStore>();
         services.AddScoped<IOrderReleaseStore, OrderReleaseStore>();
         services.AddScoped<IPaymentStore, PaymentStore>();
+        services.AddScoped<IPaymentReceiptStore, PaymentReceiptStore>();
         services.AddScoped<IRetailerReceivableStore, RetailerReceivableStore>();
         services.AddScoped<IPickingStore, PickingStore>();
-        services.AddScoped<IRunPickingStore, RunPickingStore>();
         services.AddScoped<IQrLabelStore, QrLabelStore>();
         services.AddScoped<IPromotionStore, PromotionStore>();
         services.AddScoped<IRetailerStore, RetailerStore>();

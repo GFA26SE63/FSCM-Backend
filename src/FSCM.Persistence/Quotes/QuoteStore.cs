@@ -10,8 +10,9 @@ public sealed class QuoteStore(AppDbContext db) : IQuoteStore
     public Task<QuoteView?> FindAsync(Guid id, bool forUpdate, CancellationToken ct)
     {
         var quotes = forUpdate ? db.SalesOrderQuoteRecords : db.SalesOrderQuoteRecords.AsNoTracking();
+        var orders = forUpdate ? db.SalesOrderRecords : db.SalesOrderRecords.AsNoTracking();
         return (from quote in quotes
-                join order in db.SalesOrderRecords.AsNoTracking() on quote.SalesOrderId equals order.Id
+                join order in orders on quote.SalesOrderId equals order.Id
                 join po0 in db.PurchaseOrderRecords.AsNoTracking() on quote.PurchaseOrderId equals po0.Id into pos
                 from po in pos.DefaultIfEmpty()
                 where quote.Id == id
@@ -31,19 +32,12 @@ public sealed class QuoteStore(AppDbContext db) : IQuoteStore
          where quote.Id == quoteId && retailer.UserAccountId == userId
          select quote.Id).AnyAsync(ct);
 
-    public async Task<IReadOnlyCollection<QuoteIssueOrder>> ListOrdersForPlanAsync(Guid planVersionId, CancellationToken ct) =>
-        await (from price in db.AllocationPlanPriceRecords.AsNoTracking()
-               join line in db.AllocationRunLineRecords.AsNoTracking() on price.AllocationRunLineId equals line.Id
-               join runOrder in db.AllocationRunOrderRecords.AsNoTracking() on line.AllocationRunOrderId equals runOrder.Id
-               where price.AllocationPlanVersionId == planVersionId
-               group price by new { runOrder.SalesOrderId, runOrder.AllocationRunId } into grouped
-               select new QuoteIssueOrder(grouped.Key.SalesOrderId, grouped.Key.AllocationRunId, grouped.Sum(x => x.Amount))).ToArrayAsync(ct);
-
-    public Task<bool> HasPurchaseOrderAsync(Guid allocationPlanVersionId, CancellationToken ct) =>
-        db.PurchaseOrderRecords.AnyAsync(x => x.SalesOrderQuoteId != Guid.Empty && db.SalesOrderQuoteRecords.Any(q => q.Id == x.SalesOrderQuoteId && q.AllocationPlanVersionId == allocationPlanVersionId), ct);
+    public Task<Payment?> FindPaymentByOrderAsync(Guid orderId, CancellationToken ct) =>
+        db.PaymentRecords.SingleOrDefaultAsync(x => x.SalesOrderId == orderId, ct);
 
     public void Add(SalesOrderQuote quote) => db.SalesOrderQuoteRecords.Add(quote);
     public void AddPurchaseOrder(PurchaseOrder purchaseOrder) => db.PurchaseOrderRecords.Add(purchaseOrder);
+    public void AddPayment(Payment payment) => db.PaymentRecords.Add(payment);
     public Task SaveChangesAsync(CancellationToken ct) => db.SaveChangesAsync(ct);
 
     private IQueryable<QuoteView> Build(IQueryable<SalesOrderQuote> quotes) =>

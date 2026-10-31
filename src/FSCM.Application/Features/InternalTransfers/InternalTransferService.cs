@@ -12,8 +12,7 @@ public sealed class InternalTransferService(IInternalTransferStore store, TimePr
         var threshold = await store.GetRegionalMinimumStockAsync(cancellationToken);
         var positions = await store.ListSuggestionInventoryAsync(cancellationToken);
         var activeRegionalWarehouses = await store.ListActiveRegionalWarehousesAsync(cancellationToken);
-        var central = positions.Where(item => item.Warehouse.Type == WarehouseTypes.Central &&
-            item.Warehouse.IsActive && item.Balance.AvailableQuantity > 0 &&
+        var central = positions.Where(item => item.Warehouse.IsActive && item.Balance.AvailableQuantity > 0 &&
             item.Batch.ExpirationDate >= DateOnly.FromDateTime(timeProvider.GetUtcNow().UtcDateTime) &&
             (!productId.HasValue || item.Product.Id == productId.Value)).ToArray();
         var regionalWarehouses = activeRegionalWarehouses
@@ -94,8 +93,8 @@ public sealed class InternalTransferService(IInternalTransferStore store, TimePr
             ?? throw InternalTransferOperationException.NotFound("Source warehouse was not found.");
         var destination = await store.FindWarehouseAsync(data.DestinationWarehouseId, cancellationToken)
             ?? throw InternalTransferOperationException.NotFound("Destination warehouse was not found.");
-        if (!source.IsActive || source.Type != WarehouseTypes.Central || !destination.IsActive || destination.Type != WarehouseTypes.Regional)
-            throw InternalTransferOperationException.Validation("Approved replenishment only supports an active Central warehouse to an active Regional warehouse.");
+        if (!source.IsActive || !destination.IsActive)
+            throw InternalTransferOperationException.Validation("Both warehouses must be active.");
 
         var inventories = new List<(CreateInternalTransferLineData Line, TransferInventoryView Inventory)>();
         foreach (var line in data.Lines)

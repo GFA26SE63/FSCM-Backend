@@ -8,18 +8,18 @@ public sealed class WarehouseConfigurationServiceTests
     private static readonly DateTimeOffset Now = new(2026, 10, 13, 2, 0, 0, TimeSpan.Zero);
 
     [Fact]
-    public async Task Create_warehouse_persists_type_address_and_coordinates()
+    public async Task Create_warehouse_persists_region_address_and_coordinates()
     {
         var fixture = new Fixture();
 
         var result = await fixture.Service.CreateWarehouseAsync(new SaveWarehouseData(
-            "wh-td", "Kho vùng Thủ Đức", WarehouseTypes.Regional,
+            "wh-td", "Kho Thủ Đức", fixture.RegionId,
             "Thành phố Thủ Đức, Thành phố Hồ Chí Minh", 10.848m, 106.772m,
             "dia-diem-thu-duc", 120),
             CancellationToken.None);
 
         Assert.Equal("WH-TD", result.Code);
-        Assert.Equal(WarehouseTypes.Regional, result.Type);
+        Assert.Equal(fixture.RegionId, result.RegionId);
         Assert.Equal(10.848m, result.Latitude);
         Assert.Equal(120, result.MinimumStockThresholdCartons);
         Assert.Single(fixture.Store.Warehouses);
@@ -167,6 +167,7 @@ public sealed class WarehouseConfigurationServiceTests
 
     private sealed class Fixture
     {
+        public Guid RegionId { get; } = Guid.NewGuid();
         public Fixture()
         {
             Store = new InMemoryStore();
@@ -182,8 +183,8 @@ public sealed class WarehouseConfigurationServiceTests
             {
                 Id = Guid.NewGuid(),
                 Code = "WH-CC",
-                Name = "Kho trung tâm Củ Chi",
-                Type = WarehouseTypes.Central,
+                Name = "Kho Củ Chi",
+                RegionId = RegionId,
                 Address = "Huyện Củ Chi, Thành phố Hồ Chí Minh",
                 IsActive = true,
                 CreatedAt = Now,
