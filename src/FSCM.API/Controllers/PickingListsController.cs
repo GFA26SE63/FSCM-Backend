@@ -8,6 +8,7 @@ using Microsoft.AspNetCore.Mvc;
 namespace FSCM.API.Controllers;
 
 [ApiController]
+[NonController]
 [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator},{SystemRoles.WarehouseKeeper}")]
 [Route("api/v1/picking-lists")]
 public sealed class PickingListsController(PickingService service) : ControllerBase

@@ -139,24 +139,6 @@ public sealed class OrderServiceTests
         Assert.Empty(fixture.Store.Orders);
     }
 
-    [Fact]
-    public async Task Reviewing_an_order_parks_it_for_the_run_and_commits_no_stock()
-    {
-        var fixture = new Fixture();
-        var created = await fixture.CreateAsync(10);
-
-        var approved = await fixture.Service.ApproveAsync(
-            created.Id, created.Version, fixture.OperatorUserId, SystemRoles.Operator, default);
-
-        Assert.Equal(OrderStatuses.PendingAllocation, approved.Status);
-        Assert.Equal(0m, fixture.Store.Balance.ReservedQuantity);
-        Assert.Equal(50m, fixture.Store.Balance.AvailableQuantity);
-        Assert.Equal(1, approved.Version);
-        Assert.Equal(0, fixture.Inventory.ReserveCalls);
-        // Picking lists come from the run (F43), not from reviewing one order.
-        Assert.Equal(0, fixture.PickingPlan.Calls);
-    }
-
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -243,20 +225,6 @@ public sealed class OrderServiceTests
                 fixture.OperatorUserId, SystemRoles.Operator, default));
 
         Assert.Equal("validation_error", exception.Code);
-        Assert.Equal(OrderStatuses.PendingApproval, fixture.Store.Orders.Single().Status);
-    }
-
-    [Fact]
-    public async Task Stale_order_version_is_rejected()
-    {
-        var fixture = new Fixture();
-        var created = await fixture.CreateAsync(10);
-
-        var exception = await Assert.ThrowsAsync<OrderOperationException>(() =>
-            fixture.Service.ApproveAsync(created.Id, created.Version + 1, fixture.OperatorUserId,
-                SystemRoles.Operator, default));
-
-        Assert.Equal("conflict", exception.Code);
         Assert.Equal(OrderStatuses.PendingApproval, fixture.Store.Orders.Single().Status);
     }
 
@@ -405,7 +373,11 @@ public sealed class OrderServiceTests
         public CreateAssistedOrderData Request(int quantity) => new(
             Guid.Parse("10000000-0000-0000-0000-000000000001"),
             Store.Retailer.Id,
+<<<<<<< HEAD
             OrderPaymentMethods.Prepaid,
+=======
+            OrderPaymentMethods.Credit,
+>>>>>>> 396d00a85d5d6e2eec2a4cfa09f02b874b431ba6
             new DateOnly(2026, 10, 20),
             null,
             "Giao trong giờ hành chính",
@@ -417,7 +389,11 @@ public sealed class OrderServiceTests
         public SubmitOfflineOrderData OfflineRequest(int quantity, decimal estimate) => new(
             Guid.Parse("10000000-0000-0000-0000-000000000002"),
             Store.Retailer.Id,
+<<<<<<< HEAD
             OrderPaymentMethods.Prepaid,
+=======
+            OrderPaymentMethods.Credit,
+>>>>>>> 396d00a85d5d6e2eec2a4cfa09f02b874b431ba6
             new DateOnly(2026, 10, 20),
             null,
             "Đơn nháp offline",

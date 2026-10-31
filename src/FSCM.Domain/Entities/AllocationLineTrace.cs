@@ -13,6 +13,7 @@ public sealed class AllocationLineTrace
 {
     public Guid Id { get; set; }
     public Guid AllocationPlanVersionId { get; set; }
+    public Guid AllocationRunId { get; set; }
     public Guid AllocationRunLineId { get; set; }
 
     /// <summary>Allocated, Short, or Released once the order gave up and handed the stock back.</summary>

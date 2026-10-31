@@ -2,18 +2,23 @@ namespace FSCM.Application.Features.AllocationRuns;
 
 public static class AllocationRunStatuses
 {
+    public const string Processing = "Processing";
+    public const string Succeeded = "Succeeded";
+    public const string OutOfStock = "OutOfStock";
+    public const string Conflict = "Conflict";
+    public const string TechnicalFailed = "TechnicalFailed";
     /// <summary>Orders locked and the pool snapshotted; scoring has not started.</summary>
-    public const string Snapshotted = "Snapshotted";
+    public const string Snapshotted = Processing;
 
     /// <summary>Batch selection and pricing are running.</summary>
-    public const string Planning = "Planning";
+    public const string Planning = Processing;
 
     /// <summary>A plan exists and is waiting for Admin to approve goods and price.</summary>
-    public const string AwaitingApproval = "AwaitingApproval";
+    public const string AwaitingApproval = Succeeded;
 
-    public const string Approved = "Approved";
-    public const string Closed = "Closed";
-    public const string Failed = "Failed";
+    public const string Approved = Succeeded;
+    public const string Closed = Succeeded;
+    public const string Failed = TechnicalFailed;
 }
 
 /// <summary>

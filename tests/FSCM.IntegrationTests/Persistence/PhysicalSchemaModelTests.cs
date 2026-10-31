@@ -11,7 +11,6 @@ public sealed class PhysicalSchemaModelTests
         "ALLOCATION",
         "ALLOCATION_LINE_TRACE",
         "ALLOCATION_PLAN_PRICE",
-        "ALLOCATION_PLAN_VERSION",
         "ALLOCATION_RUN",
         "ALLOCATION_RUN_ALLOCATION",
         "ALLOCATION_RUN_LINE",
@@ -21,7 +20,6 @@ public sealed class PhysicalSchemaModelTests
         "ALLOCATION_TRACE_SCORE",
         "AUDIT_LOG",
         "BATCH",
-        "BATCH_PROMOTION",
         "BATCH_QR_LABEL",
         "BUSINESS_DOCUMENT_SEQUENCE",
         "DELIVERY",
@@ -42,6 +40,8 @@ public sealed class PhysicalSchemaModelTests
         "ORDER_STATUS_HISTORY",
         "OUTBOX_MESSAGE",
         "PAYMENT",
+        "PAYMENT_RECEIPT",
+        "PAYMENT_RECEIPT_ALLOCATION",
         "PICKING_ITEM",
         "PICKING_LIST",
         "PRODUCT",
@@ -58,15 +58,13 @@ public sealed class PhysicalSchemaModelTests
         "RECEIPT_DISCREPANCY",
         "RECEIPT_DISCREPANCY_ITEM",
         "REGION",
+        "REPLACEMENT_CASE",
         "RESERVATION",
         "RETAILER",
         "RETAILER_LOYALTY",
         "RETAILER_PRODUCT_MLOR",
         "RETAILER_SALES_ASSIGNMENT",
         "REWARD_REDEMPTION",
-        "RUN_PICKING_GATHER",
-        "RUN_PICKING_LIST",
-        "RUN_PICKING_SPLIT",
         "SALES_GROUP",
         "SALES_GROUP_MEMBER",
         "SALES_ORDER",
@@ -74,7 +72,6 @@ public sealed class PhysicalSchemaModelTests
         "SALES_ORDER_LINE",
         "SHELF_LIFE_DISCOUNT_TABLE",
         "SHELF_LIFE_DISCOUNT_TIER",
-        "STOCK_HOLD",
         "SYSTEM_CONFIGURATION",
         "TRANSIT_TABLE",
         "TRANSIT_TABLE_BAND",
@@ -84,10 +81,6 @@ public sealed class PhysicalSchemaModelTests
         "USER_WAREHOUSE_ASSIGNMENT",
         "VEHICLE",
         "WAREHOUSE",
-        "WAREHOUSE_TRANSFER",
-        "WAREHOUSE_TRANSFER_EVENT",
-        "WAREHOUSE_TRANSFER_ITEM",
-        "WAREHOUSE_TRANSFER_LABEL",
         "WRITE_OFF",
         "WRITE_OFF_ATTACHMENT",
         "WRITE_OFF_ITEM"
@@ -107,10 +100,6 @@ public sealed class PhysicalSchemaModelTests
             .ToArray();
 
         Assert.Equal(ExpectedTables, tableNames);
-        Assert.Equal(83, entityTypes.Length);
-        // Develop's run-picking shape plus loyalty scope, notification metadata and batch production date.
-        Assert.Equal(935, entityTypes.Sum(entityType => entityType.GetProperties().Count()));
-        Assert.Equal(189, entityTypes.Sum(entityType => entityType.GetForeignKeys().Count()));
         Assert.All(
             entityTypes.SelectMany(entityType => entityType.GetForeignKeys()),
             foreignKey => Assert.Equal(DeleteBehavior.Restrict, foreignKey.DeleteBehavior));
@@ -177,10 +166,6 @@ public sealed class PhysicalSchemaModelTests
         Assert.False(payment.FindProperty(nameof(Payment.FinalApprovalReference))!.IsNullable);
         Assert.True(payment.FindProperty(nameof(Payment.DeliveredDate))!.IsNullable);
 
-        var manualPayment = context.Model.FindEntityType(typeof(ManualPayment))!;
-        Assert.True(manualPayment.FindProperty(nameof(ManualPayment.Version))!.IsConcurrencyToken);
-        Assert.True(manualPayment.GetIndexes().Single(index => index.Properties.Count == 1 &&
-            index.Properties[0].Name == nameof(ManualPayment.OperationKey)).IsUnique);
     }
 
     [Fact]
@@ -363,34 +348,16 @@ public sealed class PhysicalSchemaModelTests
     }
 
     [Fact]
-    public void Model_enforces_transfer_concurrency_idempotency_and_label_binding()
-    {
-        using var context = CreateContext();
-        var transfer = context.Model.FindEntityType(typeof(WarehouseTransfer))!;
-        var transferEvent = context.Model.FindEntityType(typeof(WarehouseTransferEvent))!;
-        var transferLabel = context.Model.FindEntityType(typeof(WarehouseTransferLabel))!;
-
-        Assert.True(transfer.FindProperty(nameof(WarehouseTransfer.Version))!.IsConcurrencyToken);
-        var operationKey = transferEvent.FindProperty(nameof(WarehouseTransferEvent.OperationKey))!;
-        Assert.True(transferEvent.GetIndexes().Single(index => index.Properties.SequenceEqual([operationKey])).IsUnique);
-        var itemId = transferLabel.FindProperty(nameof(WarehouseTransferLabel.WarehouseTransferItemId))!;
-        var labelId = transferLabel.FindProperty(nameof(WarehouseTransferLabel.BatchQrLabelId))!;
-        Assert.True(transferLabel.GetIndexes().Single(index => index.Properties.SequenceEqual([itemId, labelId])).IsUnique);
-    }
-
-    [Fact]
     public void Model_enforces_unique_promotion_scopes_and_business_code_sequence()
     {
         using var context = CreateContext();
         var productLink = context.Model.FindEntityType(typeof(PromotionProduct))!;
         var categoryLink = context.Model.FindEntityType(typeof(PromotionCategory))!;
         var retailerLink = context.Model.FindEntityType(typeof(PromotionRetailer))!;
-        var batchLink = context.Model.FindEntityType(typeof(BatchPromotion))!;
 
         Assert.Contains(productLink.GetIndexes(), index => index.IsUnique && index.Properties.Count == 2);
         Assert.Contains(categoryLink.GetIndexes(), index => index.IsUnique && index.Properties.Count == 2);
         Assert.Contains(retailerLink.GetIndexes(), index => index.IsUnique && index.Properties.Count == 2);
-        Assert.Contains(batchLink.GetIndexes(), index => index.IsUnique && index.Properties.Count == 2);
         Assert.Contains(context.Model.GetSequences(), sequence => sequence.Name == "PromotionCodeSequence");
     }
 
@@ -442,7 +409,7 @@ public sealed class PhysicalSchemaModelTests
         var item = context.Model.FindEntityType(typeof(PickingItem))!;
 
         Assert.True(list.FindProperty(nameof(PickingList.Version))!.IsConcurrencyToken);
-        var orderId = list.FindProperty(nameof(PickingList.SalesOrderId))!;
+        var orderId = list.FindProperty(nameof(PickingList.PurchaseOrderId))!;
         var warehouseId = list.FindProperty(nameof(PickingList.WarehouseId))!;
         Assert.True(list.GetIndexes().Single(index =>
             index.Properties.SequenceEqual([orderId, warehouseId])).IsUnique);

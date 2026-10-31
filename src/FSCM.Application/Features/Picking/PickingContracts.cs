@@ -3,10 +3,12 @@ namespace FSCM.Application.Features.Picking;
 // Legacy aggregate statuses remain while cancellation/dispatch consumers are migrated in F93/F96.
 public static class PickingListStatuses
 {
-    public const string Open = "Open";
+    public const string Pending = "Pending";
+    public const string Open = Pending;
     public const string InProgress = "InProgress";
     public const string Completed = "Completed";
-    public const string Cancelled = "Cancelled";
+    public const string Exception = "Exception";
+    public const string Cancelled = Exception;
 }
 
 public static class PickingItemStatuses

@@ -70,9 +70,11 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<ReceiptConfirmationItem> ReceiptConfirmationItemRecords => Set<ReceiptConfirmationItem>();
     public DbSet<ReceiptConfirmationQrLabel> ReceiptConfirmationQrLabelRecords => Set<ReceiptConfirmationQrLabel>();
     public DbSet<ReceiptDiscrepancy> ReceiptDiscrepancyRecords => Set<ReceiptDiscrepancy>();
+    public DbSet<ReplacementCase> ReplacementCaseRecords => Set<ReplacementCase>();
     public DbSet<ReceiptDiscrepancyItem> ReceiptDiscrepancyItemRecords => Set<ReceiptDiscrepancyItem>();
     public DbSet<Payment> PaymentRecords => Set<Payment>();
-    public DbSet<ManualPayment> ManualPaymentRecords => Set<ManualPayment>();
+    public DbSet<PaymentReceipt> PaymentReceiptRecords => Set<PaymentReceipt>();
+    public DbSet<PaymentReceiptAllocation> PaymentReceiptAllocationRecords => Set<PaymentReceiptAllocation>();
     public DbSet<ManualRefund> ManualRefundRecords => Set<ManualRefund>();
     public DbSet<OrderStatusHistory> OrderStatusHistoryRecords => Set<OrderStatusHistory>();
     public DbSet<Notification> NotificationRecords => Set<Notification>();
@@ -138,5 +140,15 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
         modelBuilder.HasSequence<long>("DriverCodeSequence").StartsAt(10);
         modelBuilder.HasSequence<long>("ShipmentCodeSequence").StartsAt(1000);
         modelBuilder.ApplyConfigurationsFromAssembly(typeof(AppDbContext).Assembly);
+        modelBuilder.Ignore<StockHold>();
+        modelBuilder.Ignore<BatchPromotion>();
+        modelBuilder.Ignore<WarehouseTransfer>();
+        modelBuilder.Ignore<WarehouseTransferItem>();
+        modelBuilder.Ignore<WarehouseTransferEvent>();
+        modelBuilder.Ignore<WarehouseTransferLabel>();
+        modelBuilder.Ignore<AllocationPlanVersion>();
+        modelBuilder.Ignore<RunPickingList>();
+        modelBuilder.Ignore<RunPickingGather>();
+        modelBuilder.Ignore<RunPickingSplit>();
     }
 }

@@ -1,23 +1,12 @@
 using FSCM.Domain.Authorization;
 using FSCM.Domain.Entities;
+using FSCM.Application.Features.Orders;
+using FSCM.Application.Features.Payments;
 
 namespace FSCM.Application.Features.Quotes;
 
 public sealed class QuoteService(IQuoteStore store, TimeProvider timeProvider)
 {
-    public async Task IssueForPlanAsync(Guid allocationPlanVersionId, CancellationToken ct)
-    {
-        var now = timeProvider.GetUtcNow();
-        foreach (var order in await store.ListOrdersForPlanAsync(allocationPlanVersionId, ct))
-        {
-            var orderQuotes = await store.ListForOrderAsync(order.SalesOrderId, ct);
-            var existing = orderQuotes.FirstOrDefault(x => x.Quote.AllocationPlanVersionId == allocationPlanVersionId);
-            if (existing is not null) continue;
-            var revision = orderQuotes.Select(x => x.Quote.RevisionNumber).DefaultIfEmpty(0).Max() + 1;
-            store.Add(new SalesOrderQuote { Id = Guid.NewGuid(), SalesOrderId = order.SalesOrderId, AllocationRunId = order.AllocationRunId, AllocationPlanVersionId = allocationPlanVersionId, RevisionNumber = revision, Status = SalesOrderQuoteStatuses.PendingRetailerAcceptance, TotalAmount = order.TotalAmount, IssuedAt = now, ExpiresAt = now.AddHours(24), Version = 0, CreatedAt = now, UpdatedAt = now });
-        }
-        await store.SaveChangesAsync(ct);
-    }
     public async Task<IReadOnlyCollection<SalesOrderQuoteResult>> ListForOrderAsync(Guid orderId, Guid actor, string role, CancellationToken ct)
     {
         var rows = await store.ListForOrderAsync(orderId, ct);
@@ -49,9 +38,18 @@ public sealed class QuoteService(IQuoteStore store, TimeProvider timeProvider)
         }
         view.Quote.Status = SalesOrderQuoteStatuses.Accepted;
         view.Quote.AcceptedByUserId = actor; view.Quote.AcceptedAt = now; view.Quote.Version++; view.Quote.UpdatedAt = now;
-        var po = new PurchaseOrder { Id = Guid.NewGuid(), PurchaseOrderCode = $"PO-{view.Order.OrderCode}-{view.Quote.RevisionNumber:00}", SalesOrderId = view.Order.Id, SalesOrderQuoteId = view.Quote.Id, Status = PurchaseOrderStatuses.Issued, PaymentMethod = view.Order.PaymentMethod, IssuedAt = now, IssuedByUserId = actor, Version = 0, CreatedAt = now, UpdatedAt = now };
-        view.Quote.PurchaseOrderId = po.Id;
-        store.AddPurchaseOrder(po);
+        if (view.Order.PaymentMethod == OrderPaymentMethods.Credit)
+        {
+            var po = NewPurchaseOrder(view, actor, now); view.Quote.PurchaseOrderId = po.Id; store.AddPurchaseOrder(po);
+            view.Order.Status = OrderStatuses.ConvertedToPo;
+        }
+        else
+        {
+            view.Order.Status = OrderStatuses.PaymentPending;
+            if (await store.FindPaymentByOrderAsync(view.Order.Id, ct) is null)
+                store.AddPayment(new Payment { Id = Guid.NewGuid(), SalesOrderId = view.Order.Id, Method = OrderPaymentMethods.Prepaid, Status = PaymentStatuses.Unpaid, Amount = view.Quote.TotalAmount, AdjustedAmount = view.Quote.TotalAmount, FinalApprovedAt = now, FinalApprovalReference = view.Quote.Id.ToString("N"), Version = 1, CreatedAt = now, UpdatedAt = now });
+        }
+        view.Order.Version++; view.Order.UpdatedAt = now;
         await store.SaveChangesAsync(ct);
         return ToResult(await store.FindAsync(id, false, ct) ?? throw QuoteOperationException.Conflict("Accepted quote could not be reloaded."));
     }
@@ -70,5 +68,6 @@ public sealed class QuoteService(IQuoteStore store, TimeProvider timeProvider)
 
     private static void RequirePending(SalesOrderQuote q, int expected) { if (q.Version != expected) throw QuoteOperationException.Conflict("Quote changed; reload before deciding."); if (q.Status != SalesOrderQuoteStatuses.PendingRetailerAcceptance) throw QuoteOperationException.Conflict("Only a pending quote can be decided."); }
     private static void EnsureRetailer(string role) { if (role != SystemRoles.Retailer) throw QuoteOperationException.Forbidden("Only the retailer can decide a quote."); }
-    private static SalesOrderQuoteResult ToResult(QuoteView v) => new(v.Quote.Id, v.Order.Id, v.Order.OrderCode, v.Quote.AllocationRunId, v.Quote.AllocationPlanVersionId, v.Quote.RevisionNumber, v.Quote.Status, v.Quote.TotalAmount, v.Quote.IssuedAt, v.Quote.ExpiresAt, v.Quote.AcceptedAt, v.Quote.RejectionReason, v.Quote.PurchaseOrderId, v.PurchaseOrder?.PurchaseOrderCode, v.Quote.Version);
+    private static PurchaseOrder NewPurchaseOrder(QuoteView view, Guid actor, DateTimeOffset now) => new() { Id = Guid.NewGuid(), PurchaseOrderCode = $"PO-{view.Order.OrderCode}-{view.Quote.RevisionNumber:00}", SalesOrderId = view.Order.Id, SalesOrderQuoteId = view.Quote.Id, Status = PurchaseOrderStatuses.Issued, PaymentMethod = view.Order.PaymentMethod, IssuedAt = now, IssuedByUserId = actor, Version = 1, CreatedAt = now, UpdatedAt = now };
+    private static SalesOrderQuoteResult ToResult(QuoteView v) => new(v.Quote.Id, v.Order.Id, v.Order.OrderCode, v.Quote.AllocationRunId, v.Quote.RevisionNumber, v.Quote.Status, v.Quote.TotalAmount, v.Quote.IssuedAt, v.Quote.ExpiresAt, v.Quote.AcceptedAt, v.Quote.RejectionReason, v.Quote.PurchaseOrderId, v.PurchaseOrder?.PurchaseOrderCode, v.Quote.Version);
 }

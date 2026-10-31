@@ -21,7 +21,6 @@ public sealed record PickingView(
 
 public interface IPickingPlanService
 {
-    Task CreateForApprovedOrderAsync(OrderView order, DateTimeOffset now, CancellationToken cancellationToken);
     Task CancelForOrderAsync(Guid orderId, DateTimeOffset now, CancellationToken cancellationToken);
 }
 
