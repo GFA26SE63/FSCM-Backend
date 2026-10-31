@@ -373,11 +373,7 @@ public sealed class OrderServiceTests
         public CreateAssistedOrderData Request(int quantity) => new(
             Guid.Parse("10000000-0000-0000-0000-000000000001"),
             Store.Retailer.Id,
-<<<<<<< HEAD
-            OrderPaymentMethods.Prepaid,
-=======
             OrderPaymentMethods.Credit,
->>>>>>> 396d00a85d5d6e2eec2a4cfa09f02b874b431ba6
             new DateOnly(2026, 10, 20),
             null,
             "Giao trong giờ hành chính",
@@ -389,11 +385,7 @@ public sealed class OrderServiceTests
         public SubmitOfflineOrderData OfflineRequest(int quantity, decimal estimate) => new(
             Guid.Parse("10000000-0000-0000-0000-000000000002"),
             Store.Retailer.Id,
-<<<<<<< HEAD
-            OrderPaymentMethods.Prepaid,
-=======
             OrderPaymentMethods.Credit,
->>>>>>> 396d00a85d5d6e2eec2a4cfa09f02b874b431ba6
             new DateOnly(2026, 10, 20),
             null,
             "Đơn nháp offline",

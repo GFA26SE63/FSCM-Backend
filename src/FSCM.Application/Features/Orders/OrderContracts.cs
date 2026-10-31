@@ -337,11 +337,8 @@ public static class OrderPaymentMethods
 {
     /// <summary>Prepaid by bank transfer (payOS or verified manual transfer) before the order leaves.</summary>
     public const string Prepaid = "Prepaid";
-<<<<<<< HEAD
 
     /// <summary>Deferred payment on the Retailer's approved 7/14/30-day term.</summary>
-=======
->>>>>>> 396d00a85d5d6e2eec2a4cfa09f02b874b431ba6
     public const string Credit = "Credit";
 
     public static bool IsSupported(string value) => value is Prepaid or Credit;

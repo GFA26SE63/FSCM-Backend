@@ -53,11 +53,7 @@ public sealed class OrderCaptureApiTests
         {
             clientOrderKey = key,
             retailerId = orderStore.Retailer.Id,
-<<<<<<< HEAD
-            paymentMethod = OrderPaymentMethods.Prepaid,
-=======
             paymentMethod = OrderPaymentMethods.Credit,
->>>>>>> 396d00a85d5d6e2eec2a4cfa09f02b874b431ba6
             requestedDeliveryDate = "2027-01-10",
             offlineEstimatedAmount = 1_000m,
             snapshotVersion = snapshot.GetProperty("version").GetString(),
@@ -170,11 +166,7 @@ public sealed class OrderCaptureApiTests
         {
             clientOrderKey = Guid.NewGuid(),
             retailerId = store.Retailer.Id,
-<<<<<<< HEAD
-            paymentMethod = OrderPaymentMethods.Prepaid,
-=======
             paymentMethod = OrderPaymentMethods.Credit,
->>>>>>> 396d00a85d5d6e2eec2a4cfa09f02b874b431ba6
             requestedDeliveryDate = "2027-01-10",
             deliveryAddress = "12 Nguyễn Huệ, Thành phố Hồ Chí Minh",
             note = "Giao trong giờ hành chính",
@@ -280,11 +272,7 @@ public sealed class OrderCaptureApiTests
         {
             clientOrderKey = Guid.NewGuid(),
             retailerId = store.Retailer.Id,
-<<<<<<< HEAD
-            paymentMethod = OrderPaymentMethods.Prepaid,
-=======
             paymentMethod = OrderPaymentMethods.Credit,
->>>>>>> 396d00a85d5d6e2eec2a4cfa09f02b874b431ba6
             requestedDeliveryDate = "2027-01-10",
             lines = new[] { new { productId = store.Product.Id, quantity = 10 } }
         });
@@ -318,11 +306,7 @@ public sealed class OrderCaptureApiTests
         {
             clientOrderKey = Guid.NewGuid(),
             retailerId = store.Retailer.Code,
-<<<<<<< HEAD
-            paymentMethod = OrderPaymentMethods.Prepaid,
-=======
             paymentMethod = OrderPaymentMethods.Credit,
->>>>>>> 396d00a85d5d6e2eec2a4cfa09f02b874b431ba6
             requestedDeliveryDate = "2027-01-10",
             lines = new[] { new { productId = store.Product.Sku, quantity = 10 } }
         };
@@ -335,11 +319,7 @@ public sealed class OrderCaptureApiTests
         {
             clientOrderKey = Guid.NewGuid(),
             retailerId = store.Retailer.Id,
-<<<<<<< HEAD
-            paymentMethod = OrderPaymentMethods.Prepaid,
-=======
             paymentMethod = OrderPaymentMethods.Credit,
->>>>>>> 396d00a85d5d6e2eec2a4cfa09f02b874b431ba6
             requestedDeliveryDate = "2027-01-10",
             lines = new[] { new { productId = store.Product.Id, quantity = 10 } }
         };

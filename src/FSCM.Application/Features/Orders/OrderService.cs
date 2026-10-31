@@ -632,12 +632,8 @@ public sealed class OrderService(
             throw OrderOperationException.Validation("Client order key and retailer are required.");
         var paymentMethod = NormalizePaymentMethod(data.PaymentMethod);
         if (paymentMethod is null)
-<<<<<<< HEAD
             throw OrderOperationException.Validation(
                 "Payment method must be Prepaid (bank transfer) or Credit; COD is not supported.");
-=======
-            throw OrderOperationException.Validation("Payment method must be Prepaid or Credit.");
->>>>>>> 396d00a85d5d6e2eec2a4cfa09f02b874b431ba6
         if (data.Lines is null || data.Lines.Count is < 1 or > 100)
             throw OrderOperationException.Validation("Order must contain between 1 and 100 lines.");
         if (data.Lines.Any(item => item.ProductId == Guid.Empty || item.Quantity <= 0))
