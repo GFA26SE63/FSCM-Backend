@@ -2,6 +2,7 @@ using System.Net.Mail;
 using System.Text.Json;
 using FSCM.Domain.Authorization;
 using FSCM.Domain.Entities;
+using FSCM.Application.Features.Retailers;
 
 namespace FSCM.Application.Features.Identity;
 
@@ -314,7 +315,6 @@ public sealed class IdentityService(
         var normalizedEmail = NormalizeEmail(email);
         ValidateFullName(fullName);
         phone = ValidatePhone(phone);
-        ValidatePassword(password);
         EnsureAssignableRole(role);
 
         if (await store.FindUserByEmailAsync(normalizedEmail, cancellationToken) is not null)
@@ -332,22 +332,30 @@ public sealed class IdentityService(
             Phone = phone,
             FullName = fullName.Trim(),
             Role = role,
-            IsActive = true,
+            // A Retailer may only use the mobile app after the Admin has linked
+            // this account to an approved retailer and the owner has completed
+            // the OTP activation flow.  Other back-office accounts keep the
+            // existing administrator-provisioned credential behaviour.
+            IsActive = role != SystemRoles.Retailer,
             CreatedAt = now,
             UpdatedAt = now
         };
         store.AddUser(user);
-        store.AddCredential(new UserCredential
+        if (role != SystemRoles.Retailer)
         {
-            Id = Guid.NewGuid(),
-            UserAccountId = userId,
-            PasswordHash = passwordHasher.Hash(password),
-            FailedLoginCount = 0,
-            MustChangePassword = false,
-            PasswordChangedAt = now,
-            CreatedAt = now,
-            UpdatedAt = now
-        });
+            ValidatePassword(password);
+            store.AddCredential(new UserCredential
+            {
+                Id = Guid.NewGuid(),
+                UserAccountId = userId,
+                PasswordHash = passwordHasher.Hash(password),
+                FailedLoginCount = 0,
+                MustChangePassword = false,
+                PasswordChangedAt = now,
+                CreatedAt = now,
+                UpdatedAt = now
+            });
+        }
         AddAudit(user.Id, actorUserId, "Created", null,
             new { user.Email, user.Phone, user.FullName, user.Role, user.IdentityProvider, user.IsActive });
         await store.SaveChangesAsync(cancellationToken);
@@ -567,6 +575,8 @@ public sealed class IdentityService(
             throw IdentityOperationException.Validation("Only Retailer users can be assigned to a Retailer profile.");
         var retailer = await store.FindRetailerAsync(retailerId, cancellationToken)
             ?? throw IdentityOperationException.NotFound("Retailer was not found.");
+        if (retailer.Status != RetailerStatuses.Active)
+            throw IdentityOperationException.Validation("Only an approved, active Retailer can receive a login account.");
         if (retailer.UserAccountId.HasValue && retailer.UserAccountId != userId)
             throw IdentityOperationException.Conflict("The Retailer is already assigned to another user.");
         var current = await store.FindRetailerByUserIdAsync(userId, cancellationToken);

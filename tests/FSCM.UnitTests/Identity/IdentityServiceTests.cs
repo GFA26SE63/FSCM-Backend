@@ -163,6 +163,27 @@ public sealed class IdentityServiceTests
     }
 
     [Fact]
+    public async Task Retailer_account_is_inactive_and_has_no_password_until_otp_activation()
+    {
+        var fixture = new IdentityFixture();
+
+        var created = await fixture.Service.CreateUserAsync(
+            "retailer@fscm.local",
+            "Retailer Owner",
+            SystemRoles.Retailer,
+            "0901234567",
+            "ignored-by-activation",
+            Guid.NewGuid(),
+            CancellationToken.None);
+
+        var user = Assert.Single(fixture.Store.Users);
+        Assert.Equal(created.UserId, user.Id);
+        Assert.False(user.IsActive);
+        Assert.Empty(fixture.Store.Credentials);
+        Assert.Contains(fixture.Store.AuditLogs, audit => audit.Action == "Created");
+    }
+
+    [Fact]
     public async Task Google_exchange_links_only_preprovisioned_google_account_and_issues_internal_tokens()
     {
         var fixture = new IdentityFixture();
