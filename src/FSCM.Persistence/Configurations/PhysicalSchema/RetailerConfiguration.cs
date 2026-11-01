@@ -15,9 +15,6 @@ public sealed class RetailerConfiguration : IEntityTypeConfiguration<Retailer>
         builder.Property(entity => entity.UserAccountId).HasColumnType("uuid").IsRequired(false);
         builder.Property(entity => entity.Code).HasMaxLength(30).IsRequired();
         builder.Property(entity => entity.Name).HasMaxLength(200).IsRequired();
-        builder.Property(entity => entity.ContactName).HasMaxLength(200).IsRequired(false);
-        builder.Property(entity => entity.Phone).HasMaxLength(30).IsRequired(false);
-        builder.Property(entity => entity.Email).HasMaxLength(150).IsRequired(false);
         builder.Property(entity => entity.Address).HasColumnType("text").IsRequired(false);
         builder.Property(entity => entity.Status).HasMaxLength(30).IsRequired();
         builder.Property(entity => entity.RetailerType).HasMaxLength(30).IsRequired();

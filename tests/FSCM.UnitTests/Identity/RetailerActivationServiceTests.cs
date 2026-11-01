@@ -64,7 +64,7 @@ public sealed class RetailerActivationServiceTests
                 FullName = "Điểm bán An Phú", Role = SystemRoles.Retailer, IsActive = false
             };
             Store.Users.Add(user);
-            Store.Retailers.Add(new Retailer { Id = Guid.NewGuid(), UserAccountId = user.Id, Email = user.Email });
+            Store.Retailers.Add(new Retailer { Id = Guid.NewGuid(), UserAccountId = user.Id });
             Service = new RetailerActivationService(Store, Email, new TokenProvider(), new PasswordHasher(), null!,
                 new FixedTimeProvider(new DateTimeOffset(2026, 10, 31, 0, 0, 0, TimeSpan.Zero)));
         }

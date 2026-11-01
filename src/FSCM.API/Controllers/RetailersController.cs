@@ -52,7 +52,7 @@ public sealed class RetailersController(RetailerService service) : ControllerBas
     public Task<RetailerDetails> SubmitForReview(Guid retailerId, CancellationToken cancellationToken) =>
         service.SubmitForReviewAsync(retailerId, GetActorUserId(), cancellationToken);
 
-    [Authorize(Roles = SystemRoles.Admin)]
+    [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator}")]
     [HttpPost("{retailerId:guid}/review")]
     public Task<RetailerDetails> Review(
         Guid retailerId, ReviewRetailerRequest request, CancellationToken cancellationToken) =>

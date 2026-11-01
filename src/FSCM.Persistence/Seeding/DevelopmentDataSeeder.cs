@@ -32,14 +32,14 @@ public sealed class DevelopmentDataSeeder(
     // New idempotency identity after Review 2 removed COD from the seeded order contract.
     private static readonly Guid DemoOrderClientKey = Guid.Parse("10000000-0000-0000-0000-000000001031");
 
-    private static readonly (string Email, string FullName, string Role)[] DemoUsers =
+    private static readonly (string Email, string Phone, string FullName, string Role)[] DemoUsers =
     [
-        ("admin@fscm.local", "Quản trị viên FSCM", SystemRoles.Admin),
-        ("operator@fscm.local", "Nhân viên vận hành FSCM", SystemRoles.Operator),
-        ("sales.manager@fscm.local", "Quản lý bán hàng FSCM", SystemRoles.SalesManager),
-        ("sales@fscm.local", "Nhân viên bán hàng FSCM", SystemRoles.Sales),
-        ("warehouse.keeper@fscm.local", "Thủ kho FSCM", SystemRoles.WarehouseKeeper),
-        ("retailer@fscm.local", "Người dùng nhà bán lẻ FSCM", SystemRoles.Retailer)
+        ("admin@fscm.local", "0901000001", "Quản trị viên FSCM", SystemRoles.Admin),
+        ("operator@fscm.local", "0901000002", "Nhân viên vận hành FSCM", SystemRoles.Operator),
+        ("sales.manager@fscm.local", "0901000003", "Quản lý bán hàng FSCM", SystemRoles.SalesManager),
+        ("sales@fscm.local", "0901000004", "Nhân viên bán hàng FSCM", SystemRoles.Sales),
+        ("warehouse.keeper@fscm.local", "0901000005", "Thủ kho FSCM", SystemRoles.WarehouseKeeper),
+        ("retailer@fscm.local", "0901000006", "Người dùng nhà bán lẻ FSCM", SystemRoles.Retailer)
     ];
 
     public async Task SeedAsync(CancellationToken cancellationToken = default)
@@ -572,6 +572,7 @@ public sealed class DevelopmentDataSeeder(
             }
 
             user.FullName = definition.FullName;
+            user.Phone = definition.Phone;
             user.Role = definition.Role;
             user.IdentityProvider = IdentityProviders.Local;
             user.IsActive = true;
@@ -947,9 +948,6 @@ public sealed class DevelopmentDataSeeder(
         retailer.UserAccountId = retailerUserId;
         retailer.Code = DemoRetailerCode;
         retailer.Name = "Cửa hàng An Phú";
-        retailer.ContactName = "Nguyễn Văn Minh";
-        retailer.Phone = "+84 28 0000 0001";
-        retailer.Email = "cuahang.anphu@fscm.local";
         retailer.Address = "Phường An Phú, thành phố Thủ Đức, Thành phố Hồ Chí Minh";
         retailer.Status = RetailerStatuses.Active;
         retailer.RetailerType = RetailerTypes.GroceryStore;
@@ -1013,6 +1011,7 @@ public sealed class DevelopmentDataSeeder(
 
         foreach (var definition in definitions)
         {
+            var contactEmail = $"retailer.{definition.Code.ToLowerInvariant()}@fscm.local";
             var retailer = await dbContext.RetailerRecords.SingleOrDefaultAsync(item => item.Code == definition.Code, cancellationToken);
             if (retailer is null)
             {
@@ -1020,10 +1019,49 @@ public sealed class DevelopmentDataSeeder(
                 dbContext.RetailerRecords.Add(retailer);
             }
             retailer.RegionId = regions[definition.RegionCode].Id;
+            var approved = definition.Status is RetailerStatuses.Active or RetailerStatuses.Inactive;
+            if (approved)
+            {
+                var contactAccount = await dbContext.UserAccountRecords.SingleOrDefaultAsync(
+                    item => item.Email == contactEmail, cancellationToken);
+                if (contactAccount is null)
+                {
+                    contactAccount = new UserAccount
+                    {
+                        Id = Guid.NewGuid(),
+                        Email = contactEmail,
+                        IdentityProvider = IdentityProviders.Local,
+                        CreatedAt = now.AddDays(-20)
+                    };
+                    dbContext.UserAccountRecords.Add(contactAccount);
+                }
+                contactAccount.FullName = definition.ContactName;
+                contactAccount.Phone = definition.Phone;
+                contactAccount.Role = SystemRoles.Retailer;
+                contactAccount.IsActive = false;
+                contactAccount.UpdatedAt = now;
+                retailer.UserAccountId = contactAccount.Id;
+            }
+            else
+            {
+                retailer.UserAccountId = null;
+                var declarationContact = await dbContext.RetailerDeclarationContactRecords
+                    .SingleOrDefaultAsync(item => item.RetailerId == retailer.Id, cancellationToken);
+                if (declarationContact is null)
+                {
+                    declarationContact = new RetailerDeclarationContact
+                    {
+                        RetailerId = retailer.Id,
+                        CreatedAt = now.AddDays(-20)
+                    };
+                    dbContext.RetailerDeclarationContactRecords.Add(declarationContact);
+                }
+                declarationContact.ContactName = definition.ContactName;
+                declarationContact.Phone = definition.Phone;
+                declarationContact.Email = contactEmail;
+                declarationContact.UpdatedAt = now;
+            }
             retailer.Name = definition.Name;
-            retailer.ContactName = definition.ContactName;
-            retailer.Phone = definition.Phone;
-            retailer.Email = null;
             retailer.Address = definition.Address;
             retailer.Status = definition.Status;
             retailer.RetailerType = definition.RetailerType;
