@@ -2,7 +2,6 @@ using System.Security.Claims;
 using FSCM.API.Contracts.Deliveries;
 using FSCM.API.Contracts.Orders;
 using FSCM.Application.Features.Deliveries;
-using FSCM.Application.Features.AllocationRuns;
 using FSCM.Application.Features.Orders;
 using FSCM.Domain.Authorization;
 using Microsoft.AspNetCore.Authorization;
@@ -15,8 +14,7 @@ namespace FSCM.API.Controllers;
 [Route("api/v1/orders")]
 public sealed class OrdersController(
     OrderService service,
-    DeliveryService deliveryService,
-    AllocationTraceService allocationTraceService) : ControllerBase
+    DeliveryService deliveryService) : ControllerBase
 {
     [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator},{SystemRoles.SalesManager},{SystemRoles.Sales},{SystemRoles.WarehouseKeeper},{SystemRoles.Retailer}")]
     [HttpGet]
@@ -36,15 +34,6 @@ public sealed class OrdersController(
     [HttpGet("{id:guid}")]
     public Task<OrderDetailResult> Get(Guid id, CancellationToken cancellationToken) =>
         service.GetAsync(id, GetActorUserId(), GetActorRole(), cancellationToken);
-
-    [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator},{SystemRoles.SalesManager},{SystemRoles.Sales},{SystemRoles.WarehouseKeeper},{SystemRoles.Retailer}")]
-    [HttpGet("{id:guid}/allocation-trace")]
-    [Obsolete("Use GET /api/v1/allocation-runs/orders/{salesOrderId}/trace.")]
-    public async Task<OrderTraceDetailResult> Trace(Guid id, CancellationToken cancellationToken)
-    {
-        await service.GetAsync(id, GetActorUserId(), GetActorRole(), cancellationToken);
-        return await allocationTraceService.GetByOrderAsync(id, cancellationToken);
-    }
 
     [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator},{SystemRoles.SalesManager},{SystemRoles.Sales},{SystemRoles.WarehouseKeeper},{SystemRoles.Retailer}")]
     [HttpGet("{id:guid}/timeline")]
@@ -105,23 +94,6 @@ public sealed class OrdersController(
             cancellationToken);
         return CreatedAtAction(nameof(Get), new { id = result.Id }, result);
     }
-
-    [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator}")]
-    [HttpPost("{id:guid}/approve")]
-    public Task<OrderDetailResult> Approve(
-        Guid id,
-        OrderDecisionRequest request,
-        CancellationToken cancellationToken) =>
-        service.ApproveAsync(id, request.ExpectedVersion, GetActorUserId(), GetActorRole(), cancellationToken);
-
-    [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator}")]
-    [HttpPost("{id:guid}/reject")]
-    public Task<OrderDetailResult> Reject(
-        Guid id,
-        RejectOrderRequest request,
-        CancellationToken cancellationToken) =>
-        service.RejectAsync(id, request.ExpectedVersion, request.Reason,
-            GetActorUserId(), GetActorRole(), cancellationToken);
 
     [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator},{SystemRoles.Sales}")]
     [HttpPost("{id:guid}/cancel")]

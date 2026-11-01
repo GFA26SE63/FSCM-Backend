@@ -18,6 +18,7 @@ public sealed class Shipment
 
     /// <summary>The warehouse run picking list (F92/run-picking) this part was created from.</summary>
     public Guid RunPickingListId { get; set; }
+    public Guid? PickingListId { get; set; }
 
     public string ShipmentCode { get; set; } = string.Empty;
     public string Status { get; set; } = string.Empty;

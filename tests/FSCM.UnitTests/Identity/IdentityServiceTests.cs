@@ -33,6 +33,18 @@ public sealed class IdentityServiceTests
     }
 
     [Fact]
+    public async Task Login_accepts_phone_as_the_identifier()
+    {
+        var fixture = new IdentityFixture();
+        var user = fixture.AddActiveUser(SystemRoles.Retailer, "retailer@fscm.local", "Correct#Pass1");
+        user.Phone = "0901234567";
+
+        var result = await fixture.Service.LoginAsync("0901234567", "Correct#Pass1", null, default);
+
+        Assert.Equal(user.Id, result.User.Id);
+    }
+
+    [Fact]
     public async Task Login_locks_account_after_five_failed_attempts()
     {
         var fixture = new IdentityFixture();
@@ -97,7 +109,8 @@ public sealed class IdentityServiceTests
                 "another@fscm.local",
                 "Another User",
                 SystemRoles.Admin,
-                IdentityProviders.Local,
+                "0901234567",
+                "Correct#Pass1",
                 Guid.NewGuid(),
                 CancellationToken.None));
         var promoteException = await Assert.ThrowsAsync<IdentityOperationException>(() =>
@@ -113,27 +126,85 @@ public sealed class IdentityServiceTests
     }
 
     [Fact]
-    public async Task Entra_exchange_links_only_preprovisioned_entra_account_and_issues_internal_tokens()
+    public async Task Admin_created_account_has_phone_password_and_supports_both_login_methods()
+    {
+        var fixture = new IdentityFixture();
+
+        var created = await fixture.Service.CreateUserAsync(
+            "new.sales@fscm.local",
+            "New Sales",
+            SystemRoles.Sales,
+            "0901234567",
+            "Correct#Pass1",
+            Guid.NewGuid(),
+            CancellationToken.None);
+
+        var user = Assert.Single(fixture.Store.Users);
+        Assert.Equal("0901234567", user.Phone);
+        Assert.True(user.IsActive);
+        Assert.Equal(IdentityProviders.Local, user.IdentityProvider);
+        Assert.Null(created.ActivationToken);
+        Assert.True(fixture.PasswordHasher.Verify(
+            "Correct#Pass1",
+            Assert.Single(fixture.Store.Credentials).PasswordHash));
+
+        var passwordLogin = await fixture.Service.LoginAsync(
+            user.Email,
+            "Correct#Pass1",
+            null,
+            CancellationToken.None);
+        var googleLogin = await fixture.Service.ExchangeGoogleAsync(
+            new GoogleIdentity("new-sales-google", user.Email),
+            null,
+            CancellationToken.None);
+
+        Assert.Equal(user.Id, passwordLogin.User.Id);
+        Assert.Equal(user.Id, googleLogin.User.Id);
+    }
+
+    [Fact]
+    public async Task Retailer_account_is_inactive_and_has_no_password_until_otp_activation()
+    {
+        var fixture = new IdentityFixture();
+
+        var created = await fixture.Service.CreateUserAsync(
+            "retailer@fscm.local",
+            "Retailer Owner",
+            SystemRoles.Retailer,
+            "0901234567",
+            "ignored-by-activation",
+            Guid.NewGuid(),
+            CancellationToken.None);
+
+        var user = Assert.Single(fixture.Store.Users);
+        Assert.Equal(created.UserId, user.Id);
+        Assert.False(user.IsActive);
+        Assert.Empty(fixture.Store.Credentials);
+        Assert.Contains(fixture.Store.AuditLogs, audit => audit.Action == "Created");
+    }
+
+    [Fact]
+    public async Task Google_exchange_links_only_preprovisioned_google_account_and_issues_internal_tokens()
     {
         var fixture = new IdentityFixture();
         var user = fixture.AddActiveUser(
             SystemRoles.Operator,
             "portal@fscm.local",
             "Correct#Pass1",
-            IdentityProviders.Entra);
-        user.EntraObjectId = null;
+            IdentityProviders.Google);
+        user.GoogleSubject = null;
         fixture.Store.Credentials.RemoveAll(credential => credential.UserAccountId == user.Id);
 
-        var result = await fixture.Service.ExchangeEntraAsync(
-            new EntraIdentity("entra-object-123", "PORTAL@FSCM.LOCAL"),
+        var result = await fixture.Service.ExchangeGoogleAsync(
+            new GoogleIdentity("google-subject-123", "PORTAL@FSCM.LOCAL"),
             "127.0.0.1",
             CancellationToken.None);
 
         Assert.Equal(user.Id, result.User.Id);
-        Assert.Equal("entra-object-123", user.EntraObjectId);
+        Assert.Equal("google-subject-123", user.GoogleSubject);
         Assert.Equal("access-token", result.AccessToken);
         Assert.Single(fixture.Store.RefreshTokens);
-        Assert.Contains(fixture.Store.AuditLogs, audit => audit.Action == "EntraIdentityLinked");
+        Assert.Contains(fixture.Store.AuditLogs, audit => audit.Action == "GoogleIdentityLinked");
 
         var refreshed = await fixture.Service.RefreshAsync(
             result.RefreshToken,
@@ -143,13 +214,13 @@ public sealed class IdentityServiceTests
     }
 
     [Fact]
-    public async Task Entra_exchange_links_local_account_and_keeps_password_login_available()
+    public async Task Google_exchange_links_local_account_and_keeps_password_login_available()
     {
         var fixture = new IdentityFixture();
         var user = fixture.AddActiveUser(SystemRoles.Sales, "mobile@fscm.local", "Correct#Pass1");
 
-        var entraResult = await fixture.Service.ExchangeEntraAsync(
-            new EntraIdentity("entra-object-456", "MOBILE@FSCM.LOCAL"),
+        var googleResult = await fixture.Service.ExchangeGoogleAsync(
+            new GoogleIdentity("google-subject-456", "MOBILE@FSCM.LOCAL"),
             null,
             CancellationToken.None);
         var localResult = await fixture.Service.LoginAsync(
@@ -158,29 +229,29 @@ public sealed class IdentityServiceTests
             null,
             CancellationToken.None);
 
-        Assert.Equal(user.Id, entraResult.User.Id);
+        Assert.Equal(user.Id, googleResult.User.Id);
         Assert.Equal(user.Id, localResult.User.Id);
-        Assert.Equal("entra-object-456", user.EntraObjectId);
+        Assert.Equal("google-subject-456", user.GoogleSubject);
         Assert.Equal(IdentityProviders.Local, user.IdentityProvider);
         Assert.Equal(2, fixture.Store.RefreshTokens.Count);
-        Assert.Contains(fixture.Store.AuditLogs, audit => audit.Action == "EntraIdentityLinked");
+        Assert.Contains(fixture.Store.AuditLogs, audit => audit.Action == "GoogleIdentityLinked");
     }
 
     [Fact]
-    public async Task Entra_exchange_rejects_relinking_email_to_another_object_id()
+    public async Task Google_exchange_rejects_relinking_email_to_another_subject()
     {
         var fixture = new IdentityFixture();
         var user = fixture.AddActiveUser(SystemRoles.Sales, "mobile@fscm.local", "Correct#Pass1");
-        user.EntraObjectId = "entra-object-original";
+        user.GoogleSubject = "google-subject-original";
 
         var exception = await Assert.ThrowsAsync<IdentityOperationException>(() =>
-            fixture.Service.ExchangeEntraAsync(
-                new EntraIdentity("entra-object-other", "mobile@fscm.local"),
+            fixture.Service.ExchangeGoogleAsync(
+                new GoogleIdentity("google-subject-other", "mobile@fscm.local"),
                 null,
                 CancellationToken.None));
 
         Assert.Equal("conflict", exception.Code);
-        Assert.Equal("entra-object-original", user.EntraObjectId);
+        Assert.Equal("google-subject-original", user.GoogleSubject);
         Assert.Empty(fixture.Store.RefreshTokens);
     }
 
@@ -299,13 +370,18 @@ public sealed class IdentityServiceTests
             CancellationToken cancellationToken) =>
             Task.FromResult(Users.SingleOrDefault(user => user.Email == normalizedEmail));
 
+        public Task<UserAccount?> FindUserByPhoneAsync(
+            string normalizedPhone,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(Users.SingleOrDefault(user => user.Phone == normalizedPhone));
+
         public Task<UserAccount?> FindUserByIdAsync(Guid userId, CancellationToken cancellationToken) =>
             Task.FromResult(Users.SingleOrDefault(user => user.Id == userId));
 
-        public Task<UserAccount?> FindUserByEntraObjectIdAsync(
-            string entraObjectId,
+        public Task<UserAccount?> FindUserByGoogleSubjectAsync(
+            string googleSubject,
             CancellationToken cancellationToken) =>
-            Task.FromResult(Users.SingleOrDefault(user => user.EntraObjectId == entraObjectId));
+            Task.FromResult(Users.SingleOrDefault(user => user.GoogleSubject == googleSubject));
 
         public Task<(IReadOnlyCollection<UserAccount> Items, int TotalCount)> ListUsersAsync(
             UserListQuery query,

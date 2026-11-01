@@ -10,6 +10,7 @@ using FSCM.Infrastructure.Maps;
 using FSCM.Infrastructure.Payments;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 
 namespace FSCM.Infrastructure;
 
@@ -21,6 +22,13 @@ public static class DependencyInjection
     {
         services.AddMemoryCache();
         services.AddHttpClient();
+        services.Configure<BrevoOptions>(configuration.GetSection(BrevoOptions.SectionName));
+        services.AddHttpClient<ITransactionalEmailSender, BrevoTransactionalEmailSender>((provider, client) =>
+        {
+            var options = provider.GetRequiredService<IOptions<BrevoOptions>>().Value;
+            client.BaseAddress = new Uri(options.ApiBaseUrl);
+            client.Timeout = TimeSpan.FromSeconds(15);
+        });
         services.AddHttpClient("GoogleMaps", client => client.Timeout = TimeSpan.FromSeconds(10));
         services.AddSingleton<IMapProvider, GoogleMapsProvider>();
         services.AddSingleton<IPasswordHasher, BcryptPasswordHasher>();

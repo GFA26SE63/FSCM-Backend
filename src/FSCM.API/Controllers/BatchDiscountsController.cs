@@ -8,6 +8,7 @@ using Microsoft.AspNetCore.Mvc;
 namespace FSCM.API.Controllers;
 
 [ApiController]
+[NonController]
 [Authorize]
 [Route("api/v1/batch-discounts")]
 public sealed class BatchDiscountsController(PromotionService service) : ControllerBase

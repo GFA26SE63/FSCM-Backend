@@ -133,11 +133,11 @@ query ProductsForMobile($after: String) {
 
 ### Identity, catalog, warehouse configuration, and development data
 
-BE-01 uses Entra ID to authenticate Portal sign-in. The Portal sends its Entra bearer token to `POST /api/v1/auth/entra/exchange`; the API validates tenant, audience, signature and lifetime, matches a pre-provisioned active FSCM account by immutable `oid` or links a null `EntraObjectId` by normalized email on first exchange, and returns the same FSCM JWT/refresh-token contract used by the rest of the system. Authentication methods are additive: an account that also has a password credential can continue using `POST /api/v1/auth/login` after Entra linking. Protected REST and GraphQL operations accept only the internal FSCM JWT. Google sign-in is not enabled.
+BE-01 uses Google Identity Services to authenticate Portal and app sign-in. Each client sends its Google ID token to `POST /api/v1/auth/google/exchange`; the API validates issuer, configured audience, signature and lifetime, requires a verified email, matches a pre-provisioned active FSCM account by immutable `sub` or links a null `GoogleSubject` by normalized email on first exchange, and returns the same FSCM JWT/refresh-token contract used by the rest of the system. Authentication methods are additive: an account that also has a password credential can continue using `POST /api/v1/auth/login` after Google linking. Protected REST and GraphQL operations accept only the internal FSCM JWT.
 
-Configure `Entra:TenantId`, `Entra:ClientId`, `Jwt:Issuer`, `Jwt:Audience`, and a JWT secret of at least 32 UTF-8 bytes through environment variables, user secrets, or the deployment secret store. No credential is committed in `appsettings.json`. `/api/v1/auth/me` returns the current role plus warehouse, region, Sales-group, and Retailer scopes. Every request revalidates that the FSCM account is active and that the token role still matches the database, so status/role changes take effect without waiting for token expiry.
+Configure `Google:ClientIds` (all accepted Google OAuth audiences), `Jwt:Issuer`, `Jwt:Audience`, and a JWT secret of at least 32 UTF-8 bytes through environment variables, user secrets, or the deployment secret store. No credential is committed in `appsettings.json`. `/api/v1/auth/me` returns the current role plus warehouse, region, Sales-group, and Retailer scopes. Every request revalidates that the FSCM account is active and that the token role still matches the database, so status/role changes take effect without waiting for token expiry.
 
-Admin user management is available under `/api/v1/users`: filtered deterministic paging, detail/profile updates, role/status commands, and warehouse/region/Sales-group/Retailer scope assignment. Entity reads are available through `entities`; the former `users`, `user`, `userScope`, and `me` GraphQL roots are removed. User creation accepts `identityProvider` as `Local` or `Entra` to select the initial provisioning flow: Entra-first accounts bind their immutable `oid` on first exchange, while Local-first accounts use activation and may later bind Entra without losing password login. Admin creation and promotion remain blocked in the public API.
+Admin user management is available under `/api/v1/users`: filtered deterministic paging, detail/profile updates, role/status commands, and warehouse/region/Sales-group/Retailer scope assignment. Entity reads are available through `entities`; the former `users`, `user`, `userScope`, and `me` GraphQL roots are removed. User creation accepts `identityProvider` as `Local` or `Google` to select the initial provisioning flow: Google-first accounts bind their immutable `sub` on first exchange, while Local-first accounts use activation and may later bind Google without losing password login. Admin creation and promotion remain blocked in the public API.
 
 Create the first deployment Admin exactly once from the deployment secret store:
 
@@ -145,7 +145,7 @@ Create the first deployment Admin exactly once from the deployment secret store:
 dotnet run --project src/FSCM.API/FSCM.API.csproj -- --bootstrap-admin
 ```
 
-Supply `AdminBootstrap:Email`, `AdminBootstrap:FullName`, `AdminBootstrap:IdentityProvider`, and either `AdminBootstrap:EntraObjectId` or `AdminBootstrap:Password`. The command applies pending migrations, exits without changing an existing Admin, and never logs the password.
+Supply `AdminBootstrap:Email`, `AdminBootstrap:FullName`, `AdminBootstrap:IdentityProvider`, and either `AdminBootstrap:GoogleSubject` or `AdminBootstrap:Password`. The command applies pending migrations, exits without changing an existing Admin, and never logs the password.
 
 Create the development-only identity dataset after applying migrations:
 
@@ -210,7 +210,7 @@ The development catalog dump contains:
 
 Approved orders create warehouse picking lists. Completing every list prepares the order for dispatch; Admin or Operator then assigns an active same-warehouse driver and vehicle, atomically issues reserved inventory, snapshots the delivery details, and changes the order and picked QR labels to delivery state. The Retailer linked to the order must scan every dispatched QR label exactly once to confirm receipt and move the order to `Delivered`. Dispatch and receipt commands require idempotency keys and expected order versions.
 
-Final allocation approval creates one canonical payment ledger from the approved amount. It records confirmed and outstanding values for PayOS, manual prepaid, COD, and deferred collection under the same database lock and cap. Prepaid PayOS checkout is unavailable before that final snapshot, and dispatch remains blocked until the ledger is fully paid. A signed, amount/order/link/currency-validated PayOS webhook confirms the effect once; browser return URLs never mark an order paid. COD is confirmed by Admin or Operator only after complete delivery, while a deferred due date is set from the Vietnam complete-receipt date plus the snapshotted 7, 14, or 30-day term. Receipt never auto-settles COD or prepaid orders. Only full collection is supported.
+Final allocation approval creates one canonical payment ledger from the approved amount. It records confirmed and outstanding values for PayOS, prepaid bank transfer, and deferred credit collection under the same database lock and cap. Per SRS BR-51 the only order payment methods are `Prepaid` (bank transfer) and `Credit` (approved 7/14/30-day term); order capture rejects `COD` and prepaid cash. Prepaid PayOS checkout is unavailable before that final snapshot, and dispatch remains blocked until the ledger is fully paid. A signed, amount/order/link/currency-validated PayOS webhook confirms the effect once; browser return URLs never mark an order paid. A deferred due date is set from the Vietnam complete-receipt date plus the snapshotted 7, 14, or 30-day term, and the credit receivable is collected through `/api/v1/payments/orders/{orderId}/collect`. Receipt never auto-settles a prepaid order. Only full collection is supported.
 
 `GET /api/v1/manual-payments/{id}` and `GET /api/v1/manual-payments?salesOrderId=...` provide use-case-shaped reads; scoped payment entities are also available below GraphQL `entities`. Manual writes require Admin or Operator; creation requires `Idempotency-Key`, while confirm/cancel commands require the current manual-payment version. Payment reads expose `amount`, `confirmedAmount`, and `outstandingAmount` without exposing provider secrets or raw webhook payloads.
 
@@ -469,6 +469,61 @@ stock is short.
 The snapshot GET intentionally has no GraphQL twin: it is a bulk device-cache synchronization
 transport with HTTP ETag/checksum semantics, not a persisted business read model. Order reads remain
 available via the shared REST/GraphQL order read services.
+
+## Completing an order, and the points it earns (F70, CH-14)
+
+An order is **Completed** when it has actually been delivered **and** paid for in full **and**
+nothing about it is in dispute. Which of those three is the last to happen depends on the payment
+method, so this is written as one evaluation that three callers ask rather than as three separate
+rules:
+
+| Caller | Why it asks |
+| --- | --- |
+| `ShipmentService.ConfirmReceiptAsync` | the final warehouse part has been received |
+| `ManualPaymentService.ConfirmAsync` | the money just landed - a credit order is delivered long before this |
+| `ComplaintService.ResolveAsync` | the dispute that was holding it is closed, and nothing else will ask |
+
+`OrderCompletionService.EvaluateAsync` owns those three conditions. When they all hold it promotes
+the order to `Completed` - writing an `OrderStatusHistory` row like any other transition - and only
+then counts the points. `LoyaltyAccrualService` gates on the **status**, not on the three facts:
+
+```
+receipt / payment / complaint-resolve
+        -> OrderCompletionService          (the three conditions live here, once)
+              -> status becomes Completed
+                   -> LoyaltyAccrualService  (gates on status == Completed)
+```
+
+Two rules exist for one reason only: the three conditions must not be written down twice. A second
+copy inside the accrual is how the ledger and the status would eventually disagree about the same
+order - points paid on an order the status still calls open, or an order closed with no points. The
+accrual still *reads* the three facts, but only to say **why** an order is waiting, so the retailer's
+card can show "Chờ cộng" with a reason instead of a blank.
+
+`Delivered` is therefore no longer the end of the line. It means every part arrived; `Completed`
+means the order is settled and nothing further is expected of either side.
+
+Both services are idempotent: an order already `Completed` is returned with
+`OrderCompletionBlock.AlreadyCompleted`, and one that already earned is returned unchanged, so every
+caller may ask after every event without guarding. All three ask **outside** their own transaction -
+the receipt and the payment are facts, completion and points are consequences, and a failure here
+must not roll back a delivery the retailer has already taken.
+
+### Rules that are easy to get wrong
+
+- **The value is the approved final amount**, not the list price and not what today's discount table
+  would say. The run froze that number; a table published next week must not change what an order
+  that shipped last week was worth.
+- **Whole points, rounded down.** A part point is not a point, and rounding up mints value the order
+  never paid for.
+- **An order that does not qualify yet is held, not dropped.** A `PendingEarn` row carries no
+  balance and exists so the card can show "Chờ cộng" without a second table. It is written once, not
+  once per evaluation - a credit order sits unpaid for a whole term and would otherwise collect a
+  row per touch.
+- **A correction is a row, not an edit.** After a refund or a complaint, `AdjustAsync` writes the
+  difference against the same order and leaves the original earning readable. The balance is allowed
+  to go negative: points already spent cannot be un-spent, and redemption refuses while the balance
+  is short, which is what stops the difference being handed out twice.
 
 ## Product ranking (F78)
 

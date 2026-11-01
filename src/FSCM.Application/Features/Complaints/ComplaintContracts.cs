@@ -11,4 +11,4 @@ public sealed record ComplaintResult(Guid Id, string Code, string OrderCode, str
     decimal ActualQuantity, string IssueType, string Status, string? LabelCode,
     string? Note, string? EvidenceUrl, DateTimeOffset CreatedAt, string? Response,
     Guid? ShipmentId = null, Guid? AllocationPlanPriceId = null, decimal FinalUnitPrice = 0,
-    decimal AdjustmentAmount = 0);
+    decimal AdjustmentAmount = 0, Guid SalesOrderId = default);

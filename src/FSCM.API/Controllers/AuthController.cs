@@ -9,7 +9,10 @@ namespace FSCM.API.Controllers;
 
 [ApiController]
 [Route("api/v1/auth")]
-public sealed class AuthController(IdentityService identityService, IWebHostEnvironment environment) : ControllerBase
+public sealed class AuthController(
+    IdentityService identityService,
+    RetailerActivationService retailerActivationService,
+    IWebHostEnvironment environment) : ControllerBase
 {
     [AllowAnonymous]
     [HttpPost("login")]
@@ -18,27 +21,29 @@ public sealed class AuthController(IdentityService identityService, IWebHostEnvi
         LoginRequest request,
         CancellationToken cancellationToken) =>
         identityService.LoginAsync(
-            request.Email,
+            request.ResolvedIdentifier,
             request.Password,
             GetRemoteIpAddress(),
             cancellationToken);
 
-    [Authorize(Policy = AuthorizationPolicies.EntraExchange)]
-    [HttpPost("entra/exchange")]
+    [Authorize(Policy = AuthorizationPolicies.GoogleExchange)]
+    [HttpPost("google/exchange")]
     [ProducesResponseType<AuthenticationResult>(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
-    public Task<AuthenticationResult> ExchangeEntra(CancellationToken cancellationToken)
+    public Task<AuthenticationResult> ExchangeGoogle(CancellationToken cancellationToken)
     {
-        var objectId = User.FindFirstValue("oid");
-        var email = User.FindFirstValue("preferred_username")
-            ?? User.FindFirstValue("email")
+        var subject = User.FindFirstValue("sub");
+        var email = User.FindFirstValue("email")
             ?? User.FindFirstValue(ClaimTypes.Email);
-        if (string.IsNullOrWhiteSpace(objectId) || string.IsNullOrWhiteSpace(email))
+        var emailVerified = User.FindFirstValue("email_verified");
+        if (string.IsNullOrWhiteSpace(subject) ||
+            string.IsNullOrWhiteSpace(email) ||
+            !string.Equals(emailVerified, "true", StringComparison.OrdinalIgnoreCase))
             throw IdentityOperationException.InvalidToken();
 
-        return identityService.ExchangeEntraAsync(
-            new EntraIdentity(objectId, email),
+        return identityService.ExchangeGoogleAsync(
+            new GoogleIdentity(subject, email),
             GetRemoteIpAddress(),
             cancellationToken);
     }
@@ -50,6 +55,29 @@ public sealed class AuthController(IdentityService identityService, IWebHostEnvi
         RefreshTokenRequest request,
         CancellationToken cancellationToken) =>
         identityService.RefreshAsync(request.RefreshToken, GetRemoteIpAddress(), cancellationToken);
+
+    [AllowAnonymous]
+    [HttpPost("otp/request")]
+    [ProducesResponseType<OtpRequestResult>(StatusCodes.Status202Accepted)]
+    public async Task<ActionResult<OtpRequestResult>> RequestRetailerOtp(
+        RequestRetailerOtpRequest request, CancellationToken cancellationToken) =>
+        Accepted(await retailerActivationService.RequestOtpAsync(
+            request.Phone, GetRemoteIpAddress(), cancellationToken));
+
+    [AllowAnonymous]
+    [HttpPost("otp/verify")]
+    [ProducesResponseType<OtpVerificationResult>(StatusCodes.Status200OK)]
+    public Task<OtpVerificationResult> VerifyRetailerOtp(
+        VerifyRetailerOtpRequest request, CancellationToken cancellationToken) =>
+        retailerActivationService.VerifyOtpAsync(request.Phone, request.Code, cancellationToken);
+
+    [AllowAnonymous]
+    [HttpPost("password")]
+    [ProducesResponseType<AuthenticationResult>(StatusCodes.Status200OK)]
+    public Task<AuthenticationResult> SetRetailerPassword(
+        SetRetailerPasswordRequest request, CancellationToken cancellationToken) =>
+        retailerActivationService.SetPasswordAsync(
+            request.SetupToken, request.Password, GetRemoteIpAddress(), cancellationToken);
 
     [AllowAnonymous]
     [HttpPost("activate")]
