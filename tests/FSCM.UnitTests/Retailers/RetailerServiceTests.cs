@@ -23,6 +23,10 @@ public sealed class RetailerServiceTests
         Assert.Equal(7, result.RequestedCreditTermDays);
         Assert.Equal(10.776m, result.Latitude);
         Assert.Single(fixture.Store.Assignments);
+        Assert.Single(fixture.Store.ContactAccounts);
+        Assert.Equal(result.ContactName, fixture.Store.ContactAccounts[0].FullName);
+        Assert.Equal(result.Phone, fixture.Store.ContactAccounts[0].Phone);
+        Assert.Equal(result.Email, fixture.Store.ContactAccounts[0].Email);
     }
 
     [Fact]
@@ -196,7 +200,7 @@ public sealed class RetailerServiceTests
             decimal revenue, decimal size, decimal capacity,
             bool includeMlor = true, bool submitForReview = true) =>
             Service.DeclareAsync(SalesUserId, RegionId, GroupId, "Cửa hàng thử nghiệm", "Nguyễn Văn An",
-                "0909000000", null, "Thành phố Hồ Chí Minh", RetailerTypes.GroceryStore,
+                "0909000000", "retailer.test@fscm.local", "Thành phố Hồ Chí Minh", RetailerTypes.GroceryStore,
                 revenue, size, capacity, 4, 7, "Đánh giá thử nghiệm",
                 10.776m, 106.700m, null,
                 includeMlor ? [new RetailerMlorData(Category.Id, null, 0.35m, null)] : [],
@@ -206,6 +210,7 @@ public sealed class RetailerServiceTests
     private sealed class FakeStore : IRetailerStore
     {
         public List<Retailer> Retailers { get; } = [];
+        public List<UserAccount> ContactAccounts { get; } = [];
         public List<RetailerSalesAssignment> Assignments { get; } = [];
         public List<MapLocation> Locations { get; } = [];
         public List<RetailerProductMlor> Mlors { get; } = [];
@@ -221,14 +226,22 @@ public sealed class RetailerServiceTests
             Task.FromResult(Retailers.Where(item => item.Id == retailerId).Select(ToView).SingleOrDefault());
         public Task<Retailer?> FindForUpdateAsync(Guid retailerId, CancellationToken cancellationToken) =>
             Task.FromResult(Retailers.SingleOrDefault(item => item.Id == retailerId));
+        public Task<UserAccount?> FindContactAccountForUpdateAsync(Guid retailerId, CancellationToken cancellationToken) =>
+            Task.FromResult(ContactAccounts.SingleOrDefault(item => item.Id == Retailers.Single(value => value.Id == retailerId).UserAccountId));
         public Task<Retailer?> FindDuplicateAsync(
             string name, string? phone, string? email, string? address,
             Guid? excludedRetailerId, CancellationToken cancellationToken) =>
             Task.FromResult(Retailers.FirstOrDefault(item => item.Id != excludedRetailerId &&
-                ((phone is not null && item.Phone?.ToLowerInvariant() == phone) ||
-                 (email is not null && item.Email?.ToLowerInvariant() == email) ||
-                 (address is not null && item.Name.ToLowerInvariant() == name &&
-                     item.Address?.ToLowerInvariant() == address))));
+                ContactAccounts.Where(account => account.Id == item.UserAccountId).Any(account =>
+                    (phone is not null && account.Phone?.ToLowerInvariant() == phone) ||
+                    (email is not null && account.Email.ToLowerInvariant() == email)) ||
+                (address is not null && item.Id != excludedRetailerId && item.Name.ToLowerInvariant() == name &&
+                    item.Address?.ToLowerInvariant() == address)));
+        public Task<bool> ContactAccountExistsAsync(
+            string phone, string email, Guid? excludedRetailerId, CancellationToken cancellationToken) =>
+            Task.FromResult(ContactAccounts.Any(account =>
+                !Retailers.Any(retailer => retailer.Id == excludedRetailerId && retailer.UserAccountId == account.Id) &&
+                (account.Phone == phone || account.Email.Equals(email, StringComparison.OrdinalIgnoreCase))));
         public Task<IReadOnlyCollection<RetailerMlorView>> ListMlorDeclarationsAsync(
             IReadOnlyCollection<Guid> retailerIds, bool includeInactive, bool tracking, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyCollection<RetailerMlorView>>(Mlors
@@ -254,6 +267,7 @@ public sealed class RetailerServiceTests
         public Task<string> NextDeclarationCodeAsync(CancellationToken cancellationToken) => Task.FromResult("KB-0100");
         public Task<string> NextBusinessCodeAsync(CancellationToken cancellationToken) => Task.FromResult("10005000");
         public void Add(Retailer retailer) => Retailers.Add(retailer);
+        public void AddContactAccount(UserAccount userAccount) => ContactAccounts.Add(userAccount);
         public void AddAssignment(RetailerSalesAssignment assignment) => Assignments.Add(assignment);
         public Task SaveChangesAsync(CancellationToken cancellationToken) => Task.CompletedTask;
         public Task<MapLocation?> FindLocationForUpdateAsync(Guid retailerId, CancellationToken cancellationToken) =>
@@ -262,6 +276,7 @@ public sealed class RetailerServiceTests
         public void AddMlor(RetailerProductMlor mlor) => Mlors.Add(mlor);
         public void AddAuditLog(AuditLog auditLog) => AuditLogs.Add(auditLog);
         private RetailerView ToView(Retailer retailer) => new(retailer,
+            ContactAccounts.Single(item => item.Id == retailer.UserAccountId),
             Assignments.Single(item => item.RetailerId == retailer.Id).SalesGroupId, "HCM-A",
             Locations.SingleOrDefault(item => item.RetailerId == retailer.Id));
     }

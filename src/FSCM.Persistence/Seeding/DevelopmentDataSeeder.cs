@@ -948,9 +948,6 @@ public sealed class DevelopmentDataSeeder(
         retailer.UserAccountId = retailerUserId;
         retailer.Code = DemoRetailerCode;
         retailer.Name = "Cửa hàng An Phú";
-        retailer.ContactName = "Nguyễn Văn Minh";
-        retailer.Phone = "+84 28 0000 0001";
-        retailer.Email = "cuahang.anphu@fscm.local";
         retailer.Address = "Phường An Phú, thành phố Thủ Đức, Thành phố Hồ Chí Minh";
         retailer.Status = RetailerStatuses.Active;
         retailer.RetailerType = RetailerTypes.GroceryStore;
@@ -1014,6 +1011,26 @@ public sealed class DevelopmentDataSeeder(
 
         foreach (var definition in definitions)
         {
+            var contactEmail = $"retailer.{definition.Code.ToLowerInvariant()}@fscm.local";
+            var contactAccount = await dbContext.UserAccountRecords.SingleOrDefaultAsync(
+                item => item.Email == contactEmail, cancellationToken);
+            if (contactAccount is null)
+            {
+                contactAccount = new UserAccount
+                {
+                    Id = Guid.NewGuid(),
+                    Email = contactEmail,
+                    IdentityProvider = IdentityProviders.Local,
+                    CreatedAt = now.AddDays(-20)
+                };
+                dbContext.UserAccountRecords.Add(contactAccount);
+            }
+            contactAccount.FullName = definition.ContactName;
+            contactAccount.Phone = definition.Phone;
+            contactAccount.Role = SystemRoles.Retailer;
+            contactAccount.IsActive = false;
+            contactAccount.UpdatedAt = now;
+
             var retailer = await dbContext.RetailerRecords.SingleOrDefaultAsync(item => item.Code == definition.Code, cancellationToken);
             if (retailer is null)
             {
@@ -1021,10 +1038,8 @@ public sealed class DevelopmentDataSeeder(
                 dbContext.RetailerRecords.Add(retailer);
             }
             retailer.RegionId = regions[definition.RegionCode].Id;
+            retailer.UserAccountId = contactAccount.Id;
             retailer.Name = definition.Name;
-            retailer.ContactName = definition.ContactName;
-            retailer.Phone = definition.Phone;
-            retailer.Email = null;
             retailer.Address = definition.Address;
             retailer.Status = definition.Status;
             retailer.RetailerType = definition.RetailerType;

@@ -3378,10 +3378,6 @@ namespace FSCM.Persistence.Migrations
                         .HasMaxLength(30)
                         .HasColumnType("character varying(30)");
 
-                    b.Property<string>("ContactName")
-                        .HasMaxLength(200)
-                        .HasColumnType("character varying(200)");
-
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -3391,10 +3387,6 @@ namespace FSCM.Persistence.Migrations
                     b.Property<Guid>("DeclaredByUserId")
                         .HasColumnType("uuid");
 
-                    b.Property<string>("Email")
-                        .HasMaxLength(150)
-                        .HasColumnType("character varying(150)");
-
                     b.Property<decimal?>("ForecastRevenue")
                         .HasPrecision(18, 2)
                         .HasColumnType("numeric(18,2)");
@@ -3403,10 +3395,6 @@ namespace FSCM.Persistence.Migrations
                         .IsRequired()
                         .HasMaxLength(200)
                         .HasColumnType("character varying(200)");
-
-                    b.Property<string>("Phone")
-                        .HasMaxLength(30)
-                        .HasColumnType("character varying(30)");
 
                     b.Property<decimal?>("PotentialScore")
                         .HasPrecision(5, 2)

@@ -30,7 +30,7 @@ public sealed class RetailerActivationService(
 
         var retailer = await store.FindRetailerByUserIdAsync(user.Id, cancellationToken)
             ?? throw IdentityOperationException.Validation("Tài khoản chưa được liên kết với Retailer.");
-        var email = ValidateTrustedEmail(user, retailer);
+        var email = ValidateTrustedEmail(user);
         var now = timeProvider.GetUtcNow();
         var latest = await store.FindLatestAsync(user.Id, cancellationToken);
         if (latest is not null && latest.ConsumedAt is null && latest.CreatedAt.Add(ResendCooldown) > now)
@@ -131,10 +131,9 @@ public sealed class RetailerActivationService(
             throw IdentityOperationException.Validation("Số điện thoại không hợp lệ.");
         return normalized;
     }
-    private static string ValidateTrustedEmail(UserAccount user, Retailer retailer)
+    private static string ValidateTrustedEmail(UserAccount user)
     {
-        if (string.IsNullOrWhiteSpace(user.Email) || string.IsNullOrWhiteSpace(retailer.Email) ||
-            !string.Equals(user.Email.Trim(), retailer.Email.Trim(), StringComparison.OrdinalIgnoreCase))
+        if (string.IsNullOrWhiteSpace(user.Email))
             throw IdentityOperationException.Validation("Retailer chưa có email hợp lệ và được liên kết đáng tin cậy.");
         try { return new MailAddress(user.Email.Trim()).Address; }
         catch (FormatException) { throw IdentityOperationException.Validation("Retailer chưa có email hợp lệ và được liên kết đáng tin cậy."); }

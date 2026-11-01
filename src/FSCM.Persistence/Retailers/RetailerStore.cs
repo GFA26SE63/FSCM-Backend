@@ -14,11 +14,12 @@ public sealed class RetailerStore(AppDbContext dbContext) : IRetailerStore
         if (!string.IsNullOrWhiteSpace(status)) retailers = retailers.Where(item => item.Status == status);
         var query =
             from retailer in retailers
+            join contactAccount in dbContext.UserAccountRecords.AsNoTracking() on retailer.UserAccountId equals contactAccount.Id
             join assignment in dbContext.RetailerSalesAssignmentRecords.AsNoTracking().Where(item => item.IsActive) on retailer.Id equals assignment.RetailerId
             join salesGroup in dbContext.SalesGroupRecords.AsNoTracking() on assignment.SalesGroupId equals salesGroup.Id
             join location in dbContext.MapLocationRecords.AsNoTracking() on retailer.Id equals location.RetailerId into locations
             from location in locations.DefaultIfEmpty()
-            select new { Retailer = retailer, SalesGroupId = salesGroup.Id, SalesGroupCode = salesGroup.Code, Location = location };
+            select new { Retailer = retailer, ContactAccount = contactAccount, SalesGroupId = salesGroup.Id, SalesGroupCode = salesGroup.Code, Location = location };
         if (actorRole is SystemRoles.Sales or SystemRoles.SalesManager)
         {
             query = actorRole == SystemRoles.Sales
@@ -27,35 +28,52 @@ public sealed class RetailerStore(AppDbContext dbContext) : IRetailerStore
                 : query.Where(item => dbContext.SalesGroupMemberRecords.Any(member => member.UserAccountId == actorUserId && member.SalesGroupId == item.SalesGroupId && member.IsActive));
         }
         return (await query.ToArrayAsync(cancellationToken))
-            .Select(item => new RetailerView(item.Retailer, item.SalesGroupId, item.SalesGroupCode, item.Location))
+            .Select(item => new RetailerView(item.Retailer, item.ContactAccount, item.SalesGroupId, item.SalesGroupCode, item.Location))
             .OrderBy(item => item.Retailer.Code, StringComparer.Ordinal)
             .ToArray();
     }
 
     public Task<RetailerView?> FindViewAsync(Guid retailerId, CancellationToken cancellationToken) =>
         (from retailer in dbContext.RetailerRecords.AsNoTracking()
+         join contactAccount in dbContext.UserAccountRecords.AsNoTracking() on retailer.UserAccountId equals contactAccount.Id
          join assignment in dbContext.RetailerSalesAssignmentRecords.AsNoTracking().Where(item => item.IsActive) on retailer.Id equals assignment.RetailerId
          join salesGroup in dbContext.SalesGroupRecords.AsNoTracking() on assignment.SalesGroupId equals salesGroup.Id
          join location in dbContext.MapLocationRecords.AsNoTracking() on retailer.Id equals location.RetailerId into locations
          from location in locations.DefaultIfEmpty()
          where retailer.Id == retailerId
-         select new RetailerView(retailer, salesGroup.Id, salesGroup.Code, location)).SingleOrDefaultAsync(cancellationToken);
+         select new RetailerView(retailer, contactAccount, salesGroup.Id, salesGroup.Code, location)).SingleOrDefaultAsync(cancellationToken);
 
     public Task<Retailer?> FindForUpdateAsync(Guid retailerId, CancellationToken cancellationToken) =>
         dbContext.RetailerRecords.SingleOrDefaultAsync(item => item.Id == retailerId, cancellationToken);
 
-    public Task<Retailer?> FindDuplicateAsync(
+    public Task<UserAccount?> FindContactAccountForUpdateAsync(Guid retailerId, CancellationToken cancellationToken) =>
+        (from retailer in dbContext.RetailerRecords
+         join user in dbContext.UserAccountRecords on retailer.UserAccountId equals user.Id
+         where retailer.Id == retailerId
+         select user).SingleOrDefaultAsync(cancellationToken);
+
+    public async Task<Retailer?> FindDuplicateAsync(
         string name, string? phone, string? email, string? address,
         Guid? excludedRetailerId, CancellationToken cancellationToken)
     {
-        var query = dbContext.RetailerRecords.AsNoTracking()
-            .Where(item => !excludedRetailerId.HasValue || item.Id != excludedRetailerId.Value);
-        return query.FirstOrDefaultAsync(item =>
-            (phone != null && item.Phone != null && item.Phone.ToLower() == phone) ||
-            (email != null && item.Email != null && item.Email.ToLower() == email) ||
-            (item.Name.ToLower() == name && address != null && item.Address != null &&
-                item.Address.ToLower() == address), cancellationToken);
+        var query = from item in dbContext.RetailerRecords.AsNoTracking()
+            join user in dbContext.UserAccountRecords.AsNoTracking() on item.UserAccountId equals user.Id
+            where !excludedRetailerId.HasValue || item.Id != excludedRetailerId.Value
+            select new { Retailer = item, User = user };
+        var duplicate = await query.FirstOrDefaultAsync(item =>
+            (phone != null && item.User.Phone != null && item.User.Phone.ToLower() == phone) ||
+            (email != null && item.User.Email.ToLower() == email) ||
+            (item.Retailer.Name.ToLower() == name && address != null && item.Retailer.Address != null &&
+                item.Retailer.Address.ToLower() == address), cancellationToken);
+        return duplicate?.Retailer;
     }
+
+    public Task<bool> ContactAccountExistsAsync(
+        string phone, string email, Guid? excludedRetailerId, CancellationToken cancellationToken) =>
+        dbContext.UserAccountRecords.AsNoTracking().AnyAsync(user =>
+            (!excludedRetailerId.HasValue || !dbContext.RetailerRecords.Any(retailer =>
+                retailer.Id == excludedRetailerId.Value && retailer.UserAccountId == user.Id)) &&
+            (user.Email.ToLower() == email || (user.Phone != null && user.Phone == phone)), cancellationToken);
 
     public async Task<IReadOnlyCollection<RetailerMlorView>> ListMlorDeclarationsAsync(
         IReadOnlyCollection<Guid> retailerIds, bool includeInactive, bool tracking,
@@ -137,6 +155,7 @@ public sealed class RetailerStore(AppDbContext dbContext) : IRetailerStore
     }
 
     public void Add(Retailer retailer) => dbContext.RetailerRecords.Add(retailer);
+    public void AddContactAccount(UserAccount userAccount) => dbContext.UserAccountRecords.Add(userAccount);
     public void AddAssignment(RetailerSalesAssignment assignment) => dbContext.RetailerSalesAssignmentRecords.Add(assignment);
     public void AddLocation(MapLocation location) => dbContext.MapLocationRecords.Add(location);
     public void AddMlor(RetailerProductMlor mlor) => dbContext.RetailerProductMlorRecords.Add(mlor);
