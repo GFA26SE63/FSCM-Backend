@@ -32,14 +32,14 @@ public sealed class DevelopmentDataSeeder(
     // New idempotency identity after Review 2 removed COD from the seeded order contract.
     private static readonly Guid DemoOrderClientKey = Guid.Parse("10000000-0000-0000-0000-000000001031");
 
-    private static readonly (string Email, string FullName, string Role)[] DemoUsers =
+    private static readonly (string Email, string Phone, string FullName, string Role)[] DemoUsers =
     [
-        ("admin@fscm.local", "Quản trị viên FSCM", SystemRoles.Admin),
-        ("operator@fscm.local", "Nhân viên vận hành FSCM", SystemRoles.Operator),
-        ("sales.manager@fscm.local", "Quản lý bán hàng FSCM", SystemRoles.SalesManager),
-        ("sales@fscm.local", "Nhân viên bán hàng FSCM", SystemRoles.Sales),
-        ("warehouse.keeper@fscm.local", "Thủ kho FSCM", SystemRoles.WarehouseKeeper),
-        ("retailer@fscm.local", "Người dùng nhà bán lẻ FSCM", SystemRoles.Retailer)
+        ("admin@fscm.local", "0901000001", "Quản trị viên FSCM", SystemRoles.Admin),
+        ("operator@fscm.local", "0901000002", "Nhân viên vận hành FSCM", SystemRoles.Operator),
+        ("sales.manager@fscm.local", "0901000003", "Quản lý bán hàng FSCM", SystemRoles.SalesManager),
+        ("sales@fscm.local", "0901000004", "Nhân viên bán hàng FSCM", SystemRoles.Sales),
+        ("warehouse.keeper@fscm.local", "0901000005", "Thủ kho FSCM", SystemRoles.WarehouseKeeper),
+        ("retailer@fscm.local", "0901000006", "Người dùng nhà bán lẻ FSCM", SystemRoles.Retailer)
     ];
 
     public async Task SeedAsync(CancellationToken cancellationToken = default)
@@ -572,6 +572,7 @@ public sealed class DevelopmentDataSeeder(
             }
 
             user.FullName = definition.FullName;
+            user.Phone = definition.Phone;
             user.Role = definition.Role;
             user.IdentityProvider = IdentityProviders.Local;
             user.IsActive = true;
