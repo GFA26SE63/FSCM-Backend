@@ -69,6 +69,25 @@ public sealed class OrderServiceTests
         Assert.Empty(fixture.Store.Orders);
     }
 
+    [Theory]
+    [InlineData("COD")]
+    [InlineData("cod")]
+    [InlineData("PrepaidCash")]
+    [InlineData("Cash")]
+    public async Task Cod_and_prepaid_cash_are_not_order_payment_methods(string method)
+    {
+        // SRS BR-51: only Prepaid (bank transfer) and approved Credit are allowed.
+        var fixture = new Fixture();
+        var request = fixture.Request(10) with { PaymentMethod = method };
+
+        var exception = await Assert.ThrowsAsync<OrderOperationException>(() =>
+            fixture.Service.CreateAsync(request, fixture.SalesUserId, default));
+
+        Assert.Equal("validation_error", exception.Code);
+        Assert.Empty(fixture.Store.Orders);
+        Assert.False(OrderPaymentMethods.IsSupported(method));
+    }
+
     [Fact]
     public async Task Repeated_client_order_key_returns_original_order_without_inventory_side_effect()
     {
@@ -118,24 +137,6 @@ public sealed class OrderServiceTests
 
         Assert.Equal("validation_error", exception.Code);
         Assert.Empty(fixture.Store.Orders);
-    }
-
-    [Fact]
-    public async Task Reviewing_an_order_parks_it_for_the_run_and_commits_no_stock()
-    {
-        var fixture = new Fixture();
-        var created = await fixture.CreateAsync(10);
-
-        var approved = await fixture.Service.ApproveAsync(
-            created.Id, created.Version, fixture.OperatorUserId, SystemRoles.Operator, default);
-
-        Assert.Equal(OrderStatuses.PendingAllocation, approved.Status);
-        Assert.Equal(0m, fixture.Store.Balance.ReservedQuantity);
-        Assert.Equal(50m, fixture.Store.Balance.AvailableQuantity);
-        Assert.Equal(1, approved.Version);
-        Assert.Equal(0, fixture.Inventory.ReserveCalls);
-        // Picking lists come from the run (F43), not from reviewing one order.
-        Assert.Equal(0, fixture.PickingPlan.Calls);
     }
 
     [Theory]
@@ -224,20 +225,6 @@ public sealed class OrderServiceTests
                 fixture.OperatorUserId, SystemRoles.Operator, default));
 
         Assert.Equal("validation_error", exception.Code);
-        Assert.Equal(OrderStatuses.PendingApproval, fixture.Store.Orders.Single().Status);
-    }
-
-    [Fact]
-    public async Task Stale_order_version_is_rejected()
-    {
-        var fixture = new Fixture();
-        var created = await fixture.CreateAsync(10);
-
-        var exception = await Assert.ThrowsAsync<OrderOperationException>(() =>
-            fixture.Service.ApproveAsync(created.Id, created.Version + 1, fixture.OperatorUserId,
-                SystemRoles.Operator, default));
-
-        Assert.Equal("conflict", exception.Code);
         Assert.Equal(OrderStatuses.PendingApproval, fixture.Store.Orders.Single().Status);
     }
 
@@ -386,7 +373,7 @@ public sealed class OrderServiceTests
         public CreateAssistedOrderData Request(int quantity) => new(
             Guid.Parse("10000000-0000-0000-0000-000000000001"),
             Store.Retailer.Id,
-            OrderPaymentMethods.Cod,
+            OrderPaymentMethods.Credit,
             new DateOnly(2026, 10, 20),
             null,
             "Giao trong giờ hành chính",
@@ -398,7 +385,7 @@ public sealed class OrderServiceTests
         public SubmitOfflineOrderData OfflineRequest(int quantity, decimal estimate) => new(
             Guid.Parse("10000000-0000-0000-0000-000000000002"),
             Store.Retailer.Id,
-            OrderPaymentMethods.Cod,
+            OrderPaymentMethods.Credit,
             new DateOnly(2026, 10, 20),
             null,
             "Đơn nháp offline",

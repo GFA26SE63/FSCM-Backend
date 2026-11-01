@@ -30,7 +30,6 @@ public sealed class PaymentServiceTests
     }
 
     [Theory]
-    [InlineData(OrderPaymentMethods.Cod)]
     [InlineData(OrderPaymentMethods.Prepaid)]
     public async Task Delivered_non_credit_order_is_not_settled_automatically(string method)
     {

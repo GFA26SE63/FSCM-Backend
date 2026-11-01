@@ -25,7 +25,7 @@ public sealed class WarehousesController(WarehouseConfigurationService service) 
     public async Task<IActionResult> Create(CreateWarehouseRequest request, CancellationToken cancellationToken)
     {
         var result = await service.CreateWarehouseAsync(new SaveWarehouseData(
-            request.Code, request.Name, request.Type, request.Address,
+            request.Code, request.Name, request.RegionId, request.Address,
             request.Latitude, request.Longitude, request.ProviderPlaceId,
             request.MinimumStockThresholdCartons), cancellationToken);
         return CreatedAtAction(nameof(Get), new { warehouseId = result.Id }, result);
@@ -36,7 +36,7 @@ public sealed class WarehousesController(WarehouseConfigurationService service) 
     public Task<WarehouseResult> Update(
         Guid warehouseId, UpdateWarehouseRequest request, CancellationToken cancellationToken) =>
         service.UpdateWarehouseAsync(warehouseId, new SaveWarehouseData(
-            string.Empty, request.Name, request.Type, request.Address,
+            string.Empty, request.Name, request.RegionId, request.Address,
             request.Latitude, request.Longitude, request.ProviderPlaceId,
             request.MinimumStockThresholdCartons), cancellationToken);
 

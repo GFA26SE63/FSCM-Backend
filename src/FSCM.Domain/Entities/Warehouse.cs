@@ -7,7 +7,7 @@ public sealed class Warehouse
     public Guid Id { get; set; }
     public string Code { get; set; } = string.Empty;
     public string Name { get; set; } = string.Empty;
-    public string Type { get; set; } = string.Empty;
+    public Guid RegionId { get; set; }
     public string? Address { get; set; }
     public int MinimumStockThresholdCartons { get; set; }
     public bool IsActive { get; set; }

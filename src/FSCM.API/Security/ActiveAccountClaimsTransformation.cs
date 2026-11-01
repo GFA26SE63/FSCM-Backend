@@ -11,9 +11,9 @@ public sealed class ActiveAccountClaimsTransformation(IIdentityStore identitySto
         if (principal.Identity?.IsAuthenticated != true)
             return principal;
 
-        // Entra is used only at the exchange endpoint. Its identity is validated by the
-        // dedicated Entra bearer scheme before an FSCM account/JWT exists.
-        if (principal.HasClaim(claim => claim.Type == "oid") &&
+        // Google is used only at the exchange endpoint. Its identity is validated by the
+        // dedicated Google bearer scheme before an FSCM account/JWT exists.
+        if (principal.HasClaim(claim => claim.Type == "sub") &&
             !Guid.TryParse(principal.FindFirstValue(ClaimTypes.NameIdentifier), out _))
             return principal;
 

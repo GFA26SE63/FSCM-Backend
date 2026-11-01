@@ -16,7 +16,8 @@ public sealed class OrderService(
     IInventoryLifecycleService inventoryLifecycleService,
     IPickingPlanService pickingPlanService,
     OrderReleaseService releaseService,
-    TimeProvider timeProvider)
+    TimeProvider timeProvider,
+    IRealTimeAllocationService? realTimeAllocationService = null)
 {
     private const string OrderStepKey = "order.order_step_cartons";
     private static readonly TimeZoneInfo VietnamTimeZone = TimeZoneInfo.FindSystemTimeZoneById("Asia/Ho_Chi_Minh");
@@ -56,6 +57,7 @@ public sealed class OrderService(
         {
             throw OrderOperationException.Validation("Requested delivery date cannot be in the past.");
         }
+        await EnsureServiceRadiusAsync(normalized.RetailerId, normalized.Lines, cancellationToken);
 
         var orderCode = await store.NextOrderCodeAsync(cancellationToken);
         var plan = await BuildCaptureAsync(
@@ -78,6 +80,8 @@ public sealed class OrderService(
         }
 
         store.ClearTracking();
+        if (realTimeAllocationService is not null)
+            await realTimeAllocationService.AllocateAsync(plan.Order.Id, salesUserId, cancellationToken);
         return await GetAsync(plan.Order.Id, salesUserId, SystemRoles.Sales, cancellationToken);
     }
 
@@ -123,6 +127,7 @@ public sealed class OrderService(
         var today = GetVietnamDate(now);
         if (normalized.RequestedDeliveryDate < today)
             throw OrderOperationException.Validation("Requested delivery date cannot be in the past.");
+        await EnsureServiceRadiusAsync(normalized.RetailerId, normalized.Lines, cancellationToken);
 
         var orderCode = await store.NextOrderCodeAsync(cancellationToken);
         var plan = await BuildCaptureAsync(
@@ -180,6 +185,8 @@ public sealed class OrderService(
         }
 
         store.ClearTracking();
+        if (realTimeAllocationService is not null)
+            await realTimeAllocationService.AllocateAsync(plan.Order.Id, salesUserId, cancellationToken);
         return await GetAsync(plan.Order.Id, salesUserId, SystemRoles.Sales, cancellationToken);
     }
 
@@ -414,7 +421,7 @@ public sealed class OrderService(
             ClientOrderKey = data.ClientOrderKey,
             RequestHash = requestHash,
             Source = source,
-            Status = OrderStatuses.PendingApproval,
+            Status = OrderStatuses.Allocating,
             PaymentMethod = data.PaymentMethod,
             CreditTermDays = data.PaymentMethod == OrderPaymentMethods.Credit
                 ? retailerContext.Retailer.CreditTermDays
@@ -424,6 +431,7 @@ public sealed class OrderService(
             Note = data.Note,
             FinalPricePendingAllocation = true,
             ServerReceivedAt = now,
+            AcceptedAt = now,
             CreatedAt = now,
             UpdatedAt = now
         };
@@ -515,7 +523,7 @@ public sealed class OrderService(
             order.HasOfflineDifference =
                 offlineEstimatedAmount.HasValue && offlineEstimatedAmount.Value != order.FinalAmount;
         }
-        var history = NewHistory(order.Id, null, OrderStatuses.PendingApproval,
+        var history = NewHistory(order.Id, null, OrderStatuses.Allocating,
             salesUserId, source == OrderSources.Offline ? "Sales gửi đơn nháp offline" : "Sales tạo đơn hỗ trợ", now);
         var audit = new AuditLog
         {
@@ -577,6 +585,30 @@ public sealed class OrderService(
         return order;
     }
 
+    private async Task EnsureServiceRadiusAsync(Guid retailerId, IReadOnlyCollection<CreateOrderLineData> lines,
+        CancellationToken cancellationToken)
+    {
+        var retailer = await store.FindRetailerLocationAsync(retailerId, cancellationToken)
+            ?? throw OrderOperationException.Conflict("Retailer location must be geocoded before order submission.");
+        var radius = await GetPositiveConfigurationAsync("allocation.service_radius_meters", 20_000, false, cancellationToken);
+        var candidates = new List<OrderInventoryCandidate>();
+        foreach (var productId in lines.Select(item => item.ProductId).Distinct())
+            candidates.AddRange(await store.ListCandidatesAsync(productId, cancellationToken));
+        if (!candidates.Any(item => item.WarehouseLatitude.HasValue && item.WarehouseLongitude.HasValue &&
+            HaversineMeters(retailer.Latitude, retailer.Longitude, item.WarehouseLatitude.Value, item.WarehouseLongitude.Value) <= radius))
+            throw OrderOperationException.Conflict("Delivery address is outside every active warehouse service radius.");
+    }
+
+    private static decimal HaversineMeters(decimal latitude1, decimal longitude1, decimal latitude2, decimal longitude2)
+    {
+        const double radius = 6_371_000;
+        static double Radians(decimal value) => (double)value * Math.PI / 180d;
+        var lat1 = Radians(latitude1); var lat2 = Radians(latitude2);
+        var dLat = lat2 - lat1; var dLon = Radians(longitude2 - longitude1);
+        var a = Math.Sin(dLat / 2) * Math.Sin(dLat / 2) + Math.Cos(lat1) * Math.Cos(lat2) * Math.Sin(dLon / 2) * Math.Sin(dLon / 2);
+        return (decimal)(radius * 2 * Math.Atan2(Math.Sqrt(a), Math.Sqrt(1 - a)));
+    }
+
     private async Task<int> GetPositiveConfigurationAsync(
         string key,
         int fallback,
@@ -600,7 +632,8 @@ public sealed class OrderService(
             throw OrderOperationException.Validation("Client order key and retailer are required.");
         var paymentMethod = NormalizePaymentMethod(data.PaymentMethod);
         if (paymentMethod is null)
-            throw OrderOperationException.Validation("Payment method must be Prepaid, COD, or Credit.");
+            throw OrderOperationException.Validation(
+                "Payment method must be Prepaid (bank transfer) or Credit; COD is not supported.");
         if (data.Lines is null || data.Lines.Count is < 1 or > 100)
             throw OrderOperationException.Validation("Order must contain between 1 and 100 lines.");
         if (data.Lines.Any(item => item.ProductId == Guid.Empty || item.Quantity <= 0))
@@ -624,8 +657,6 @@ public sealed class OrderService(
         var candidate = value?.Trim();
         if (string.Equals(candidate, OrderPaymentMethods.Prepaid, StringComparison.OrdinalIgnoreCase))
             return OrderPaymentMethods.Prepaid;
-        if (string.Equals(candidate, OrderPaymentMethods.Cod, StringComparison.OrdinalIgnoreCase))
-            return OrderPaymentMethods.Cod;
         if (string.Equals(candidate, OrderPaymentMethods.Credit, StringComparison.OrdinalIgnoreCase))
             return OrderPaymentMethods.Credit;
         return null;
@@ -915,15 +946,16 @@ public sealed class OrderService(
 
     private static readonly HashSet<string> OrderStatusSet =
     [
-        OrderStatuses.PendingApproval,
-        OrderStatuses.PendingAllocation,
-        OrderStatuses.Approved,
-        OrderStatuses.Picking,
-        OrderStatuses.Rejected,
-        OrderStatuses.Cancelled,
-        OrderStatuses.Issued,
-        OrderStatuses.Delivering,
-        OrderStatuses.Delivered
+        OrderStatuses.Allocating,
+        OrderStatuses.Quoted,
+        OrderStatuses.AllocationFailed,
+        OrderStatuses.OutOfStock,
+        OrderStatuses.AllocationConflict,
+        OrderStatuses.Withdrawn,
+        OrderStatuses.QuoteRejected,
+        OrderStatuses.QuoteExpired,
+        OrderStatuses.PaymentPending,
+        OrderStatuses.ConvertedToPo
     ];
 
     private sealed record CapturePlan(

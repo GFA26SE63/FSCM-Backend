@@ -25,16 +25,16 @@ public sealed record IdentityScopeLabels(
 public static class IdentityProviders
 {
     public const string Local = "Local";
-    public const string Entra = "Entra";
+    public const string Google = "Google";
 
     public static IReadOnlySet<string> All { get; } = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
     {
         Local,
-        Entra
+        Google
     };
 }
 
-public sealed record EntraIdentity(string ObjectId, string Email);
+public sealed record GoogleIdentity(string Subject, string Email);
 
 public sealed record UserListQuery(
     string? Search,
@@ -46,6 +46,7 @@ public sealed record UserListQuery(
 public sealed record UserSummary(
     Guid Id,
     string Email,
+    string? Phone,
     string FullName,
     string Role,
     bool IsActive,

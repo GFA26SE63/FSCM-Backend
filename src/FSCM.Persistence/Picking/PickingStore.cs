@@ -59,7 +59,9 @@ public sealed class PickingStore(AppDbContext dbContext) : IPickingStore
         var list = await listQuery.SingleOrDefaultAsync(cancellationToken);
         if (list is null) return null;
 
-        var orderQuery = dbContext.SalesOrderRecords.Where(item => item.Id == list.SalesOrderId);
+        var purchaseOrder = await dbContext.PurchaseOrderRecords.AsNoTracking()
+            .SingleAsync(item => item.Id == list.PurchaseOrderId, cancellationToken);
+        var orderQuery = dbContext.SalesOrderRecords.Where(item => item.Id == purchaseOrder.SalesOrderId);
         if (!forUpdate) orderQuery = orderQuery.AsNoTracking();
         var order = await orderQuery.SingleAsync(cancellationToken);
         var warehouse = await dbContext.WarehouseRecords.AsNoTracking()
@@ -100,14 +102,16 @@ public sealed class PickingStore(AppDbContext dbContext) : IPickingStore
 
     public async Task<IReadOnlyCollection<PickingList>> ListByOrderAsync(
         Guid orderId, CancellationToken cancellationToken) =>
-        await dbContext.PickingListRecords.Where(item => item.SalesOrderId == orderId)
+        await dbContext.PickingListRecords.Where(item => dbContext.PurchaseOrderRecords.Any(po =>
+                po.Id == item.PurchaseOrderId && po.SalesOrderId == orderId))
             .OrderBy(item => item.PickingCode).ToArrayAsync(cancellationToken);
 
     public async Task<IReadOnlyCollection<PickingItem>> ListItemsByOrderAsync(
         Guid orderId, CancellationToken cancellationToken) =>
         await dbContext.PickingItemRecords
             .Where(item => dbContext.PickingListRecords.Any(list =>
-                list.Id == item.PickingListId && list.SalesOrderId == orderId))
+                list.Id == item.PickingListId && dbContext.PurchaseOrderRecords.Any(po =>
+                    po.Id == list.PurchaseOrderId && po.SalesOrderId == orderId)))
             .ToArrayAsync(cancellationToken);
 
     public Task<QrLabelEvent?> FindOperationAsync(string operationKey, CancellationToken cancellationToken) =>
