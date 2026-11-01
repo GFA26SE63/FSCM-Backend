@@ -46,6 +46,7 @@ public sealed record UserListQuery(
 public sealed record UserSummary(
     Guid Id,
     string Email,
+    string? Phone,
     string FullName,
     string Role,
     bool IsActive,

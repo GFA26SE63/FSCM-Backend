@@ -711,7 +711,7 @@ public sealed class IdentityService(
             scopeLabels ?? IdentityScopeLabels.Empty);
 
     private static UserSummary ToUserSummary(UserAccount user) =>
-        new(user.Id, user.Email, user.FullName, user.Role, user.IsActive,
+        new(user.Id, user.Email, user.Phone, user.FullName, user.Role, user.IsActive,
             user.IdentityProvider, user.CreatedAt, user.UpdatedAt);
 
     private void AddAudit(Guid entityId, Guid actorUserId, string action, object? oldValues, object? newValues) =>
