@@ -7,6 +7,9 @@ public sealed class IdentityOperationException(string code, string message) : Ex
     public static IdentityOperationException InvalidCredentials() =>
         new("invalid_credentials", "The email address, phone number, or password is invalid.");
 
+    public static IdentityOperationException RetailerActivationRequired() =>
+        new("retailer_activation_required", "Retailer cần kích hoạt tài khoản bằng OTP trước khi đăng nhập lần đầu.");
+
     public static IdentityOperationException AccountLocked() =>
         new("account_locked", "The account is temporarily locked. Try again later.");
 

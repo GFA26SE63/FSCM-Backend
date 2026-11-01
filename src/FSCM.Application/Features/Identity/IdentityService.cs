@@ -31,6 +31,13 @@ public sealed class IdentityService(
             ? null
             : await store.FindCredentialAsync(user.Id, cancellationToken);
 
+        if (string.IsNullOrWhiteSpace(password))
+        {
+            if (user?.Role == SystemRoles.Retailer && !user.IsActive && credential is null)
+                throw IdentityOperationException.RetailerActivationRequired();
+            throw IdentityOperationException.Validation("Vui lòng nhập mật khẩu.");
+        }
+
         // Authentication methods are capabilities, not mutually exclusive account types.
         // A password credential enables local login even after the same account is linked to Google.
         if (user is null || credential is null || !user.IsActive)
