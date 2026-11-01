@@ -3531,6 +3531,43 @@ namespace FSCM.Persistence.Migrations
                     b.ToTable("RETAILER_ACTIVATION_CHALLENGE", (string)null);
                 });
 
+            modelBuilder.Entity("FSCM.Domain.Entities.RetailerDeclarationContact", b =>
+                {
+                    b.Property<Guid>("RetailerId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ContactName")
+                        .IsRequired()
+                        .HasMaxLength(150)
+                        .HasColumnType("character varying(150)");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Email")
+                        .IsRequired()
+                        .HasMaxLength(150)
+                        .HasColumnType("character varying(150)");
+
+                    b.Property<string>("Phone")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("RetailerId");
+
+                    b.HasIndex("Email")
+                        .IsUnique();
+
+                    b.HasIndex("Phone")
+                        .IsUnique();
+
+                    b.ToTable("RETAILER_DECLARATION_CONTACT", (string)null);
+                });
+
             modelBuilder.Entity("FSCM.Domain.Entities.RetailerLoyalty", b =>
                 {
                     b.Property<Guid>("Id")
@@ -5866,6 +5903,15 @@ namespace FSCM.Persistence.Migrations
                     b.HasOne("FSCM.Domain.Entities.UserAccount", null)
                         .WithMany()
                         .HasForeignKey("UserAccountId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("FSCM.Domain.Entities.RetailerDeclarationContact", b =>
+                {
+                    b.HasOne("FSCM.Domain.Entities.Retailer", null)
+                        .WithOne()
+                        .HasForeignKey("FSCM.Domain.Entities.RetailerDeclarationContact", "RetailerId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });

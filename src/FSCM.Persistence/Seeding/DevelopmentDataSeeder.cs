@@ -1012,25 +1012,6 @@ public sealed class DevelopmentDataSeeder(
         foreach (var definition in definitions)
         {
             var contactEmail = $"retailer.{definition.Code.ToLowerInvariant()}@fscm.local";
-            var contactAccount = await dbContext.UserAccountRecords.SingleOrDefaultAsync(
-                item => item.Email == contactEmail, cancellationToken);
-            if (contactAccount is null)
-            {
-                contactAccount = new UserAccount
-                {
-                    Id = Guid.NewGuid(),
-                    Email = contactEmail,
-                    IdentityProvider = IdentityProviders.Local,
-                    CreatedAt = now.AddDays(-20)
-                };
-                dbContext.UserAccountRecords.Add(contactAccount);
-            }
-            contactAccount.FullName = definition.ContactName;
-            contactAccount.Phone = definition.Phone;
-            contactAccount.Role = SystemRoles.Retailer;
-            contactAccount.IsActive = false;
-            contactAccount.UpdatedAt = now;
-
             var retailer = await dbContext.RetailerRecords.SingleOrDefaultAsync(item => item.Code == definition.Code, cancellationToken);
             if (retailer is null)
             {
@@ -1038,7 +1019,48 @@ public sealed class DevelopmentDataSeeder(
                 dbContext.RetailerRecords.Add(retailer);
             }
             retailer.RegionId = regions[definition.RegionCode].Id;
-            retailer.UserAccountId = contactAccount.Id;
+            var approved = definition.Status is RetailerStatuses.Active or RetailerStatuses.Inactive;
+            if (approved)
+            {
+                var contactAccount = await dbContext.UserAccountRecords.SingleOrDefaultAsync(
+                    item => item.Email == contactEmail, cancellationToken);
+                if (contactAccount is null)
+                {
+                    contactAccount = new UserAccount
+                    {
+                        Id = Guid.NewGuid(),
+                        Email = contactEmail,
+                        IdentityProvider = IdentityProviders.Local,
+                        CreatedAt = now.AddDays(-20)
+                    };
+                    dbContext.UserAccountRecords.Add(contactAccount);
+                }
+                contactAccount.FullName = definition.ContactName;
+                contactAccount.Phone = definition.Phone;
+                contactAccount.Role = SystemRoles.Retailer;
+                contactAccount.IsActive = false;
+                contactAccount.UpdatedAt = now;
+                retailer.UserAccountId = contactAccount.Id;
+            }
+            else
+            {
+                retailer.UserAccountId = null;
+                var declarationContact = await dbContext.RetailerDeclarationContactRecords
+                    .SingleOrDefaultAsync(item => item.RetailerId == retailer.Id, cancellationToken);
+                if (declarationContact is null)
+                {
+                    declarationContact = new RetailerDeclarationContact
+                    {
+                        RetailerId = retailer.Id,
+                        CreatedAt = now.AddDays(-20)
+                    };
+                    dbContext.RetailerDeclarationContactRecords.Add(declarationContact);
+                }
+                declarationContact.ContactName = definition.ContactName;
+                declarationContact.Phone = definition.Phone;
+                declarationContact.Email = contactEmail;
+                declarationContact.UpdatedAt = now;
+            }
             retailer.Name = definition.Name;
             retailer.Address = definition.Address;
             retailer.Status = definition.Status;

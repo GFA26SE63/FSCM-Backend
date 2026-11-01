@@ -4,7 +4,9 @@ namespace FSCM.Application.Features.Retailers;
 
 public sealed record RetailerView(
     Retailer Retailer,
-    UserAccount ContactAccount,
+    string ContactName,
+    string Phone,
+    string Email,
     Guid SalesGroupId,
     string SalesGroupCode,
     MapLocation? Location);
@@ -21,7 +23,9 @@ public interface IRetailerStore
     Task<IReadOnlyCollection<RetailerView>> ListAsync(Guid actorUserId, string actorRole, string? status, CancellationToken cancellationToken);
     Task<RetailerView?> FindViewAsync(Guid retailerId, CancellationToken cancellationToken);
     Task<Retailer?> FindForUpdateAsync(Guid retailerId, CancellationToken cancellationToken);
-    Task<UserAccount?> FindContactAccountForUpdateAsync(Guid retailerId, CancellationToken cancellationToken);
+    Task<RetailerDeclarationContact?> FindDeclarationContactForUpdateAsync(Guid retailerId, CancellationToken cancellationToken);
+    Task<UserAccount?> FindUnassignedRetailerAccountAsync(
+        string email, string phone, CancellationToken cancellationToken);
     Task<Retailer?> FindDuplicateAsync(
         string name, string? phone, string? email, string? address,
         Guid? excludedRetailerId, CancellationToken cancellationToken);
@@ -42,6 +46,8 @@ public interface IRetailerStore
     Task<string> NextBusinessCodeAsync(CancellationToken cancellationToken);
     void Add(Retailer retailer);
     void AddContactAccount(UserAccount userAccount);
+    void AddDeclarationContact(RetailerDeclarationContact contact);
+    void RemoveDeclarationContact(RetailerDeclarationContact contact);
     void AddAssignment(RetailerSalesAssignment assignment);
     void AddLocation(MapLocation location);
     void AddMlor(RetailerProductMlor mlor);
