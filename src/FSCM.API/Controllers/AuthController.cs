@@ -22,7 +22,7 @@ public sealed class AuthController(
         CancellationToken cancellationToken) =>
         identityService.LoginAsync(
             request.ResolvedIdentifier,
-            request.Password,
+            request.Password ?? string.Empty,
             GetRemoteIpAddress(),
             cancellationToken);
 
@@ -62,7 +62,7 @@ public sealed class AuthController(
     public async Task<ActionResult<OtpRequestResult>> RequestRetailerOtp(
         RequestRetailerOtpRequest request, CancellationToken cancellationToken) =>
         Accepted(await retailerActivationService.RequestOtpAsync(
-            request.Phone, GetRemoteIpAddress(), cancellationToken));
+            request.Phone, request.Channel, GetRemoteIpAddress(), cancellationToken));
 
     [AllowAnonymous]
     [HttpPost("otp/verify")]

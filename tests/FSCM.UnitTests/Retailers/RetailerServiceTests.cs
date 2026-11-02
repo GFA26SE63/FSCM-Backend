@@ -1,3 +1,4 @@
+using FSCM.Application.Features.Identity;
 using FSCM.Application.Features.Retailers;
 using FSCM.Application.Features.WarehouseConfiguration;
 using FSCM.Domain.Entities;
@@ -44,6 +45,99 @@ public sealed class RetailerServiceTests
         Assert.Single(fixture.Store.ContactAccounts);
         Assert.Empty(fixture.Store.DeclarationContacts);
         Assert.Equal(fixture.Store.ContactAccounts[0].Id, fixture.Store.Retailers[0].UserAccountId);
+    }
+
+    [Fact]
+    public async Task Approval_creates_inactive_retailer_account_and_sends_account_created_email()
+    {
+        var fixture = new Fixture();
+        var declared = await fixture.DeclareAsync(30_000_000, 20, 60);
+
+        var result = await fixture.Service.ReviewAsync(declared.Id, Guid.NewGuid(), true, 7, "Hồ sơ hợp lệ", CancellationToken.None);
+
+        var account = Assert.Single(fixture.Store.ContactAccounts);
+        Assert.False(account.IsActive);
+        Assert.Equal("Retailer", account.Role);
+        var email = Assert.Single(fixture.EmailSender.AccountCreatedEmails);
+        Assert.Equal("retailer.test@fscm.local", email.RecipientEmail);
+        Assert.Equal("0909000000", email.Phone);
+        Assert.Equal(result.Code, email.RetailerCode);
+        Assert.Contains(fixture.Store.AuditLogs, log => log.Action == "RetailerAccountCreatedEmailSent");
+    }
+
+    [Fact]
+    public async Task Approval_still_succeeds_when_account_created_email_fails()
+    {
+        var fixture = new Fixture();
+        fixture.EmailSender.Fail = true;
+        var declared = await fixture.DeclareAsync(30_000_000, 20, 60);
+
+        var result = await fixture.Service.ReviewAsync(declared.Id, Guid.NewGuid(), true, 7, "Hồ sơ hợp lệ", CancellationToken.None);
+
+        Assert.Equal(RetailerStatuses.Active, result.Status);
+        Assert.Single(fixture.Store.ContactAccounts);
+        Assert.Contains(fixture.Store.AuditLogs, log => log.Action == "RetailerAccountCreatedEmailFailed");
+    }
+
+    [Fact]
+    public async Task Approval_reuses_single_unassigned_retailer_account()
+    {
+        var fixture = new Fixture();
+        var declared = await fixture.DeclareAsync(30_000_000, 20, 60);
+        var existing = UnassignedAccount("retailer.test@fscm.local", "0911111111");
+        fixture.Store.ContactAccounts.Add(existing);
+
+        await fixture.Service.ReviewAsync(declared.Id, Guid.NewGuid(), true, 7, "Hồ sơ hợp lệ", CancellationToken.None);
+
+        Assert.Single(fixture.Store.ContactAccounts);
+        Assert.Equal(existing.Id, fixture.Store.Retailers[0].UserAccountId);
+        Assert.Equal("0909000000", existing.Phone);
+    }
+
+    [Fact]
+    public async Task Approval_with_multiple_matching_unassigned_accounts_returns_conflict()
+    {
+        var fixture = new Fixture();
+        var declared = await fixture.DeclareAsync(30_000_000, 20, 60);
+        fixture.Store.ContactAccounts.Add(UnassignedAccount("retailer.test@fscm.local", "0911111111"));
+        fixture.Store.ContactAccounts.Add(UnassignedAccount("other@fscm.local", "0909000000"));
+
+        var exception = await Assert.ThrowsAsync<RetailerOperationException>(() =>
+            fixture.Service.ReviewAsync(declared.Id, Guid.NewGuid(), true, 7, "Hồ sơ hợp lệ", CancellationToken.None));
+
+        Assert.Equal("conflict", exception.Code);
+        Assert.Null(fixture.Store.Retailers[0].UserAccountId);
+        Assert.Empty(fixture.EmailSender.AccountCreatedEmails);
+    }
+
+    private static UserAccount UnassignedAccount(string email, string phone) => new()
+    {
+        Id = Guid.NewGuid(), Email = email, Phone = phone, FullName = "Tài khoản có sẵn",
+        Role = "Retailer", IsActive = false, IdentityProvider = "Local"
+    };
+
+    [Fact]
+    public async Task Rejection_does_not_send_account_created_email()
+    {
+        var fixture = new Fixture();
+        var declared = await fixture.DeclareAsync(10_000_000, 20, 20);
+
+        await fixture.Service.ReviewAsync(declared.Id, Guid.NewGuid(), false, null, "Hồ sơ chưa hợp lệ", CancellationToken.None);
+
+        Assert.Empty(fixture.EmailSender.AccountCreatedEmails);
+    }
+
+    [Fact]
+    public async Task Search_scope_mine_returns_only_own_declarations()
+    {
+        var fixture = new Fixture();
+        await fixture.DeclareAsync(30_000_000, 20, 60);
+
+        var own = await fixture.Service.SearchAsync(fixture.SalesUserId, "Sales", null, null, "mine", 1, 20, CancellationToken.None);
+        var other = await fixture.Service.SearchAsync(Guid.NewGuid(), "Sales", null, null, "mine", 1, 20, CancellationToken.None);
+
+        Assert.Equal(1, own.TotalCount);
+        Assert.Equal(0, other.TotalCount);
     }
 
     [Fact]
@@ -211,8 +305,10 @@ public sealed class RetailerServiceTests
                 Version = 1,
                 IsActive = true
             });
-            Service = new RetailerService(Store, new FixedTimeProvider(Now));
+            Service = new RetailerService(Store, new FixedTimeProvider(Now), EmailSender);
         }
+
+        public FakeEmailSender EmailSender { get; } = new();
 
         public Task<RetailerDetails> DeclareAsync(
             decimal revenue, decimal size, decimal capacity,
@@ -223,6 +319,22 @@ public sealed class RetailerServiceTests
                 10.776m, 106.700m, null,
                 includeMlor ? [new RetailerMlorData(Category.Id, null, 0.35m, null)] : [],
                 submitForReview, CancellationToken.None);
+    }
+
+    private sealed class FakeEmailSender : ITransactionalEmailSender
+    {
+        public List<RetailerAccountCreatedEmail> AccountCreatedEmails { get; } = [];
+        public bool Fail { get; set; }
+
+        public Task SendRetailerActivationOtpAsync(string email, string name, string otp, CancellationToken token) =>
+            Task.CompletedTask;
+
+        public Task SendRetailerAccountCreatedAsync(RetailerAccountCreatedEmail email, CancellationToken token)
+        {
+            if (Fail) throw new HttpRequestException("Brevo returned HTTP 503.");
+            AccountCreatedEmails.Add(email);
+            return Task.CompletedTask;
+        }
     }
 
     private sealed class FakeStore : IRetailerStore
@@ -247,11 +359,12 @@ public sealed class RetailerServiceTests
             Task.FromResult(Retailers.SingleOrDefault(item => item.Id == retailerId));
         public Task<RetailerDeclarationContact?> FindDeclarationContactForUpdateAsync(Guid retailerId, CancellationToken cancellationToken) =>
             Task.FromResult(DeclarationContacts.SingleOrDefault(item => item.RetailerId == retailerId));
-        public Task<UserAccount?> FindUnassignedRetailerAccountAsync(
+        public Task<IReadOnlyList<UserAccount>> FindUnassignedRetailerAccountsAsync(
             string email, string phone, CancellationToken cancellationToken) =>
-            Task.FromResult(ContactAccounts.SingleOrDefault(account =>
+            Task.FromResult<IReadOnlyList<UserAccount>>(ContactAccounts.Where(account =>
+                !account.IsActive &&
                 (account.Email.Equals(email, StringComparison.OrdinalIgnoreCase) || account.Phone == phone) &&
-                !Retailers.Any(retailer => retailer.UserAccountId == account.Id)));
+                !Retailers.Any(retailer => retailer.UserAccountId == account.Id)).ToList());
         public Task<Retailer?> FindDuplicateAsync(
             string name, string? phone, string? email, string? address,
             Guid? excludedRetailerId, CancellationToken cancellationToken) =>
