@@ -1,6 +1,6 @@
-using FSCM.Application.Features.ManualPayments;
 using FSCM.Application.Features.Payments;
 using FSCM.Application.Features.Refunds;
+using FSCM.Domain.Entities;
 using FSCM.Persistence.DbContexts;
 using Microsoft.EntityFrameworkCore;
 
@@ -55,13 +55,15 @@ public sealed class RetailerReceivableStore(AppDbContext dbContext) : IRetailerR
         var completedRefund = refunds.Where(item => item.Status == RefundStatuses.Refunded)
             .Sum(item => item.Amount);
 
-        var collections = await dbContext.ManualPaymentRecords.AsNoTracking()
-            .Where(item => item.SalesOrderId == orderId)
-            .OrderByDescending(item => item.CreatedAt)
-            .Select(item => new ReceivableCollectionHistory(item.Id, item.Method, item.Amount,
-                item.Status, item.ConfirmedAt, null, item.Note))
-            .ToListAsync(cancellationToken);
-        if (core.payment.ConfirmedAmount > 0 && collections.All(item => item.Status != ManualPaymentStatuses.Paid))
+        var receiptRows = await (from allocation in dbContext.PaymentReceiptAllocationRecords.AsNoTracking()
+            join receipt in dbContext.PaymentReceiptRecords.AsNoTracking() on allocation.PaymentReceiptId equals receipt.Id
+            where allocation.PaymentId == core.payment.Id
+            orderby receipt.CreatedAt descending
+            select new { Receipt = receipt, allocation.Amount }).ToArrayAsync(cancellationToken);
+        var collections = receiptRows.Select(item => new ReceivableCollectionHistory(
+            item.Receipt.Id, "PaymentReceipt", item.Amount, item.Receipt.Status.ToString(),
+            item.Receipt.ConfirmedAt, item.Receipt.Reference, item.Receipt.Note)).ToList();
+        if (core.payment.ConfirmedAmount > 0 && collections.All(item => item.Status != PaymentReceiptStatus.Confirmed.ToString()))
         {
             collections.Add(new(core.payment.Id, core.payment.CollectionMethod ?? core.payment.Method,
                 core.payment.ConfirmedAmount, PaymentStatuses.Paid, core.payment.ConfirmedAt,

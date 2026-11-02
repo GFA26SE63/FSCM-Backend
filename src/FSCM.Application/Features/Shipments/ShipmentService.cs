@@ -226,8 +226,8 @@ public sealed class ShipmentService(
     }
 
     /// <summary>
-    /// Only a prepaid order has to be paid before it moves. COD is collected on delivery and credit
-    /// is settled on terms, so demanding payment from either would stop orders that are in order.
+    /// Only a prepaid order has to be paid before it moves. Credit is settled on terms, so demanding
+    /// payment from it would stop orders that are in order. COD is not a supported method (BR-51).
     /// </summary>
     private async Task<bool> IsPaymentSettledAsync(SalesOrder order, CancellationToken cancellationToken)
     {

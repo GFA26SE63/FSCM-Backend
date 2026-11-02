@@ -1,6 +1,7 @@
 using FSCM.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
+using FSCM.Persistence.Configurations;
 
 namespace FSCM.Persistence.Configurations.PhysicalSchema;
 
@@ -12,8 +13,8 @@ public sealed class PaymentConfiguration : IEntityTypeConfiguration<Payment>
         builder.HasKey(entity => entity.Id);
         builder.Property(entity => entity.Id).HasColumnType("uuid").IsRequired();
         builder.Property(entity => entity.SalesOrderId).HasColumnType("uuid").IsRequired();
-        builder.Property(entity => entity.Method).HasMaxLength(30).IsRequired();
-        builder.Property(entity => entity.Status).HasMaxLength(30).IsRequired();
+        builder.Property(entity => entity.Method).HasConversion(new EnumCodeConverter("PaymentMethod")).HasColumnType("smallint").IsRequired();
+        builder.Property(entity => entity.Status).HasConversion(new EnumCodeConverter("PaymentStatus")).HasColumnType("smallint").IsRequired();
         builder.Property(entity => entity.Amount).HasPrecision(18, 2).IsRequired();
         builder.Property(entity => entity.AdjustedAmount).HasPrecision(18, 2).IsRequired();
         builder.Property(entity => entity.ConfirmedAmount).HasPrecision(18, 2).IsRequired();
@@ -58,6 +59,8 @@ public sealed class PaymentConfiguration : IEntityTypeConfiguration<Payment>
                 "\"AdjustedAmount\" >= 0 AND \"AdjustedAmount\" <= \"Amount\"");
             table.HasCheckConstraint("CK_PAYMENT_ConfirmedAmount",
                 "\"ConfirmedAmount\" >= 0 AND \"ConfirmedAmount\" <= \"Amount\"");
+            table.HasCheckConstraint("CK_PAYMENT_Method", "\"Method\" BETWEEN 0 AND 1");
+            table.HasCheckConstraint("CK_PAYMENT_Status", "\"Status\" BETWEEN 0 AND 3");
         });
         builder.HasOne<SalesOrder>()
             .WithMany()

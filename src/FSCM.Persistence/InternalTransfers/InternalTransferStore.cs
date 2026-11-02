@@ -42,7 +42,7 @@ public sealed class InternalTransferStore(AppDbContext dbContext) : IInternalTra
                select new TransferInventoryView(batch, balance, warehouse, product)).ToArrayAsync(cancellationToken);
 
     public async Task<IReadOnlyCollection<Warehouse>> ListActiveRegionalWarehousesAsync(CancellationToken cancellationToken) =>
-        await dbContext.WarehouseRecords.AsNoTracking().Where(item => item.Type == WarehouseTypes.Regional && item.IsActive)
+        await dbContext.WarehouseRecords.AsNoTracking().Where(item => item.IsActive)
             .OrderBy(item => item.Code).ToArrayAsync(cancellationToken);
 
     public async Task<int> GetRegionalMinimumStockAsync(CancellationToken cancellationToken)

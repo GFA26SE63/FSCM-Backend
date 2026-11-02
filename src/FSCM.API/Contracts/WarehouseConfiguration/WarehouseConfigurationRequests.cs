@@ -3,12 +3,12 @@ using System.Text.Json;
 namespace FSCM.API.Contracts.WarehouseConfiguration;
 
 public sealed record CreateWarehouseRequest(
-    string Code, string Name, string Type, string Address,
+    string Code, string Name, Guid RegionId, string Address,
     decimal Latitude, decimal Longitude, string? ProviderPlaceId,
     int MinimumStockThresholdCartons);
 
 public sealed record UpdateWarehouseRequest(
-    string Name, string Type, string Address,
+    string Name, Guid RegionId, string Address,
     decimal Latitude, decimal Longitude, string? ProviderPlaceId,
     int MinimumStockThresholdCartons);
 

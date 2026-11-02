@@ -1,6 +1,7 @@
 using FSCM.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
+using FSCM.Persistence.Configurations;
 
 namespace FSCM.Persistence.Configurations.PhysicalSchema;
 
@@ -21,8 +22,8 @@ public sealed class SalesOrderConfiguration : IEntityTypeConfiguration<SalesOrde
         builder.Property(entity => entity.ClientOrderKey).HasColumnType("uuid").IsRequired();
         builder.Property(entity => entity.RequestHash).HasMaxLength(64).IsRequired();
         builder.Property(entity => entity.Source).HasMaxLength(30).IsRequired();
-        builder.Property(entity => entity.Status).HasMaxLength(30).IsRequired();
-        builder.Property(entity => entity.PaymentMethod).HasMaxLength(30).IsRequired();
+        builder.Property(entity => entity.Status).HasConversion(new EnumCodeConverter("SalesOrderStatus")).HasColumnType("smallint").IsRequired();
+        builder.Property(entity => entity.PaymentMethod).HasConversion(new EnumCodeConverter("PaymentMethod")).HasColumnType("smallint").IsRequired();
         builder.Property(entity => entity.DeliveryAddress).HasColumnType("text").IsRequired();
         builder.Property(entity => entity.RequestedDeliveryDate).HasColumnType("date").IsRequired(false);
         builder.Property(entity => entity.Note).HasColumnType("text").IsRequired(false);
@@ -34,6 +35,7 @@ public sealed class SalesOrderConfiguration : IEntityTypeConfiguration<SalesOrde
         builder.Property(entity => entity.OfflineEstimatedAmount).HasPrecision(18, 2).IsRequired(false);
         builder.Property(entity => entity.HasOfflineDifference).IsRequired();
         builder.Property(entity => entity.ServerReceivedAt).HasColumnType("timestamp with time zone").IsRequired();
+        builder.Property(entity => entity.AcceptedAt).HasColumnType("timestamp with time zone").IsRequired();
         builder.Property(entity => entity.ReviewedAt).HasColumnType("timestamp with time zone").IsRequired(false);
         builder.Property(entity => entity.RejectionReason).HasColumnType("text").IsRequired(false);
         builder.Property(entity => entity.Version).IsRequired().IsConcurrencyToken();
@@ -42,6 +44,11 @@ public sealed class SalesOrderConfiguration : IEntityTypeConfiguration<SalesOrde
         builder.HasIndex(entity => entity.OrderCode).IsUnique();
         builder.HasIndex(entity => entity.ClientOrderKey).IsUnique();
         builder.HasIndex(entity => new { entity.CreatedByUserId, entity.ServerReceivedAt });
+        builder.ToTable(table =>
+        {
+            table.HasCheckConstraint("CK_SALES_ORDER_Status", "\"Status\" BETWEEN 0 AND 9");
+            table.HasCheckConstraint("CK_SALES_ORDER_PaymentMethod", "\"PaymentMethod\" BETWEEN 0 AND 1");
+        });
         builder.HasOne<Retailer>()
             .WithMany()
             .HasForeignKey(entity => entity.RetailerId)

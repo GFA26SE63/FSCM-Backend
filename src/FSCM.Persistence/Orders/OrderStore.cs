@@ -323,6 +323,22 @@ public sealed class OrderStore(AppDbContext dbContext) : IOrderStore
         IReadOnlyCollection<Guid> lineIds,
         CancellationToken cancellationToken)
     {
+        var currentRun = await dbContext.AllocationRunRecords.AsNoTracking()
+            .Where(item => item.SalesOrderId == orderId)
+            .OrderByDescending(item => item.AttemptNumber)
+            .ThenByDescending(item => item.StartedAt)
+            .FirstOrDefaultAsync(cancellationToken);
+        if (currentRun is not null)
+        {
+            return new OrderAllocationReadContext(
+                currentRun.Id, currentRun.RunCode, currentRun.Status, currentRun.Status,
+                currentRun.FailureReason, Guid.Empty, currentRun.AttemptNumber, currentRun.Status,
+                currentRun.SnapshotCompletedAt ?? currentRun.StartedAt,
+                Array.Empty<OrderAllocationFragmentView>(), Array.Empty<OrderWarehouseProgressView>());
+        }
+
+        return null;
+#pragma warning disable CS0162
         var runOrder = await (
             from item in dbContext.AllocationRunOrderRecords.AsNoTracking()
             where item.SalesOrderId == orderId
@@ -419,6 +435,7 @@ public sealed class OrderStore(AppDbContext dbContext) : IOrderStore
             runOrder.Run.Id, runOrder.Run.RunCode, runOrder.Run.Status, runOrder.Order.Status,
             runOrder.Order.ShortageReason, plan.Id, plan.VersionNumber, plan.Status, plan.PricedAt,
             fragments, progress);
+#pragma warning restore CS0162
     }
 
 }

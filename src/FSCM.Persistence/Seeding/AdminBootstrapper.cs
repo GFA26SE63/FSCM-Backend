@@ -32,26 +32,26 @@ public sealed class AdminBootstrapper(
         if (fullName.Length > 150)
             throw new InvalidOperationException("AdminBootstrap:FullName cannot exceed 150 characters.");
         var identityProvider = NormalizeProvider(Require("AdminBootstrap:IdentityProvider"));
-        var entraObjectId = Clean(configuration["AdminBootstrap:EntraObjectId"]);
+        var googleSubject = Clean(configuration["AdminBootstrap:GoogleSubject"]);
         var password = configuration["AdminBootstrap:Password"];
 
-        if (identityProvider == IdentityProviders.Entra && string.IsNullOrWhiteSpace(entraObjectId))
-            throw new InvalidOperationException("AdminBootstrap:EntraObjectId is required for an Entra Admin.");
-        if (entraObjectId?.Length > 150)
-            throw new InvalidOperationException("AdminBootstrap:EntraObjectId cannot exceed 150 characters.");
+        if (identityProvider == IdentityProviders.Google && string.IsNullOrWhiteSpace(googleSubject))
+            throw new InvalidOperationException("AdminBootstrap:GoogleSubject is required for a Google Admin.");
+        if (googleSubject?.Length > 255)
+            throw new InvalidOperationException("AdminBootstrap:GoogleSubject cannot exceed 255 characters.");
         if (identityProvider == IdentityProviders.Local)
             ValidatePassword(password);
         if (await dbContext.UserAccountRecords.AnyAsync(
                 user => user.Email == email ||
-                    (entraObjectId != null && user.EntraObjectId == entraObjectId),
+                    (googleSubject != null && user.GoogleSubject == googleSubject),
                 cancellationToken))
-            throw new InvalidOperationException("The configured Admin email or Entra object ID already exists.");
+            throw new InvalidOperationException("The configured Admin email or Google subject already exists.");
 
         var now = timeProvider.GetUtcNow();
         var admin = new UserAccount
         {
             Id = Guid.NewGuid(),
-            EntraObjectId = entraObjectId,
+            GoogleSubject = googleSubject,
             IdentityProvider = identityProvider,
             Email = email,
             FullName = fullName,
@@ -113,9 +113,9 @@ public sealed class AdminBootstrapper(
     {
         if (value.Equals(IdentityProviders.Local, StringComparison.OrdinalIgnoreCase))
             return IdentityProviders.Local;
-        if (value.Equals(IdentityProviders.Entra, StringComparison.OrdinalIgnoreCase))
-            return IdentityProviders.Entra;
-        throw new InvalidOperationException("AdminBootstrap:IdentityProvider must be Local or Entra.");
+        if (value.Equals(IdentityProviders.Google, StringComparison.OrdinalIgnoreCase))
+            return IdentityProviders.Google;
+        throw new InvalidOperationException("AdminBootstrap:IdentityProvider must be Local or Google.");
     }
 
     private static string? Clean(string? value) =>

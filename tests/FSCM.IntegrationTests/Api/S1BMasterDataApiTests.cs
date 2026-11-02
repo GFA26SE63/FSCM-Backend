@@ -180,7 +180,7 @@ public sealed class S1BMasterDataApiTests
                 Id = Guid.NewGuid(),
                 Code = "WH-TD",
                 Name = "Kho Thủ Đức",
-                Type = "Regional",
+                RegionId = Guid.NewGuid(),
                 Address = "Thành phố Thủ Đức",
                 MinimumStockThresholdCartons = 120,
                 IsActive = true,
@@ -366,6 +366,7 @@ public sealed class S1BMasterDataApiTests
             Retailer = new Retailer
             {
                 Id = Guid.NewGuid(),
+                UserAccountId = ContactAccount.Id,
                 RegionId = Guid.NewGuid(),
                 Code = "10004127",
                 Name = "Cửa hàng An Phú",
@@ -387,6 +388,11 @@ public sealed class S1BMasterDataApiTests
         }
 
         public Retailer Retailer { get; }
+        public UserAccount ContactAccount { get; } = new()
+        {
+            Id = Guid.NewGuid(), Email = "retailer@fscm.local", Phone = "0909000000",
+            FullName = "Nguyễn Văn Minh", Role = FSCM.Domain.Authorization.SystemRoles.Retailer
+        };
         public Guid SalesId { get; }
         public ProductCategory Category { get; }
         public Product Product { get; }
@@ -395,12 +401,17 @@ public sealed class S1BMasterDataApiTests
             Task.FromResult<IReadOnlyCollection<RetailerView>>(
                 actorRole == FSCM.Domain.Authorization.SystemRoles.Sales && actorUserId != SalesId
                     ? []
-                    : [new(Retailer, Guid.NewGuid(), "HCM-A", null)]);
-        public Task<RetailerView?> FindViewAsync(Guid retailerId, CancellationToken cancellationToken) => Task.FromResult<RetailerView?>(new(Retailer, Guid.NewGuid(), "HCM-A", null));
+                    : [new(Retailer, ContactAccount.FullName, ContactAccount.Phone!, ContactAccount.Email, Guid.NewGuid(), "HCM-A", null)]);
+        public Task<RetailerView?> FindViewAsync(Guid retailerId, CancellationToken cancellationToken) => Task.FromResult<RetailerView?>(new(Retailer, ContactAccount.FullName, ContactAccount.Phone!, ContactAccount.Email, Guid.NewGuid(), "HCM-A", null));
         public Task<Retailer?> FindForUpdateAsync(Guid retailerId, CancellationToken cancellationToken) => Task.FromResult<Retailer?>(Retailer);
+        public Task<RetailerDeclarationContact?> FindDeclarationContactForUpdateAsync(Guid retailerId, CancellationToken cancellationToken) => Task.FromResult<RetailerDeclarationContact?>(null);
+        public Task<UserAccount?> FindUnassignedRetailerAccountAsync(
+            string email, string phone, CancellationToken cancellationToken) => Task.FromResult<UserAccount?>(null);
         public Task<Retailer?> FindDuplicateAsync(
             string name, string? phone, string? email, string? address,
             Guid? excludedRetailerId, CancellationToken cancellationToken) => Task.FromResult<Retailer?>(null);
+        public Task<bool> ContactAccountExistsAsync(
+            string phone, string email, Guid? excludedRetailerId, CancellationToken cancellationToken) => Task.FromResult(false);
         public Task<IReadOnlyCollection<RetailerMlorView>> ListMlorDeclarationsAsync(IReadOnlyCollection<Guid> retailerIds, bool includeInactive, bool tracking, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyCollection<RetailerMlorView>>(Mlors.Where(item => includeInactive || item.IsActive).Select(item => new RetailerMlorView(item, item.ProductCategoryId.HasValue ? Category.Code : null, item.ProductCategoryId.HasValue ? Category.Name : null, item.ProductId.HasValue ? Product.Sku : null, item.ProductId.HasValue ? Product.Name : null)).ToArray());
         public Task<ProductCategory?> FindCategoryAsync(Guid categoryId, CancellationToken cancellationToken) => Task.FromResult<ProductCategory?>(Category);
         public Task<Product?> FindProductAsync(Guid productId, CancellationToken cancellationToken) => Task.FromResult<Product?>(Product);
@@ -413,6 +424,9 @@ public sealed class S1BMasterDataApiTests
         public Task<string> NextDeclarationCodeAsync(CancellationToken cancellationToken) => Task.FromResult("KB-0100");
         public Task<string> NextBusinessCodeAsync(CancellationToken cancellationToken) => Task.FromResult("10005000");
         public void Add(Retailer retailer) { }
+        public void AddContactAccount(UserAccount userAccount) { }
+        public void AddDeclarationContact(RetailerDeclarationContact contact) { }
+        public void RemoveDeclarationContact(RetailerDeclarationContact contact) { }
         public void AddAssignment(RetailerSalesAssignment assignment) { }
         public void AddLocation(MapLocation location) { }
         public void AddMlor(RetailerProductMlor mlor) => Mlors.Add(mlor);

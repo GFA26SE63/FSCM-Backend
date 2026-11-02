@@ -8,6 +8,9 @@ public sealed class AllocationRun
 {
     public Guid Id { get; set; }
     public string RunCode { get; set; } = string.Empty;
+    public Guid SalesOrderId { get; set; }
+    public int AttemptNumber { get; set; }
+    public Guid? RetryOfAllocationRunId { get; set; }
     public DateOnly BusinessDate { get; set; }
     public DateTimeOffset CutoffAt { get; set; }
     public string Status { get; set; } = string.Empty;
@@ -19,6 +22,7 @@ public sealed class AllocationRun
     public int EtaScheduleVersion { get; set; }
     public int OrderCount { get; set; }
     public string? FailureReason { get; set; }
+    public string? TechnicalErrorCode { get; set; }
     public DateTimeOffset StartedAt { get; set; }
     public DateTimeOffset? SnapshotCompletedAt { get; set; }
     public DateTimeOffset? CompletedAt { get; set; }

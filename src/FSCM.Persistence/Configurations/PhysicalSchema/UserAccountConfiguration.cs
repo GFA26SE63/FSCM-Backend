@@ -11,17 +11,18 @@ public sealed class UserAccountConfiguration : IEntityTypeConfiguration<UserAcco
         builder.ToTable("USER_ACCOUNT");
         builder.HasKey(entity => entity.Id);
         builder.Property(entity => entity.Id).HasColumnType("uuid").IsRequired();
-        builder.Property(entity => entity.EntraObjectId).HasMaxLength(150).IsRequired(false);
+        builder.Property(entity => entity.GoogleSubject).HasMaxLength(255).IsRequired(false);
         builder.Property(entity => entity.IdentityProvider).HasMaxLength(20).IsRequired();
         builder.Property(entity => entity.Email).HasMaxLength(150).IsRequired();
+        builder.Property(entity => entity.Phone).HasMaxLength(20).IsRequired(false);
         builder.Property(entity => entity.FullName).HasMaxLength(150).IsRequired();
         builder.Property(entity => entity.Role).HasMaxLength(30).IsRequired();
         builder.Property(entity => entity.IsActive).IsRequired();
         builder.Property(entity => entity.CreatedAt).HasColumnType("timestamp with time zone").IsRequired();
         builder.Property(entity => entity.UpdatedAt).HasColumnType("timestamp with time zone").IsRequired();
-        builder.HasIndex(entity => entity.EntraObjectId)
+        builder.HasIndex(entity => entity.GoogleSubject)
             .IsUnique()
-            .HasFilter("\"EntraObjectId\" IS NOT NULL");
+            .HasFilter("\"GoogleSubject\" IS NOT NULL");
         builder.HasIndex(entity => entity.Email).IsUnique();
     }
 }

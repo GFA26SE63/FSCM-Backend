@@ -3,6 +3,7 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
 using FSCM.Application.Features.Orders;
+using FSCM.Application.Features.AllocationRuns;
 using FSCM.Application.Features.MobileSnapshots;
 using FSCM.Application.Features.Promotions;
 using FSCM.Domain.Authorization;
@@ -26,6 +27,8 @@ public sealed class OrderCaptureApiTests
             {
                 services.RemoveAll<IOrderStore>();
                 services.AddSingleton<IOrderStore>(orderStore);
+                services.RemoveAll<IRealTimeAllocationService>();
+                services.AddSingleton<IRealTimeAllocationService, NoOpRealTimeAllocationService>();
                 services.RemoveAll<IOrderPricingService>();
                 services.AddSingleton<IOrderPricingService, TestPricingService>();
                 services.RemoveAll<IMobileSnapshotStore>();
@@ -50,7 +53,7 @@ public sealed class OrderCaptureApiTests
         {
             clientOrderKey = key,
             retailerId = orderStore.Retailer.Id,
-            paymentMethod = OrderPaymentMethods.Cod,
+            paymentMethod = OrderPaymentMethods.Credit,
             requestedDeliveryDate = "2027-01-10",
             offlineEstimatedAmount = 1_000m,
             snapshotVersion = snapshot.GetProperty("version").GetString(),
@@ -87,6 +90,8 @@ public sealed class OrderCaptureApiTests
                 services.AddSingleton<IPromotionStore>(store);
                 services.RemoveAll<IOrderStore>();
                 services.AddSingleton<IOrderStore>(orderStore);
+                services.RemoveAll<IRealTimeAllocationService>();
+                services.AddSingleton<IRealTimeAllocationService, NoOpRealTimeAllocationService>();
             }));
         using var client = factory.CreateClient();
         client.DefaultRequestHeaders.Authorization = Bearer(identityFactory.Sales, identityFactory);
@@ -151,6 +156,8 @@ public sealed class OrderCaptureApiTests
             {
                 services.RemoveAll<IOrderStore>();
                 services.AddSingleton<IOrderStore>(store);
+                services.RemoveAll<IRealTimeAllocationService>();
+                services.AddSingleton<IRealTimeAllocationService, NoOpRealTimeAllocationService>();
                 services.RemoveAll<IOrderPricingService>();
                 services.AddSingleton<IOrderPricingService, TestPricingService>();
             }));
@@ -159,7 +166,7 @@ public sealed class OrderCaptureApiTests
         {
             clientOrderKey = Guid.NewGuid(),
             retailerId = store.Retailer.Id,
-            paymentMethod = OrderPaymentMethods.Cod,
+            paymentMethod = OrderPaymentMethods.Credit,
             requestedDeliveryDate = "2027-01-10",
             deliveryAddress = "12 Nguyễn Huệ, Thành phố Hồ Chí Minh",
             note = "Giao trong giờ hành chính",
@@ -238,7 +245,7 @@ public sealed class OrderCaptureApiTests
             .GetProperty("orderRead").GetProperty("id").GetGuid());
 
         var timeline = await client.GetFromJsonAsync<JsonElement>($"/api/v1/orders/{orderId}/timeline");
-        Assert.Equal("PendingApproval", timeline.GetProperty("currentStatus").GetString());
+        Assert.Equal(OrderStatuses.Allocating, timeline.GetProperty("currentStatus").GetString());
         Assert.Single(timeline.GetProperty("events").EnumerateArray());
 
     }
@@ -253,6 +260,8 @@ public sealed class OrderCaptureApiTests
             {
                 services.RemoveAll<IOrderStore>();
                 services.AddSingleton<IOrderStore>(store);
+                services.RemoveAll<IRealTimeAllocationService>();
+                services.AddSingleton<IRealTimeAllocationService, NoOpRealTimeAllocationService>();
                 services.RemoveAll<IOrderPricingService>();
                 services.AddSingleton<IOrderPricingService, TestPricingService>();
             }));
@@ -263,7 +272,7 @@ public sealed class OrderCaptureApiTests
         {
             clientOrderKey = Guid.NewGuid(),
             retailerId = store.Retailer.Id,
-            paymentMethod = OrderPaymentMethods.Cod,
+            paymentMethod = OrderPaymentMethods.Credit,
             requestedDeliveryDate = "2027-01-10",
             lines = new[] { new { productId = store.Product.Id, quantity = 10 } }
         });
@@ -285,6 +294,8 @@ public sealed class OrderCaptureApiTests
             {
                 services.RemoveAll<IOrderStore>();
                 services.AddSingleton<IOrderStore>(store);
+                services.RemoveAll<IRealTimeAllocationService>();
+                services.AddSingleton<IRealTimeAllocationService, NoOpRealTimeAllocationService>();
                 services.RemoveAll<IOrderPricingService>();
                 services.AddSingleton<IOrderPricingService, TestPricingService>();
             }));
@@ -295,7 +306,7 @@ public sealed class OrderCaptureApiTests
         {
             clientOrderKey = Guid.NewGuid(),
             retailerId = store.Retailer.Code,
-            paymentMethod = OrderPaymentMethods.Cod,
+            paymentMethod = OrderPaymentMethods.Credit,
             requestedDeliveryDate = "2027-01-10",
             lines = new[] { new { productId = store.Product.Sku, quantity = 10 } }
         };
@@ -308,7 +319,7 @@ public sealed class OrderCaptureApiTests
         {
             clientOrderKey = Guid.NewGuid(),
             retailerId = store.Retailer.Id,
-            paymentMethod = OrderPaymentMethods.Cod,
+            paymentMethod = OrderPaymentMethods.Credit,
             requestedDeliveryDate = "2027-01-10",
             lines = new[] { new { productId = store.Product.Id, quantity = 10 } }
         };
@@ -458,6 +469,12 @@ public sealed class OrderCaptureApiTests
         public Task SaveChangesAsync(CancellationToken cancellationToken) => Task.CompletedTask;
     }
 
+    private sealed class NoOpRealTimeAllocationService : IRealTimeAllocationService
+    {
+        public Task AllocateAsync(Guid orderId, Guid actorUserId, CancellationToken cancellationToken) =>
+            Task.CompletedTask;
+    }
+
     private sealed class TestOrderStore(Guid salesUserId) : IOrderStore
     {
         public Retailer Retailer { get; } = new()
@@ -482,6 +499,8 @@ public sealed class OrderCaptureApiTests
         public List<OrderPromotion> Promotions { get; } = [];
         public List<OrderStatusHistory> History { get; } = [];
         public List<AuditLog> Audits { get; } = [];
+        private readonly Warehouse warehouse = new() { Id = Guid.NewGuid(), Code = "WH-TEST", Name = "Kho kiểm thử", IsActive = true };
+        private readonly Batch batch = new() { Id = Guid.NewGuid(), BatchCode = "LO-TEST", ExpirationDate = new DateOnly(2027, 12, 31) };
 
         public Task<SalesOrder?> FindByClientOrderKeyAsync(Guid key, CancellationToken cancellationToken) =>
             Task.FromResult(Orders.SingleOrDefault(item => item.ClientOrderKey == key));
@@ -492,9 +511,14 @@ public sealed class OrderCaptureApiTests
         public Task<Product?> FindPublishedProductAsync(Guid productId, CancellationToken cancellationToken) =>
             Task.FromResult<Product?>(productId == Product.Id ? Product : null);
         public Task<IReadOnlyCollection<OrderInventoryCandidate>> ListCandidatesAsync(Guid productId,
-            CancellationToken cancellationToken) => throw new InvalidOperationException("Capture must not query stock.");
+            CancellationToken cancellationToken) => Task.FromResult<IReadOnlyCollection<OrderInventoryCandidate>>(
+                productId == Product.Id
+                    ? [new(batch, new InventoryBalance { BatchId = batch.Id, AvailableQuantity = 1_000 }, warehouse, 10.776m, 106.700m)]
+                    : []);
         public Task<MapLocation?> FindRetailerLocationAsync(Guid retailerId, CancellationToken cancellationToken) =>
-            throw new InvalidOperationException("Capture must not query allocation distance.");
+            Task.FromResult<MapLocation?>(retailerId == Retailer.Id
+                ? new MapLocation { Id = Guid.NewGuid(), RetailerId = retailerId, Latitude = 10.776m, Longitude = 106.700m }
+                : null);
         public Task<OrderMlorSnapshot?> ResolveMlorAsync(
             Guid retailerId, Guid productId, DateTimeOffset at,
             CancellationToken cancellationToken) => Task.FromResult<OrderMlorSnapshot?>(new(

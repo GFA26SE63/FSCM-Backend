@@ -6,7 +6,7 @@ public sealed class PickingList
 {
     public Guid Id { get; set; }
     public string PickingCode { get; set; } = string.Empty;
-    public Guid SalesOrderId { get; set; }
+    public Guid PurchaseOrderId { get; set; }
     public Guid WarehouseId { get; set; }
     public Guid? AssignedToUserId { get; set; }
     public string Status { get; set; } = string.Empty;

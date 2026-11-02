@@ -21,12 +21,19 @@ public static class BatchStockStatuses
 
 public static class InventoryTransactionTypes
 {
-    public const string GoodsReceipt = "GoodsReceipt";
+    public const string PurchaseReceipt = "PurchaseReceipt";
+    public const string CustomerReturnReceipt = "CustomerReturnReceipt";
+    public const string AdjustmentIncrease = "AdjustmentIncrease";
+    public const string SalesIssue = "SalesIssue";
+    public const string ReplacementIssue = "ReplacementIssue";
+    public const string WriteOff = "WriteOff";
+    public const string AdjustmentDecrease = "AdjustmentDecrease";
+    public const string GoodsReceipt = PurchaseReceipt;
     public const string OrderReserve = "OrderReserve";
     public const string OrderRelease = "OrderRelease";
-    public const string OrderIssue = "OrderIssue";
-    public const string TransferDispatch = "TransferDispatch";
-    public const string TransferReceipt = "TransferReceipt";
+    public const string OrderIssue = SalesIssue;
+    public const string TransferDispatch = AdjustmentDecrease;
+    public const string TransferReceipt = AdjustmentIncrease;
 }
 
 public static class InventoryTransactionSourceTypes

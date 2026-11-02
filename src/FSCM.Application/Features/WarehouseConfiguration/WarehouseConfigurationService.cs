@@ -39,7 +39,7 @@ public sealed partial class WarehouseConfigurationService(
             Id = Guid.NewGuid(),
             Code = normalized.Code,
             Name = normalized.Name,
-            Type = normalized.Type,
+            RegionId = normalized.RegionId,
             Address = normalized.Address,
             MinimumStockThresholdCartons = normalized.MinimumStockThresholdCartons,
             IsActive = true,
@@ -61,7 +61,7 @@ public sealed partial class WarehouseConfigurationService(
         var location = await store.FindWarehouseLocationAsync(warehouseId, cancellationToken);
         var now = timeProvider.GetUtcNow();
         warehouse.Name = normalized.Name;
-        warehouse.Type = normalized.Type;
+        warehouse.RegionId = normalized.RegionId;
         warehouse.Address = normalized.Address;
         warehouse.MinimumStockThresholdCartons = normalized.MinimumStockThresholdCartons;
         warehouse.UpdatedAt = now;
@@ -345,18 +345,17 @@ public sealed partial class WarehouseConfigurationService(
         var code = data.Code.Trim().ToUpperInvariant();
         var name = data.Name.Trim();
         var address = data.Address.Trim();
-        var type = data.Type.Trim();
         if (includeCode && !WarehouseCodeRegex().IsMatch(code))
             throw WarehouseConfigurationOperationException.Validation("Warehouse code must start with WH- and contain uppercase letters, digits, or hyphens.");
         if (name.Length is < 2 or > 150) throw WarehouseConfigurationOperationException.Validation("Warehouse name must contain 2 to 150 characters.");
-        if (!WarehouseTypes.All.Contains(type)) throw WarehouseConfigurationOperationException.Validation("Warehouse type must be Central or Regional.");
+        if (data.RegionId == Guid.Empty) throw WarehouseConfigurationOperationException.Validation("Region is required.");
         if (address.Length is < 5 or > 500) throw WarehouseConfigurationOperationException.Validation("Warehouse address must contain 5 to 500 characters.");
         if (data.Latitude is < -90 or > 90 || data.Longitude is < -180 or > 180)
             throw WarehouseConfigurationOperationException.Validation("Warehouse coordinates are outside the valid latitude or longitude range.");
         if (data.ProviderPlaceId?.Length > 200) throw WarehouseConfigurationOperationException.Validation("Provider place ID cannot exceed 200 characters.");
         if (data.MinimumStockThresholdCartons < 0)
             throw WarehouseConfigurationOperationException.Validation("Minimum stock threshold must be zero or a positive carton quantity.");
-        return data with { Code = code, Name = name, Type = type, Address = address, ProviderPlaceId = data.ProviderPlaceId?.Trim() };
+        return data with { Code = code, Name = name, Address = address, ProviderPlaceId = data.ProviderPlaceId?.Trim() };
     }
 
     private static void ValidateTransitRules(IReadOnlyCollection<TransitTimeRuleData> definitions)
@@ -482,7 +481,7 @@ public sealed partial class WarehouseConfigurationService(
 
     private static WarehouseResult ToWarehouseResult(
         WarehouseView view, IReadOnlyCollection<WarehouseKeeperView> keepers) => new(
-        view.Warehouse.Id, view.Warehouse.Code, view.Warehouse.Name, view.Warehouse.Type,
+        view.Warehouse.Id, view.Warehouse.Code, view.Warehouse.Name, view.Warehouse.RegionId,
         view.Warehouse.Address, view.Location?.Latitude ?? 0, view.Location?.Longitude ?? 0,
         view.Location?.ProviderPlaceId, view.Warehouse.MinimumStockThresholdCartons,
         keepers.Select(item => new WarehouseKeeperResult(item.UserId, item.FullName, item.Email)).ToArray(),

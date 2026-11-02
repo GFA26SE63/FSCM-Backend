@@ -36,7 +36,7 @@ public sealed class LoyaltyAccrualStore(AppDbContext dbContext) : ILoyaltyAccrua
         var pending = ledger.Count(type => type == LoyaltyTransactionTypes.PendingEarn);
         var cancelled = ledger.Count(type => type == LoyaltyTransactionTypes.PendingEarnCancelled);
 
-        // Only a prepaid order is settled by its payment row; credit and COD are settled by the
+        // A prepaid order is settled by its payment row; a credit order is settled by the
         // receivable being collected, which is the same ledger reaching Paid.
         var payment = await dbContext.PaymentRecords.AsNoTracking()
             .SingleOrDefaultAsync(item => item.SalesOrderId == salesOrderId, cancellationToken);

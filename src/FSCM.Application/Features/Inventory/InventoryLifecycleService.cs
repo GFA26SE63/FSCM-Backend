@@ -7,6 +7,7 @@ public static class ReservationStatuses
     public const string Active = "Active";
     public const string Released = "Released";
     public const string Consumed = "Consumed";
+    public const string Expired = "Expired";
 }
 
 public static class AllocationInventoryStatuses

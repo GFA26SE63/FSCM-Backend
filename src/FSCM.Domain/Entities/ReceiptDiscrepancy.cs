@@ -10,6 +10,7 @@ public sealed class ReceiptDiscrepancy
     public Guid ReportedByRetailerUserId { get; set; }
     public Guid? ReviewedByUserId { get; set; }
     public string Status { get; set; } = string.Empty;
+    public string? ResolutionType { get; set; }
     public string? Note { get; set; }
     public DateTimeOffset ReportedAt { get; set; }
     public DateTimeOffset? ReviewedAt { get; set; }

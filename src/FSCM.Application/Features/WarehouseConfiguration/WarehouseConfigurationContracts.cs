@@ -6,7 +6,7 @@ public sealed record WarehouseResult(
     Guid Id,
     string Code,
     string Name,
-    string Type,
+    Guid RegionId,
     string? Address,
     decimal Latitude,
     decimal Longitude,
@@ -25,7 +25,7 @@ public sealed record WarehouseKeeperResult(
 public sealed record SaveWarehouseData(
     string Code,
     string Name,
-    string Type,
+    Guid RegionId,
     string Address,
     decimal Latitude,
     decimal Longitude,

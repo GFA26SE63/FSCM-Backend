@@ -1,6 +1,7 @@
 using FSCM.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
+using FSCM.Persistence.Configurations;
 
 namespace FSCM.Persistence.Configurations.PhysicalSchema;
 
@@ -10,7 +11,7 @@ public sealed class InventoryTransactionConfiguration : IEntityTypeConfiguration
     {
         builder.ToTable("INVENTORY_TRANSACTION");
         builder.HasKey(entity => entity.Id);
-        builder.Property(entity => entity.TransactionType).HasMaxLength(30).IsRequired();
+        builder.Property(entity => entity.TransactionType).HasConversion(new EnumCodeConverter("InventoryTransactionType")).HasColumnType("smallint").IsRequired();
         builder.Property(entity => entity.SourceType).HasMaxLength(50).IsRequired();
         builder.Property(entity => entity.SourceId).HasColumnType("uuid").IsRequired();
         builder.Property(entity => entity.ReferenceCode).HasMaxLength(80).IsRequired();
@@ -29,5 +30,6 @@ public sealed class InventoryTransactionConfiguration : IEntityTypeConfiguration
         builder.HasOne<GoodsReceipt>().WithMany().HasForeignKey(entity => entity.GoodsReceiptId).OnDelete(DeleteBehavior.Restrict);
         builder.HasOne<GoodsReceiptLine>().WithMany().HasForeignKey(entity => entity.GoodsReceiptLineId).OnDelete(DeleteBehavior.Restrict);
         builder.HasOne<UserAccount>().WithMany().HasForeignKey(entity => entity.CreatedByUserId).OnDelete(DeleteBehavior.Restrict);
+        builder.ToTable(table => table.HasCheckConstraint("CK_INVENTORY_TRANSACTION_TransactionType", "\"TransactionType\" BETWEEN 0 AND 8"));
     }
 }

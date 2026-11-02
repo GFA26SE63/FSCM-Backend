@@ -120,7 +120,9 @@ public sealed class InventoryServiceTests
         var fixture = new Fixture();
 
         var exception = await Assert.ThrowsAsync<InventoryOperationException>(() =>
-            fixture.CreateAsync("receipt-key-0001", decimal.Parse(quantity), new DateOnly(year, month, day)));
+            fixture.CreateAsync("receipt-key-0001",
+                decimal.Parse(quantity, System.Globalization.CultureInfo.InvariantCulture),
+                new DateOnly(year, month, day)));
 
         Assert.Equal("validation_error", exception.Code);
         Assert.Empty(fixture.Store.Receipts);

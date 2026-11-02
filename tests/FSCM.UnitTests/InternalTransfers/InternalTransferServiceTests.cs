@@ -25,16 +25,16 @@ public sealed class InternalTransferServiceTests
     }
 
     [Fact]
-    public async Task Create_rejects_non_central_source_direction()
+    public async Task Create_allows_peer_warehouses_without_a_type_tier()
     {
         var fixture = new Fixture();
         var position = fixture.Store.AddPosition(fixture.Regional, fixture.Product, new DateOnly(2026, 12, 1), 20m, "LO-VUNG");
 
-        var exception = await Assert.ThrowsAsync<InternalTransferOperationException>(() => fixture.Service.CreateAsync(
+        var result = await fixture.Service.CreateAsync(
             new(fixture.Regional.Id, fixture.Central.Id, [new(position.Batch.Id, 10m, null)], null),
-            "tao-phieu-sai-huong", fixture.OperatorId, SystemRoles.Operator, default));
+            "tao-phieu-peer", fixture.OperatorId, SystemRoles.Operator, default);
 
-        Assert.Equal("validation_error", exception.Code);
+        Assert.Equal(InternalTransferStatuses.Requested, result.Status);
     }
 
     [Fact]
@@ -134,8 +134,8 @@ public sealed class InternalTransferServiceTests
     {
         public Guid OperatorId { get; } = Guid.NewGuid();
         public Guid KeeperId { get; } = Guid.NewGuid();
-        public Warehouse Central { get; } = new() { Id = Guid.NewGuid(), Code = "WH-HCM-01", Name = "Kho trung tâm", Type = WarehouseTypes.Central, IsActive = true };
-        public Warehouse Regional { get; } = new() { Id = Guid.NewGuid(), Code = "WH-TD", Name = "Kho vùng", Type = WarehouseTypes.Regional, IsActive = true };
+        public Warehouse Central { get; } = new() { Id = Guid.NewGuid(), Code = "WH-HCM-01", Name = "Kho Củ Chi", RegionId = Guid.NewGuid(), IsActive = true };
+        public Warehouse Regional { get; } = new() { Id = Guid.NewGuid(), Code = "WH-TD", Name = "Kho Thủ Đức", RegionId = Guid.NewGuid(), IsActive = true };
         public Product Product { get; } = new() { Id = Guid.NewGuid(), Sku = "SKU001", Name = "Sữa tiệt trùng" };
         public FakeStore Store { get; }
         public InternalTransferService Service { get; }

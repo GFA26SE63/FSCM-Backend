@@ -275,7 +275,7 @@ Content-Type: application/json
 {
   "clientOrderKey": "{{$guid}}",
   "retailerId": "{{salesLogin.response.body.$.user.scope.retailerIds[0]}}",
-  "paymentMethod": "COD",
+  "paymentMethod": "Prepaid",
   "note": "Đơn hỗ trợ tạo tại điểm bán",
   "lines": [
     {
@@ -560,7 +560,7 @@ Content-Type: application/json
 
 ###
 
-# Admin/Operator only. COD requires complete delivery; prepaid requires final approval.
+# Admin/Operator only. Prepaid bank transfer only (no COD / prepaid cash, BR-51); requires final approval.
 POST {{FSCM.API_HostAddress}}/api/v1/manual-payments
 Authorization: Bearer {{operatorLogin.response.body.$.accessToken}}
 Idempotency-Key: {{$guid}}
@@ -568,10 +568,10 @@ Content-Type: application/json
 
 {
   "salesOrderId": "00000000-0000-0000-0000-000000000000",
-  "method": "COD",
+  "method": "PrepaidTransfer",
   "amount": 100000,
   "markPaid": false,
-  "note": "Chờ xác nhận thu đủ tiền khi giao hàng"
+  "note": "Chờ đối soát chứng từ chuyển khoản"
 }
 
 ###

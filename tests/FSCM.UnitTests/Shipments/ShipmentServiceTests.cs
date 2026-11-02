@@ -487,7 +487,7 @@ public sealed class ShipmentServiceTests
     public async Task A_credit_order_does_not_have_to_be_paid_before_it_leaves()
     {
         var fixture = new Fixture();
-        // Credit is settled on terms and COD on delivery, so neither gates the door.
+        // Credit is settled on terms, so it does not gate the door.
         fixture.PaymentStore.Payment!.Status = PaymentStatuses.Unpaid;
         var (ready, balance, _) = fixture.AddReadyShipment(fixture.WarehouseA, 12m, onHand: 50m);
 
@@ -509,12 +509,12 @@ public sealed class ShipmentServiceTests
         await fixture.Service.ConfirmIssueAsync(
             first.Id, new ConfirmShipmentIssueData(first.Version), actor,
             SystemRoles.WarehouseKeeper, CancellationToken.None);
-        Assert.NotEqual(OrderStatuses.Issued, fixture.Order.Status);
+        Assert.Equal(OrderStatuses.ConvertedToPo, fixture.Order.Status);
 
         await fixture.Service.ConfirmIssueAsync(
             second.Id, new ConfirmShipmentIssueData(second.Version), actor,
             SystemRoles.WarehouseKeeper, CancellationToken.None);
-        Assert.Equal(OrderStatuses.Issued, fixture.Order.Status);
+        Assert.Equal(OrderStatuses.ConvertedToPo, fixture.Order.Status);
     }
 
     [Fact]

@@ -128,16 +128,8 @@ public sealed class EntityQuery(EntityQueryAccess access)
     public IQueryable<AllocationRunStock> AllocationRunStocks([Service] IEntityQueryService source) => source.Query<AllocationRunStock>(access);
     [UsePaging(typeof(DomainEntityObjectType<AllocationRunAllocation>), ConnectionName = "EntityAllocationRunAllocations", DefaultPageSize = 50, MaxPageSize = int.MaxValue, IncludeTotalCount = true, RequirePagingBoundaries = false), UseProjection, UseFiltering, UseSorting]
     public IQueryable<AllocationRunAllocation> AllocationRunAllocations([Service] IEntityQueryService source) => source.Query<AllocationRunAllocation>(access);
-    [UsePaging(typeof(DomainEntityObjectType<AllocationPlanVersion>), ConnectionName = "EntityAllocationPlanVersions", DefaultPageSize = 50, MaxPageSize = int.MaxValue, IncludeTotalCount = true, RequirePagingBoundaries = false), UseProjection, UseFiltering, UseSorting]
-    public IQueryable<AllocationPlanVersion> AllocationPlanVersions([Service] IEntityQueryService source) => source.Query<AllocationPlanVersion>(access);
     [UsePaging(typeof(DomainEntityObjectType<AllocationPlanPrice>), ConnectionName = "EntityAllocationPlanPrices", DefaultPageSize = 50, MaxPageSize = int.MaxValue, IncludeTotalCount = true, RequirePagingBoundaries = false), UseProjection, UseFiltering, UseSorting]
     public IQueryable<AllocationPlanPrice> AllocationPlanPrices([Service] IEntityQueryService source) => source.Query<AllocationPlanPrice>(access);
-    [UsePaging(typeof(DomainEntityObjectType<RunPickingList>), ConnectionName = "EntityRunPickingLists", DefaultPageSize = 50, MaxPageSize = int.MaxValue, IncludeTotalCount = true, RequirePagingBoundaries = false), UseProjection, UseFiltering, UseSorting]
-    public IQueryable<RunPickingList> RunPickingLists([Service] IEntityQueryService source) => source.Query<RunPickingList>(access);
-    [UsePaging(typeof(DomainEntityObjectType<RunPickingGather>), ConnectionName = "EntityRunPickingGathers", DefaultPageSize = 50, MaxPageSize = int.MaxValue, IncludeTotalCount = true, RequirePagingBoundaries = false), UseProjection, UseFiltering, UseSorting]
-    public IQueryable<RunPickingGather> RunPickingGathers([Service] IEntityQueryService source) => source.Query<RunPickingGather>(access);
-    [UsePaging(typeof(DomainEntityObjectType<RunPickingSplit>), ConnectionName = "EntityRunPickingSplits", DefaultPageSize = 50, MaxPageSize = int.MaxValue, IncludeTotalCount = true, RequirePagingBoundaries = false), UseProjection, UseFiltering, UseSorting]
-    public IQueryable<RunPickingSplit> RunPickingSplits([Service] IEntityQueryService source) => source.Query<RunPickingSplit>(access);
 
     [UsePaging(typeof(DomainEntityObjectType<TransitTable>), ConnectionName = "EntityTransitTables", DefaultPageSize = 50, MaxPageSize = int.MaxValue, IncludeTotalCount = true, RequirePagingBoundaries = false), UseProjection, UseFiltering, UseSorting]
     public IQueryable<TransitTable> TransitTables([Service] IEntityQueryService source) => source.Query<TransitTable>(access);
@@ -205,8 +197,12 @@ public sealed class EntityQuery(EntityQueryAccess access)
 
     [UsePaging(typeof(DomainEntityObjectType<Payment>), ConnectionName = "EntityPayments", DefaultPageSize = 50, MaxPageSize = int.MaxValue, IncludeTotalCount = true, RequirePagingBoundaries = false), UseProjection, UseFiltering, UseSorting]
     public IQueryable<Payment> Payments([Service] IEntityQueryService source) => source.Query<Payment>(access);
-    [UsePaging(typeof(DomainEntityObjectType<ManualPayment>), ConnectionName = "EntityManualPayments", DefaultPageSize = 50, MaxPageSize = int.MaxValue, IncludeTotalCount = true, RequirePagingBoundaries = false), UseProjection, UseFiltering, UseSorting]
-    public IQueryable<ManualPayment> ManualPayments([Service] IEntityQueryService source) => source.Query<ManualPayment>(access);
+    [UsePaging(typeof(DomainEntityObjectType<PaymentReceipt>), ConnectionName = "EntityPaymentReceipts", DefaultPageSize = 50, MaxPageSize = int.MaxValue, IncludeTotalCount = true, RequirePagingBoundaries = false), UseProjection, UseFiltering, UseSorting]
+    public IQueryable<PaymentReceipt> PaymentReceipts([Service] IEntityQueryService source) => source.Query<PaymentReceipt>(access);
+    [UsePaging(typeof(DomainEntityObjectType<PaymentReceiptAllocation>), ConnectionName = "EntityPaymentReceiptAllocations", DefaultPageSize = 50, MaxPageSize = int.MaxValue, IncludeTotalCount = true, RequirePagingBoundaries = false), UseProjection, UseFiltering, UseSorting]
+    public IQueryable<PaymentReceiptAllocation> PaymentReceiptAllocations([Service] IEntityQueryService source) => source.Query<PaymentReceiptAllocation>(access);
+    [UsePaging(typeof(DomainEntityObjectType<ReplacementCase>), ConnectionName = "EntityReplacementCases", DefaultPageSize = 50, MaxPageSize = int.MaxValue, IncludeTotalCount = true, RequirePagingBoundaries = false), UseProjection, UseFiltering, UseSorting]
+    public IQueryable<ReplacementCase> ReplacementCases([Service] IEntityQueryService source) => source.Query<ReplacementCase>(access);
     [UsePaging(typeof(DomainEntityObjectType<ManualRefund>), ConnectionName = "EntityManualRefunds", DefaultPageSize = 50, MaxPageSize = int.MaxValue, IncludeTotalCount = true, RequirePagingBoundaries = false), UseProjection, UseFiltering, UseSorting]
     public IQueryable<ManualRefund> ManualRefunds([Service] IEntityQueryService source) => source.Query<ManualRefund>(access);
     [UsePaging(typeof(DomainEntityObjectType<Delivery>), ConnectionName = "EntityDeliveries", DefaultPageSize = 50, MaxPageSize = int.MaxValue, IncludeTotalCount = true, RequirePagingBoundaries = false), UseProjection, UseFiltering, UseSorting]

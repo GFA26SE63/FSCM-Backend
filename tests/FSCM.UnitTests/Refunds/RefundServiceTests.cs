@@ -108,7 +108,7 @@ public sealed class RefundServiceTests
                 Amount = 100_000,
                 AdjustedAmount = 40_000,
                 ConfirmedAmount = 100_000,
-                Method = "COD",
+                Method = "Prepaid",
                 Status = PaymentStatuses.Paid,
                 FinalApprovedAt = now.AddDays(-1),
                 FinalApprovalReference = "RUN-001",

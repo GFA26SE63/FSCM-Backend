@@ -59,8 +59,11 @@ public sealed class EntityQueryService(AppDbContext dbContext) : IEntityQuerySer
             return Cast<TEntity, SalesOrderAttachment>(dbContext.SalesOrderAttachmentRecords.Where(x => orderIds.Contains(x.SalesOrderId)));
         if (typeof(TEntity) == typeof(Payment))
             return Cast<TEntity, Payment>(dbContext.PaymentRecords.Where(x => orderIds.Contains(x.SalesOrderId)));
-        if (typeof(TEntity) == typeof(ManualPayment))
-            return Cast<TEntity, ManualPayment>(dbContext.ManualPaymentRecords.Where(x => orderIds.Contains(x.SalesOrderId)));
+        if (typeof(TEntity) == typeof(PaymentReceipt))
+            return Cast<TEntity, PaymentReceipt>(dbContext.PaymentReceiptRecords.Where(x => retailerIds.Contains(x.RetailerId)));
+        if (typeof(TEntity) == typeof(PaymentReceiptAllocation))
+            return Cast<TEntity, PaymentReceiptAllocation>(dbContext.PaymentReceiptAllocationRecords.Where(x =>
+                dbContext.PaymentReceiptRecords.Any(receipt => receipt.Id == x.PaymentReceiptId && retailerIds.Contains(receipt.RetailerId))));
         if (typeof(TEntity) == typeof(ManualRefund))
             return Cast<TEntity, ManualRefund>(dbContext.ManualRefundRecords.Where(x => orderIds.Contains(x.SalesOrderId)));
         if (typeof(TEntity) == typeof(Delivery))
@@ -71,11 +74,14 @@ public sealed class EntityQueryService(AppDbContext dbContext) : IEntityQuerySer
                 (access.Role == SystemRoles.WarehouseKeeper && warehouseIds.Contains(x.WarehouseId))));
         if (typeof(TEntity) == typeof(PickingList))
             return Cast<TEntity, PickingList>(dbContext.PickingListRecords.Where(x =>
-                orderIds.Contains(x.SalesOrderId) || warehouseIds.Contains(x.WarehouseId)));
+                dbContext.PurchaseOrderRecords.Any(po => po.Id == x.PurchaseOrderId && orderIds.Contains(po.SalesOrderId)) ||
+                warehouseIds.Contains(x.WarehouseId)));
         if (typeof(TEntity) == typeof(PickingItem))
         {
             var pickingIds = dbContext.PickingListRecords
-                .Where(x => orderIds.Contains(x.SalesOrderId) || warehouseIds.Contains(x.WarehouseId))
+                .Where(x => dbContext.PurchaseOrderRecords.Any(po =>
+                        po.Id == x.PurchaseOrderId && orderIds.Contains(po.SalesOrderId)) ||
+                    warehouseIds.Contains(x.WarehouseId))
                 .Select(x => x.Id);
             return Cast<TEntity, PickingItem>(dbContext.PickingItemRecords.Where(x => pickingIds.Contains(x.PickingListId)));
         }
@@ -104,6 +110,9 @@ public sealed class EntityQueryService(AppDbContext dbContext) : IEntityQuerySer
             return Cast<TEntity, ReceiptDiscrepancyItem>(dbContext.ReceiptDiscrepancyItemRecords.Where(x =>
                 discrepancyIds.Contains(x.ReceiptDiscrepancyId)));
         }
+        if (typeof(TEntity) == typeof(ReplacementCase))
+            return Cast<TEntity, ReplacementCase>(dbContext.ReplacementCaseRecords.Where(x =>
+                dbContext.ReceiptDiscrepancyRecords.Any(claim => claim.Id == x.ReceiptDiscrepancyId && orderIds.Contains(claim.SalesOrderId))));
         if (typeof(TEntity) == typeof(Allocation))
             return Cast<TEntity, Allocation>(dbContext.AllocationRecords.Where(x =>
                 warehouseIds.Contains(x.WarehouseId) || dbContext.SalesOrderLineRecords.Any(line =>
@@ -120,7 +129,6 @@ public sealed class EntityQueryService(AppDbContext dbContext) : IEntityQuerySer
                                 orderIds.Contains(orderLine.SalesOrderId))))))));
 
         var runIds = ScopedRunIds(access, orderIds);
-        var planVersionIds = dbContext.AllocationPlanVersionRecords.Where(x => runIds.Contains(x.AllocationRunId)).Select(x => x.Id);
         var runOrderIds = dbContext.AllocationRunOrderRecords.Where(x => runIds.Contains(x.AllocationRunId) &&
             (access.Role == SystemRoles.WarehouseKeeper || orderIds.Contains(x.SalesOrderId))).Select(x => x.Id);
         var runLineIds = dbContext.AllocationRunLineRecords.Where(x => runOrderIds.Contains(x.AllocationRunOrderId)).Select(x => x.Id);
@@ -137,29 +145,10 @@ public sealed class EntityQueryService(AppDbContext dbContext) : IEntityQuerySer
             return Cast<TEntity, AllocationRunAllocation>(dbContext.AllocationRunAllocationRecords.Where(x =>
                 runLineIds.Contains(x.AllocationRunLineId) &&
                 (access.Role != SystemRoles.WarehouseKeeper || warehouseIds.Contains(x.WarehouseId))));
-        if (typeof(TEntity) == typeof(AllocationPlanVersion))
-            return Cast<TEntity, AllocationPlanVersion>(dbContext.AllocationPlanVersionRecords.Where(x => runIds.Contains(x.AllocationRunId)));
         if (typeof(TEntity) == typeof(AllocationPlanPrice))
             return Cast<TEntity, AllocationPlanPrice>(dbContext.AllocationPlanPriceRecords.Where(x =>
-                planVersionIds.Contains(x.AllocationPlanVersionId) && runLineIds.Contains(x.AllocationRunLineId) &&
+                runIds.Contains(x.AllocationRunId) && runLineIds.Contains(x.AllocationRunLineId) &&
                 (access.Role != SystemRoles.WarehouseKeeper || warehouseIds.Contains(x.WarehouseId))));
-        if (typeof(TEntity) == typeof(RunPickingList))
-            return Cast<TEntity, RunPickingList>(dbContext.RunPickingListRecords.Where(x =>
-                access.Role == SystemRoles.WarehouseKeeper
-                    ? runIds.Contains(x.AllocationRunId) && warehouseIds.Contains(x.WarehouseId)
-                    : dbContext.RunPickingGatherRecords.Any(gather => gather.RunPickingListId == x.Id &&
-                        dbContext.RunPickingSplitRecords.Any(split => split.RunPickingGatherId == gather.Id && orderIds.Contains(split.SalesOrderId)))));
-        if (typeof(TEntity) == typeof(RunPickingGather))
-        {
-            var listIds = dbContext.RunPickingListRecords.Where(x => access.Role == SystemRoles.WarehouseKeeper
-                ? runIds.Contains(x.AllocationRunId) && warehouseIds.Contains(x.WarehouseId)
-                : dbContext.RunPickingGatherRecords.Any(gather => gather.RunPickingListId == x.Id &&
-                    dbContext.RunPickingSplitRecords.Any(split => split.RunPickingGatherId == gather.Id && orderIds.Contains(split.SalesOrderId)))).Select(x => x.Id);
-            return Cast<TEntity, RunPickingGather>(dbContext.RunPickingGatherRecords.Where(x => listIds.Contains(x.RunPickingListId)));
-        }
-        if (typeof(TEntity) == typeof(RunPickingSplit))
-            return Cast<TEntity, RunPickingSplit>(dbContext.RunPickingSplitRecords.Where(x =>
-                runLineIds.Contains(x.AllocationRunLineId) && orderIds.Contains(x.SalesOrderId)));
 
         if (typeof(TEntity) == typeof(GoodsReceipt))
             return Cast<TEntity, GoodsReceipt>(dbContext.GoodsReceiptRecords.Where(x => warehouseIds.Contains(x.WarehouseId)));
@@ -217,7 +206,9 @@ public sealed class EntityQueryService(AppDbContext dbContext) : IEntityQuerySer
         SystemRoles.SalesManager => dbContext.SalesOrderRecords.Where(x => access.Scope.SalesGroupIds.Contains(x.SalesGroupId)),
         SystemRoles.Retailer => dbContext.SalesOrderRecords.Where(x => access.Scope.RetailerIds.Contains(x.RetailerId)),
         SystemRoles.WarehouseKeeper => dbContext.SalesOrderRecords.Where(order =>
-            dbContext.PickingListRecords.Any(list => list.SalesOrderId == order.Id && access.Scope.WarehouseIds.Contains(list.WarehouseId)) ||
+            dbContext.PickingListRecords.Any(list =>
+                dbContext.PurchaseOrderRecords.Any(po => po.Id == list.PurchaseOrderId && po.SalesOrderId == order.Id) &&
+                access.Scope.WarehouseIds.Contains(list.WarehouseId)) ||
             dbContext.AllocationRecords.Any(allocation => access.Scope.WarehouseIds.Contains(allocation.WarehouseId) &&
                 dbContext.SalesOrderLineRecords.Any(line => line.Id == allocation.SalesOrderLineId && line.SalesOrderId == order.Id)) ||
             // The run allocates into its own table; without this a keeper's GraphQL order scope is
@@ -231,7 +222,7 @@ public sealed class EntityQueryService(AppDbContext dbContext) : IEntityQuerySer
     private IQueryable<Guid> ScopedRunIds(EntityQueryAccess access, IQueryable<Guid> orderIds) =>
         access.Role == SystemRoles.WarehouseKeeper
             ? dbContext.AllocationRunStockRecords.Where(x => access.Scope.WarehouseIds.Contains(x.WarehouseId)).Select(x => x.AllocationRunId).Distinct()
-            : dbContext.AllocationRunOrderRecords.Where(x => orderIds.Contains(x.SalesOrderId)).Select(x => x.AllocationRunId).Distinct();
+            : dbContext.AllocationRunRecords.Where(x => orderIds.Contains(x.SalesOrderId)).Select(x => x.Id).Distinct();
 
     private IQueryable<Delivery> ScopedDeliveries(EntityQueryAccess access, IQueryable<Guid> orderIds) =>
         access.Role == SystemRoles.WarehouseKeeper

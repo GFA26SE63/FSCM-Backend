@@ -1,5 +1,7 @@
 using System.Text.Json;
+using FSCM.Application.Features.Identity;
 using FSCM.Application.Features.WarehouseConfiguration;
+using FSCM.Domain.Authorization;
 using FSCM.Domain.Entities;
 
 namespace FSCM.Application.Features.Retailers;
@@ -48,8 +50,8 @@ public sealed class RetailerService(IRetailerStore store, TimeProvider timeProvi
     }
 
     public async Task<RetailerDetails> DeclareAsync(
-        Guid actorUserId, Guid regionId, Guid salesGroupId, string name, string? contactName,
-        string? phone, string? email, string? address, string retailerType,
+        Guid actorUserId, Guid regionId, Guid salesGroupId, string name, string contactName,
+        string phone, string email, string? address, string retailerType,
         decimal forecastRevenue, decimal storeSizeSquareMeters, decimal purchasingCapacity,
         int purchaseFrequencyPerMonth, int requestedCreditTermDays, string? assessmentNote,
         decimal? latitude, decimal? longitude, string? providerPlaceId,
@@ -77,6 +79,15 @@ public sealed class RetailerService(IRetailerStore store, TimeProvider timeProvi
         };
         Apply(retailer, input, actorUserId, now);
         store.Add(retailer);
+        store.AddDeclarationContact(new RetailerDeclarationContact
+        {
+            RetailerId = retailer.Id,
+            ContactName = input.ContactName,
+            Phone = input.Phone,
+            Email = input.Email,
+            CreatedAt = now,
+            UpdatedAt = now
+        });
         store.AddAssignment(new RetailerSalesAssignment
         {
             Id = Guid.NewGuid(),
@@ -95,14 +106,14 @@ public sealed class RetailerService(IRetailerStore store, TimeProvider timeProvi
             retailer.Status = RetailerStatuses.PendingApproval;
         }
         AddAudit(retailer.Id, actorUserId, "RetailerDeclarationSaved", null,
-            GeneralInformationAuditJson(retailer), null, now);
+            GeneralInformationAuditJson(retailer, input.ContactName, input.Phone, input.Email), null, now);
         await store.SaveChangesAsync(cancellationToken);
         return await GetResultAsync(retailer.Id, cancellationToken);
     }
 
     public async Task<RetailerDetails> UpdateDeclarationAsync(
-        Guid retailerId, Guid actorUserId, string name, string? contactName, string? phone,
-        string? email, string? address, string retailerType, decimal forecastRevenue,
+        Guid retailerId, Guid actorUserId, string name, string contactName, string phone,
+        string email, string? address, string retailerType, decimal forecastRevenue,
         decimal storeSizeSquareMeters, decimal purchasingCapacity, int purchaseFrequencyPerMonth,
         int requestedCreditTermDays, string? assessmentNote,
         decimal? latitude, decimal? longitude, string? providerPlaceId,
@@ -117,10 +128,16 @@ public sealed class RetailerService(IRetailerStore store, TimeProvider timeProvi
             throw RetailerOperationException.InvalidTransition("Only draft or rejected declarations can be updated.");
 
         var now = timeProvider.GetUtcNow();
-        var oldValues = GeneralInformationAuditJson(retailer);
+        var contact = await store.FindDeclarationContactForUpdateAsync(retailerId, cancellationToken)
+            ?? throw RetailerOperationException.InvalidTransition("Retailer declaration contact was not found.");
+        var oldValues = GeneralInformationAuditJson(retailer, contact.ContactName, contact.Phone, contact.Email);
         var input = Validate(name, contactName, phone, email, address, retailerType, forecastRevenue,
             storeSizeSquareMeters, purchasingCapacity, purchaseFrequencyPerMonth, requestedCreditTermDays, assessmentNote);
         await EnsureNoDuplicateAsync(input, retailerId, cancellationToken);
+        contact.ContactName = input.ContactName;
+        contact.Phone = input.Phone;
+        contact.Email = input.Email;
+        contact.UpdatedAt = now;
         Apply(retailer, input, actorUserId, now);
         await ApplyLocationAsync(retailer.Id, latitude, longitude, providerPlaceId, now, cancellationToken);
         var activeMlors = mlorDeclarations is null
@@ -136,7 +153,7 @@ public sealed class RetailerService(IRetailerStore store, TimeProvider timeProvi
         retailer.ReviewedAt = null;
         retailer.ReviewReason = null;
         AddAudit(retailer.Id, actorUserId, "RetailerDeclarationUpdated", oldValues,
-            GeneralInformationAuditJson(retailer), null, now);
+            GeneralInformationAuditJson(retailer, contact.ContactName, contact.Phone, contact.Email), null, now);
         await store.SaveChangesAsync(cancellationToken);
         return await GetResultAsync(retailerId, cancellationToken);
     }
@@ -177,14 +194,47 @@ public sealed class RetailerService(IRetailerStore store, TimeProvider timeProvi
         if (approve && (!creditTermDays.HasValue || !AllowedCreditTerms.Contains(creditTermDays.Value)))
             throw RetailerOperationException.Validation("Admin must select a payment term of 0, 7, 14, or 30 days when approving.");
 
+        var reviewedAt = timeProvider.GetUtcNow();
         retailer.Status = approve ? RetailerStatuses.Active : RetailerStatuses.Rejected;
         if (approve)
         {
+            if (!retailer.UserAccountId.HasValue)
+            {
+                var contact = await store.FindDeclarationContactForUpdateAsync(retailerId, cancellationToken)
+                    ?? throw RetailerOperationException.InvalidTransition("Retailer declaration contact was not found.");
+                var account = await store.FindUnassignedRetailerAccountAsync(
+                    contact.Email.ToLowerInvariant(), contact.Phone, cancellationToken);
+                if (account is null)
+                {
+                    account = new UserAccount
+                    {
+                        Id = Guid.NewGuid(),
+                        IdentityProvider = IdentityProviders.Local,
+                        Email = contact.Email,
+                        Phone = contact.Phone,
+                        FullName = contact.ContactName,
+                        Role = SystemRoles.Retailer,
+                        IsActive = false,
+                        CreatedAt = reviewedAt,
+                        UpdatedAt = reviewedAt
+                    };
+                    store.AddContactAccount(account);
+                }
+                else
+                {
+                    account.Email = contact.Email;
+                    account.Phone = contact.Phone;
+                    account.FullName = contact.ContactName;
+                    account.UpdatedAt = reviewedAt;
+                }
+                retailer.UserAccountId = account.Id;
+                store.RemoveDeclarationContact(contact);
+            }
             retailer.Code = await store.NextBusinessCodeAsync(cancellationToken);
             retailer.CreditTermDays = creditTermDays!.Value;
         }
         retailer.ReviewedByUserId = reviewerUserId;
-        retailer.ReviewedAt = timeProvider.GetUtcNow();
+        retailer.ReviewedAt = reviewedAt;
         retailer.ReviewReason = reason;
         retailer.UpdatedAt = retailer.ReviewedAt.Value;
         AddAudit(retailer.Id, reviewerUserId, approve ? "RetailerDeclarationApproved" : "RetailerDeclarationRejected",
@@ -280,8 +330,8 @@ public sealed class RetailerService(IRetailerStore store, TimeProvider timeProvi
     {
         var duplicate = await store.FindDuplicateAsync(
             input.Name.ToLowerInvariant(),
-            input.Phone?.ToLowerInvariant(),
-            input.Email?.ToLowerInvariant(),
+            input.Phone.ToLowerInvariant(),
+            input.Email.ToLowerInvariant(),
             input.Address?.ToLowerInvariant(),
             excludedRetailerId,
             cancellationToken);
@@ -290,6 +340,8 @@ public sealed class RetailerService(IRetailerStore store, TimeProvider timeProvi
             throw RetailerOperationException.Conflict(
                 $"Retailer declaration duplicates existing record '{duplicate.Code}'.");
         }
+        if (await store.ContactAccountExistsAsync(input.Phone, input.Email, excludedRetailerId, cancellationToken))
+            throw RetailerOperationException.Conflict("Phone or email is already assigned to another user account.");
     }
 
     private static RetailerInput Validate(
@@ -300,9 +352,16 @@ public sealed class RetailerService(IRetailerStore store, TimeProvider timeProvi
     {
         name = Clean(name, 200, "Retailer name")!;
         if (name.Length < 2) throw RetailerOperationException.Validation("Retailer name must contain at least 2 characters.");
-        contactName = Clean(contactName, 200, "Contact name");
-        phone = Clean(phone, 30, "Phone");
-        email = Clean(email, 150, "Email")?.ToLowerInvariant();
+        contactName = Clean(contactName, 150, "Contact name")
+            ?? throw RetailerOperationException.Validation("Contact name is required.");
+        phone = Clean(phone, 20, "Phone");
+        phone = phone is null ? null : new string(phone.Where(char.IsAsciiDigit).ToArray());
+        if (phone is null || phone.Length != 10 || phone[0] != '0')
+            throw RetailerOperationException.Validation("Phone must contain 10 digits and start with 0.");
+        email = Clean(email, 150, "Email")?.ToLowerInvariant()
+            ?? throw RetailerOperationException.Validation("Email is required.");
+        try { _ = new System.Net.Mail.MailAddress(email); }
+        catch (FormatException) { throw RetailerOperationException.Validation("Email is invalid."); }
         address = Clean(address, 2000, "Address");
         assessmentNote = Clean(assessmentNote, 4000, "Assessment note");
         retailerType = retailerType.Trim();
@@ -321,9 +380,6 @@ public sealed class RetailerService(IRetailerStore store, TimeProvider timeProvi
     private static void Apply(Retailer retailer, RetailerInput input, Guid assessorId, DateTimeOffset now)
     {
         retailer.Name = input.Name;
-        retailer.ContactName = input.ContactName;
-        retailer.Phone = input.Phone;
-        retailer.Email = input.Email;
         retailer.Address = input.Address;
         retailer.RetailerType = input.RetailerType;
         retailer.ForecastRevenue = input.ForecastRevenue;
@@ -359,8 +415,8 @@ public sealed class RetailerService(IRetailerStore store, TimeProvider timeProvi
     private static RetailerDetails ToDetails(RetailerView view, IReadOnlyCollection<RetailerMlorView> mlors)
     {
         var item = view.Retailer;
-        var generalInformation = new RetailerGeneralInformation(item.Name, item.ContactName, item.Phone,
-            item.Email, item.Address, view.Location?.Latitude, view.Location?.Longitude,
+        var generalInformation = new RetailerGeneralInformation(item.Name, view.ContactName, view.Phone,
+            view.Email, item.Address, view.Location?.Latitude, view.Location?.Longitude,
             view.Location?.ProviderPlaceId, view.Location?.Version ?? 0, item.RetailerType,
             item.ForecastRevenue ?? 0, item.StoreSizeSquareMeters ?? 0, item.StoreSizeCategory,
             item.PurchasingCapacity ?? 0, item.PurchaseFrequencyPerMonth, item.RequestedCreditTermDays,
@@ -368,7 +424,7 @@ public sealed class RetailerService(IRetailerStore store, TimeProvider timeProvi
         var declarations = mlors.Select(ToMlorResult).OrderBy(value => value.Scope)
             .ThenBy(value => value.CategoryCode ?? value.ProductSku, StringComparer.Ordinal).ToArray();
         return new(item.Id, item.RegionId, view.SalesGroupId, view.SalesGroupCode, item.Code, item.Name,
-            item.ContactName, item.Phone, item.Email, item.Address,
+            view.ContactName, view.Phone, view.Email, item.Address,
             view.Location?.Latitude, view.Location?.Longitude, view.Location?.ProviderPlaceId,
             view.Location?.Version ?? 0, item.Status, item.RetailerType,
             item.ForecastRevenue ?? 0, item.StoreSizeSquareMeters ?? 0, item.StoreSizeCategory,
@@ -528,12 +584,13 @@ public sealed class RetailerService(IRetailerStore store, TimeProvider timeProvi
             CreatedAt = createdAt
         });
 
-    private static string GeneralInformationAuditJson(Retailer retailer) => JsonSerializer.Serialize(new
+    private static string GeneralInformationAuditJson(
+        Retailer retailer, string contactName, string phone, string email) => JsonSerializer.Serialize(new
     {
         retailer.Name,
-        retailer.ContactName,
-        retailer.Phone,
-        retailer.Email,
+        ContactName = contactName,
+        Phone = phone,
+        Email = email,
         retailer.Address,
         retailer.RetailerType,
         retailer.ForecastRevenue,
@@ -561,7 +618,7 @@ public sealed class RetailerService(IRetailerStore store, TimeProvider timeProvi
         view.Mlor.MinimumLifeRatio, view.Mlor.MinimumLifeHours, timeProvider.GetUtcNow());
 
     private sealed record RetailerInput(
-        string Name, string? ContactName, string? Phone, string? Email, string? Address,
+        string Name, string ContactName, string Phone, string Email, string? Address,
         string RetailerType, decimal ForecastRevenue, decimal StoreSizeSquareMeters,
         decimal PurchasingCapacity, int PurchaseFrequencyPerMonth, int RequestedCreditTermDays,
         string? AssessmentNote);
