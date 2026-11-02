@@ -630,10 +630,11 @@ public sealed class OrderService(
     {
         if (data.ClientOrderKey == Guid.Empty || data.RetailerId == Guid.Empty)
             throw OrderOperationException.Validation("Client order key and retailer are required.");
-        var paymentMethod = NormalizePaymentMethod(data.PaymentMethod);
-        if (paymentMethod is null)
-            throw OrderOperationException.Validation(
-                "Payment method must be Prepaid (bank transfer) or Credit; COD is not supported.");
+        var paymentMethod = string.IsNullOrWhiteSpace(data.PaymentMethod)
+            ? null
+            : NormalizePaymentMethod(data.PaymentMethod)
+                ?? throw OrderOperationException.Validation(
+                    "Payment method must be Prepaid (bank transfer) or Credit; COD is not supported.");
         if (data.Lines is null || data.Lines.Count is < 1 or > 100)
             throw OrderOperationException.Validation("Order must contain between 1 and 100 lines.");
         if (data.Lines.Any(item => item.ProductId == Guid.Empty || item.Quantity <= 0))
@@ -662,7 +663,7 @@ public sealed class OrderService(
         return null;
     }
 
-    private static void ValidatePayment(string paymentMethod, int retailerCreditTermDays)
+    private static void ValidatePayment(string? paymentMethod, int retailerCreditTermDays)
     {
         if (paymentMethod == OrderPaymentMethods.Credit && retailerCreditTermDays is not (7 or 14 or 30))
         {

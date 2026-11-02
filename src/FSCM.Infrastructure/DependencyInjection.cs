@@ -37,8 +37,9 @@ public static class DependencyInjection
 
         services.Configure<DateTrackerOptions>(configuration.GetSection(DateTrackerOptions.SectionName));
         services.AddHostedService<DateTrackerHostedService>();
+        // Review 2 flow allocates each SO in real time. The legacy scheduled run still targets
+        // archived RUN_* tables and must not start alongside real-time reservation.
         services.Configure<AllocationRunOptions>(configuration.GetSection(AllocationRunOptions.SectionName));
-        services.AddHostedService<AllocationRunHostedService>();
         services.Configure<InventoryOutboxOptions>(configuration.GetSection(InventoryOutboxOptions.SectionName));
         services.AddHostedService<InventoryOutboxHostedService>();
         services.AddSingleton<IPayOsGateway>(_ => new PayOsGateway(configuration));

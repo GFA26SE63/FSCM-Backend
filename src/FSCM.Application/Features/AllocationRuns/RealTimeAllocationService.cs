@@ -30,7 +30,11 @@ public interface IRealTimeAllocationService
     Task AllocateAsync(Guid orderId, Guid actorUserId, CancellationToken cancellationToken);
 }
 
-public sealed class RealTimeAllocationService(IRealTimeAllocationStore store, AllocationEngine engine, TimeProvider timeProvider)
+public sealed class RealTimeAllocationService(
+    IRealTimeAllocationStore store,
+    AllocationEngine engine,
+    AllocationPricingService pricingService,
+    TimeProvider timeProvider)
     : IRealTimeAllocationService
 {
     private static readonly TimeSpan DefaultTransit = TimeSpan.FromHours(24);
@@ -113,9 +117,39 @@ public sealed class RealTimeAllocationService(IRealTimeAllocationStore store, Al
             candidate.Balance.Version++; candidate.Balance.UpdatedAt = now;
         }
 
+        var pricingParts = selected.Select(row =>
+        {
+            var candidate = context.Candidates.Single(item => item.Batch.Id == row.Decision.BatchId);
+            var baseNetUnitPrice = row.Line.OrderedQuantity == 0
+                ? row.Line.UnitPrice
+                : decimal.Round(row.Line.NetAmount / row.Line.OrderedQuantity, 2,
+                    MidpointRounding.AwayFromZero);
+            return new PricingPart(
+                row.Line.Id,
+                row.Decision.BatchId,
+                row.Decision.WarehouseId,
+                row.Line.ProductId,
+                candidate.Product.ProductCategoryId,
+                row.Line.SkuSnapshot,
+                row.Decision.Quantity,
+                new DateTimeOffset(candidate.Batch.ExpirationDate.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero),
+                candidate.Product.ShelfLifeHours,
+                row.Line.UnitPrice,
+                baseNetUnitPrice);
+        }).ToArray();
+        var pricedOrder = (await pricingService.PriceAsync(now,
+            [new PricingOrder(context.Order.Id, context.Order.OrderCode, pricingParts)],
+            cancellationToken)).Orders.Single();
+        var pricedByPart = pricedOrder.Parts.ToDictionary(
+            item => (item.RunLineId, item.BatchId, item.WarehouseId));
+
         foreach (var row in selected)
         {
             var candidate = context.Candidates.Single(item => item.Batch.Id == row.Decision.BatchId);
+            var priced = pricedByPart[(row.Line.Id, row.Decision.BatchId, row.Decision.WarehouseId)];
+            var grossAmount = decimal.Round(row.Decision.Quantity * row.Line.UnitPrice, 2,
+                MidpointRounding.AwayFromZero);
+            var discountAmount = grossAmount - priced.Amount;
             var allocation = new Allocation
             {
                 Id = Guid.NewGuid(), SalesOrderLineId = row.Line.Id, BatchId = row.Decision.BatchId,
@@ -124,7 +158,15 @@ public sealed class RealTimeAllocationService(IRealTimeAllocationStore store, Al
                 EstimatedArrivalAt = row.Decision.EstimatedArrivalAt,
                 RemainingLifeHoursAtArrival = decimal.ToInt32(decimal.Truncate(row.Decision.RemainingShelfLifeHours)),
                 WeightedScore = row.Decision.WeightedScore, UnitPrice = row.Line.UnitPrice,
-                GrossAmount = row.Decision.Quantity * row.Line.UnitPrice, NetAmount = row.Decision.Quantity * row.Line.UnitPrice,
+                GrossAmount = grossAmount,
+                DiscountAmount = discountAmount,
+                DiscountPercent = grossAmount == 0 ? 0 :
+                    decimal.Round(discountAmount / grossAmount * 100m, 2, MidpointRounding.AwayFromZero),
+                NetAmount = priced.Amount,
+                DiscountSourceType = priced.ShelfLifeDiscountPerUnit > 0 ? "ShelfLife" : row.Line.DiscountSourceType,
+                DiscountSourceCode = priced.ShelfLifeDiscountPerUnit > 0
+                    ? $"HSD-V{priced.DiscountTableVersion}"
+                    : row.Line.DiscountSourceCode,
                 Status = AllocationInventoryStatuses.Reserved, CreatedAt = now
             };
             store.AddAllocation(allocation);
@@ -132,10 +174,36 @@ public sealed class RealTimeAllocationService(IRealTimeAllocationStore store, Al
             store.AddTransaction(new InventoryTransaction { Id = Guid.NewGuid(), BatchId = allocation.BatchId, WarehouseId = allocation.WarehouseId, ProductId = row.Line.ProductId, CreatedByUserId = actorUserId, TransactionType = InventoryTransactionTypes.OrderReserve, SourceType = InventoryTransactionSourceTypes.Allocation, SourceId = allocation.Id, ReferenceCode = run.RunCode, ReservedQuantityDelta = allocation.AllocatedQuantity, PhysicalQuantityAfter = candidate.Balance.PhysicalQuantity, ReservedQuantityAfter = candidate.Balance.ReservedQuantity, AvailableQuantityAfter = candidate.Balance.AvailableQuantity, Note = "Đặt trước tồn kho tự động theo SO", OccurredAt = now });
         }
 
+        foreach (var line in context.Lines)
+        {
+            var parts = pricedOrder.Parts.Where(item => item.RunLineId == line.Id).ToArray();
+            line.GrossAmount = decimal.Round(parts.Sum(item => item.ListUnitPrice * item.Quantity), 2,
+                MidpointRounding.AwayFromZero);
+            line.NetAmount = parts.Sum(item => item.Amount);
+            line.DiscountAmount = line.GrossAmount - line.NetAmount;
+            line.DiscountPercent = line.GrossAmount == 0 ? 0 :
+                decimal.Round(line.DiscountAmount / line.GrossAmount * 100m, 2,
+                    MidpointRounding.AwayFromZero);
+            if (parts.Any(item => item.ShelfLifeDiscountPerUnit > 0))
+            {
+                line.DiscountSourceType = "ShelfLife";
+                line.DiscountSourceCode = string.Join(",", parts
+                    .Where(item => item.ShelfLifeDiscountPerUnit > 0)
+                    .Select(item => $"HSD-V{item.DiscountTableVersion}")
+                    .Distinct());
+            }
+            line.FinalPricePendingAllocation = false;
+            line.EstimatedArrivalAt = selected.Where(item => item.Line.Id == line.Id)
+                .Max(item => item.Decision.EstimatedArrivalAt);
+        }
+
+        context.Order.SubtotalAmount = context.Lines.Sum(item => item.GrossAmount);
+        context.Order.DiscountAmount = context.Lines.Sum(item => item.DiscountAmount);
+        context.Order.FinalAmount = context.Lines.Sum(item => item.NetAmount);
         context.Order.Status = OrderStatuses.Quoted; context.Order.FinalPricePendingAllocation = false;
         context.Order.Version++; context.Order.UpdatedAt = now;
         run.Status = AllocationRunStatuses.Succeeded; run.CompletedAt = now; run.SnapshotCompletedAt = now; run.UpdatedAt = now;
-        store.AddQuote(new SalesOrderQuote { Id = Guid.NewGuid(), SalesOrderId = context.Order.Id, AllocationRunId = run.Id, RevisionNumber = 1, Status = SalesOrderQuoteStatuses.Issued, TotalAmount = context.Order.FinalAmount, IssuedAt = now, ExpiresAt = now.AddHours(24), Version = 1, CreatedAt = now, UpdatedAt = now });
+        store.AddQuote(new SalesOrderQuote { Id = Guid.NewGuid(), SalesOrderId = context.Order.Id, AllocationRunId = run.Id, RevisionNumber = 1, Status = SalesOrderQuoteStatuses.Issued, TotalAmount = pricedOrder.FinalAmount, IssuedAt = now, ExpiresAt = now.AddHours(24), Version = 1, CreatedAt = now, UpdatedAt = now });
         store.AddHistory(History(context.Order.Id, OrderStatuses.Allocating, OrderStatuses.Quoted, actorUserId, "Phân bổ real-time thành công", now));
         await store.SaveChangesAsync(cancellationToken);
     }

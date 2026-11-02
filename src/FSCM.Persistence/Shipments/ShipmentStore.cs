@@ -1,6 +1,6 @@
 using System.Data;
-using FSCM.Application.Features.AllocationRuns;
 using FSCM.Application.Features.Inventory;
+using FSCM.Application.Features.Picking;
 using FSCM.Application.Features.QrLabels;
 using FSCM.Application.Features.Shipments;
 using FSCM.Domain.Authorization;
@@ -29,23 +29,13 @@ public sealed class ShipmentStore(AppDbContext dbContext) : IShipmentStore
                 order.Id == orderId && dbContext.SalesGroupMemberRecords.Any(membership =>
                     membership.UserAccountId == userId && membership.SalesGroupId == order.SalesGroupId &&
                     membership.IsActive), cancellationToken),
-            // Either allocation table puts the order in this keeper's warehouse. The run writes
-            // ALLOCATION_RUN_ALLOCATION and never the older ALLOCATION, so a rule that reads only
-            // the latter cannot see a single order the run produced - which is every order now.
             SystemRoles.WarehouseKeeper => dbContext.SalesOrderLineRecords.AsNoTracking().AnyAsync(line =>
                 line.SalesOrderId == orderId &&
-                (dbContext.AllocationRecords.Any(allocation =>
+                dbContext.AllocationRecords.Any(allocation =>
                         allocation.SalesOrderLineId == line.Id &&
                         dbContext.UserWarehouseAssignmentRecords.Any(assignment =>
                             assignment.UserAccountId == userId && assignment.IsActive &&
-                            assignment.WarehouseId == allocation.WarehouseId)) ||
-                 dbContext.AllocationRunAllocationRecords.Any(allocation =>
-                        dbContext.AllocationRunLineRecords.Any(runLine =>
-                            runLine.Id == allocation.AllocationRunLineId &&
-                            runLine.SalesOrderLineId == line.Id) &&
-                        dbContext.UserWarehouseAssignmentRecords.Any(assignment =>
-                            assignment.UserAccountId == userId && assignment.IsActive &&
-                            assignment.WarehouseId == allocation.WarehouseId))),
+                            assignment.WarehouseId == allocation.WarehouseId)),
                 cancellationToken),
             SystemRoles.Retailer => dbContext.SalesOrderRecords.AsNoTracking().AnyAsync(order =>
                 order.Id == orderId && dbContext.RetailerRecords.Any(retailer =>
@@ -98,8 +88,8 @@ public sealed class ShipmentStore(AppDbContext dbContext) : IShipmentStore
     {
         var shipmentInfo = await (
             from shipment in dbContext.ShipmentRecords.AsNoTracking()
-            join list in dbContext.RunPickingListRecords.AsNoTracking()
-                on shipment.RunPickingListId equals list.Id
+            join list in dbContext.PickingListRecords.AsNoTracking()
+                on shipment.PickingListId equals list.Id
             join order in dbContext.SalesOrderRecords.AsNoTracking()
                 on shipment.SalesOrderId equals order.Id
             where shipment.Id == shipmentId
@@ -124,18 +114,13 @@ public sealed class ShipmentStore(AppDbContext dbContext) : IShipmentStore
     public async Task<IReadOnlyCollection<ExpectedWarehousePart>> ListExpectedWarehousesAsync(
         Guid orderId, CancellationToken cancellationToken)
     {
-        // Every run picking sheet that carries a split of this order, which is one sheet per
-        // warehouse the approved plan drew from. A sheet that has not closed yet has produced no
-        // shipment part, and that is precisely the warehouse readiness has to keep waiting for.
         var rows = await (
-                from list in dbContext.RunPickingListRecords.AsNoTracking()
-                join gather in dbContext.RunPickingGatherRecords.AsNoTracking()
-                    on list.Id equals gather.RunPickingListId
-                join split in dbContext.RunPickingSplitRecords.AsNoTracking()
-                    on gather.Id equals split.RunPickingGatherId
+                from list in dbContext.PickingListRecords.AsNoTracking()
+                join po in dbContext.PurchaseOrderRecords.AsNoTracking()
+                    on list.PurchaseOrderId equals po.Id
                 join warehouse in dbContext.WarehouseRecords.AsNoTracking()
                     on list.WarehouseId equals warehouse.Id
-                where split.SalesOrderId == orderId
+                where po.SalesOrderId == orderId
                 select new
                 {
                     list.WarehouseId,
@@ -155,16 +140,12 @@ public sealed class ShipmentStore(AppDbContext dbContext) : IShipmentStore
     public async Task<IReadOnlyCollection<PendingShipmentSource>> ListPendingSourcesAsync(
         Guid? orderId, CancellationToken cancellationToken)
     {
-        // A run picking list that is Ready produces one shipment per distinct order in its splits.
-        // Yield (list, order) pairs that do not yet have a shipment for that (order, warehouse).
         var query =
-            from list in dbContext.RunPickingListRecords.AsNoTracking()
-            where list.Status == RunPickingListStatuses.Ready
-            join gather in dbContext.RunPickingGatherRecords.AsNoTracking()
-                on list.Id equals gather.RunPickingListId
-            join split in dbContext.RunPickingSplitRecords.AsNoTracking()
-                on gather.Id equals split.RunPickingGatherId
-            select new { list.Id, list.WarehouseId, split.SalesOrderId, split.PickedQuantity };
+            from list in dbContext.PickingListRecords.AsNoTracking()
+            where list.Status == PickingListStatuses.Completed
+            join po in dbContext.PurchaseOrderRecords.AsNoTracking() on list.PurchaseOrderId equals po.Id
+            join item in dbContext.PickingItemRecords.AsNoTracking() on list.Id equals item.PickingListId
+            select new { list.Id, list.WarehouseId, po.SalesOrderId, item.PickedQuantity };
         if (orderId.HasValue) query = query.Where(row => row.SalesOrderId == orderId.Value);
 
         var rows = await query.ToArrayAsync(cancellationToken);
@@ -232,18 +213,13 @@ public sealed class ShipmentStore(AppDbContext dbContext) : IShipmentStore
             .SingleOrDefaultAsync(item => item.Id == shipmentId, cancellationToken);
         if (shipment is null) return [];
 
+        if (!shipment.PickingListId.HasValue) return [];
         var parts = await (
-            from split in dbContext.RunPickingSplitRecords.AsNoTracking()
-            join gather in dbContext.RunPickingGatherRecords.AsNoTracking()
-                on split.RunPickingGatherId equals gather.Id
-            where gather.RunPickingListId == shipment.RunPickingListId
-                  && split.SalesOrderId == shipment.SalesOrderId
-            join price in dbContext.AllocationPlanPriceRecords.AsNoTracking()
-                on split.AllocationPlanPriceId equals price.Id
-            join allocation in dbContext.AllocationRunAllocationRecords.AsNoTracking()
-                on new { price.AllocationPlanVersionId, price.AllocationRunLineId, price.BatchId }
-                equals new { allocation.AllocationPlanVersionId, allocation.AllocationRunLineId, allocation.BatchId }
-            select new { gather.BatchId, split.PickedQuantity, AllocationId = allocation.Id })
+            from item in dbContext.PickingItemRecords.AsNoTracking()
+            where item.PickingListId == shipment.PickingListId.Value
+            join allocation in dbContext.AllocationRecords.AsNoTracking()
+                on item.AllocationId equals allocation.Id
+            select new { BatchId = item.SourceBatchId, item.PickedQuantity, AllocationId = allocation.Id })
             .ToArrayAsync(cancellationToken);
         if (parts.Length == 0) return [];
 
@@ -257,8 +233,8 @@ public sealed class ShipmentStore(AppDbContext dbContext) : IShipmentStore
             .Where(item => batchIds.Contains(item.BatchId))
             .ToDictionaryAsync(item => item.BatchId, cancellationToken);
         var holds = await dbContext.ReservationRecords
-            .Where(item => item.AllocationRunAllocationId != null
-                           && allocationIds.Contains(item.AllocationRunAllocationId!.Value)
+            .Where(item => item.AllocationId != null
+                           && allocationIds.Contains(item.AllocationId!.Value)
                            && item.Status == ReservationStatuses.Active)
             .ToArrayAsync(cancellationToken);
 
@@ -270,8 +246,8 @@ public sealed class ShipmentStore(AppDbContext dbContext) : IShipmentStore
                 group.Sum(item => item.PickedQuantity),
                 batches[group.Key],
                 balances[group.Key],
-                holds.Where(hold => group.Select(item => item.AllocationId)
-                    .Contains(hold.AllocationRunAllocationId!.Value)).ToArray()))
+                holds.Where(hold => hold.AllocationId.HasValue && group.Select(item => item.AllocationId)
+                    .Contains(hold.AllocationId.Value)).ToArray()))
             .ToArray();
     }
 
@@ -352,29 +328,26 @@ public sealed class ShipmentStore(AppDbContext dbContext) : IShipmentStore
         var warehouse = await dbContext.WarehouseRecords.AsNoTracking()
             .SingleOrDefaultAsync(item => item.Id == shipment.WarehouseId, cancellationToken);
         if (warehouse is null) return null;
-        var pickingCode = await dbContext.RunPickingListRecords.AsNoTracking()
-            .Where(item => item.Id == shipment.RunPickingListId)
+        var pickingCode = await dbContext.PickingListRecords.AsNoTracking()
+            .Where(item => shipment.PickingListId.HasValue && item.Id == shipment.PickingListId.Value)
             .Select(item => item.PickingCode)
             .SingleOrDefaultAsync(cancellationToken) ?? string.Empty;
 
-        // Lines for this shipment = the run picking splits of this order on this warehouse's list.
-        // Batch comes from the gather; the locked per-batch price comes from the approved plan price
-        // (FinalNetUnitPrice/Amount) so nothing is recomputed from current discount tables.
         var lines = await (
-            from split in dbContext.RunPickingSplitRecords.AsNoTracking()
-            where split.SalesOrderId == shipment.SalesOrderId
-            join gather in dbContext.RunPickingGatherRecords.AsNoTracking()
-                on split.RunPickingGatherId equals gather.Id
-            where gather.RunPickingListId == shipment.RunPickingListId
+            from item in dbContext.PickingItemRecords.AsNoTracking()
+            where shipment.PickingListId.HasValue && item.PickingListId == shipment.PickingListId.Value
+            join allocation in dbContext.AllocationRecords.AsNoTracking()
+                on item.AllocationId equals allocation.Id
             join line in dbContext.SalesOrderLineRecords.AsNoTracking()
-                on split.SalesOrderLineId equals line.Id
-            join price in dbContext.AllocationPlanPriceRecords.AsNoTracking()
-                on split.AllocationPlanPriceId equals price.Id
-            orderby line.LineNumber, gather.BatchCodeSnapshot
+                on allocation.SalesOrderLineId equals line.Id
+            join batch in dbContext.BatchRecords.AsNoTracking()
+                on item.SourceBatchId equals batch.Id
+            orderby line.LineNumber, batch.BatchCode
             select new ShipmentLineView(
-                line.Id, line.LineNumber, line.ProductId, gather.SkuSnapshot, line.ProductNameSnapshot,
-                gather.BatchId, gather.BatchCodeSnapshot, split.PickedQuantity,
-                price.FinalNetUnitPrice, price.FinalNetUnitPrice * split.PickedQuantity))
+                line.Id, line.LineNumber, line.ProductId, line.SkuSnapshot, line.ProductNameSnapshot,
+                batch.Id, batch.BatchCode, item.PickedQuantity,
+                allocation.AllocatedQuantity == 0 ? 0 : allocation.NetAmount / allocation.AllocatedQuantity,
+                allocation.AllocatedQuantity == 0 ? 0 : allocation.NetAmount / allocation.AllocatedQuantity * item.PickedQuantity))
             .ToArrayAsync(cancellationToken);
 
         var receipt = await dbContext.ReceiptConfirmationRecords.AsNoTracking()

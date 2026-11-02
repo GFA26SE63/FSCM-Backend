@@ -37,6 +37,7 @@ public interface IPickingStore
     Task<BatchQrLabel?> FindLabelByIdAsync(Guid id, CancellationToken cancellationToken);
     Task<string> NextQrCodeAsync(CancellationToken cancellationToken);
     Task<string> NextShipmentCodeAsync(CancellationToken cancellationToken);
+    Task<bool> ShipmentExistsAsync(Guid salesOrderId, Guid warehouseId, CancellationToken cancellationToken);
     void AddList(PickingList list);
     void AddItem(PickingItem item);
     void AddLabel(BatchQrLabel label);

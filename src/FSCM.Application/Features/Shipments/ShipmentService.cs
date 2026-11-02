@@ -1,12 +1,12 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Globalization;
-using FSCM.Application.Features.AllocationRuns;
 using FSCM.Application.Features.Deliveries;
 using FSCM.Application.Features.Orders;
 using FSCM.Application.Features.Loyalty;
 using FSCM.Application.Features.Inventory;
 using FSCM.Application.Features.Payments;
+using FSCM.Application.Features.Picking;
 using FSCM.Application.Features.QrLabels;
 using FSCM.Domain.Authorization;
 using FSCM.Domain.Entities;
@@ -184,10 +184,10 @@ public sealed class ShipmentService(
                 item.WarehouseCode,
                 // A sheet closed with an exception holds the order the same way a damaged part
                 // does, so it is reported as one rather than as merely unfinished.
-                item.PickingStatus == RunPickingListStatuses.NeedsHandling
+                item.PickingStatus == PickingListStatuses.Exception
                     ? ShipmentStatuses.Exception
                     : ShipmentStatuses.WaitingToPick,
-                item.PickingStatus == RunPickingListStatuses.NeedsHandling
+                item.PickingStatus == PickingListStatuses.Exception
                     ? $"phieu soan {item.PickingCode} dang co ngoai le"
                     : null))
             .ToArray();
@@ -394,7 +394,7 @@ public sealed class ShipmentService(
                 Id = Guid.NewGuid(),
                 SalesOrderId = source.SalesOrderId,
                 WarehouseId = source.WarehouseId,
-                RunPickingListId = source.RunPickingListId,
+                PickingListId = source.RunPickingListId,
                 ShipmentCode = await store.NextShipmentCodeAsync(cancellationToken),
                 Status = ShipmentStatuses.Ready,
                 TotalQuantity = source.TotalQuantity,
@@ -622,7 +622,7 @@ public sealed class ShipmentService(
     private static ShipmentResult ToResult(ShipmentView view) => new(
         view.Shipment.Id, view.Order.Id, view.Order.OrderCode,
         view.Warehouse.Id, view.Warehouse.Code, view.Warehouse.Name,
-        view.Shipment.RunPickingListId, view.PickingCode,
+        view.Shipment.PickingListId ?? Guid.Empty, view.PickingCode,
         view.Shipment.ShipmentCode, view.Shipment.Status,
         view.Shipment.TotalQuantity, view.Shipment.ReceivedQuantity,
         view.Shipment.DriverId, view.Shipment.DriverCodeSnapshot, view.Shipment.DriverNameSnapshot,

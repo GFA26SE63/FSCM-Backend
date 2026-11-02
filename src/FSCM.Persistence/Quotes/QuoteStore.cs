@@ -13,10 +13,11 @@ public sealed class QuoteStore(AppDbContext db) : IQuoteStore
         var orders = forUpdate ? db.SalesOrderRecords : db.SalesOrderRecords.AsNoTracking();
         return (from quote in quotes
                 join order in orders on quote.SalesOrderId equals order.Id
+                join retailer in db.RetailerRecords.AsNoTracking() on order.RetailerId equals retailer.Id
                 join po0 in db.PurchaseOrderRecords.AsNoTracking() on quote.PurchaseOrderId equals po0.Id into pos
                 from po in pos.DefaultIfEmpty()
                 where quote.Id == id
-                select new QuoteView(quote, order, po)).SingleOrDefaultAsync(ct);
+                select new QuoteView(quote, order, retailer, po)).SingleOrDefaultAsync(ct);
     }
 
     public async Task<IReadOnlyCollection<QuoteView>> ListForOrderAsync(Guid orderId, CancellationToken ct) =>
@@ -38,12 +39,14 @@ public sealed class QuoteStore(AppDbContext db) : IQuoteStore
     public void Add(SalesOrderQuote quote) => db.SalesOrderQuoteRecords.Add(quote);
     public void AddPurchaseOrder(PurchaseOrder purchaseOrder) => db.PurchaseOrderRecords.Add(purchaseOrder);
     public void AddPayment(Payment payment) => db.PaymentRecords.Add(payment);
+    public void AddHistory(OrderStatusHistory history) => db.OrderStatusHistoryRecords.Add(history);
     public Task SaveChangesAsync(CancellationToken ct) => db.SaveChangesAsync(ct);
 
     private IQueryable<QuoteView> Build(IQueryable<SalesOrderQuote> quotes) =>
         from quote in quotes
         join order in db.SalesOrderRecords.AsNoTracking() on quote.SalesOrderId equals order.Id
+        join retailer in db.RetailerRecords.AsNoTracking() on order.RetailerId equals retailer.Id
         join po0 in db.PurchaseOrderRecords.AsNoTracking() on quote.PurchaseOrderId equals po0.Id into pos
         from po in pos.DefaultIfEmpty()
-        select new QuoteView(quote, order, po);
+        select new QuoteView(quote, order, retailer, po);
 }
