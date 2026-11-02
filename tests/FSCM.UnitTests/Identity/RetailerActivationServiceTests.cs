@@ -50,13 +50,82 @@ public sealed class RetailerActivationServiceTests
         Assert.Equal("rate_limited", error.Code);
     }
 
+    [Fact]
+    public async Task Default_channel_sends_otp_by_sms_with_masked_phone()
+    {
+        var fixture = new Fixture(defaultChannel: OtpChannels.Sms);
+
+        var requested = await fixture.Service.RequestOtpAsync("0901234567", "127.0.0.1", default);
+
+        Assert.Equal(OtpChannels.Sms, requested.Channel);
+        Assert.Equal("090****567", requested.MaskedDestination);
+        Assert.Null(requested.MaskedEmail);
+        Assert.Equal("0901234567", fixture.Sms.LastPhone);
+        Assert.Null(fixture.Email.LastOtp);
+        var verified = await fixture.Service.VerifyOtpAsync("0901234567", fixture.Sms.LastOtp!, default);
+        Assert.False(string.IsNullOrWhiteSpace(verified.SetupToken));
+    }
+
+    [Fact]
+    public async Task Sms_failure_falls_back_to_email_when_enabled()
+    {
+        var fixture = new Fixture(defaultChannel: OtpChannels.Sms, fallbackToEmail: true);
+        fixture.Sms.Fail = true;
+
+        var requested = await fixture.Service.RequestOtpAsync("0901234567", null, default);
+
+        Assert.Equal(OtpChannels.Email, requested.Channel);
+        Assert.NotNull(fixture.Email.LastOtp);
+        Assert.Null(fixture.Store.Challenges.Single().ConsumedAt);
+    }
+
+    [Fact]
+    public async Task Sms_failure_without_fallback_consumes_challenge_and_allows_retry()
+    {
+        var fixture = new Fixture(defaultChannel: OtpChannels.Sms, fallbackToEmail: false);
+        fixture.Sms.Fail = true;
+
+        var error = await Assert.ThrowsAsync<IdentityOperationException>(() =>
+            fixture.Service.RequestOtpAsync("0901234567", null, default));
+
+        Assert.Equal("sms_delivery_failed", error.Code);
+        Assert.NotNull(fixture.Store.Challenges.Single().ConsumedAt);
+        fixture.Sms.Fail = false;
+        var retried = await fixture.Service.RequestOtpAsync("0901234567", null, default);
+        Assert.Equal(OtpChannels.Sms, retried.Channel);
+    }
+
+    [Fact]
+    public async Task Sms_channel_does_not_require_email()
+    {
+        var fixture = new Fixture(defaultChannel: OtpChannels.Sms);
+        fixture.Store.Users.Single().Email = "";
+
+        var requested = await fixture.Service.RequestOtpAsync("0901234567", null, default);
+
+        Assert.Equal(OtpChannels.Sms, requested.Channel);
+    }
+
+    [Fact]
+    public async Task Invalid_channel_is_rejected()
+    {
+        var fixture = new Fixture();
+
+        var error = await Assert.ThrowsAsync<IdentityOperationException>(() =>
+            fixture.Service.RequestOtpAsync("0901234567", "Zalo", null, default));
+
+        Assert.Equal("validation_error", error.Code);
+    }
+
     private sealed class Fixture
     {
         public ActivationStore Store { get; } = new();
         public EmailSender Email { get; } = new();
+        public SmsSender Sms { get; } = new();
         public RetailerActivationService Service { get; }
 
-        public Fixture()
+        // Existing tests exercise the email channel; SMS tests pass defaultChannel explicitly.
+        public Fixture(string defaultChannel = OtpChannels.Email, bool fallbackToEmail = true)
         {
             var user = new UserAccount
             {
@@ -65,7 +134,9 @@ public sealed class RetailerActivationServiceTests
             };
             Store.Users.Add(user);
             Store.Retailers.Add(new Retailer { Id = Guid.NewGuid(), UserAccountId = user.Id });
-            Service = new RetailerActivationService(Store, Email, new TokenProvider(), new PasswordHasher(), null!,
+            Service = new RetailerActivationService(Store, Email, Sms,
+                new RetailerActivationOptions { DefaultOtpChannel = defaultChannel, FallbackToEmail = fallbackToEmail },
+                new TokenProvider(), new PasswordHasher(), null!,
                 new FixedTimeProvider(new DateTimeOffset(2026, 10, 31, 0, 0, 0, TimeSpan.Zero)));
         }
     }
@@ -93,6 +164,20 @@ public sealed class RetailerActivationServiceTests
     {
         public string? LastOtp { get; private set; }
         public Task SendRetailerActivationOtpAsync(string email, string name, string otp, CancellationToken token) { LastOtp = otp; return Task.CompletedTask; }
+        public Task SendRetailerAccountCreatedAsync(RetailerAccountCreatedEmail email, CancellationToken token) => Task.CompletedTask;
+    }
+    private sealed class SmsSender : ISmsSender
+    {
+        public bool Fail { get; set; }
+        public string? LastPhone { get; private set; }
+        public string? LastOtp { get; private set; }
+        public Task SendRetailerActivationOtpAsync(string phone, string otp, CancellationToken token)
+        {
+            if (Fail) throw new HttpRequestException("Brevo SMS returned HTTP 402.");
+            LastPhone = phone;
+            LastOtp = otp;
+            return Task.CompletedTask;
+        }
     }
     private sealed class TokenProvider : IIdentityTokenProvider
     {

@@ -58,9 +58,48 @@ The activation request succeeds only when all of these are true:
 - `USER_ACCOUNT.Role` is `Retailer` and `IsActive` is false;
 - `USER_ACCOUNT.Phone` matches the phone entered in Mobile;
 - a `RETAILER` row is linked through `UserAccountId`;
-- both rows have the same syntactically valid email address.
+- for the `Email` channel (or SMS fallback): the account has a syntactically valid email address.
 
-This proves access to the linked email only. It does not prove ownership of the phone number.
+An SMS OTP proves possession of the phone number; an email OTP proves access to the linked email only.
+
+### OTP channels (SMS and email)
+
+`POST /api/v1/auth/otp/request` accepts `{ "phone": "0901234567", "channel": "Sms" | "Email" }`.
+`channel` is optional and defaults to `RetailerActivation:DefaultOtpChannel`.
+
+```json
+"Brevo": { "SmsSender": "FSCM", "SmsCountryCode": "84" },
+"RetailerActivation": { "DefaultOtpChannel": "Email", "FallbackToEmail": true }
+```
+
+- SMS goes through Brevo `POST /v3/transactionalSMS/send` with the same API key. The local number
+  `0901234567` is sent as `84901234567`. The text is ASCII so it fits one 160-character segment.
+- Brevo SMS is prepaid: buy SMS credits under **Plans → SMS credits** first. The sender
+  (`SmsSender`) is at most 11 letters/digits; Vietnamese carriers usually require a registered
+  brand name for alphanumeric senders, otherwise the message may be rewritten or dropped.
+- If SMS fails and `FallbackToEmail` is true and the account has a valid email, the same OTP is sent
+  by email. The response `channel` tells Mobile where the code actually went:
+  `{ "channel": "Sms", "maskedDestination": "090****567", "maskedEmail": null, ... }`.
+- If no channel can deliver, the challenge is consumed (so the user can retry immediately) and the
+  API returns `503 sms_delivery_failed` or `503 email_delivery_failed`.
+- Environment variables: `Brevo__SmsSender`, `Brevo__SmsCountryCode`,
+  `RetailerActivation__DefaultOtpChannel`, `RetailerActivation__FallbackToEmail`.
+
+These preconditions are produced automatically when Admin approves a pending Retailer declaration
+(`POST /api/v1/retailers/{retailerId}/review` with `approve=true`):
+
+1. The Retailer becomes `Active`, gets its business code, and an inactive `Retailer` user account is
+   created (or an unassigned one is linked) from the declaration contact. Both are saved in one
+   transaction, so either both exist or neither does.
+2. After the commit, Brevo sends the "Tài khoản FSCM của bạn đã được tạo" email asking the Retailer to
+   sign in on Mobile with the phone number and an empty password, then verify by OTP.
+3. The result is written to `AUDIT_LOG` as `RetailerAccountCreatedEmailSent` or
+   `RetailerAccountCreatedEmailFailed`. A delivery failure does not roll back the approval; the
+   Retailer can still sign in with the phone number and request an OTP.
+
+Mobile first login: `POST /api/v1/auth/login` with `{ "identifier": "<phone>", "password": "" }`
+(or `password` omitted) returns `409 retailer_activation_required`. Mobile then calls
+`otp/request` → `otp/verify` → `password`.
 
 ## 6. Run and verify end to end
 
@@ -89,6 +128,7 @@ The API endpoints are:
 ## 7. Troubleshooting
 
 - `email_delivery_failed`: verify transactional sending is active, the sender is verified, and the API key has Transactional email permission.
+- `sms_delivery_failed`: check SMS credits, that the API key has Transactional SMS permission, and **Transactional SMS → Logs** in Brevo. HTTP 402 from Brevo means no SMS credits.
 - HTTP 401/403 from Brevo: rotate/check the API key and its restricted permissions.
 - HTTP 400 from Brevo: confirm sender/recipient formatting and that `SenderEmail` is verified.
 - Email is accepted but not received: inspect Brevo Transactional logs, blocked contacts, bounce reason, spam, DKIM, and DMARC.

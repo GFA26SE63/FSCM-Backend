@@ -6,7 +6,10 @@ using FSCM.Domain.Entities;
 
 namespace FSCM.Application.Features.Retailers;
 
-public sealed class RetailerService(IRetailerStore store, TimeProvider timeProvider)
+public sealed class RetailerService(
+    IRetailerStore store,
+    TimeProvider timeProvider,
+    ITransactionalEmailSender emailSender)
 {
     private static readonly HashSet<int> AllowedCreditTerms = [0, 7, 14, 30];
 
@@ -28,7 +31,10 @@ public sealed class RetailerService(IRetailerStore store, TimeProvider timeProvi
         if (!string.IsNullOrWhiteSpace(scope) &&
             (!scope.Equals("mine", StringComparison.OrdinalIgnoreCase) || actorRole != "Sales"))
             throw RetailerOperationException.Validation("Scope 'mine' is only available to Sales users.");
-        var items = await ListAsync(actorUserId, actorRole, status, cancellationToken);
+        IReadOnlyCollection<RetailerDetails> items = await ListAsync(actorUserId, actorRole, status, cancellationToken);
+        // scope=mine: only the declarations this Sales user created (Mobile "Khai báo retailer" list).
+        if (!string.IsNullOrWhiteSpace(scope))
+            items = items.Where(item => item.DeclaredByUserId == actorUserId).ToArray();
         search = string.IsNullOrWhiteSpace(search) ? null : search.Trim();
         if (search is not null)
             items = items.Where(item => item.Code.Contains(search, StringComparison.OrdinalIgnoreCase) ||
@@ -196,14 +202,23 @@ public sealed class RetailerService(IRetailerStore store, TimeProvider timeProvi
 
         var reviewedAt = timeProvider.GetUtcNow();
         retailer.Status = approve ? RetailerStatuses.Active : RetailerStatuses.Rejected;
+        RetailerAccountCreatedEmail? accountCreatedEmail = null;
         if (approve)
         {
             if (!retailer.UserAccountId.HasValue)
             {
                 var contact = await store.FindDeclarationContactForUpdateAsync(retailerId, cancellationToken)
                     ?? throw RetailerOperationException.InvalidTransition("Retailer declaration contact was not found.");
-                var account = await store.FindUnassignedRetailerAccountAsync(
+                var candidates = await store.FindUnassignedRetailerAccountsAsync(
                     contact.Email.ToLowerInvariant(), contact.Phone, cancellationToken);
+                // Reusing one of several matches would leave two accounts with the same email/phone,
+                // which breaks phone login and OTP lookup. Ask Admin to resolve the duplicates instead.
+                if (candidates.Count > 1)
+                    throw RetailerOperationException.Conflict(
+                        "Có nhiều tài khoản Retailer chưa liên kết trùng email hoặc số điện thoại của hồ sơ này (" +
+                        string.Join(", ", candidates.Select(item => $"{item.Email} / {item.Phone}")) +
+                        "). Vui lòng xóa hoặc sửa tài khoản trùng trước khi duyệt.");
+                var account = candidates.SingleOrDefault();
                 if (account is null)
                 {
                     account = new UserAccount
@@ -229,6 +244,8 @@ public sealed class RetailerService(IRetailerStore store, TimeProvider timeProvi
                 }
                 retailer.UserAccountId = account.Id;
                 store.RemoveDeclarationContact(contact);
+                accountCreatedEmail = new RetailerAccountCreatedEmail(
+                    account.Email, account.FullName, retailer.Name, string.Empty, contact.Phone);
             }
             retailer.Code = await store.NextBusinessCodeAsync(cancellationToken);
             retailer.CreditTermDays = creditTermDays!.Value;
@@ -239,8 +256,40 @@ public sealed class RetailerService(IRetailerStore store, TimeProvider timeProvi
         retailer.UpdatedAt = retailer.ReviewedAt.Value;
         AddAudit(retailer.Id, reviewerUserId, approve ? "RetailerDeclarationApproved" : "RetailerDeclarationRejected",
             null, JsonSerializer.Serialize(new { retailer.Status, retailer.CreditTermDays }), reason, retailer.UpdatedAt);
+        // Retailer status, business code and the Retailer user account are committed in one
+        // SaveChanges (single implicit transaction): either both records exist or neither does.
         await store.SaveChangesAsync(cancellationToken);
+
+        // Only notify after the commit succeeded so an email is never sent for a rolled-back approval.
+        if (accountCreatedEmail is not null)
+            await NotifyAccountCreatedAsync(retailer.Id, reviewerUserId,
+                accountCreatedEmail with { RetailerCode = retailer.Code }, cancellationToken);
         return await GetResultAsync(retailerId, cancellationToken);
+    }
+
+    private async Task NotifyAccountCreatedAsync(
+        Guid retailerId, Guid reviewerUserId, RetailerAccountCreatedEmail email,
+        CancellationToken cancellationToken)
+    {
+        string action;
+        string? failure = null;
+        try
+        {
+            await emailSender.SendRetailerAccountCreatedAsync(email, cancellationToken);
+            action = "RetailerAccountCreatedEmailSent";
+        }
+        catch (Exception exception) when (!cancellationToken.IsCancellationRequested)
+        {
+            // The approval is already committed. A delivery failure must not turn the response into
+            // an error; the Retailer can still sign in with phone + empty password and request an OTP.
+            action = "RetailerAccountCreatedEmailFailed";
+            failure = exception.GetType().Name;
+        }
+
+        AddAudit(retailerId, reviewerUserId, action, null,
+            JsonSerializer.Serialize(new { Recipient = email.RecipientEmail, Failure = failure }),
+            null, timeProvider.GetUtcNow());
+        await store.SaveChangesAsync(CancellationToken.None);
     }
 
     public async Task<RetailerDetails> SetActiveAsync(

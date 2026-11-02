@@ -80,12 +80,15 @@ public sealed class RetailerStore(AppDbContext dbContext) : IRetailerStore
         dbContext.RetailerDeclarationContactRecords.SingleOrDefaultAsync(
             item => item.RetailerId == retailerId, cancellationToken);
 
-    public Task<UserAccount?> FindUnassignedRetailerAccountAsync(
+    public async Task<IReadOnlyList<UserAccount>> FindUnassignedRetailerAccountsAsync(
         string email, string phone, CancellationToken cancellationToken) =>
-        dbContext.UserAccountRecords.SingleOrDefaultAsync(user =>
+        await dbContext.UserAccountRecords.Where(user =>
             user.Role == SystemRoles.Retailer && !user.IsActive &&
             (user.Email.ToLower() == email || user.Phone == phone) &&
-            !dbContext.RetailerRecords.Any(retailer => retailer.UserAccountId == user.Id), cancellationToken);
+            !dbContext.RetailerRecords.Any(retailer => retailer.UserAccountId == user.Id))
+            .OrderBy(user => user.CreatedAt)
+            .Take(10)
+            .ToListAsync(cancellationToken);
 
     public async Task<Retailer?> FindDuplicateAsync(
         string name, string? phone, string? email, string? address,
