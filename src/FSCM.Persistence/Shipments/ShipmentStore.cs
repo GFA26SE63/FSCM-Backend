@@ -101,8 +101,10 @@ public sealed class ShipmentStore(AppDbContext dbContext) : IShipmentStore
             from labelEvent in dbContext.QrLabelEventRecords.AsNoTracking()
             join label in dbContext.BatchQrLabelRecords.AsNoTracking()
                 on labelEvent.BatchQrLabelId equals label.Id
-            where labelEvent.EventType == QrLabelEventTypes.Dispatched &&
-                  labelEvent.ReferenceCode == shipmentInfo.OrderCode &&
+            where ((labelEvent.EventType == QrLabelEventTypes.Picked &&
+                    labelEvent.ReferenceCode == shipmentInfo.PickingCode) ||
+                   (labelEvent.EventType == QrLabelEventTypes.Dispatched &&
+                    labelEvent.ReferenceCode == shipmentInfo.OrderCode)) &&
                   label.CurrentWarehouseId == shipmentInfo.WarehouseId
             select labelEvent.BatchQrLabelId).Distinct().ToArrayAsync(cancellationToken);
         var query = dbContext.BatchQrLabelRecords.Where(item => ids.Contains(item.Id));

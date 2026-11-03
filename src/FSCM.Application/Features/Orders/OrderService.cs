@@ -227,6 +227,23 @@ public sealed class OrderService(
         return ToDetail(view);
     }
 
+    public async Task<OrderDetailResult> GetByCodeAsync(
+        string orderCode,
+        Guid actorUserId,
+        string actorRole,
+        CancellationToken cancellationToken)
+    {
+        ValidateReadRole(actorRole);
+        var normalizedCode = orderCode.Trim().ToUpperInvariant();
+        if (normalizedCode.Length is < 3 or > 50)
+            throw OrderOperationException.Validation("Order code is invalid.");
+        var view = await store.FindByCodeAsync(normalizedCode, false, cancellationToken)
+            ?? throw OrderOperationException.NotFound("Order was not found.");
+        if (!await store.CanViewAsync(view, actorUserId, actorRole, cancellationToken))
+            throw OrderOperationException.Forbidden("User cannot access this order.");
+        return ToDetail(view);
+    }
+
     public async Task<OrderTimelineResult> GetTimelineAsync(
         Guid orderId,
         Guid actorUserId,
