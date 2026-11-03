@@ -26,7 +26,9 @@ using FSCM.Application.Features.Shipments;
 using FSCM.Application.Features.Territory;
 using FSCM.Application.Features.TransitTables;
 using FSCM.Application.Features.WarehouseConfiguration;
+using FSCM.Application.Features.WriteOffs;
 using FSCM.Persistence.Complaints;
+using FSCM.Persistence.WriteOffs;
 using FSCM.Persistence.AllocationRuns;
 using FSCM.Persistence.Catalog;
 using FSCM.Persistence.DeliveryEta;
@@ -96,6 +98,7 @@ public static class DependencyInjection
         services.AddScoped<IRewardStore, RewardStore>();
         services.AddScoped<IRedemptionStore, RedemptionStore>();
         services.AddScoped<IComplaintStore, ComplaintStore>();
+        services.AddScoped<IWriteOffStore, WriteOffStore>();
         services.AddScoped<IRedemptionWorkflowStore, RedemptionStore>();
         services.AddScoped<ILoyaltyCardStore, LoyaltyCardStore>();
         services.AddScoped<ILoyaltyAccrualStore, LoyaltyAccrualStore>();
