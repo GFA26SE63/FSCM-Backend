@@ -2,6 +2,7 @@ using FSCM.Application.Features.Identity;
 using FSCM.Application.Features.Retailers;
 using FSCM.Application.Features.WarehouseConfiguration;
 using FSCM.Domain.Entities;
+using FSCM.UnitTests.Storage;
 
 namespace FSCM.UnitTests.Retailers;
 
@@ -115,6 +116,33 @@ public sealed class RetailerServiceTests
         Id = Guid.NewGuid(), Email = email, Phone = phone, FullName = "Tài khoản có sẵn",
         Role = "Retailer", IsActive = false, IdentityProvider = "Local"
     };
+
+    [Fact]
+    public async Task Set_storefront_image_stores_key_and_exposes_url()
+    {
+        var fixture = new Fixture();
+        var declared = await fixture.DeclareAsync(30_000_000, 20, 60);
+
+        var result = await fixture.Service.SetStorefrontImageAsync(
+            declared.Id, fixture.SalesUserId, "Sales", FakeImageFactory.Png(), CancellationToken.None);
+
+        Assert.NotNull(result.StorefrontImageUrl);
+        Assert.NotNull(fixture.Store.Retailers[0].StorefrontImageBlobKey);
+        Assert.Single(fixture.Images.Blobs);
+    }
+
+    [Fact]
+    public async Task Retailer_cannot_set_storefront_image_of_another_account()
+    {
+        var fixture = new Fixture();
+        var declared = await fixture.DeclareAsync(30_000_000, 20, 60);
+
+        var error = await Assert.ThrowsAsync<RetailerOperationException>(() =>
+            fixture.Service.SetStorefrontImageAsync(
+                declared.Id, Guid.NewGuid(), "Retailer", FakeImageFactory.Png(), CancellationToken.None));
+
+        Assert.Equal("forbidden", error.Code);
+    }
 
     [Fact]
     public async Task Rejection_does_not_send_account_created_email()
@@ -305,10 +333,11 @@ public sealed class RetailerServiceTests
                 Version = 1,
                 IsActive = true
             });
-            Service = new RetailerService(Store, new FixedTimeProvider(Now), EmailSender);
+            Service = new RetailerService(Store, new FixedTimeProvider(Now), EmailSender, Images.ToUploadService());
         }
 
         public FakeEmailSender EmailSender { get; } = new();
+        public FakeImageStorage Images { get; } = new();
 
         public Task<RetailerDetails> DeclareAsync(
             decimal revenue, decimal size, decimal capacity,

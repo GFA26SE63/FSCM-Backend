@@ -1,11 +1,33 @@
 using System.Text.RegularExpressions;
+using FSCM.Application.Features.Storage;
 using FSCM.Domain.Entities;
 
 namespace FSCM.Application.Features.Catalog;
 
-public sealed partial class CatalogService(ICatalogStore store, TimeProvider timeProvider)
+public sealed partial class CatalogService(
+    ICatalogStore store, TimeProvider timeProvider, ImageUploadService images)
 {
     private const int MaximumPageSize = 100;
+
+    /// <summary>
+    /// Uploads or replaces a product's catalog image. Image is display-only: it does not affect SKU,
+    /// price, batches, inventory or allocation. Only the blob key is stored; the old blob is deleted
+    /// after the new key is saved.
+    /// </summary>
+    public async Task<ProductResult> SetProductImageAsync(
+        Guid productId, ImageUpload upload, CancellationToken cancellationToken)
+    {
+        var product = await store.FindProductAsync(productId, cancellationToken)
+            ?? throw CatalogOperationException.NotFound("Product was not found.");
+        var previousKey = product.ImageBlobKey;
+        var stored = await images.ValidateAndUploadAsync(ImageCategory.ProductImage, upload, cancellationToken);
+        product.ImageBlobKey = stored.BlobKey;
+        product.UpdatedAt = timeProvider.GetUtcNow();
+        await store.SaveChangesAsync(cancellationToken);
+        if (!string.IsNullOrWhiteSpace(previousKey))
+            await images.DeleteAsync(ImageCategory.ProductImage, previousKey, cancellationToken);
+        return await GetProductAsync(productId, cancellationToken);
+    }
 
     public async Task<IReadOnlyCollection<CategoryResult>> ListCategoriesAsync(
         bool includeInactive,
@@ -692,7 +714,7 @@ public sealed partial class CatalogService(ICatalogStore store, TimeProvider tim
         category.CreatedAt,
         category.UpdatedAt);
 
-    private static ProductResult ToResult(ProductView view) => new(
+    private ProductResult ToResult(ProductView view) => new(
         view.Product.Id,
         view.Product.ProductCategoryId,
         view.CategoryCode,
@@ -705,6 +727,9 @@ public sealed partial class CatalogService(ICatalogStore store, TimeProvider tim
         view.Product.NearDateThresholdHours,
         view.Product.Status,
         view.CurrentUnitPrice,
+        string.IsNullOrWhiteSpace(view.Product.ImageBlobKey)
+            ? null
+            : images.GetReadUrl(ImageCategory.ProductImage, view.Product.ImageBlobKey),
         view.Product.PublishedAt,
         view.Product.InactivatedAt,
         view.Product.CreatedAt,

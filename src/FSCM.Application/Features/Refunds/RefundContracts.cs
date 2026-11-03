@@ -11,7 +11,7 @@ public static class RefundStatuses
 public sealed record CreateRefundData(Guid SalesOrderId, decimal Amount, string Recipient, string Reason);
 public sealed record SubmitRefundEvidenceData(
     int ExpectedVersion, DateTimeOffset TransferredAt, string TransactionReference, string EvidenceReference);
-public sealed record VerifyRefundData(int ExpectedVersion, string? Note);
+public sealed record VerifyRefundData(int ExpectedVersion, bool Approved, string? Note);
 
 public sealed record RefundResult(
     Guid Id, Guid PaymentId, Guid SalesOrderId, string OrderCode, decimal Amount,

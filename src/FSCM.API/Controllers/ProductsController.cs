@@ -1,4 +1,5 @@
 using FSCM.API.Contracts.Catalog;
+using FSCM.API.Infrastructure;
 using FSCM.Application.Features.Catalog;
 using FSCM.Domain.Authorization;
 using Microsoft.AspNetCore.Authorization;
@@ -135,6 +136,18 @@ public sealed class ProductsController(CatalogService catalogService) : Controll
                 request.InitialUnitPrice),
             cancellationToken);
         return CreatedAtAction(nameof(Get), new { productId = result.Id }, result);
+    }
+
+    /// <summary>Upload / thay thế ảnh sản phẩm (chỉ hiển thị, không ảnh hưởng SKU, giá, tồn kho).</summary>
+    [Authorize(Roles = SystemRoles.Admin)]
+    [HttpPost("{productId:guid}/image")]
+    [RequestSizeLimit(ImageUploadLimits.MaxRequestBytes)]
+    [ProducesResponseType<ProductResult>(StatusCodes.Status200OK)]
+    public async Task<ProductResult> SetImage(
+        Guid productId, IFormFile file, CancellationToken cancellationToken)
+    {
+        await using var upload = await file.ToImageUploadAsync(cancellationToken);
+        return await catalogService.SetProductImageAsync(productId, upload, cancellationToken);
     }
 
     [HttpGet("{productId:guid}/prices")]

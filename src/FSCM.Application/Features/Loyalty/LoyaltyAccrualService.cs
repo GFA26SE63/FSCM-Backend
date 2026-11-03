@@ -124,7 +124,7 @@ public sealed class LoyaltyAccrualService(ILoyaltyAccrualStore store, TimeProvid
                 LoyaltyAccrualBlock.None, "Đơn chưa được cộng điểm nên không có gì để sửa.");
         }
 
-        var earned = PointsFor(view.ApprovedFinalAmount, view.Program.SpendAmountPerPoint);
+        var earned = view.EarnedPointsForOrder;
         var shouldBe = PointsFor(newApprovedFinalAmount, view.Program.SpendAmountPerPoint);
         var delta = shouldBe - earned;
         if (delta == 0)

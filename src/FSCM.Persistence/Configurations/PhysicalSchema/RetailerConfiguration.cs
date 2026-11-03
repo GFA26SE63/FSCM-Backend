@@ -28,6 +28,7 @@ public sealed class RetailerConfiguration : IEntityTypeConfiguration<Retailer>
         builder.Property(entity => entity.PotentialStatus).HasMaxLength(30).IsRequired(false);
         builder.Property(entity => entity.PotentialScore).HasPrecision(5, 2).IsRequired(false);
         builder.Property(entity => entity.AssessmentNote).HasColumnType("text").IsRequired(false);
+        builder.Property(entity => entity.StorefrontImageBlobKey).HasColumnType("text").IsRequired(false);
         builder.Property(entity => entity.DeclaredByUserId).HasColumnType("uuid").IsRequired();
         builder.Property(entity => entity.ReviewedByUserId).HasColumnType("uuid").IsRequired(false);
         builder.Property(entity => entity.AssessedByUserId).HasColumnType("uuid").IsRequired(false);

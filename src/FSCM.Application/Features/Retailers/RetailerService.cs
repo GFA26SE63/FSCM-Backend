@@ -1,5 +1,6 @@
 using System.Text.Json;
 using FSCM.Application.Features.Identity;
+using FSCM.Application.Features.Storage;
 using FSCM.Application.Features.WarehouseConfiguration;
 using FSCM.Domain.Authorization;
 using FSCM.Domain.Entities;
@@ -9,7 +10,8 @@ namespace FSCM.Application.Features.Retailers;
 public sealed class RetailerService(
     IRetailerStore store,
     TimeProvider timeProvider,
-    ITransactionalEmailSender emailSender)
+    ITransactionalEmailSender emailSender,
+    Storage.ImageUploadService images)
 {
     private static readonly HashSet<int> AllowedCreditTerms = [0, 7, 14, 30];
 
@@ -461,9 +463,12 @@ public sealed class RetailerService(
         return value;
     }
 
-    private static RetailerDetails ToDetails(RetailerView view, IReadOnlyCollection<RetailerMlorView> mlors)
+    private RetailerDetails ToDetails(RetailerView view, IReadOnlyCollection<RetailerMlorView> mlors)
     {
         var item = view.Retailer;
+        var storefrontImageUrl = string.IsNullOrWhiteSpace(item.StorefrontImageBlobKey)
+            ? null
+            : images.GetReadUrl(ImageCategory.RetailerStorefront, item.StorefrontImageBlobKey);
         var generalInformation = new RetailerGeneralInformation(item.Name, view.ContactName, view.Phone,
             view.Email, item.Address, view.Location?.Latitude, view.Location?.Longitude,
             view.Location?.ProviderPlaceId, view.Location?.Version ?? 0, item.RetailerType,
@@ -481,7 +486,32 @@ public sealed class RetailerService(
             item.RequestedCreditTermDays,
             item.PotentialStatus ?? "C", item.AssessmentNote, item.DeclaredByUserId,
             item.ReviewedByUserId, item.ReviewedAt, item.ReviewReason, item.CreatedAt, item.UpdatedAt,
-            generalInformation, declarations, declarations.Length > 0);
+            storefrontImageUrl, generalInformation, declarations, declarations.Length > 0);
+    }
+
+    /// <summary>
+    /// Uploads or replaces a retailer's storefront photo. Only metadata (the blob key) is stored; the
+    /// old blob is deleted after the new key is saved. Does not change retailer status or activation.
+    /// </summary>
+    public async Task<RetailerDetails> SetStorefrontImageAsync(
+        Guid retailerId, Guid actorUserId, string actorRole,
+        Storage.ImageUpload upload, CancellationToken cancellationToken)
+    {
+        var retailer = await store.FindForUpdateAsync(retailerId, cancellationToken)
+            ?? throw RetailerOperationException.NotFound("Retailer was not found.");
+        // A Retailer may only change their own storefront image; staff roles may change any.
+        if (actorRole == SystemRoles.Retailer && retailer.UserAccountId != actorUserId)
+            throw RetailerOperationException.Forbidden("You can only update your own storefront image.");
+
+        var previousKey = retailer.StorefrontImageBlobKey;
+        var stored = await images.ValidateAndUploadAsync(
+            ImageCategory.RetailerStorefront, upload, cancellationToken);
+        retailer.StorefrontImageBlobKey = stored.BlobKey;
+        retailer.UpdatedAt = timeProvider.GetUtcNow();
+        await store.SaveChangesAsync(cancellationToken);
+        if (!string.IsNullOrWhiteSpace(previousKey))
+            await images.DeleteAsync(ImageCategory.RetailerStorefront, previousKey, cancellationToken);
+        return await GetResultAsync(retailerId, cancellationToken);
     }
 
     private async Task<RetailerDetails> GetResultAsync(Guid retailerId, CancellationToken cancellationToken)

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using FSCM.Application.Features.Orders;
 using FSCM.Domain.Authorization;
 using FSCM.Domain.Entities;
 
@@ -25,7 +26,10 @@ public interface IPaymentReceiptStore
 }
 
 /// <summary>Applies one verified receipt to selected receivables atomically and derives their status.</summary>
-public sealed class PaymentReceiptService(IPaymentReceiptStore store, TimeProvider timeProvider)
+public sealed class PaymentReceiptService(
+    IPaymentReceiptStore store,
+    TimeProvider timeProvider,
+    OrderCompletionService? completionService = null)
 {
     public async Task<PaymentReceiptResult> ConfirmAsync(ConfirmPaymentReceiptData data, string operationKey,
         Guid actorUserId, string actorRole, CancellationToken cancellationToken)
@@ -44,6 +48,7 @@ public sealed class PaymentReceiptService(IPaymentReceiptStore store, TimeProvid
             return replayResult;
         }
 
+        Guid[] affectedOrderIds = [];
         await store.ExecuteInTransactionAsync(async token =>
         {
             if (await store.FindReceiptByOperationKeyAsync(operationKey, true, token) is not null) return;
@@ -51,6 +56,7 @@ public sealed class PaymentReceiptService(IPaymentReceiptStore store, TimeProvid
             var payments = await store.FindPaymentsForUpdateAsync(ids, token);
             if (payments.Count != ids.Length || payments.Any(item => item.Order.RetailerId != data.RetailerId))
                 throw PaymentOperationException.Validation("Every selected payment must belong to the receipt retailer.");
+            affectedOrderIds = payments.Select(item => item.Order.Id).Distinct().ToArray();
             foreach (var allocation in data.Allocations)
             {
                 var payment = payments.Single(item => item.Payment.Id == allocation.PaymentId).Payment;
@@ -80,6 +86,11 @@ public sealed class PaymentReceiptService(IPaymentReceiptStore store, TimeProvid
             await store.SaveChangesAsync(token);
         }, cancellationToken);
         store.ClearTracking();
+        if (completionService is not null)
+        {
+            foreach (var orderId in affectedOrderIds)
+                await completionService.EvaluateAsync(orderId, actorUserId, cancellationToken);
+        }
         return await ToResultAsync((await store.FindReceiptByOperationKeyAsync(operationKey, false, cancellationToken))!, cancellationToken);
     }
 

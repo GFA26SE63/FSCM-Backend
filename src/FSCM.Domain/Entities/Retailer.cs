@@ -22,6 +22,9 @@ public sealed class Retailer
     public string? PotentialStatus { get; set; }
     public decimal? PotentialScore { get; set; }
     public string? AssessmentNote { get; set; }
+
+    /// <summary>Azure Blob key for the storefront photo (nullable). Only the key is stored, not bytes.</summary>
+    public string? StorefrontImageBlobKey { get; set; }
     public Guid DeclaredByUserId { get; set; }
     public Guid? ReviewedByUserId { get; set; }
     public Guid? AssessedByUserId { get; set; }

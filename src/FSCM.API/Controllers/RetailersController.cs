@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using FSCM.API.Contracts.Retailers;
+using FSCM.API.Infrastructure;
 using FSCM.Application.Features.Retailers;
 using FSCM.Domain.Authorization;
 using Microsoft.AspNetCore.Authorization;
@@ -8,10 +9,13 @@ using Microsoft.AspNetCore.Mvc;
 namespace FSCM.API.Controllers;
 
 [ApiController]
-[Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator},{SystemRoles.SalesManager},{SystemRoles.Sales}")]
+// Retailer is allowed at class level only so a Retailer can manage their own storefront image; every
+// other action keeps its own tighter per-action role restriction.
+[Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator},{SystemRoles.SalesManager},{SystemRoles.Sales},{SystemRoles.Retailer}")]
 [Route("api/v1/retailers")]
 public sealed class RetailersController(RetailerService service) : ControllerBase
 {
+    [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator},{SystemRoles.SalesManager},{SystemRoles.Sales}")]
     [HttpGet]
     public Task<RetailerPage> List(
         [FromQuery] string? status, [FromQuery] string? search, [FromQuery] string? scope,
@@ -19,6 +23,7 @@ public sealed class RetailersController(RetailerService service) : ControllerBas
         CancellationToken cancellationToken = default) =>
         service.SearchAsync(GetActorUserId(), GetActorRole(), status, search, scope, page, pageSize, cancellationToken);
 
+    [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator},{SystemRoles.SalesManager},{SystemRoles.Sales}")]
     [HttpGet("{retailerId:guid}")]
     public Task<RetailerDetails> Get(Guid retailerId, CancellationToken cancellationToken) =>
         service.GetAsync(retailerId, GetActorUserId(), GetActorRole(), cancellationToken);
@@ -65,12 +70,26 @@ public sealed class RetailersController(RetailerService service) : ControllerBas
         Guid retailerId, UpdateRetailerStatusRequest request, CancellationToken cancellationToken) =>
         service.SetActiveAsync(retailerId, request.IsActive, GetActorUserId(), cancellationToken);
 
+    /// <summary>Upload / thay thế ảnh mặt trước cửa hàng. Retailer chỉ sửa ảnh của chính mình.</summary>
+    [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator},{SystemRoles.SalesManager},{SystemRoles.Sales},{SystemRoles.Retailer}")]
+    [HttpPost("{retailerId:guid}/storefront-image")]
+    [RequestSizeLimit(ImageUploadLimits.MaxRequestBytes)]
+    [ProducesResponseType<RetailerDetails>(StatusCodes.Status200OK)]
+    public async Task<RetailerDetails> SetStorefrontImage(
+        Guid retailerId, IFormFile file, CancellationToken cancellationToken)
+    {
+        await using var upload = await file.ToImageUploadAsync(cancellationToken);
+        return await service.SetStorefrontImageAsync(
+            retailerId, GetActorUserId(), GetActorRole(), upload, cancellationToken);
+    }
+
     [Authorize(Roles = SystemRoles.Sales)]
     [HttpGet("{retailerId:guid}/order-eligibility")]
     public Task<RetailerOrderEligibility> CheckOrderEligibility(
         Guid retailerId, CancellationToken cancellationToken) =>
         service.CheckOrderEligibilityAsync(GetActorUserId(), retailerId, cancellationToken);
 
+    [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator},{SystemRoles.SalesManager},{SystemRoles.Sales}")]
     [HttpGet("{retailerId:guid}/mlor-resolution")]
     public Task<RetailerMlorResolutionResult> ResolveMlor(
         Guid retailerId, [FromQuery] Guid productId, CancellationToken cancellationToken) =>

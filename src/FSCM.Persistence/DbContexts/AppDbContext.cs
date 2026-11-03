@@ -73,6 +73,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<ReceiptDiscrepancy> ReceiptDiscrepancyRecords => Set<ReceiptDiscrepancy>();
     public DbSet<ReplacementCase> ReplacementCaseRecords => Set<ReplacementCase>();
     public DbSet<ReceiptDiscrepancyItem> ReceiptDiscrepancyItemRecords => Set<ReceiptDiscrepancyItem>();
+    public DbSet<ComplaintEvidence> ComplaintEvidenceRecords => Set<ComplaintEvidence>();
     public DbSet<Payment> PaymentRecords => Set<Payment>();
     public DbSet<PaymentReceipt> PaymentReceiptRecords => Set<PaymentReceipt>();
     public DbSet<PaymentReceiptAllocation> PaymentReceiptAllocationRecords => Set<PaymentReceiptAllocation>();

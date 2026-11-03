@@ -31,6 +31,7 @@ public sealed class ProductConfiguration : IEntityTypeConfiguration<Product>
         builder.Property(entity => entity.ShelfLifeHours).IsRequired();
         builder.Property(entity => entity.NearDateThresholdHours).IsRequired();
         builder.Property(entity => entity.Status).HasMaxLength(30).IsRequired();
+        builder.Property(entity => entity.ImageBlobKey).HasColumnType("text").IsRequired(false);
         builder.Property(entity => entity.PublishedAt).HasColumnType("timestamp with time zone").IsRequired(false);
         builder.Property(entity => entity.InactivatedAt).HasColumnType("timestamp with time zone").IsRequired(false);
         builder.Property(entity => entity.CreatedAt).HasColumnType("timestamp with time zone").IsRequired();

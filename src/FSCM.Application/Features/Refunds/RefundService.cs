@@ -93,7 +93,10 @@ public sealed class RefundService(IRefundStore store, IPaymentStore paymentStore
             throw RefundOperationException.Forbidden("Only Admin can verify a completed refund transfer.");
         operationKey = Key(operationKey);
         var note = Optional(data.Note, 500);
-        var hash = Hash(id, data.ExpectedVersion, note);
+        if (!data.Approved && string.IsNullOrWhiteSpace(note))
+            throw RefundOperationException.Validation(
+                "A rejection note is required so the Operator can correct the evidence.");
+        var hash = Hash(id, data.ExpectedVersion, data.Approved, note);
         var prior = await store.FindByOperationKeyAsync(operationKey, cancellationToken);
         if (prior is not null) return Replay(prior, hash, prior.Refund.VerificationRequestHash);
         await MutateAsync(id, data.ExpectedVersion, actorUserId, refund =>
@@ -102,13 +105,25 @@ public sealed class RefundService(IRefundStore store, IPaymentStore paymentStore
                 throw RefundOperationException.Conflict("Only a refund awaiting verification can be verified.");
             if (refund.SubmittedByUserId == actorUserId)
                 throw RefundOperationException.Forbidden("The evidence submitter cannot verify the same refund.");
-            refund.Status = RefundStatuses.Refunded;
-            refund.VerifiedByUserId = actorUserId;
-            refund.VerifiedAt = timeProvider.GetUtcNow();
+            refund.Status = data.Approved
+                ? RefundStatuses.Refunded
+                : RefundStatuses.PendingRefund;
+            refund.VerifiedByUserId = data.Approved ? actorUserId : null;
+            refund.VerifiedAt = data.Approved ? timeProvider.GetUtcNow() : null;
             refund.VerificationNote = note;
             refund.VerificationOperationKey = operationKey;
             refund.VerificationRequestHash = hash;
-        }, "RefundVerified", cancellationToken);
+            if (!data.Approved)
+            {
+                refund.TransferredAt = null;
+                refund.TransactionReference = null;
+                refund.EvidenceReference = null;
+                refund.SubmittedByUserId = null;
+                refund.SubmittedAt = null;
+                refund.EvidenceOperationKey = null;
+                refund.EvidenceRequestHash = null;
+            }
+        }, data.Approved ? "RefundVerified" : "RefundEvidenceRejected", cancellationToken);
         return await Reload(id, cancellationToken);
     }
 

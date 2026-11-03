@@ -57,6 +57,8 @@ public static class ServiceCollectionExtensions
         services.AddExceptionHandler<DeliveryEtaExceptionHandler>();
         services.AddExceptionHandler<WarehouseConfigurationExceptionHandler>();
         services.AddExceptionHandler<IdentityExceptionHandler>();
+        services.AddExceptionHandler<ImageStorageExceptionHandler>();
+        services.AddExceptionHandler<WriteOffExceptionHandler>();
 
         services.AddCors(options =>
         {

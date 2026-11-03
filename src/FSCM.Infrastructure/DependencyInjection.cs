@@ -2,6 +2,7 @@ using System.Net.Http.Headers;
 using FSCM.Application.Features.Identity;
 using FSCM.Application.Features.Maps;
 using FSCM.Application.Features.QrLabels;
+using FSCM.Application.Features.Storage;
 using FSCM.Infrastructure.BackgroundJobs;
 using FSCM.Infrastructure.ExternalServices;
 using FSCM.Application.Features.Payments;
@@ -42,6 +43,9 @@ public static class DependencyInjection
         services.AddSingleton<IPasswordHasher, BcryptPasswordHasher>();
         services.AddSingleton<IIdentityTokenProvider, JwtIdentityTokenProvider>();
         services.AddSingleton<IQrCodeRenderer, QrCoderQrCodeRenderer>();
+
+        services.Configure<FscmBlobStorageOptions>(configuration.GetSection(FscmBlobStorageOptions.SectionName));
+        services.AddSingleton<IImageStorage, AzureBlobImageStorage>();
 
         services.Configure<DateTrackerOptions>(configuration.GetSection(DateTrackerOptions.SectionName));
         services.AddHostedService<DateTrackerHostedService>();

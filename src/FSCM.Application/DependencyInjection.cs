@@ -23,6 +23,8 @@ using FSCM.Application.Features.QrLabels;
 using FSCM.Application.Features.Promotions;
 using FSCM.Application.Features.Reports;
 using FSCM.Application.Features.ShelfLifeDiscounts;
+using FSCM.Application.Features.Storage;
+using FSCM.Application.Features.WriteOffs;
 using FSCM.Application.Features.Shipments;
 using FSCM.Application.Features.Territory;
 using FSCM.Application.Features.TransitTables;
@@ -42,6 +44,8 @@ public static class DependencyInjection
         services.AddScoped<AllocationPlanner>();
         services.AddScoped<AllocationPricingService>();
         services.AddScoped<IRealTimeAllocationService, RealTimeAllocationService>();
+        services.AddScoped<ImageUploadService>();
+        services.AddScoped<WriteOffService>();
         services.AddScoped<CatalogService>();
         services.AddScoped<DeliveryService>();
         services.AddScoped<ShipmentService>();
