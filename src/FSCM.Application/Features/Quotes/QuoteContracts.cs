@@ -23,5 +23,5 @@ public sealed record SalesOrderQuoteResult(
     DateTimeOffset ExpiresAt, DateTimeOffset? AcceptedAt, string? RejectionReason,
     Guid? PurchaseOrderId, string? PurchaseOrderCode, int Version);
 
-public sealed record AcceptQuoteRequestData(int ExpectedVersion);
+public sealed record AcceptQuoteRequestData(int ExpectedVersion, string PaymentMethod);
 public sealed record RejectQuoteRequestData(int ExpectedVersion, string Reason);

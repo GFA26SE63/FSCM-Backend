@@ -162,6 +162,12 @@ public sealed class PickingStore(AppDbContext dbContext) : IPickingStore
         }
     }
 
+    public Task<bool> ShipmentExistsAsync(
+        Guid salesOrderId, Guid warehouseId, CancellationToken cancellationToken) =>
+        dbContext.ShipmentRecords.AsNoTracking().AnyAsync(item =>
+            item.SalesOrderId == salesOrderId && item.WarehouseId == warehouseId,
+            cancellationToken);
+
     public void AddList(PickingList list) => dbContext.PickingListRecords.Add(list);
     public void AddItem(PickingItem item) => dbContext.PickingItemRecords.Add(item);
     public void AddLabel(BatchQrLabel label) => dbContext.BatchQrLabelRecords.Add(label);

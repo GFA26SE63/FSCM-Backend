@@ -43,6 +43,19 @@ public sealed class OrderServiceTests
     }
 
     [Fact]
+    public async Task Order_can_be_loaded_by_code_for_mobile_deep_links()
+    {
+        var fixture = new Fixture();
+        var created = await fixture.CreateAsync(quantity: 10);
+
+        var result = await fixture.Service.GetByCodeAsync(
+            created.OrderCode.ToLowerInvariant(), fixture.SalesUserId, SystemRoles.Sales, default);
+
+        Assert.Equal(created.Id, result.Id);
+        Assert.Equal(created.OrderCode, result.OrderCode);
+    }
+
+    [Fact]
     public async Task Credit_order_snapshots_the_approved_retailer_term()
     {
         var fixture = new Fixture();

@@ -1,12 +1,12 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Globalization;
-using FSCM.Application.Features.AllocationRuns;
 using FSCM.Application.Features.Deliveries;
 using FSCM.Application.Features.Orders;
 using FSCM.Application.Features.Loyalty;
 using FSCM.Application.Features.Inventory;
 using FSCM.Application.Features.Payments;
+using FSCM.Application.Features.Picking;
 using FSCM.Application.Features.QrLabels;
 using FSCM.Domain.Authorization;
 using FSCM.Domain.Entities;
@@ -184,10 +184,10 @@ public sealed class ShipmentService(
                 item.WarehouseCode,
                 // A sheet closed with an exception holds the order the same way a damaged part
                 // does, so it is reported as one rather than as merely unfinished.
-                item.PickingStatus == RunPickingListStatuses.NeedsHandling
+                item.PickingStatus == PickingListStatuses.Exception
                     ? ShipmentStatuses.Exception
                     : ShipmentStatuses.WaitingToPick,
-                item.PickingStatus == RunPickingListStatuses.NeedsHandling
+                item.PickingStatus == PickingListStatuses.Exception
                     ? $"phieu soan {item.PickingCode} dang co ngoai le"
                     : null))
             .ToArray();
@@ -394,7 +394,7 @@ public sealed class ShipmentService(
                 Id = Guid.NewGuid(),
                 SalesOrderId = source.SalesOrderId,
                 WarehouseId = source.WarehouseId,
-                RunPickingListId = source.RunPickingListId,
+                PickingListId = source.RunPickingListId,
                 ShipmentCode = await store.NextShipmentCodeAsync(cancellationToken),
                 Status = ShipmentStatuses.Ready,
                 TotalQuantity = source.TotalQuantity,
@@ -449,6 +449,89 @@ public sealed class ShipmentService(
         view.Shipment.UpdatedAt = now;
         await store.SaveChangesAsync(cancellationToken);
         return ToResult((await store.FindByIdAsync(id, false, cancellationToken))!);
+    }
+
+    /// <summary>
+    /// Hands an issued warehouse part to its assigned transport. Inventory was already deducted
+    /// by <see cref="ConfirmIssueAsync"/>; dispatch must never deduct it a second time.
+    /// </summary>
+    public async Task<ShipmentResult> DispatchAsync(
+        Guid id, DispatchShipmentData data, Guid actorUserId, string actorRole,
+        CancellationToken cancellationToken)
+    {
+        EnsureOperator(actorRole);
+        await store.ExecuteInTransactionAsync(async token =>
+        {
+            var view = await store.FindByIdAsync(id, true, token)
+                ?? throw ShipmentOperationException.NotFound("Shipment was not found.");
+            if (view.Shipment.Status == ShipmentStatuses.Delivering) return;
+            if (view.Shipment.Status != ShipmentStatuses.Issued)
+                throw ShipmentOperationException.Conflict(
+                    "Only an issued shipment can start delivery.");
+            if (view.Shipment.Version != data.ExpectedVersion)
+                throw ShipmentOperationException.Conflict(
+                    $"Shipment version is {view.Shipment.Version}; refresh and retry.");
+            if (!view.Shipment.DriverId.HasValue || !view.Shipment.VehicleId.HasValue)
+                throw ShipmentOperationException.Conflict(
+                    "Assign a driver and vehicle before dispatching the shipment.");
+
+            var labels = await store.ListLabelsAsync(id, true, token);
+            if (labels.Count == 0 || labels.Any(item => item.Label.Status != QrLabelStatuses.Picked))
+                throw ShipmentOperationException.Conflict(
+                    "Every picked QR label must be ready before dispatch.");
+
+            var now = timeProvider.GetUtcNow();
+            for (var index = 0; index < labels.Count; index++)
+            {
+                var label = labels.ElementAt(index).Label;
+                var fromStatus = label.Status;
+                label.Status = QrLabelStatuses.InTransit;
+                label.Version++;
+                label.UpdatedAt = now;
+                store.AddLabelEvent(new QrLabelEvent
+                {
+                    Id = Guid.NewGuid(), BatchQrLabelId = label.Id,
+                    WarehouseId = label.CurrentWarehouseId, PerformedByUserId = actorUserId,
+                    OperationKey = $"shipment-dispatch:{id:N}:{index + 1}",
+                    EventType = QrLabelEventTypes.Dispatched,
+                    FromStatus = fromStatus, ToStatus = QrLabelStatuses.InTransit,
+                    Quantity = label.Quantity, ReferenceCode = view.Order.OrderCode,
+                    Note = $"Dispatched with {view.Shipment.ShipmentCode}", OccurredAt = now
+                });
+            }
+
+            view.Shipment.Status = ShipmentStatuses.Delivering;
+            view.Shipment.DispatchedAt = now;
+            view.Shipment.Version++;
+            view.Shipment.UpdatedAt = now;
+
+            var siblings = await store.ListByOrderAsync(view.Order.Id, token);
+            var allDispatched = siblings.All(item => item.Id == view.Shipment.Id ||
+                item.Status is ShipmentStatuses.Delivering or ShipmentStatuses.Received);
+            if (allDispatched)
+            {
+                var order = await store.FindOrderForUpdateAsync(view.Order.Id, token)
+                    ?? throw ShipmentOperationException.NotFound("Order was not found.");
+                var fromStatus = order.Status;
+                order.Status = OrderStatuses.Delivering;
+                order.Version++;
+                order.UpdatedAt = now;
+                store.AddOrderHistory(new OrderStatusHistory
+                {
+                    Id = Guid.NewGuid(), SalesOrderId = order.Id,
+                    FromStatus = fromStatus, ToStatus = OrderStatuses.Delivering,
+                    ChangedByUserId = actorUserId,
+                    Reason = "All warehouse shipments were handed to transport",
+                    ChangedAt = now
+                });
+            }
+
+            await store.SaveChangesAsync(token);
+        }, cancellationToken);
+        store.ClearTracking();
+        return ToResult(await store.FindByIdAsync(id, false, cancellationToken)
+            ?? throw ShipmentOperationException.Conflict(
+                "Dispatch was committed but could not be reloaded."));
     }
 
     public async Task<ShipmentResult> ConfirmReceiptAsync(
@@ -622,7 +705,7 @@ public sealed class ShipmentService(
     private static ShipmentResult ToResult(ShipmentView view) => new(
         view.Shipment.Id, view.Order.Id, view.Order.OrderCode,
         view.Warehouse.Id, view.Warehouse.Code, view.Warehouse.Name,
-        view.Shipment.RunPickingListId, view.PickingCode,
+        view.Shipment.PickingListId ?? Guid.Empty, view.PickingCode,
         view.Shipment.ShipmentCode, view.Shipment.Status,
         view.Shipment.TotalQuantity, view.Shipment.ReceivedQuantity,
         view.Shipment.DriverId, view.Shipment.DriverCodeSnapshot, view.Shipment.DriverNameSnapshot,

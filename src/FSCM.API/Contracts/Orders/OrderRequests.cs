@@ -3,7 +3,7 @@ namespace FSCM.API.Contracts.Orders;
 public sealed record CreateAssistedOrderRequest(
     Guid ClientOrderKey,
     Guid RetailerId,
-    string PaymentMethod,
+    string? PaymentMethod,
     DateOnly? RequestedDeliveryDate,
     string? DeliveryAddress,
     string? Note,
@@ -14,7 +14,7 @@ public sealed record CreateAssistedOrderLineRequest(Guid ProductId, int Quantity
 public sealed record SubmitOfflineOrderRequest(
     Guid ClientOrderKey,
     Guid RetailerId,
-    string PaymentMethod,
+    string? PaymentMethod,
     DateOnly? RequestedDeliveryDate,
     string? DeliveryAddress,
     string? Note,

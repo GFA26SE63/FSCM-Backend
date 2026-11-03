@@ -4,7 +4,7 @@ namespace FSCM.Application.Features.Orders;
 
 /// <summary>One allocation of an order that is currently holding stock, with everything needed to let go of it.</summary>
 public sealed record OrderHeldAllocation(
-    Guid AllocationRunAllocationId,
+    Allocation Allocation,
     Reservation Reservation,
     InventoryBalance Balance,
     Batch Batch);
@@ -14,9 +14,8 @@ public sealed record OrderHeldAllocation(
 /// cancellation touches these rows and leaves the other orders on it alone.
 /// </summary>
 public sealed record OrderPickingShare(
-    RunPickingSplit Split,
-    RunPickingGather Gather,
-    RunPickingList List);
+    PickingItem Item,
+    PickingList List);
 
 public interface IOrderReleaseStore
 {
@@ -31,9 +30,9 @@ public interface IOrderReleaseStore
     Task<IReadOnlyCollection<OrderPickingShare>> ListPickingSharesAsync(
         Guid salesOrderId, CancellationToken cancellationToken);
 
-    void RemoveSplit(RunPickingSplit split);
+    Task<int> CountPickingItemsAsync(Guid pickingListId, CancellationToken cancellationToken);
 
-    void RemoveGather(RunPickingGather gather);
+    void RemovePickingItem(PickingItem item);
 
     void AddInventoryTransaction(InventoryTransaction transaction);
 }

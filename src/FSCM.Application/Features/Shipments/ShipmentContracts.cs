@@ -129,6 +129,8 @@ public sealed record FlagShipmentExceptionData(string Reason, int ExpectedVersio
 
 public sealed record AssignShipmentData(Guid DriverId, Guid VehicleId, int ExpectedVersion);
 
+public sealed record DispatchShipmentData(int ExpectedVersion);
+
 /// <summary>F60 payment-status summary shown alongside a retailer's order delivery view.</summary>
 public sealed record OrderPaymentStatusResult(
     string Method,

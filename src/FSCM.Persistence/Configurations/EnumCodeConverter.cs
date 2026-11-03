@@ -8,7 +8,7 @@ internal sealed class EnumCodeConverter(string family) : ValueConverter<string, 
     private static readonly IReadOnlyDictionary<string, string[]> Values =
         new Dictionary<string, string[]>(StringComparer.Ordinal)
         {
-            ["SalesOrderStatus"] = ["Allocating", "Quoted", "AllocationFailed", "OutOfStock", "AllocationConflict", "Withdrawn", "QuoteRejected", "QuoteExpired", "PaymentPending", "ConvertedToPo"],
+            ["SalesOrderStatus"] = ["Allocating", "Quoted", "AllocationFailed", "OutOfStock", "AllocationConflict", "Withdrawn", "QuoteRejected", "QuoteExpired", "PaymentPending", "ConvertedToPo", "Picking", "Issued", "Delivering", "Delivered", "Completed"],
             ["PaymentMethod"] = ["Prepaid", "Credit"],
             ["QuoteStatus"] = ["Issued", "Accepted", "Rejected", "Expired"],
             ["PaymentStatus"] = ["Unpaid", "PartiallyPaid", "Paid", "Overdue"],

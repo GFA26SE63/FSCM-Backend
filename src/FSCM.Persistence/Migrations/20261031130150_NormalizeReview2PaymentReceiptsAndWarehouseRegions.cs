@@ -17,18 +17,20 @@ namespace FSCM.Persistence.Migrations
                 type: "uuid",
                 nullable: true);
 
-            // Legacy warehouses had no geographic FK. A deployment must already have a Region;
-            // map unclassified historical warehouses to its first stable code before enforcing
-            // the new mandatory relation. No synthetic warehouse tier/region is created here.
+            // Legacy warehouses had no geographic FK. Map existing warehouses to the first
+            // configured region before enforcing the new mandatory relation. A brand-new,
+            // empty database is allowed to migrate before reference data is seeded.
             migrationBuilder.Sql("""
                 DO $$
                 DECLARE fallback_region uuid;
                 BEGIN
                     SELECT "Id" INTO fallback_region FROM "REGION" ORDER BY "Code" LIMIT 1;
-                    IF fallback_region IS NULL THEN
+                    IF fallback_region IS NULL AND EXISTS (SELECT 1 FROM "WAREHOUSE") THEN
                         RAISE EXCEPTION 'Cannot migrate WAREHOUSE.RegionId: REGION is empty.';
                     END IF;
-                    UPDATE "WAREHOUSE" SET "RegionId" = fallback_region WHERE "RegionId" IS NULL;
+                    IF fallback_region IS NOT NULL THEN
+                        UPDATE "WAREHOUSE" SET "RegionId" = fallback_region WHERE "RegionId" IS NULL;
+                    END IF;
                 END $$;
                 """);
 

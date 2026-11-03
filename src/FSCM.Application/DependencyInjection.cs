@@ -66,6 +66,7 @@ public static class DependencyInjection
         services.AddScoped<NotificationService>();
         services.AddScoped<OrderService>();
         services.AddScoped<OrderReleaseService>();
+        services.AddScoped<PurchaseOrderGateService>();
         services.AddScoped<IOrderPricingService, OrderPricingService>();
         services.AddScoped<PaymentService>();
         services.AddScoped<PaymentReceiptService>();
@@ -74,6 +75,7 @@ public static class DependencyInjection
         services.AddScoped<QuoteService>();
         services.AddScoped<IPaymentPlanService>(provider => provider.GetRequiredService<PaymentPlanService>());
         services.AddScoped<PickingPlanService>();
+        services.AddScoped<CurrentPickingService>();
         services.AddScoped<IPickingPlanService>(provider => provider.GetRequiredService<PickingPlanService>());
         services.AddScoped<QrLabelService>();
         services.AddScoped<PromotionService>();

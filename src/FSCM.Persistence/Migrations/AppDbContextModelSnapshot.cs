@@ -3137,6 +3137,9 @@ namespace FSCM.Persistence.Migrations
                         .HasPrecision(18, 2)
                         .HasColumnType("numeric(18,2)");
 
+                    b.Property<Guid?>("AllocationId")
+                        .HasColumnType("uuid");
+
                     b.Property<Guid?>("AllocationPlanPriceId")
                         .HasColumnType("uuid");
 
@@ -3169,6 +3172,8 @@ namespace FSCM.Persistence.Migrations
                         .HasColumnType("uuid");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("AllocationId");
 
                     b.HasIndex("BatchId");
 
@@ -3888,7 +3893,7 @@ namespace FSCM.Persistence.Migrations
                         .HasMaxLength(40)
                         .HasColumnType("character varying(40)");
 
-                    b.Property<short>("PaymentMethod")
+                    b.Property<short?>("PaymentMethod")
                         .HasColumnType("smallint");
 
                     b.Property<string>("RejectionReason")
@@ -3964,9 +3969,9 @@ namespace FSCM.Persistence.Migrations
 
                     b.ToTable("SALES_ORDER", null, t =>
                         {
-                            t.HasCheckConstraint("CK_SALES_ORDER_PaymentMethod", "\"PaymentMethod\" BETWEEN 0 AND 1");
+                            t.HasCheckConstraint("CK_SALES_ORDER_PaymentMethod", "\"PaymentMethod\" IS NULL OR \"PaymentMethod\" BETWEEN 0 AND 1");
 
-                            t.HasCheckConstraint("CK_SALES_ORDER_Status", "\"Status\" BETWEEN 0 AND 9");
+                            t.HasCheckConstraint("CK_SALES_ORDER_Status", "\"Status\" BETWEEN 0 AND 14");
                         });
                 });
 
@@ -5808,6 +5813,11 @@ namespace FSCM.Persistence.Migrations
 
             modelBuilder.Entity("FSCM.Domain.Entities.ReceiptDiscrepancyItem", b =>
                 {
+                    b.HasOne("FSCM.Domain.Entities.Allocation", null)
+                        .WithMany()
+                        .HasForeignKey("AllocationId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
                     b.HasOne("FSCM.Domain.Entities.Batch", null)
                         .WithMany()
                         .HasForeignKey("BatchId")

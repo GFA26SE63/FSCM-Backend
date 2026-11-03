@@ -5,7 +5,7 @@ public sealed record CreateOrderLineData(Guid ProductId, int Quantity);
 public sealed record CreateAssistedOrderData(
     Guid ClientOrderKey,
     Guid RetailerId,
-    string PaymentMethod,
+    string? PaymentMethod,
     DateOnly? RequestedDeliveryDate,
     string? DeliveryAddress,
     string? Note,
@@ -20,7 +20,7 @@ public sealed record CreateAssistedOrderData(
 public sealed record SubmitOfflineOrderData(
     Guid ClientOrderKey,
     Guid RetailerId,
-    string PaymentMethod,
+    string? PaymentMethod,
     DateOnly? RequestedDeliveryDate,
     string? DeliveryAddress,
     string? Note,
@@ -173,7 +173,7 @@ public sealed record OrderSummaryResult(
     Guid SalesGroupId,
     Guid CreatedByUserId,
     string Status,
-    string PaymentMethod,
+    string? PaymentMethod,
     decimal FinalAmount,
     bool FinalPricePendingAllocation,
     string AllocationState,
@@ -238,7 +238,7 @@ public sealed record OrderDetailResult(
     Guid? ReviewedByUserId,
     string Source,
     string Status,
-    string PaymentMethod,
+    string? PaymentMethod,
     int CreditTermDays,
     string DeliveryAddress,
     DateOnly? RequestedDeliveryDate,
@@ -303,12 +303,12 @@ public static class OrderStatuses
     public const string PendingAllocation = Allocating;
 
     public const string Approved = Quoted;
-    public const string Picking = ConvertedToPo;
+    public const string Picking = "Picking";
     public const string Rejected = QuoteRejected;
     public const string Cancelled = Withdrawn;
-    public const string Issued = ConvertedToPo;
-    public const string Delivering = ConvertedToPo;
-    public const string Delivered = ConvertedToPo;
+    public const string Issued = "Issued";
+    public const string Delivering = "Delivering";
+    public const string Delivered = "Delivered";
 
     /// <summary>
     /// Everything about the order is settled: every warehouse part was received, the money is in,
@@ -320,7 +320,7 @@ public static class OrderStatuses
     /// delivered and not yet paid. Collapsing the two would pay points on money that has not
     /// arrived and on quantities that are still being argued about.
     /// </summary>
-    public const string Completed = ConvertedToPo;
+    public const string Completed = "Completed";
 }
 
 public static class OrderSources
@@ -341,5 +341,5 @@ public static class OrderPaymentMethods
     /// <summary>Deferred payment on the Retailer's approved 7/14/30-day term.</summary>
     public const string Credit = "Credit";
 
-    public static bool IsSupported(string value) => value is Prepaid or Credit;
+    public static bool IsSupported(string? value) => value is Prepaid or Credit;
 }

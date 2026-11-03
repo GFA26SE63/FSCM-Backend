@@ -16,7 +16,7 @@ public sealed class SalesOrder
     public string RequestHash { get; set; } = string.Empty;
     public string Source { get; set; } = string.Empty;
     public string Status { get; set; } = string.Empty;
-    public string PaymentMethod { get; set; } = string.Empty;
+    public string? PaymentMethod { get; set; }
     public string DeliveryAddress { get; set; } = string.Empty;
     public DateOnly? RequestedDeliveryDate { get; set; }
     public string? Note { get; set; }

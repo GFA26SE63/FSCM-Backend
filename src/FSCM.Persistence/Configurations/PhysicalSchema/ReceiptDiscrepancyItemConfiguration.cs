@@ -15,6 +15,7 @@ public sealed class ReceiptDiscrepancyItemConfiguration : IEntityTypeConfigurati
         builder.Property(entity => entity.BatchId).HasColumnType("uuid").IsRequired(false);
         builder.Property(entity => entity.ShipmentId).HasColumnType("uuid").IsRequired(false);
         builder.Property(entity => entity.AllocationPlanPriceId).HasColumnType("uuid").IsRequired(false);
+        builder.Property(entity => entity.AllocationId).HasColumnType("uuid").IsRequired(false);
         builder.Property(entity => entity.IssueType).HasMaxLength(30).IsRequired();
         builder.Property(entity => entity.ExpectedQuantity).HasPrecision(18, 3).IsRequired();
         builder.Property(entity => entity.ActualReceivedQuantity).HasPrecision(18, 3).IsRequired();
@@ -29,6 +30,10 @@ public sealed class ReceiptDiscrepancyItemConfiguration : IEntityTypeConfigurati
         builder.HasOne<Batch>()
             .WithMany()
             .HasForeignKey(entity => entity.BatchId)
+            .OnDelete(DeleteBehavior.Restrict);
+        builder.HasOne<Allocation>()
+            .WithMany()
+            .HasForeignKey(entity => entity.AllocationId)
             .OnDelete(DeleteBehavior.Restrict);
     }
 }

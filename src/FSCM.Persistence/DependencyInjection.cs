@@ -105,6 +105,7 @@ public static class DependencyInjection
         services.AddScoped<INotificationStore, NotificationStore>();
         services.AddScoped<IOrderStore, OrderStore>();
         services.AddScoped<IOrderReleaseStore, OrderReleaseStore>();
+        services.AddScoped<IPurchaseOrderGateStore, PurchaseOrderGateStore>();
         services.AddScoped<IPaymentStore, PaymentStore>();
         services.AddScoped<IPaymentReceiptStore, PaymentReceiptStore>();
         services.AddScoped<IRetailerReceivableStore, RetailerReceivableStore>();

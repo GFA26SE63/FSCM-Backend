@@ -36,17 +36,23 @@ public sealed class ComplaintStore(AppDbContext db) : IComplaintStore
             throw ComplaintOperationException.Conflict("The receipt is not linked to a shipment part.");
         if (data.ShipmentId.HasValue && data.ShipmentId.Value != shipmentId)
             throw ComplaintOperationException.Validation("Shipment part does not belong to the receipt.");
-        var priceRow = await (from split in db.RunPickingSplitRecords.AsNoTracking()
-                              join gather in db.RunPickingGatherRecords.AsNoTracking() on split.RunPickingGatherId equals gather.Id
-                              join price in db.AllocationPlanPriceRecords.AsNoTracking() on split.AllocationPlanPriceId equals price.Id
-                              where gather.RunPickingListId == shipment.RunPickingListId
-                                    && split.SalesOrderId == order.Id
-                                    && split.SalesOrderLineId == receiptItem.SalesOrderLineId
-                                    && gather.BatchId == receiptItem.BatchId
-                              select new { price.Id, price.FinalNetUnitPrice }).SingleOrDefaultAsync(ct)
+        var priceRow = await (from item in db.PickingItemRecords.AsNoTracking()
+                              join allocation in db.AllocationRecords.AsNoTracking() on item.AllocationId equals allocation.Id
+                              where shipment.PickingListId.HasValue
+                                    && item.PickingListId == shipment.PickingListId.Value
+                                    && allocation.SalesOrderLineId == receiptItem.SalesOrderLineId
+                                    && item.SourceBatchId == receiptItem.BatchId
+                              select new
+                              {
+                                  allocation.Id,
+                                  FinalNetUnitPrice = allocation.AllocatedQuantity == 0
+                                      ? 0
+                                      : allocation.NetAmount / allocation.AllocatedQuantity
+                              }).SingleOrDefaultAsync(ct)
             ?? throw ComplaintOperationException.Conflict("The received batch is not linked to an allocation price.");
-        if (data.AllocationPlanPriceId.HasValue && data.AllocationPlanPriceId.Value != priceRow.Id)
-            throw ComplaintOperationException.Validation("Allocation price does not belong to the shipment batch.");
+        var requestedAllocationId = data.AllocationId ?? data.AllocationPlanPriceId;
+        if (requestedAllocationId.HasValue && requestedAllocationId.Value != priceRow.Id)
+            throw ComplaintOperationException.Validation("Allocation does not belong to the shipment batch.");
         var adjustment = Math.Round((receiptItem.ExpectedQuantity - data.ActualQuantity) * priceRow.FinalNetUnitPrice, 0,
             MidpointRounding.AwayFromZero);
         if (await db.ReceiptDiscrepancyRecords.AnyAsync(x => x.SalesOrderId == order.Id && x.ReceiptConfirmationId == receipt.Id && x.Status != "Resolved" && x.Note == data.Note, ct))
@@ -55,7 +61,7 @@ public sealed class ComplaintStore(AppDbContext db) : IComplaintStore
             ReportedByRetailerUserId = actor, Status = "Open", Note = data.Note, ReportedAt = now };
         db.ReceiptDiscrepancyRecords.Add(discrepancy);
         db.ReceiptDiscrepancyItemRecords.Add(new ReceiptDiscrepancyItem { Id = Guid.NewGuid(), ReceiptDiscrepancyId = discrepancy.Id,
-            BatchId = label.Batch.Id, ShipmentId = shipmentId, AllocationPlanPriceId = priceRow.Id,
+            BatchId = label.Batch.Id, ShipmentId = shipmentId, AllocationId = priceRow.Id,
             IssueType = data.ActualQuantity < receiptItem.ExpectedQuantity ? "Shortage" : "Damaged",
             ExpectedQuantity = receiptItem.ExpectedQuantity, ActualReceivedQuantity = data.ActualQuantity,
             FinalUnitPrice = priceRow.FinalNetUnitPrice, AdjustmentAmount = adjustment,
@@ -103,5 +109,5 @@ public sealed class ComplaintStore(AppDbContext db) : IComplaintStore
     }
 
     private static ComplaintResult ToResult(ReceiptDiscrepancy d, string order, string retailerCode, string retailerName, string sku, string product, ReceiptDiscrepancyItem i, string? label, string? evidence) =>
-        new(d.Id, $"KN-{d.Id.ToString("N")[..8].ToUpperInvariant()}", order, retailerCode, retailerName, sku, product, i.ExpectedQuantity, i.ActualReceivedQuantity, i.IssueType, d.Status, label, i.Note ?? d.Note, evidence, d.ReportedAt, d.Status is "Approved" or "Rejected" or "Resolved" ? d.Note : null, i.ShipmentId, i.AllocationPlanPriceId, i.FinalUnitPrice, i.AdjustmentAmount, d.SalesOrderId);
+        new(d.Id, $"KN-{d.Id.ToString("N")[..8].ToUpperInvariant()}", order, retailerCode, retailerName, sku, product, i.ExpectedQuantity, i.ActualReceivedQuantity, i.IssueType, d.Status, label, i.Note ?? d.Note, evidence, d.ReportedAt, d.Status is "Approved" or "Rejected" or "Resolved" ? d.Note : null, i.ShipmentId, i.AllocationPlanPriceId, i.FinalUnitPrice, i.AdjustmentAmount, d.SalesOrderId, i.AllocationId);
 }

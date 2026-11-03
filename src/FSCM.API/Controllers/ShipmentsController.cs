@@ -66,6 +66,18 @@ public sealed class ShipmentsController(ShipmentService service) : ControllerBas
             GetActorRole(), cancellationToken);
 
     /// <summary>
+    /// Starts delivery after stock has been issued and a driver/vehicle have been assigned.
+    /// This transition does not deduct inventory again; it only hands the picked QR labels to
+    /// transport and changes them to InTransit.
+    /// </summary>
+    [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator}")]
+    [HttpPost("{id:guid}/dispatch")]
+    public Task<ShipmentResult> Dispatch(
+        Guid id, [FromBody] DispatchShipmentRequest request, CancellationToken cancellationToken) =>
+        service.DispatchAsync(id, new DispatchShipmentData(request.ExpectedVersion),
+            GetActorUserId(), GetActorRole(), cancellationToken);
+
+    /// <summary>
     /// F61: confirms actual received and damaged quantities for one warehouse shipment.
     /// Missing quantity is calculated by the server and the order completes only after every
     /// shipment is received without an exception.
