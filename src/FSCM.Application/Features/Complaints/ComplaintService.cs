@@ -11,9 +11,9 @@ public sealed class ComplaintService(
     IComplaintStore store,
     OrderCompletionService completion,
     TimeProvider timeProvider,
+    ImageUploadService images,
     PaymentService? payments = null,
-    LoyaltyAccrualService? loyalty = null,
-    ImageUploadService images)
+    LoyaltyAccrualService? loyalty = null)
 {
     private const ImageCategory Category = ImageCategory.ClaimEvidence;
 
