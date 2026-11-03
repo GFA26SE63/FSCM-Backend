@@ -7,16 +7,27 @@ namespace FSCM.Persistence.Quotes;
 
 public sealed class QuoteStore(AppDbContext db) : IQuoteStore
 {
-    public Task<QuoteView?> FindAsync(Guid id, bool forUpdate, CancellationToken ct)
+    public async Task<QuoteView?> FindAsync(Guid id, bool forUpdate, CancellationToken ct)
     {
-        var quotes = forUpdate ? db.SalesOrderQuoteRecords : db.SalesOrderQuoteRecords.AsNoTracking();
-        var orders = forUpdate ? db.SalesOrderRecords : db.SalesOrderRecords.AsNoTracking();
-        return (from quote in quotes
-                join order in orders on quote.SalesOrderId equals order.Id
-                join po0 in db.PurchaseOrderRecords.AsNoTracking() on quote.PurchaseOrderId equals po0.Id into pos
-                from po in pos.DefaultIfEmpty()
-                where quote.Id == id
-                select new QuoteView(quote, order, po)).SingleOrDefaultAsync(ct);
+        if (!forUpdate)
+        {
+            return await Build(db.SalesOrderQuoteRecords.AsNoTracking().Where(item => item.Id == id))
+                .SingleOrDefaultAsync(ct);
+        }
+
+        // Load mutable aggregates separately. Mixing tracked and no-tracking sources in a
+        // projected join can leave the quote/order detached, causing an acceptance response
+        // to reach the PO gate before the Accepted state has actually been persisted.
+        var quote = await db.SalesOrderQuoteRecords.SingleOrDefaultAsync(item => item.Id == id, ct);
+        if (quote is null) return null;
+        var order = await db.SalesOrderRecords.SingleAsync(item => item.Id == quote.SalesOrderId, ct);
+        var retailer = await db.RetailerRecords.AsNoTracking()
+            .SingleAsync(item => item.Id == order.RetailerId, ct);
+        var purchaseOrder = quote.PurchaseOrderId.HasValue
+            ? await db.PurchaseOrderRecords.AsNoTracking()
+                .SingleOrDefaultAsync(item => item.Id == quote.PurchaseOrderId.Value, ct)
+            : null;
+        return new QuoteView(quote, order, retailer, purchaseOrder);
     }
 
     public async Task<IReadOnlyCollection<QuoteView>> ListForOrderAsync(Guid orderId, CancellationToken ct) =>
@@ -38,12 +49,14 @@ public sealed class QuoteStore(AppDbContext db) : IQuoteStore
     public void Add(SalesOrderQuote quote) => db.SalesOrderQuoteRecords.Add(quote);
     public void AddPurchaseOrder(PurchaseOrder purchaseOrder) => db.PurchaseOrderRecords.Add(purchaseOrder);
     public void AddPayment(Payment payment) => db.PaymentRecords.Add(payment);
+    public void AddHistory(OrderStatusHistory history) => db.OrderStatusHistoryRecords.Add(history);
     public Task SaveChangesAsync(CancellationToken ct) => db.SaveChangesAsync(ct);
 
     private IQueryable<QuoteView> Build(IQueryable<SalesOrderQuote> quotes) =>
         from quote in quotes
         join order in db.SalesOrderRecords.AsNoTracking() on quote.SalesOrderId equals order.Id
+        join retailer in db.RetailerRecords.AsNoTracking() on order.RetailerId equals retailer.Id
         join po0 in db.PurchaseOrderRecords.AsNoTracking() on quote.PurchaseOrderId equals po0.Id into pos
         from po in pos.DefaultIfEmpty()
-        select new QuoteView(quote, order, po);
+        select new QuoteView(quote, order, retailer, po);
 }

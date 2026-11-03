@@ -11,7 +11,8 @@ namespace FSCM.Application.Features.Payments;
 public sealed class PaymentService(
     IPaymentStore store,
     IPayOsGateway payOsGateway,
-    TimeProvider timeProvider)
+    TimeProvider timeProvider,
+    PurchaseOrderGateService? purchaseOrderGateService = null)
 {
     private static readonly TimeSpan VietnamOffset = TimeSpan.FromHours(7);
 
@@ -406,6 +407,8 @@ public sealed class PaymentService(
             await store.SaveChangesAsync(transactionCancellationToken);
             result = new(true, "Payment was confirmed by payOS.", current.Payment.Id);
         }, cancellationToken);
+        if (result?.Processed == true && purchaseOrderGateService is not null)
+            await purchaseOrderGateService.TryCreateAsync(existing.Order.Id, cancellationToken);
         return result ?? throw PaymentOperationException.Conflict("Payment webhook could not be processed.");
     }
 

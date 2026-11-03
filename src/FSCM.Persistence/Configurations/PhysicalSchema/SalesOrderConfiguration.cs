@@ -23,7 +23,7 @@ public sealed class SalesOrderConfiguration : IEntityTypeConfiguration<SalesOrde
         builder.Property(entity => entity.RequestHash).HasMaxLength(64).IsRequired();
         builder.Property(entity => entity.Source).HasMaxLength(30).IsRequired();
         builder.Property(entity => entity.Status).HasConversion(new EnumCodeConverter("SalesOrderStatus")).HasColumnType("smallint").IsRequired();
-        builder.Property(entity => entity.PaymentMethod).HasConversion(new EnumCodeConverter("PaymentMethod")).HasColumnType("smallint").IsRequired();
+        builder.Property(entity => entity.PaymentMethod).HasConversion(new NullableEnumCodeConverter("PaymentMethod")).HasColumnType("smallint").IsRequired(false);
         builder.Property(entity => entity.DeliveryAddress).HasColumnType("text").IsRequired();
         builder.Property(entity => entity.RequestedDeliveryDate).HasColumnType("date").IsRequired(false);
         builder.Property(entity => entity.Note).HasColumnType("text").IsRequired(false);
@@ -46,8 +46,8 @@ public sealed class SalesOrderConfiguration : IEntityTypeConfiguration<SalesOrde
         builder.HasIndex(entity => new { entity.CreatedByUserId, entity.ServerReceivedAt });
         builder.ToTable(table =>
         {
-            table.HasCheckConstraint("CK_SALES_ORDER_Status", "\"Status\" BETWEEN 0 AND 9");
-            table.HasCheckConstraint("CK_SALES_ORDER_PaymentMethod", "\"PaymentMethod\" BETWEEN 0 AND 1");
+            table.HasCheckConstraint("CK_SALES_ORDER_Status", "\"Status\" BETWEEN 0 AND 14");
+            table.HasCheckConstraint("CK_SALES_ORDER_PaymentMethod", "\"PaymentMethod\" IS NULL OR \"PaymentMethod\" BETWEEN 0 AND 1");
         });
         builder.HasOne<Retailer>()
             .WithMany()

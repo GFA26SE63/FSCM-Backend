@@ -21,7 +21,7 @@ public sealed class ComplaintsController(ComplaintService service) : ControllerB
     {
         var created = await service.CreateAsync(ActorId(), new(request.OrderCode, request.Sku, request.LabelCode,
             request.ActualQty, request.Note, request.EvidenceUrl, request.ShipmentId,
-            request.AllocationPlanPriceId), ct);
+            request.AllocationPlanPriceId, request.AllocationId), ct);
         var result = (await service.ListAsync(ActorId(), SystemRoles.Retailer, ct)).Single(x => x.Id == created.Id);
         return CreatedAtAction(nameof(List), new { id = result.Id }, result);
     }
