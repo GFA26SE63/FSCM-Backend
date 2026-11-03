@@ -90,6 +90,7 @@ public sealed record ShipmentReceiptResult(
     string Status,
     DateTimeOffset ConfirmedAt,
     string? Note,
+    IReadOnlyCollection<string> QrCodes,
     IReadOnlyCollection<ShipmentReceiptLineResult> Lines);
 
 public sealed record ShipmentResult(

@@ -28,13 +28,13 @@ public sealed class LoyaltyAccrualStore(AppDbContext dbContext) : ILoyaltyAccrua
             ? []
             : await dbContext.LoyaltyTransactionRecords.AsNoTracking()
                 .Where(item => item.RetailerLoyaltyId == balance.Id && item.SalesOrderId == salesOrderId)
-                .Select(item => item.TransactionType)
+                .Select(item => new { item.TransactionType, item.Points })
                 .ToArrayAsync(cancellationToken);
 
         // A hold is live until its own cancellation lands, so both rows are counted rather than
         // just looking for the hold.
-        var pending = ledger.Count(type => type == LoyaltyTransactionTypes.PendingEarn);
-        var cancelled = ledger.Count(type => type == LoyaltyTransactionTypes.PendingEarnCancelled);
+        var pending = ledger.Count(item => item.TransactionType == LoyaltyTransactionTypes.PendingEarn);
+        var cancelled = ledger.Count(item => item.TransactionType == LoyaltyTransactionTypes.PendingEarnCancelled);
 
         // A prepaid order is settled by its payment row; a credit order is settled by the
         // receivable being collected, which is the same ledger reaching Paid.
@@ -45,7 +45,7 @@ public sealed class LoyaltyAccrualStore(AppDbContext dbContext) : ILoyaltyAccrua
             salesOrderId,
             order.RetailerId,
             order.Status,
-            order.FinalAmount,
+            payment?.AdjustedAmount ?? order.FinalAmount,
             payment is not null && payment.Status == PaymentStatuses.Paid,
             await dbContext.ReceiptDiscrepancyRecords.AsNoTracking().AnyAsync(
                 item => item.SalesOrderId == salesOrderId && item.ResolvedAt == null, cancellationToken),
@@ -53,8 +53,11 @@ public sealed class LoyaltyAccrualStore(AppDbContext dbContext) : ILoyaltyAccrua
             balance is null
                 ? null
                 : new RetailerBalanceSnapshot(balance.Id, balance.CurrentPoints, balance.LifetimeEarnedPoints),
-            ledger.Contains(LoyaltyTransactionTypes.Earned),
-            pending > cancelled);
+            ledger.Any(item => item.TransactionType == LoyaltyTransactionTypes.Earned),
+            pending > cancelled,
+            ledger.Where(item => item.TransactionType is LoyaltyTransactionTypes.Earned or
+                    LoyaltyTransactionTypes.EarnedAdjusted)
+                .Sum(item => item.Points));
     }
 
     public async Task<RetailerBalanceSnapshot> EnsureBalanceAsync(
