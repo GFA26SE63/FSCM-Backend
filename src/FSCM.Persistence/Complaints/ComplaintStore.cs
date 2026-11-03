@@ -14,6 +14,15 @@ public sealed class ComplaintStore(AppDbContext db) : IComplaintStore
         if (string.IsNullOrWhiteSpace(data.OrderCode) || string.IsNullOrWhiteSpace(data.Sku) || string.IsNullOrWhiteSpace(data.LabelCode))
             throw ComplaintOperationException.Validation("Order, SKU and label are required.");
         if (data.ActualQuantity < 0) throw ComplaintOperationException.Validation("Actual quantity cannot be negative.");
+        var issueType = string.IsNullOrWhiteSpace(data.IssueType)
+            ? "Shortage"
+            : data.IssueType.Trim() switch
+            {
+                "Shortage" => "Shortage",
+                "Damaged" => "Damaged",
+                _ => throw ComplaintOperationException.Validation(
+                    "Issue type must be Shortage or Damaged.")
+            };
         var retailer = await db.RetailerRecords.SingleOrDefaultAsync(x => x.UserAccountId == actor && x.Status == "Active", ct)
             ?? throw ComplaintOperationException.Forbidden("The account is not linked to an active retailer.");
         var order = await db.SalesOrderRecords.SingleOrDefaultAsync(x => x.OrderCode == data.OrderCode && x.RetailerId == retailer.Id, ct)
@@ -32,6 +41,9 @@ public sealed class ComplaintStore(AppDbContext db) : IComplaintStore
             ?? throw ComplaintOperationException.Conflict("The label was not recorded on the receipt.");
         if (data.ActualQuantity > receiptItem.ExpectedQuantity)
             throw ComplaintOperationException.Validation("Actual quantity cannot exceed the received expectation.");
+        if (data.ActualQuantity == receiptItem.ExpectedQuantity)
+            throw ComplaintOperationException.Validation(
+                "A complaint must identify at least one missing or unusable carton.");
         if (receipt.ShipmentId is not Guid shipmentId)
             throw ComplaintOperationException.Conflict("The receipt is not linked to a shipment part.");
         if (data.ShipmentId.HasValue && data.ShipmentId.Value != shipmentId)
@@ -62,7 +74,7 @@ public sealed class ComplaintStore(AppDbContext db) : IComplaintStore
         db.ReceiptDiscrepancyRecords.Add(discrepancy);
         db.ReceiptDiscrepancyItemRecords.Add(new ReceiptDiscrepancyItem { Id = Guid.NewGuid(), ReceiptDiscrepancyId = discrepancy.Id,
             BatchId = label.Batch.Id, ShipmentId = shipmentId, AllocationId = priceRow.Id,
-            IssueType = data.ActualQuantity < receiptItem.ExpectedQuantity ? "Shortage" : "Damaged",
+            IssueType = issueType,
             ExpectedQuantity = receiptItem.ExpectedQuantity, ActualReceivedQuantity = data.ActualQuantity,
             FinalUnitPrice = priceRow.FinalNetUnitPrice, AdjustmentAmount = adjustment,
             EvidenceBlobUrl = data.EvidenceUrl, Note = data.Note });
@@ -108,6 +120,15 @@ public sealed class ComplaintStore(AppDbContext db) : IComplaintStore
         return ToResult(row.d, row.o.OrderCode, row.r.Code, row.r.Name, row.p.Sku, row.p.Name, row.i, null, row.i.EvidenceBlobUrl);
     }
 
+    public async Task MarkFinancialAdjustmentAppliedAsync(Guid id, CancellationToken ct)
+    {
+        var discrepancy = await db.ReceiptDiscrepancyRecords.SingleOrDefaultAsync(
+            item => item.Id == id, ct)
+            ?? throw ComplaintOperationException.NotFound("Complaint was not found.");
+        discrepancy.ResolutionType = "PaymentAdjusted";
+        await db.SaveChangesAsync(ct);
+    }
+
     public async Task<ReceiptDiscrepancy?> FindOwnedComplaintAsync(Guid complaintId, Guid actorUserId, CancellationToken ct)
     {
         var complaint = await db.ReceiptDiscrepancyRecords.SingleOrDefaultAsync(x => x.Id == complaintId, ct);
@@ -137,5 +158,5 @@ public sealed class ComplaintStore(AppDbContext db) : IComplaintStore
             .SingleOrDefaultAsync(x => x.Id == evidenceId && x.ReceiptDiscrepancyId == complaintId, ct);
 
     private static ComplaintResult ToResult(ReceiptDiscrepancy d, string order, string retailerCode, string retailerName, string sku, string product, ReceiptDiscrepancyItem i, string? label, string? evidence) =>
-        new(d.Id, $"KN-{d.Id.ToString("N")[..8].ToUpperInvariant()}", order, retailerCode, retailerName, sku, product, i.ExpectedQuantity, i.ActualReceivedQuantity, i.IssueType, d.Status, label, i.Note ?? d.Note, evidence, d.ReportedAt, d.Status is "Approved" or "Rejected" or "Resolved" ? d.Note : null, i.ShipmentId, i.AllocationPlanPriceId, i.FinalUnitPrice, i.AdjustmentAmount, d.SalesOrderId, i.AllocationId);
+        new(d.Id, $"KN-{d.Id.ToString("N")[..8].ToUpperInvariant()}", order, retailerCode, retailerName, sku, product, i.ExpectedQuantity, i.ActualReceivedQuantity, i.IssueType, d.Status, label, i.Note ?? d.Note, evidence, d.ReportedAt, d.Status is "Approved" or "Rejected" or "Resolved" ? d.Note : null, i.ShipmentId, i.AllocationPlanPriceId, i.FinalUnitPrice, i.AdjustmentAmount, d.SalesOrderId, i.AllocationId, d.ResolutionType == "PaymentAdjusted");
 }

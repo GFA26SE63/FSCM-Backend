@@ -37,7 +37,7 @@ public sealed class RefundsController(RefundService service) : ControllerBase
     [HttpPost("{id:guid}/verify")]
     [Authorize(Roles = SystemRoles.Admin)]
     public Task<RefundResult> Verify(Guid id, VerifyRefundRequest request, CancellationToken ct) =>
-        service.VerifyAsync(id, new(request.ExpectedVersion, request.Note),
+        service.VerifyAsync(id, new(request.ExpectedVersion, request.Approved, request.Note),
             Request.Headers["Idempotency-Key"].ToString(), UserId(), Role(), ct);
 
     private Guid UserId() => Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var id)

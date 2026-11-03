@@ -722,6 +722,7 @@ public sealed class ShipmentService(
         view.Receipt is null ? null : new ShipmentReceiptResult(
             view.Receipt.Receipt.Id, view.Receipt.Receipt.Status, view.Receipt.Receipt.ConfirmedAt,
             view.Receipt.Receipt.Note,
+            view.Receipt.QrCodes,
             view.Receipt.Lines.Where(line => line.SalesOrderLineId.HasValue)
                 .Select(line => new ShipmentReceiptLineResult(
                     line.SalesOrderLineId!.Value, line.BatchId, line.ExpectedQuantity,

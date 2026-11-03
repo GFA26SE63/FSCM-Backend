@@ -12,7 +12,8 @@ public sealed class PaymentService(
     IPaymentStore store,
     IPayOsGateway payOsGateway,
     TimeProvider timeProvider,
-    PurchaseOrderGateService? purchaseOrderGateService = null)
+    PurchaseOrderGateService? purchaseOrderGateService = null,
+    OrderCompletionService? completionService = null)
 {
     private static readonly TimeSpan VietnamOffset = TimeSpan.FromHours(7);
 
@@ -69,6 +70,8 @@ public sealed class PaymentService(
                     "Operation key was already used for a different payment request.");
             if (!await store.CanViewAsync(prior, actorUserId, actorRole, cancellationToken))
                 throw PaymentOperationException.Forbidden("You cannot collect this payment.");
+            if (prior.Payment.Status == PaymentStatuses.Paid && completionService is not null)
+                await completionService.EvaluateAsync(orderId, actorUserId, cancellationToken);
             return ToResult(prior, Today());
         }
 
@@ -145,16 +148,18 @@ public sealed class PaymentService(
         }, cancellationToken);
 
         store.ClearTracking();
-        return ToResult(await store.FindByOrderAsync(orderId, false, cancellationToken)
+        var committed = await store.FindByOrderAsync(orderId, false, cancellationToken)
             ?? throw PaymentOperationException.Conflict(
-                "Payment was committed but could not be reloaded."), Today());
+                "Payment was committed but could not be reloaded.");
+        if (committed.Payment.Status == PaymentStatuses.Paid && completionService is not null)
+            await completionService.EvaluateAsync(orderId, actorUserId, cancellationToken);
+        return ToResult(committed, Today());
     }
 
     /// <summary>
-    /// F64: adjusts a credit receivable from an approved claim (positive amount reduces the
-    /// collectable total against the final price of the affected goods) or a rejected claim
-    /// (negative amount restores a prior reduction). Never recomputes shelf-life discounts; the
-    /// change applies to the adjusted collectable base only and keeps disputed money separate.
+    /// F64: adjusts the payment obligation from an approved claim. If money has not been collected,
+    /// the outstanding receivable is reduced. If the order was already paid, the same adjustment
+    /// creates a refund obligation without rewriting the approved price snapshot.
     /// </summary>
     public async Task<PaymentResult> AdjustReceivableAsync(
         Guid orderId,
@@ -192,30 +197,25 @@ public sealed class PaymentService(
         {
             var view = await store.FindByOrderAsync(orderId, true, transactionCancellationToken)
                 ?? throw PaymentOperationException.NotFound("Payment was not found.");
-            if (view.Payment.Method != OrderPaymentMethods.Credit)
-                throw PaymentOperationException.Conflict("Only a credit receivable can be adjusted.");
             if (!view.Payment.DeliveredDate.HasValue)
                 throw PaymentOperationException.Conflict(
-                    "A receivable can only be adjusted after complete receipt.");
+                    "A payment obligation can only be adjusted after complete receipt.");
             if (view.Payment.Version != data.ExpectedVersion)
                 throw PaymentOperationException.Conflict(
                     $"Payment version is {view.Payment.Version}; refresh and retry.");
 
             // Positive amount reduces the collectable base (approved claim); negative restores it.
             var adjusted = view.Payment.AdjustedAmount - data.Amount;
-            if (adjusted < view.Payment.ConfirmedAmount)
-                throw PaymentOperationException.Conflict(
-                    "Adjustment cannot reduce the receivable below the amount already collected.");
             if (adjusted > view.Payment.Amount)
                 throw PaymentOperationException.Conflict(
-                    "Adjustment cannot restore the receivable above the approved final total.");
+                    "Adjustment cannot restore the payment obligation above the approved final total.");
 
             var now = timeProvider.GetUtcNow();
             var oldValues = new { view.Payment.AdjustedAmount, view.Payment.Status, view.Payment.Version };
             view.Payment.AdjustedAmount = adjusted;
             // If the remaining collectable is fully covered by collections, the receivable is settled.
             if (view.Payment.Status != PaymentStatuses.Paid &&
-                view.Payment.ConfirmedAmount >= adjusted && adjusted >= 0 && view.Payment.ConfirmedAmount > 0)
+                view.Payment.ConfirmedAmount >= adjusted && adjusted >= 0)
             {
                 view.Payment.Status = PaymentStatuses.Paid;
                 view.Payment.PaidDate ??= DateOnly.FromDateTime(now.ToOffset(VietnamOffset).DateTime);
@@ -246,9 +246,12 @@ public sealed class PaymentService(
         }, cancellationToken);
 
         store.ClearTracking();
-        return ToResult(await store.FindByOrderAsync(orderId, false, cancellationToken)
+        var committed = await store.FindByOrderAsync(orderId, false, cancellationToken)
             ?? throw PaymentOperationException.Conflict(
-                "Payment was committed but could not be reloaded."), Today());
+                "Payment was committed but could not be reloaded.");
+        if (committed.Payment.Status == PaymentStatuses.Paid && completionService is not null)
+            await completionService.EvaluateAsync(orderId, actorUserId, cancellationToken);
+        return ToResult(committed, Today());
     }
 
     public async Task<PayOsCheckoutResult> CreatePayOsCheckoutAsync(

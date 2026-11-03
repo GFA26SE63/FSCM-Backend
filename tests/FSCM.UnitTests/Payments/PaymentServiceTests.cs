@@ -2,6 +2,9 @@ using FSCM.Application.Features.Orders;
 using FSCM.Application.Features.Payments;
 using FSCM.Domain.Authorization;
 using FSCM.Domain.Entities;
+using FSCM.Application.Features.Loyalty;
+using FSCM.UnitTests.Loyalty;
+using FSCM.UnitTests.Orders;
 
 namespace FSCM.UnitTests.Payments;
 
@@ -64,6 +67,20 @@ public sealed class PaymentServiceTests
         Assert.Equal("Collected", audit.Action);
         Assert.Equal(fixture.SalesUserId, audit.UserAccountId);
         Assert.Contains("Thu đủ công nợ", audit.Reason);
+    }
+
+    [Fact]
+    public async Task Full_credit_collection_rechecks_completion_and_closes_delivered_order()
+    {
+        var fixture = new Fixture();
+        fixture.CompletionStore.Views[fixture.Order.Id] = new(
+            fixture.Order.Id, OrderStatuses.Delivered, PaymentSettled: true, HasOpenComplaint: false);
+
+        await fixture.CollectAsync(
+            fixture.SalesUserId, SystemRoles.Sales, PaymentCollectionMethods.Cash);
+
+        Assert.Equal(OrderStatuses.Completed, fixture.Order.Status);
+        Assert.Contains(fixture.Order.Id, fixture.CompletionStore.Completed);
     }
 
     [Fact]
@@ -252,18 +269,19 @@ public sealed class PaymentServiceTests
     }
 
     [Fact]
-    public async Task Adjustment_cannot_reduce_below_collected_amount()
+    public async Task Adjustment_after_full_collection_creates_a_refund_obligation()
     {
         var fixture = new Fixture();
         // Collect in full first so ConfirmedAmount == AdjustedAmount.
         await fixture.CollectAsync(fixture.SalesUserId, SystemRoles.Sales, PaymentCollectionMethods.Cash);
 
-        var exception = await Assert.ThrowsAsync<PaymentOperationException>(() =>
-            fixture.Service.AdjustReceivableAsync(
-                fixture.Order.Id, new AdjustReceivableData(100_000, "Giảm sau khi đã thu đủ", 1),
-                "adjust-below", Guid.NewGuid(), SystemRoles.Operator, default));
+        var result = await fixture.Service.AdjustReceivableAsync(
+            fixture.Order.Id, new AdjustReceivableData(100_000, "Giảm sau khi đã thu đủ", 1),
+            "adjust-below", Guid.NewGuid(), SystemRoles.Operator, default);
 
-        Assert.Equal("conflict", exception.Code);
+        Assert.Equal(PaymentStatuses.Paid, result.Status);
+        Assert.Equal(fixture.Order.FinalAmount - 100_000, result.AdjustedAmount);
+        Assert.Equal(100_000, result.RefundDueAmount);
     }
 
     [Fact]
@@ -290,6 +308,7 @@ public sealed class PaymentServiceTests
         public PaymentPlanService Plan { get; }
         public PaymentService Service { get; }
         public FakePayOsGateway Gateway { get; }
+        public FakeOrderCompletionStore CompletionStore { get; }
 
         public Fixture(
             string method = OrderPaymentMethods.Credit,
@@ -336,7 +355,23 @@ public sealed class PaymentServiceTests
             Store = new FakePaymentStore(this);
             Gateway = new FakePayOsGateway();
             Plan = new PaymentPlanService(Store);
-            Service = new PaymentService(Store, Gateway, new FixedTimeProvider(Now));
+            CompletionStore = new FakeOrderCompletionStore
+            {
+                OnCompleted = id =>
+                {
+                    if (id == Order.Id) Order.Status = OrderStatuses.Completed;
+                }
+            };
+            Service = new PaymentService(
+                Store,
+                Gateway,
+                new FixedTimeProvider(Now),
+                null,
+                new OrderCompletionService(
+                    CompletionStore,
+                    new LoyaltyAccrualService(
+                        new FakeLoyaltyAccrualStore(), new FixedTimeProvider(Now)),
+                    new FixedTimeProvider(Now)));
         }
 
         public Task<PaymentResult> CollectAsync(
