@@ -1,5 +1,6 @@
 using FSCM.Application.Features.Catalog;
 using FSCM.Domain.Entities;
+using FSCM.UnitTests.Storage;
 
 namespace FSCM.UnitTests.Catalog;
 
@@ -270,15 +271,59 @@ public sealed class CatalogServiceTests
         Assert.Single(fixture.Store.Categories);
     }
 
+    [Fact]
+    public async Task Set_product_image_stores_blob_key_and_exposes_read_url()
+    {
+        var fixture = new CatalogFixture();
+        var category = fixture.AddCategory("CAT-01");
+        var product = fixture.AddProduct(category.Id, "SKU001", ProductStatuses.Published);
+
+        var result = await fixture.Service.SetProductImageAsync(
+            product.Id, FakeImageFactory.Png(), CancellationToken.None);
+
+        Assert.NotNull(result.ImageUrl);
+        Assert.Contains("ProductImage", result.ImageUrl);
+        Assert.NotNull(product.ImageBlobKey);
+        Assert.Single(fixture.Images.Blobs);
+    }
+
+    [Fact]
+    public async Task Replacing_product_image_deletes_previous_blob()
+    {
+        var fixture = new CatalogFixture();
+        var category = fixture.AddCategory("CAT-01");
+        var product = fixture.AddProduct(category.Id, "SKU001", ProductStatuses.Published);
+
+        await fixture.Service.SetProductImageAsync(product.Id, FakeImageFactory.Png(), CancellationToken.None);
+        var firstKey = product.ImageBlobKey;
+        await fixture.Service.SetProductImageAsync(product.Id, FakeImageFactory.Jpeg(), CancellationToken.None);
+
+        Assert.Contains(firstKey, fixture.Images.Deleted);
+        Assert.NotEqual(firstKey, product.ImageBlobKey);
+    }
+
+    [Fact]
+    public async Task Set_product_image_rejects_non_image_content()
+    {
+        var fixture = new CatalogFixture();
+        var category = fixture.AddCategory("CAT-01");
+        var product = fixture.AddProduct(category.Id, "SKU001", ProductStatuses.Published);
+
+        await Assert.ThrowsAsync<FSCM.Application.Features.Storage.ImageStorageException>(() =>
+            fixture.Service.SetProductImageAsync(product.Id, FakeImageFactory.Fake("application/pdf"), CancellationToken.None));
+    }
+
     private sealed class CatalogFixture
     {
         public CatalogFixture()
         {
             Store = new InMemoryCatalogStore();
-            Service = new CatalogService(Store, new TestTimeProvider(Now));
+            Images = new FakeImageStorage();
+            Service = new CatalogService(Store, new TestTimeProvider(Now), Images.ToUploadService());
         }
 
         public InMemoryCatalogStore Store { get; }
+        public FakeImageStorage Images { get; }
         public CatalogService Service { get; }
 
         public ProductCategory AddCategory(string code, Guid? parentId = null)

@@ -129,6 +129,34 @@ public sealed class ComplaintStore(AppDbContext db) : IComplaintStore
         await db.SaveChangesAsync(ct);
     }
 
+    public async Task<ReceiptDiscrepancy?> FindOwnedComplaintAsync(Guid complaintId, Guid actorUserId, CancellationToken ct)
+    {
+        var complaint = await db.ReceiptDiscrepancyRecords.SingleOrDefaultAsync(x => x.Id == complaintId, ct);
+        if (complaint is null) return null;
+        // Retailer who reported it, or whose linked account owns it.
+        if (complaint.ReportedByRetailerUserId == actorUserId) return complaint;
+        var owns = await db.RetailerRecords
+            .Join(db.SalesOrderRecords, r => r.Id, o => o.RetailerId, (r, o) => new { r.UserAccountId, o.Id })
+            .AnyAsync(x => x.UserAccountId == actorUserId && x.Id == complaint.SalesOrderId, ct);
+        return owns ? complaint : null;
+    }
+
+    public async Task AddEvidenceAsync(ComplaintEvidence evidence, CancellationToken ct)
+    {
+        db.ComplaintEvidenceRecords.Add(evidence);
+        await db.SaveChangesAsync(ct);
+    }
+
+    public async Task<IReadOnlyCollection<ComplaintEvidence>> ListEvidenceAsync(Guid complaintId, CancellationToken ct) =>
+        await db.ComplaintEvidenceRecords.AsNoTracking()
+            .Where(x => x.ReceiptDiscrepancyId == complaintId)
+            .OrderBy(x => x.UploadedAt)
+            .ToArrayAsync(ct);
+
+    public Task<ComplaintEvidence?> FindEvidenceAsync(Guid complaintId, Guid evidenceId, CancellationToken ct) =>
+        db.ComplaintEvidenceRecords.AsNoTracking()
+            .SingleOrDefaultAsync(x => x.Id == evidenceId && x.ReceiptDiscrepancyId == complaintId, ct);
+
     private static ComplaintResult ToResult(ReceiptDiscrepancy d, string order, string retailerCode, string retailerName, string sku, string product, ReceiptDiscrepancyItem i, string? label, string? evidence) =>
         new(d.Id, $"KN-{d.Id.ToString("N")[..8].ToUpperInvariant()}", order, retailerCode, retailerName, sku, product, i.ExpectedQuantity, i.ActualReceivedQuantity, i.IssueType, d.Status, label, i.Note ?? d.Note, evidence, d.ReportedAt, d.Status is "Approved" or "Rejected" or "Resolved" ? d.Note : null, i.ShipmentId, i.AllocationPlanPriceId, i.FinalUnitPrice, i.AdjustmentAmount, d.SalesOrderId, i.AllocationId, d.ResolutionType == "PaymentAdjusted");
 }
