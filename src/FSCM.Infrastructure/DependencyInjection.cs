@@ -29,6 +29,14 @@ public static class DependencyInjection
             client.BaseAddress = new Uri(options.ApiBaseUrl);
             client.Timeout = TimeSpan.FromSeconds(15);
         });
+        services.AddHttpClient<ISmsSender, BrevoSmsSender>((provider, client) =>
+        {
+            var options = provider.GetRequiredService<IOptions<BrevoOptions>>().Value;
+            client.BaseAddress = new Uri(options.ApiBaseUrl);
+            client.Timeout = TimeSpan.FromSeconds(15);
+        });
+        services.AddSingleton(configuration.GetSection(RetailerActivationOptions.SectionName)
+            .Get<RetailerActivationOptions>() ?? new RetailerActivationOptions());
         services.AddHttpClient("GoogleMaps", client => client.Timeout = TimeSpan.FromSeconds(10));
         services.AddSingleton<IMapProvider, GoogleMapsProvider>();
         services.AddSingleton<IPasswordHasher, BcryptPasswordHasher>();
@@ -37,8 +45,9 @@ public static class DependencyInjection
 
         services.Configure<DateTrackerOptions>(configuration.GetSection(DateTrackerOptions.SectionName));
         services.AddHostedService<DateTrackerHostedService>();
+        // Review 2 flow allocates each SO in real time. The legacy scheduled run still targets
+        // archived RUN_* tables and must not start alongside real-time reservation.
         services.Configure<AllocationRunOptions>(configuration.GetSection(AllocationRunOptions.SectionName));
-        services.AddHostedService<AllocationRunHostedService>();
         services.Configure<InventoryOutboxOptions>(configuration.GetSection(InventoryOutboxOptions.SectionName));
         services.AddHostedService<InventoryOutboxHostedService>();
         services.AddSingleton<IPayOsGateway>(_ => new PayOsGateway(configuration));

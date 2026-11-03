@@ -6,6 +6,7 @@ using FSCM.Application.Features.Shipments;
 using FSCM.UnitTests.Loyalty;
 using FSCM.Application.Features.Payments;
 using FSCM.Application.Features.Orders;
+using FSCM.Application.Features.Picking;
 using FSCM.Application.Features.QrLabels;
 using FSCM.Domain.Authorization;
 using FSCM.Domain.Entities;
@@ -170,6 +171,54 @@ public sealed class ShipmentServiceTests
                 SystemRoles.WarehouseKeeper, default));
 
         Assert.Equal("forbidden", exception.Code);
+    }
+
+    [Fact]
+    public async Task Dispatch_moves_picked_labels_and_order_without_deducting_stock_twice()
+    {
+        var fixture = new Fixture();
+        var (shipment, _, hold) = fixture.AddReadyShipment(fixture.WarehouseA, 8);
+        var issued = await fixture.Service.ConfirmIssueAsync(
+            shipment.Id, new ConfirmShipmentIssueData(shipment.Version), Guid.NewGuid(),
+            SystemRoles.WarehouseKeeper, default);
+        var label = new BatchQrLabel
+        {
+            Id = Guid.NewGuid(), BatchId = hold.BatchId, CurrentWarehouseId = fixture.WarehouseA,
+            QrCode = "TEM-009001", Quantity = 8, Status = QrLabelStatuses.Picked, Version = 1
+        };
+        fixture.Store.Labels.Add(new ShipmentLabelView(label, hold.BatchId));
+        var assigned = await fixture.Service.AssignAsync(
+            shipment.Id, new AssignShipmentData(fixture.DriverA.Id, fixture.VehicleA.Id, issued.Version),
+            SystemRoles.Operator, default);
+        var inventoryTransactionsBeforeDispatch = fixture.Store.InventoryTransactions.Count;
+
+        var result = await fixture.Service.DispatchAsync(
+            shipment.Id, new DispatchShipmentData(assigned.Version), Guid.NewGuid(),
+            SystemRoles.Operator, default);
+
+        Assert.Equal(ShipmentStatuses.Delivering, result.Status);
+        Assert.Equal(OrderStatuses.Delivering, fixture.Order.Status);
+        Assert.Equal(QrLabelStatuses.InTransit, label.Status);
+        Assert.Single(fixture.Store.LabelEvents);
+        Assert.Equal(QrLabelEventTypes.Dispatched, fixture.Store.LabelEvents[0].EventType);
+        Assert.Equal(inventoryTransactionsBeforeDispatch, fixture.Store.InventoryTransactions.Count);
+    }
+
+    [Fact]
+    public async Task Dispatch_rejects_an_issued_shipment_without_transport_assignment()
+    {
+        var fixture = new Fixture();
+        var (shipment, _, _) = fixture.AddReadyShipment(fixture.WarehouseA, 8);
+        var issued = await fixture.Service.ConfirmIssueAsync(
+            shipment.Id, new ConfirmShipmentIssueData(shipment.Version), Guid.NewGuid(),
+            SystemRoles.WarehouseKeeper, default);
+
+        var exception = await Assert.ThrowsAsync<ShipmentOperationException>(() =>
+            fixture.Service.DispatchAsync(
+                shipment.Id, new DispatchShipmentData(issued.Version), Guid.NewGuid(),
+                SystemRoles.Operator, default));
+
+        Assert.Equal("conflict", exception.Code);
     }
 
     [Fact]
@@ -419,7 +468,7 @@ public sealed class ShipmentServiceTests
         var fixture = new Fixture();
         fixture.AddReadyShipment(fixture.WarehouseA, 12m, onHand: 50m);
         fixture.AddOpenPickingList(
-            fixture.WarehouseB, "WH-B", RunPickingListStatuses.NeedsHandling);
+            fixture.WarehouseB, "WH-B", PickingListStatuses.Exception);
 
         var readiness = await fixture.Service.GetOrderReadinessAsync(
             fixture.Order.Id, Guid.NewGuid(), SystemRoles.Operator, CancellationToken.None);
@@ -514,7 +563,7 @@ public sealed class ShipmentServiceTests
         await fixture.Service.ConfirmIssueAsync(
             second.Id, new ConfirmShipmentIssueData(second.Version), actor,
             SystemRoles.WarehouseKeeper, CancellationToken.None);
-        Assert.Equal(OrderStatuses.ConvertedToPo, fixture.Order.Status);
+        Assert.Equal(OrderStatuses.Issued, fixture.Order.Status);
     }
 
     [Fact]
@@ -566,7 +615,7 @@ public sealed class ShipmentServiceTests
         {
             Order = new SalesOrder
             {
-                Id = Guid.NewGuid(), OrderCode = "DH-002001", Status = OrderStatuses.Delivering,
+                Id = Guid.NewGuid(), OrderCode = "DH-002001", Status = OrderStatuses.ConvertedToPo,
                 PaymentMethod = OrderPaymentMethods.Credit, CreditTermDays = 7, FinalAmount = 1_000_000
             };
             Store = new FakeStore(Order);
@@ -662,6 +711,7 @@ public sealed class ShipmentServiceTests
         public (Shipment Shipment, ShipmentLineView Line, Guid BatchId, string QrCode)
             AddDeliveringShipment(decimal quantity)
         {
+            Order.Status = OrderStatuses.Delivering;
             var shipment = new Shipment
             {
                 Id = Guid.NewGuid(), SalesOrderId = Order.Id, WarehouseId = WarehouseA,
@@ -690,6 +740,7 @@ public sealed class ShipmentServiceTests
         public List<ReceiptConfirmationItem> ReceiptLines { get; } = [];
         public List<ReceiptConfirmationQrLabel> ReceiptLabels { get; } = [];
         public List<ShipmentLabelView> Labels { get; } = [];
+        public List<QrLabelEvent> LabelEvents { get; } = [];
         public Dictionary<Guid, IReadOnlyCollection<ShipmentLineView>> Lines { get; } = [];
         public List<PendingShipmentSource> PendingLists { get; } = [];
 
@@ -790,7 +841,7 @@ public sealed class ShipmentServiceTests
         public void AddReceipt(ReceiptConfirmation receipt) => Receipts.Add(receipt);
         public void AddReceiptLine(ReceiptConfirmationItem line) => ReceiptLines.Add(line);
         public void AddReceiptQrLabel(ReceiptConfirmationQrLabel qrLabel) => ReceiptLabels.Add(qrLabel);
-        public void AddLabelEvent(QrLabelEvent labelEvent) { }
+        public void AddLabelEvent(QrLabelEvent labelEvent) => LabelEvents.Add(labelEvent);
         public void AddOrderHistory(OrderStatusHistory history) { }
 
         public Task SaveChangesAsync(CancellationToken cancellationToken) => Task.CompletedTask;

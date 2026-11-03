@@ -8,25 +8,24 @@ using Microsoft.AspNetCore.Mvc;
 namespace FSCM.API.Controllers;
 
 [ApiController]
-[NonController]
 [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator},{SystemRoles.WarehouseKeeper}")]
 [Route("api/v1/picking-lists")]
-public sealed class PickingListsController(PickingService service) : ControllerBase
+public sealed class PickingListsController(CurrentPickingService service) : ControllerBase
 {
     [HttpGet]
-    public Task<IReadOnlyCollection<PickingListResult>> List(
+    public Task<IReadOnlyCollection<CurrentPickingResult>> List(
         [FromQuery] Guid? warehouseId,
         [FromQuery] string? status,
         CancellationToken cancellationToken) =>
         service.ListAsync(GetActorUserId(), GetActorRole(), warehouseId, status, cancellationToken);
 
     [HttpGet("{pickingCode}")]
-    public Task<PickingListResult> Get(string pickingCode, CancellationToken cancellationToken) =>
+    public Task<CurrentPickingResult> Get(string pickingCode, CancellationToken cancellationToken) =>
         service.GetAsync(pickingCode, GetActorUserId(), GetActorRole(), cancellationToken);
 
     [Authorize(Roles = SystemRoles.WarehouseKeeper)]
     [HttpPost("{pickingCode}/scans")]
-    public Task<PickingListResult> Scan(
+    public Task<CurrentPickingResult> Scan(
         string pickingCode,
         ScanPickingLabelRequest request,
         [FromHeader(Name = "Idempotency-Key")] string operationKey,
@@ -48,7 +47,7 @@ public sealed class PickingListsController(PickingService service) : ControllerB
     /// <summary>Marks one warehouse portion Ready only after every approved gather/split is picked.</summary>
     [Authorize(Roles = SystemRoles.WarehouseKeeper)]
     [HttpPost("{pickingCode}/complete")]
-    public Task<PickingListResult> Complete(
+    public Task<CurrentPickingResult> Complete(
         string pickingCode,
         CompleteRunPickingRequest request,
         CancellationToken cancellationToken) =>

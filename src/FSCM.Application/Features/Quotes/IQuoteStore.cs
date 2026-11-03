@@ -2,7 +2,11 @@ using FSCM.Domain.Entities;
 
 namespace FSCM.Application.Features.Quotes;
 
-public sealed record QuoteView(SalesOrderQuote Quote, SalesOrder Order, PurchaseOrder? PurchaseOrder);
+public sealed record QuoteView(
+    SalesOrderQuote Quote,
+    SalesOrder Order,
+    Retailer Retailer,
+    PurchaseOrder? PurchaseOrder);
 
 public interface IQuoteStore
 {
@@ -14,5 +18,6 @@ public interface IQuoteStore
     void Add(SalesOrderQuote quote);
     void AddPurchaseOrder(PurchaseOrder purchaseOrder);
     void AddPayment(Payment payment);
+    void AddHistory(OrderStatusHistory history);
     Task SaveChangesAsync(CancellationToken cancellationToken);
 }

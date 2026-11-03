@@ -1,5 +1,5 @@
-using FSCM.Application.Features.AllocationRuns;
 using FSCM.Application.Features.Inventory;
+using FSCM.Application.Features.Picking;
 using FSCM.Domain.Entities;
 
 namespace FSCM.Application.Features.Orders;
@@ -66,6 +66,7 @@ public sealed class OrderReleaseService(IOrderReleaseStore store, TimeProvider t
 
             row.Reservation.Status = ReservationStatuses.Released;
             row.Reservation.ReleasedAt = now;
+            row.Allocation.Status = AllocationInventoryStatuses.Released;
 
             store.AddInventoryTransaction(new InventoryTransaction
             {
@@ -76,7 +77,7 @@ public sealed class OrderReleaseService(IOrderReleaseStore store, TimeProvider t
                 CreatedByUserId = actorUserId,
                 TransactionType = InventoryTransactionTypes.OrderRelease,
                 SourceType = InventoryTransactionSourceTypes.Allocation,
-                SourceId = row.AllocationRunAllocationId,
+                SourceId = row.Allocation.Id,
                 ReferenceCode = referenceCode,
                 // Letting go does not move anything: only the reserved side changes.
                 PhysicalQuantityDelta = 0m,
@@ -104,7 +105,7 @@ public sealed class OrderReleaseService(IOrderReleaseStore store, TimeProvider t
         if (shares.Count == 0) return 0;
 
         var started = shares.FirstOrDefault(item =>
-            item.Split.PickedQuantity > 0 || item.List.Status != RunPickingListStatuses.Issued);
+            item.Item.PickedQuantity > 0 || item.List.Status != PickingListStatuses.Pending);
         if (started is not null)
         {
             throw OrderOperationException.Conflict(
@@ -112,21 +113,20 @@ public sealed class OrderReleaseService(IOrderReleaseStore store, TimeProvider t
                 "this order can no longer be cancelled here.");
         }
 
-        foreach (var group in shares.GroupBy(item => item.Gather.Id))
-        {
-            var gather = group.First().Gather;
-            foreach (var share in group)
-            {
-                gather.RequiredQuantity -= share.Split.Quantity;
-                store.RemoveSplit(share.Split);
-            }
+        var itemCounts = new Dictionary<Guid, int>();
+        foreach (var listId in shares.Select(item => item.List.Id).Distinct())
+            itemCounts[listId] = await store.CountPickingItemsAsync(listId, cancellationToken);
 
-            // Nothing left for this batch once this order is out of it, so the trip to the shelf
-            // should not stay on the sheet at all.
-            if (gather.RequiredQuantity <= 0)
-            {
-                store.RemoveGather(gather);
-            }
+        foreach (var share in shares)
+        {
+            share.Item.Status = PickingItemStatuses.Cancelled;
+            store.RemovePickingItem(share.Item);
+        }
+
+        foreach (var list in shares.Select(item => item.List).DistinctBy(item => item.Id))
+        {
+            if (shares.Count(item => item.List.Id == list.Id) == itemCounts[list.Id])
+                list.Status = PickingListStatuses.Cancelled;
         }
 
         return shares.Count;

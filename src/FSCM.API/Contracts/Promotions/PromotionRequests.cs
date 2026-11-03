@@ -14,3 +14,10 @@ public sealed record UpdatePromotionRequest(
 
 public sealed record ApplyBatchDiscountRequest(
     decimal DiscountPercent, DateTimeOffset StartAt, DateTimeOffset EndAt);
+
+public sealed record CartPriceSnapshotRequest(
+    Guid RetailerId,
+    IReadOnlyCollection<CartPriceSnapshotLineRequest> Lines,
+    DateTimeOffset? At = null);
+
+public sealed record CartPriceSnapshotLineRequest(Guid ProductId, decimal Quantity);

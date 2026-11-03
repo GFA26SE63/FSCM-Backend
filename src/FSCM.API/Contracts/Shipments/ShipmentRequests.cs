@@ -4,6 +4,8 @@ public sealed record FlagShipmentExceptionRequest(string Reason, int ExpectedVer
 
 public sealed record AssignShipmentRequest(Guid DriverId, Guid VehicleId, int ExpectedVersion);
 
+public sealed record DispatchShipmentRequest(int ExpectedVersion);
+
 public sealed record ConfirmShipmentReceiptLineRequest(
     Guid OrderLineId,
     Guid BatchId,

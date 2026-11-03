@@ -22,6 +22,9 @@ public sealed class PaymentPlanService(IPaymentStore store) : IPaymentPlanServic
             throw PaymentOperationException.Validation("Final approval reference cannot exceed 100 characters.");
         if (order.FinalAmount <= 0)
             throw PaymentOperationException.Conflict("Final approved amount must be positive.");
+        if (order.PaymentMethod is not (OrderPaymentMethods.Prepaid or OrderPaymentMethods.Credit))
+            throw PaymentOperationException.Conflict(
+                "Retailer must select Prepaid or Credit before a payment ledger is created.");
 
         var existing = await store.FindByOrderAsync(order.Id, true, cancellationToken);
         if (existing is not null)

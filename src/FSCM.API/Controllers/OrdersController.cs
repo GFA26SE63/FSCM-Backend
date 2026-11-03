@@ -36,6 +36,11 @@ public sealed class OrdersController(
         service.GetAsync(id, GetActorUserId(), GetActorRole(), cancellationToken);
 
     [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator},{SystemRoles.SalesManager},{SystemRoles.Sales},{SystemRoles.WarehouseKeeper},{SystemRoles.Retailer}")]
+    [HttpGet("by-code/{code}")]
+    public Task<OrderDetailResult> GetByCode(string code, CancellationToken cancellationToken) =>
+        service.GetByCodeAsync(code, GetActorUserId(), GetActorRole(), cancellationToken);
+
+    [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator},{SystemRoles.SalesManager},{SystemRoles.Sales},{SystemRoles.WarehouseKeeper},{SystemRoles.Retailer}")]
     [HttpGet("{id:guid}/timeline")]
     public Task<OrderTimelineResult> Timeline(Guid id, CancellationToken cancellationToken) =>
         service.GetTimelineAsync(id, GetActorUserId(), GetActorRole(), cancellationToken);

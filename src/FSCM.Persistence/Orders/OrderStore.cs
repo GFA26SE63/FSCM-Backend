@@ -163,20 +163,10 @@ public sealed class OrderStore(AppDbContext dbContext) : IOrderStore
             SystemRoles.SalesManager => query.Where(item =>
                 dbContext.SalesGroupMemberRecords.Any(membership => membership.UserAccountId == actorUserId &&
                     membership.SalesGroupId == item.SalesGroupId && membership.IsActive)),
-            // See the note in ShipmentStore: the run allocates into its own table, so both have
-            // to be consulted or a keeper's order list comes back empty.
             SystemRoles.WarehouseKeeper => query.Where(item =>
                 dbContext.AllocationRecords.Any(allocation =>
                     dbContext.SalesOrderLineRecords.Any(line => line.Id == allocation.SalesOrderLineId &&
                         line.SalesOrderId == item.Id) &&
-                    dbContext.UserWarehouseAssignmentRecords.Any(assignment =>
-                        assignment.UserAccountId == actorUserId && assignment.WarehouseId == allocation.WarehouseId &&
-                        assignment.IsActive)) ||
-                dbContext.AllocationRunAllocationRecords.Any(allocation =>
-                    dbContext.AllocationRunLineRecords.Any(runLine =>
-                        runLine.Id == allocation.AllocationRunLineId &&
-                        dbContext.SalesOrderLineRecords.Any(line => line.Id == runLine.SalesOrderLineId &&
-                            line.SalesOrderId == item.Id)) &&
                     dbContext.UserWarehouseAssignmentRecords.Any(assignment =>
                         assignment.UserAccountId == actorUserId && assignment.WarehouseId == allocation.WarehouseId &&
                         assignment.IsActive))),
@@ -330,11 +320,77 @@ public sealed class OrderStore(AppDbContext dbContext) : IOrderStore
             .FirstOrDefaultAsync(cancellationToken);
         if (currentRun is not null)
         {
+            var currentAllocations = await dbContext.AllocationRecords.AsNoTracking()
+                .Where(item => lineIds.Contains(item.SalesOrderLineId))
+                .OrderBy(item => item.AllocationSequence).ToArrayAsync(cancellationToken);
+            var currentBatchIds = currentAllocations.Select(item => item.BatchId).Distinct().ToArray();
+            var currentWarehouseIds = currentAllocations.Select(item => item.WarehouseId).Distinct().ToArray();
+            var currentBatches = await dbContext.BatchRecords.AsNoTracking()
+                .Where(item => currentBatchIds.Contains(item.Id))
+                .ToDictionaryAsync(item => item.Id, cancellationToken);
+            var currentWarehouses = await dbContext.WarehouseRecords.AsNoTracking()
+                .Where(item => currentWarehouseIds.Contains(item.Id))
+                .ToDictionaryAsync(item => item.Id, cancellationToken);
+            var products = await (
+                from line in dbContext.SalesOrderLineRecords.AsNoTracking()
+                where lineIds.Contains(line.Id)
+                join product in dbContext.ProductRecords.AsNoTracking() on line.ProductId equals product.Id
+                select new { line.Id, Product = product })
+                .ToDictionaryAsync(item => item.Id, item => item.Product, cancellationToken);
+            var pricedAt = currentRun.CompletedAt ?? currentRun.StartedAt;
+            var currentFragments = currentAllocations.Select(item =>
+            {
+                var batch = currentBatches[item.BatchId];
+                var product = products[item.SalesOrderLineId];
+                var remainingPercent = product.ShelfLifeHours <= 0 ? 0 : Math.Clamp(
+                    decimal.Round((decimal)(batch.ExpirationDate.ToDateTime(TimeOnly.MinValue) -
+                        pricedAt.UtcDateTime).TotalHours / product.ShelfLifeHours * 100m, 2), 0, 100);
+                var finalUnitPrice = item.AllocatedQuantity == 0 ? 0 : item.NetAmount / item.AllocatedQuantity;
+                return new OrderAllocationFragmentView(
+                    item.Id, Guid.Empty, item.SalesOrderLineId, item.BatchId, batch.BatchCode,
+                    batch.ExpirationDate, item.WarehouseId, currentWarehouses[item.WarehouseId].Code,
+                    item.AllocatedQuantity, item.AllocationSequence, item.EstimatedArrivalAt,
+                    item.RemainingLifeHoursAtArrival, item.UnitPrice,
+                    item.AllocatedQuantity == 0 ? 0 :
+                        (item.GrossAmount - item.DiscountAmount) / item.AllocatedQuantity,
+                    remainingPercent, null,
+                    item.DiscountSourceType, item.DiscountSourceCode, 0, null, null,
+                    item.AllocatedQuantity == 0 ? 0 : item.DiscountAmount / item.AllocatedQuantity,
+                    finalUnitPrice, item.NetAmount,
+                    item.DiscountSourceCode is null ? "No shelf-life discount" :
+                        $"Applied {item.DiscountSourceCode}");
+            }).ToArray();
+
+            var currentPickingLists = await (
+                from list in dbContext.PickingListRecords.AsNoTracking()
+                join po in dbContext.PurchaseOrderRecords.AsNoTracking() on list.PurchaseOrderId equals po.Id
+                where po.SalesOrderId == orderId
+                select list).ToArrayAsync(cancellationToken);
+            var currentPickingIds = currentPickingLists.Select(item => item.Id).ToArray();
+            var picked = await dbContext.PickingItemRecords.AsNoTracking()
+                .Where(item => currentPickingIds.Contains(item.PickingListId))
+                .GroupBy(item => item.PickingListId)
+                .Select(group => new { PickingListId = group.Key, Quantity = group.Sum(item => item.PickedQuantity) })
+                .ToDictionaryAsync(item => item.PickingListId, item => item.Quantity, cancellationToken);
+            var currentShipments = await dbContext.ShipmentRecords.AsNoTracking()
+                .Where(item => item.SalesOrderId == orderId).ToArrayAsync(cancellationToken);
+            var currentProgress = currentWarehouseIds.Select(warehouseId =>
+            {
+                var picking = currentPickingLists.FirstOrDefault(item => item.WarehouseId == warehouseId);
+                var shipment = currentShipments.FirstOrDefault(item => item.WarehouseId == warehouseId);
+                return new OrderWarehouseProgressView(
+                    warehouseId, currentWarehouses[warehouseId].Code,
+                    picking?.Id, picking?.PickingCode, picking?.Status,
+                    shipment?.Id, shipment?.ShipmentCode, shipment?.Status,
+                    currentAllocations.Where(item => item.WarehouseId == warehouseId)
+                        .Sum(item => item.AllocatedQuantity),
+                    picking is null ? 0 : picked.GetValueOrDefault(picking.Id),
+                    shipment?.ReceivedQuantity ?? 0);
+            }).ToArray();
             return new OrderAllocationReadContext(
                 currentRun.Id, currentRun.RunCode, currentRun.Status, currentRun.Status,
                 currentRun.FailureReason, Guid.Empty, currentRun.AttemptNumber, currentRun.Status,
-                currentRun.SnapshotCompletedAt ?? currentRun.StartedAt,
-                Array.Empty<OrderAllocationFragmentView>(), Array.Empty<OrderWarehouseProgressView>());
+                pricedAt, currentFragments, currentProgress);
         }
 
         return null;
