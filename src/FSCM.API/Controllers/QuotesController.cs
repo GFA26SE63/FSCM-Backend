@@ -21,7 +21,8 @@ public sealed class QuotesController(QuoteService service) : ControllerBase
 
     [HttpPost("{id:guid}/accept")]
     [Authorize(Roles = SystemRoles.Retailer)]
-    public Task<SalesOrderQuoteResult> Accept(Guid id, AcceptQuoteRequest request, CancellationToken ct) => service.AcceptAsync(id, request.ExpectedVersion, ActorId(), Role(), ct);
+    public Task<SalesOrderQuoteResult> Accept(Guid id, AcceptQuoteRequest request, CancellationToken ct) =>
+        service.AcceptAsync(id, request.ExpectedVersion, request.PaymentMethod, ActorId(), Role(), ct);
 
     [HttpPost("{id:guid}/reject")]
     [Authorize(Roles = SystemRoles.Retailer)]

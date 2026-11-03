@@ -24,7 +24,7 @@ public sealed class IdentityExceptionHandler(IProblemDetailsService problemDetai
             "account_locked" => StatusCodes.Status423Locked,
             "rate_limited" => StatusCodes.Status429TooManyRequests,
             "retailer_activation_required" => StatusCodes.Status409Conflict,
-            "email_delivery_failed" => StatusCodes.Status503ServiceUnavailable,
+            "email_delivery_failed" or "sms_delivery_failed" => StatusCodes.Status503ServiceUnavailable,
             "forbidden" => StatusCodes.Status403Forbidden,
             "not_found" => StatusCodes.Status404NotFound,
             "conflict" => StatusCodes.Status409Conflict,

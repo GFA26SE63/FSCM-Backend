@@ -9,6 +9,8 @@ namespace FSCM.Application.Features.Identity;
 public sealed class RetailerActivationService(
     IRetailerActivationStore store,
     ITransactionalEmailSender emailSender,
+    ISmsSender smsSender,
+    RetailerActivationOptions options,
     IIdentityTokenProvider tokenProvider,
     IPasswordHasher passwordHasher,
     IdentityService identityService,
@@ -18,8 +20,15 @@ public sealed class RetailerActivationService(
     private static readonly TimeSpan ResendCooldown = TimeSpan.FromSeconds(60);
     private static readonly TimeSpan SetupTokenLifetime = TimeSpan.FromMinutes(10);
 
-    public async Task<OtpRequestResult> RequestOtpAsync(string phone, string? ipAddress, CancellationToken cancellationToken)
+    public Task<OtpRequestResult> RequestOtpAsync(string phone, string? ipAddress, CancellationToken cancellationToken) =>
+        RequestOtpAsync(phone, null, ipAddress, cancellationToken);
+
+    public async Task<OtpRequestResult> RequestOtpAsync(
+        string phone, string? channel, string? ipAddress, CancellationToken cancellationToken)
     {
+        var requestedChannel = OtpChannels.Normalize(channel)
+            ?? OtpChannels.Normalize(options.DefaultOtpChannel)
+            ?? OtpChannels.Email;
         phone = NormalizePhone(phone);
         var user = await store.FindUserByPhoneAsync(phone, cancellationToken)
             ?? throw IdentityOperationException.NotFound("Không tìm thấy tài khoản Retailer với số điện thoại này.");
@@ -30,7 +39,10 @@ public sealed class RetailerActivationService(
 
         var retailer = await store.FindRetailerByUserIdAsync(user.Id, cancellationToken)
             ?? throw IdentityOperationException.Validation("Tài khoản chưa được liên kết với Retailer.");
-        var email = ValidateTrustedEmail(user);
+        // Email is mandatory for the Email channel and optional for SMS (used only as a fallback).
+        var email = TryGetTrustedEmail(user);
+        if (requestedChannel == OtpChannels.Email && email is null)
+            throw IdentityOperationException.Validation("Retailer chưa có email hợp lệ và được liên kết đáng tin cậy.");
         var now = timeProvider.GetUtcNow();
         var latest = await store.FindLatestAsync(user.Id, cancellationToken);
         if (latest is not null && latest.ConsumedAt is null && latest.CreatedAt.Add(ResendCooldown) > now)
@@ -50,17 +62,52 @@ public sealed class RetailerActivationService(
         };
         store.AddChallenge(challenge);
         await store.SaveChangesAsync(cancellationToken);
+        string deliveredChannel;
         try
         {
-            await emailSender.SendRetailerActivationOtpAsync(email, user.FullName, otp, cancellationToken);
+            deliveredChannel = await DeliverOtpAsync(requestedChannel, user, phone, email, otp, cancellationToken);
         }
-        catch (Exception exception) when (exception is not OperationCanceledException)
+        catch (IdentityOperationException)
         {
+            // An undelivered OTP must not be usable, and must not block an immediate retry.
             challenge.ConsumedAt = now;
-            await store.SaveChangesAsync(cancellationToken);
-            throw IdentityOperationException.EmailDeliveryFailed();
+            await store.SaveChangesAsync(CancellationToken.None);
+            throw;
         }
-        return new OtpRequestResult(MaskEmail(email), challenge.ExpiresAt, now.Add(ResendCooldown));
+        return deliveredChannel == OtpChannels.Sms
+            ? new OtpRequestResult(OtpChannels.Sms, MaskPhone(phone), null, challenge.ExpiresAt, now.Add(ResendCooldown))
+            : new OtpRequestResult(OtpChannels.Email, MaskEmail(email!), MaskEmail(email!), challenge.ExpiresAt, now.Add(ResendCooldown));
+    }
+
+    private async Task<string> DeliverOtpAsync(
+        string channel, UserAccount user, string phone, string? email, string otp,
+        CancellationToken cancellationToken)
+    {
+        if (channel == OtpChannels.Sms)
+        {
+            try
+            {
+                await smsSender.SendRetailerActivationOtpAsync(phone, otp, cancellationToken);
+                return OtpChannels.Sms;
+            }
+            catch (Exception) when (!cancellationToken.IsCancellationRequested)
+            {
+                if (!options.FallbackToEmail || email is null)
+                    throw IdentityOperationException.SmsDeliveryFailed();
+            }
+        }
+
+        try
+        {
+            await emailSender.SendRetailerActivationOtpAsync(email!, user.FullName, otp, cancellationToken);
+            return OtpChannels.Email;
+        }
+        catch (Exception) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw channel == OtpChannels.Sms
+                ? IdentityOperationException.SmsDeliveryFailed()
+                : IdentityOperationException.EmailDeliveryFailed();
+        }
     }
 
     public async Task<OtpVerificationResult> VerifyOtpAsync(string phone, string code, CancellationToken cancellationToken)
@@ -131,13 +178,13 @@ public sealed class RetailerActivationService(
             throw IdentityOperationException.Validation("Số điện thoại không hợp lệ.");
         return normalized;
     }
-    private static string ValidateTrustedEmail(UserAccount user)
+    private static string? TryGetTrustedEmail(UserAccount user)
     {
-        if (string.IsNullOrWhiteSpace(user.Email))
-            throw IdentityOperationException.Validation("Retailer chưa có email hợp lệ và được liên kết đáng tin cậy.");
+        if (string.IsNullOrWhiteSpace(user.Email)) return null;
         try { return new MailAddress(user.Email.Trim()).Address; }
-        catch (FormatException) { throw IdentityOperationException.Validation("Retailer chưa có email hợp lệ và được liên kết đáng tin cậy."); }
+        catch (FormatException) { return null; }
     }
+    private static string MaskPhone(string phone) => $"{phone[..3]}****{phone[^3..]}";
     private static string MaskEmail(string email)
     {
         var at = email.IndexOf('@');
