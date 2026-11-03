@@ -24,7 +24,11 @@ public interface IRetailerStore
     Task<RetailerView?> FindViewAsync(Guid retailerId, CancellationToken cancellationToken);
     Task<Retailer?> FindForUpdateAsync(Guid retailerId, CancellationToken cancellationToken);
     Task<RetailerDeclarationContact?> FindDeclarationContactForUpdateAsync(Guid retailerId, CancellationToken cancellationToken);
-    Task<UserAccount?> FindUnassignedRetailerAccountAsync(
+    /// <summary>
+    /// Returns every inactive Retailer account not yet linked to a Retailer whose email or phone
+    /// matches. Phone is not unique in USER_ACCOUNT, so more than one account can match.
+    /// </summary>
+    Task<IReadOnlyList<UserAccount>> FindUnassignedRetailerAccountsAsync(
         string email, string phone, CancellationToken cancellationToken);
     Task<Retailer?> FindDuplicateAsync(
         string name, string? phone, string? email, string? address,

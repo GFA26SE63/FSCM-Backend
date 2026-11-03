@@ -34,6 +34,9 @@ public sealed class IdentityOperationException(string code, string message) : Ex
     public static IdentityOperationException EmailDeliveryFailed() =>
         new("email_delivery_failed", "Không thể gửi email OTP. Vui lòng thử lại sau.");
 
+    public static IdentityOperationException SmsDeliveryFailed() =>
+        new("sms_delivery_failed", "Không thể gửi SMS OTP. Vui lòng thử lại sau hoặc chọn nhận OTP qua email.");
+
     public static IdentityOperationException OtpExpired() =>
         new("otp_expired", "OTP đã hết hạn. Vui lòng yêu cầu mã mới.");
 

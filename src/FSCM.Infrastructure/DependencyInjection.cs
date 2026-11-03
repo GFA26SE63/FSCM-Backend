@@ -29,6 +29,14 @@ public static class DependencyInjection
             client.BaseAddress = new Uri(options.ApiBaseUrl);
             client.Timeout = TimeSpan.FromSeconds(15);
         });
+        services.AddHttpClient<ISmsSender, BrevoSmsSender>((provider, client) =>
+        {
+            var options = provider.GetRequiredService<IOptions<BrevoOptions>>().Value;
+            client.BaseAddress = new Uri(options.ApiBaseUrl);
+            client.Timeout = TimeSpan.FromSeconds(15);
+        });
+        services.AddSingleton(configuration.GetSection(RetailerActivationOptions.SectionName)
+            .Get<RetailerActivationOptions>() ?? new RetailerActivationOptions());
         services.AddHttpClient("GoogleMaps", client => client.Timeout = TimeSpan.FromSeconds(10));
         services.AddSingleton<IMapProvider, GoogleMapsProvider>();
         services.AddSingleton<IPasswordHasher, BcryptPasswordHasher>();

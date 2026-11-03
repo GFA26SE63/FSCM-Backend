@@ -405,8 +405,9 @@ public sealed class S1BMasterDataApiTests
         public Task<RetailerView?> FindViewAsync(Guid retailerId, CancellationToken cancellationToken) => Task.FromResult<RetailerView?>(new(Retailer, ContactAccount.FullName, ContactAccount.Phone!, ContactAccount.Email, Guid.NewGuid(), "HCM-A", null));
         public Task<Retailer?> FindForUpdateAsync(Guid retailerId, CancellationToken cancellationToken) => Task.FromResult<Retailer?>(Retailer);
         public Task<RetailerDeclarationContact?> FindDeclarationContactForUpdateAsync(Guid retailerId, CancellationToken cancellationToken) => Task.FromResult<RetailerDeclarationContact?>(null);
-        public Task<UserAccount?> FindUnassignedRetailerAccountAsync(
-            string email, string phone, CancellationToken cancellationToken) => Task.FromResult<UserAccount?>(null);
+        public Task<IReadOnlyList<UserAccount>> FindUnassignedRetailerAccountsAsync(
+            string email, string phone, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<UserAccount>>([]);
         public Task<Retailer?> FindDuplicateAsync(
             string name, string? phone, string? email, string? address,
             Guid? excludedRetailerId, CancellationToken cancellationToken) => Task.FromResult<Retailer?>(null);
