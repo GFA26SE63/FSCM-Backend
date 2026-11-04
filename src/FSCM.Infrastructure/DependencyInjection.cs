@@ -54,6 +54,8 @@ public static class DependencyInjection
         services.Configure<AllocationRunOptions>(configuration.GetSection(AllocationRunOptions.SectionName));
         services.Configure<InventoryOutboxOptions>(configuration.GetSection(InventoryOutboxOptions.SectionName));
         services.AddHostedService<InventoryOutboxHostedService>();
+        services.Configure<OrderDeadlineOptions>(configuration.GetSection(OrderDeadlineOptions.SectionName));
+        services.AddHostedService<OrderDeadlineHostedService>();
         services.AddSingleton<IPayOsGateway>(_ => new PayOsGateway(configuration));
 
         services.AddHttpClient("OpenAI", client =>

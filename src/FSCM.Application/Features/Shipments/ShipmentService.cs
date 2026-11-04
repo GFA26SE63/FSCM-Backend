@@ -6,6 +6,7 @@ using FSCM.Application.Features.Orders;
 using FSCM.Application.Features.Loyalty;
 using FSCM.Application.Features.Inventory;
 using FSCM.Application.Features.Payments;
+using FSCM.Application.Features.Notifications;
 using FSCM.Application.Features.Picking;
 using FSCM.Application.Features.QrLabels;
 using FSCM.Domain.Authorization;
@@ -25,7 +26,8 @@ public sealed class ShipmentService(
     IPaymentStore paymentStore,
     IPaymentPlanService paymentPlanService,
     OrderCompletionService completion,
-    TimeProvider timeProvider)
+    TimeProvider timeProvider,
+    OrderNotificationService? notifications = null)
 {
     private static readonly TimeSpan VietnamOffset = TimeSpan.FromHours(7);
 
@@ -529,9 +531,17 @@ public sealed class ShipmentService(
             await store.SaveChangesAsync(token);
         }, cancellationToken);
         store.ClearTracking();
-        return ToResult(await store.FindByIdAsync(id, false, cancellationToken)
+        var committed = await store.FindByIdAsync(id, false, cancellationToken)
             ?? throw ShipmentOperationException.Conflict(
-                "Dispatch was committed but could not be reloaded."));
+                "Dispatch was committed but could not be reloaded.");
+        if (notifications is not null)
+        {
+            await notifications.PublishRetailerAsync(committed.Order.Id, "ShipmentDispatched",
+                "Đơn hàng đang được giao",
+                $"Chuyến {committed.Shipment.ShipmentCode} từ kho {committed.Warehouse.Code} đã bắt đầu giao.",
+                committed.Shipment.Id, $"/retailer/orders/{committed.Order.Id}", cancellationToken);
+        }
+        return ToResult(committed);
     }
 
     public async Task<ShipmentResult> ConfirmReceiptAsync(

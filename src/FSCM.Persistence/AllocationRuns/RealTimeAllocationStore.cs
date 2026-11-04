@@ -30,6 +30,16 @@ public sealed class RealTimeAllocationStore(AppDbContext db) : IRealTimeAllocati
         return new(order, lines, retailerLocation, positions, nextAttempt);
     }
 
+    public async Task<(string OrderCode, string Status)> ReadOrderStateAsync(
+        Guid orderId, CancellationToken ct)
+    {
+        var state = await db.SalesOrderRecords.AsNoTracking()
+            .Where(item => item.Id == orderId)
+            .Select(item => new { item.OrderCode, item.Status })
+            .SingleAsync(ct);
+        return (state.OrderCode, state.Status);
+    }
+
     public void AddRun(AllocationRun item) => db.AllocationRunRecords.Add(item);
     public void AddAllocation(Allocation item) => db.AllocationRecords.Add(item);
     public void AddReservation(Reservation item) => db.ReservationRecords.Add(item);

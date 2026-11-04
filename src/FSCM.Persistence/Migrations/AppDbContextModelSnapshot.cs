@@ -2344,7 +2344,7 @@ namespace FSCM.Persistence.Migrations
 
                             t.HasCheckConstraint("CK_PAYMENT_Method", "\"Method\" BETWEEN 0 AND 1");
 
-                            t.HasCheckConstraint("CK_PAYMENT_Status", "\"Status\" BETWEEN 0 AND 3");
+                            t.HasCheckConstraint("CK_PAYMENT_Status", "\"Status\" BETWEEN 0 AND 4");
                         });
                 });
 

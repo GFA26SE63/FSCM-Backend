@@ -349,7 +349,8 @@ public sealed class OrderStore(AppDbContext dbContext) : IOrderStore
                 return new OrderAllocationFragmentView(
                     item.Id, Guid.Empty, item.SalesOrderLineId, item.BatchId, batch.BatchCode,
                     batch.ExpirationDate, item.WarehouseId, currentWarehouses[item.WarehouseId].Code,
-                    item.AllocatedQuantity, item.AllocationSequence, item.EstimatedArrivalAt,
+                    item.AllocatedQuantity, item.AllocationSequence, item.WeightedScore,
+                    item.DistanceMeters, item.EstimatedArrivalAt,
                     item.RemainingLifeHoursAtArrival, item.UnitPrice,
                     item.AllocatedQuantity == 0 ? 0 :
                         (item.GrossAmount - item.DiscountAmount) / item.AllocatedQuantity,
@@ -389,7 +390,8 @@ public sealed class OrderStore(AppDbContext dbContext) : IOrderStore
             }).ToArray();
             return new OrderAllocationReadContext(
                 currentRun.Id, currentRun.RunCode, currentRun.Status, currentRun.Status,
-                currentRun.FailureReason, Guid.Empty, currentRun.AttemptNumber, currentRun.Status,
+                currentRun.FailureReason, Guid.Empty, currentRun.AttemptNumber,
+                AllocationPlanVersionStatuses.Approved,
                 pricedAt, currentFragments, currentProgress);
         }
 
@@ -453,7 +455,8 @@ public sealed class OrderStore(AppDbContext dbContext) : IOrderStore
                 allocation.Id, price.Id, runLineToOrderLine[allocation.AllocationRunLineId],
                 allocation.BatchId, batches[allocation.BatchId].BatchCode, batches[allocation.BatchId].ExpirationDate,
                 allocation.WarehouseId, warehouses[allocation.WarehouseId].Code,
-                allocation.Quantity, allocation.Sequence, allocation.EstimatedArrivalAt,
+                allocation.Quantity, allocation.Sequence, allocation.WeightedScore, null,
+                allocation.EstimatedArrivalAt,
                 allocation.RemainingShelfLifeHours, price.ListUnitPrice, price.BaseNetUnitPrice,
                 price.RemainingShelfLifePercent, price.ShelfLifeDiscountTierId, tier?.Scope, ruleCode,
                 price.DiscountTableVersion, price.DiscountType, price.DiscountValue,
