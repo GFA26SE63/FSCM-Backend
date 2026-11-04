@@ -7,7 +7,16 @@ using FSCM.Domain.Entities;
 namespace FSCM.Application.Features.AllocationRuns;
 
 public sealed record RealTimeInventoryCandidate(Batch Batch, InventoryBalance Balance, Warehouse Warehouse,
-    Product Product, decimal? WarehouseLatitude, decimal? WarehouseLongitude);
+    Product Product, decimal? WarehouseLatitude, decimal? WarehouseLongitude, decimal ActiveLockedQuantity = 0m)
+{
+    /// <summary>
+    /// F100: stock issuable to an order. Active inventory locks (damaged/expired/quality hold) are
+    /// held out of the pool without moving OnHand, so allocation must never offer locked quantity.
+    /// Available already nets off Reserved, so subtracting the lock total here cannot double-count
+    /// the portion that overlaps reserved stock; the result is floored at zero.
+    /// </summary>
+    public decimal IssuableQuantity => Math.Max(0m, Balance.AvailableQuantity - ActiveLockedQuantity);
+}
 public sealed record RealTimeAllocationContext(SalesOrder Order, IReadOnlyCollection<SalesOrderLine> Lines,
     MapLocation? RetailerLocation, IReadOnlyCollection<RealTimeInventoryCandidate> Candidates, int NextAttemptNumber);
 
@@ -75,7 +84,8 @@ public sealed class RealTimeAllocationService(
         store.AddRun(run);
 
         var selected = new List<(SalesOrderLine Line, AllocationDecision Decision)>();
-        var remainingByBatch = context.Candidates.ToDictionary(item => item.Batch.Id, item => item.Balance.AvailableQuantity);
+        // F100: the planner works off issuable stock (available minus active locks), not raw available.
+        var remainingByBatch = context.Candidates.ToDictionary(item => item.Batch.Id, item => item.IssuableQuantity);
         foreach (var line in context.Lines.OrderBy(item => item.LineNumber))
         {
             var productCandidates = context.Candidates.Where(item => item.Product.Id == line.ProductId).ToArray();
@@ -111,7 +121,8 @@ public sealed class RealTimeAllocationService(
         {
             var candidate = context.Candidates.Single(item => item.Batch.Id == group.Key);
             var quantity = group.Sum(item => item.Decision.Quantity);
-            if (candidate.Balance.AvailableQuantity < quantity) throw new AllocationConcurrencyException("Inventory changed during allocation.");
+            // F100: re-check against issuable stock so a lock placed during allocation also blocks the hold.
+            if (candidate.IssuableQuantity < quantity) throw new AllocationConcurrencyException("Inventory changed during allocation.");
             candidate.Balance.ReservedQuantity += quantity;
             candidate.Balance.AvailableQuantity = candidate.Balance.PhysicalQuantity - candidate.Balance.ReservedQuantity;
             candidate.Balance.Version++; candidate.Balance.UpdatedAt = now;

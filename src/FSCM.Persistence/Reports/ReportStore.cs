@@ -29,15 +29,17 @@ public sealed class ReportStore(AppDbContext dbContext) : IReportStore
         IReadOnlyCollection<Guid>? salesGroupIds,
         CancellationToken cancellationToken)
     {
-        // Delivered orders are the recognized-revenue source (same as the KPI, F75). The recognized
-        // amount is the F64-adjusted payment amount when a ledger exists, else the post-promotion
-        // order total. The recognition date is the payment delivered date, else the order's
-        // Vietnam-local received date — both bounded to the inclusive [fromDate, toDate] window.
+        // Completed orders are the recognized-revenue source (same as the KPI, F75). Review 2:
+        // revenue is recognized only when the order is fully closed (delivery + payment + claims
+        // settled), not merely delivered. The recognized amount is the F64-adjusted payment amount
+        // when a ledger exists, else the post-promotion order total. The recognition date is the
+        // payment delivered date, else the order's Vietnam-local received date — both bounded to the
+        // inclusive [fromDate, toDate] window.
         var groupSet = salesGroupIds?.ToHashSet();
 
         var rows = await (
             from order in dbContext.SalesOrderRecords.AsNoTracking()
-            where order.Status == OrderStatuses.Delivered
+            where order.Status == OrderStatuses.Completed
             join payment in dbContext.PaymentRecords.AsNoTracking()
                 on order.Id equals payment.SalesOrderId into payments
             from payment in payments.DefaultIfEmpty()
@@ -94,7 +96,7 @@ public sealed class ReportStore(AppDbContext dbContext) : IReportStore
         var groupSet = salesGroupIds?.ToHashSet();
         var rows = await (
             from order in dbContext.SalesOrderRecords.AsNoTracking()
-            where order.Status == OrderStatuses.Delivered
+            where order.Status == OrderStatuses.Completed
             join payment in dbContext.PaymentRecords.AsNoTracking()
                 on order.Id equals payment.SalesOrderId into payments
             from payment in payments.DefaultIfEmpty()
@@ -154,7 +156,7 @@ public sealed class ReportStore(AppDbContext dbContext) : IReportStore
         var groupSet = salesGroupIds?.ToHashSet();
         var orderLines = await (
             from order in dbContext.SalesOrderRecords.AsNoTracking()
-            where order.Status == OrderStatuses.Delivered
+            where order.Status == OrderStatuses.Completed
             join payment in dbContext.PaymentRecords.AsNoTracking()
                 on order.Id equals payment.SalesOrderId into payments
             from payment in payments.DefaultIfEmpty()

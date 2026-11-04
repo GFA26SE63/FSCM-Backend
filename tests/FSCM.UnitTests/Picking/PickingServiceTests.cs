@@ -1,4 +1,5 @@
 using FSCM.Application.Features.AllocationRuns;
+using FSCM.Application.Features.Inventory;
 using FSCM.Application.Features.Picking;
 using FSCM.Application.Features.QrLabels;
 using FSCM.Application.Features.Shipments;
@@ -31,6 +32,29 @@ public sealed class PickingServiceTests
         var error = await Assert.ThrowsAsync<PickingOperationException>(() =>
             f.ScanAsync(10, [(f.First.AllocationRunAllocationId, 10)]));
         Assert.Equal("conflict", error.Code);
+    }
+
+    [Fact]
+    public async Task Scan_rejects_expired_batch_even_when_approved_on_sheet()
+    {
+        // F4 step 10 / F100: a batch that expired after the picking list was issued cannot be picked.
+        var f = new Fixture { GuardExpiryStatus = BatchExpiryStatuses.Expired };
+        var error = await Assert.ThrowsAsync<PickingOperationException>(() =>
+            f.ScanAsync(10, [(f.First.AllocationRunAllocationId, 6), (f.Second.AllocationRunAllocationId, 4)]));
+        Assert.Equal("conflict", error.Code);
+        Assert.Contains("expired", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Scan_rejects_quantity_that_dips_into_locked_stock()
+    {
+        // F100: 10 physical available but 4 locked (damaged/quality hold) leaves 6 issuable; a
+        // 10-carton scan must be blocked.
+        var f = new Fixture { GuardAvailableQuantity = 10m, GuardActiveLockedQuantity = 4m };
+        var error = await Assert.ThrowsAsync<PickingOperationException>(() =>
+            f.ScanAsync(10, [(f.First.AllocationRunAllocationId, 6), (f.Second.AllocationRunAllocationId, 4)]));
+        Assert.Equal("conflict", error.Code);
+        Assert.Contains("locked", error.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -120,6 +144,11 @@ public sealed class PickingServiceTests
     {
         public Guid ActorId { get; } = Guid.NewGuid();
         public Guid FirstPriceId { get; } = Guid.NewGuid();
+        // F100/F4 step 10: batch state the scan guard reads. Healthy and unlocked by default.
+        public string GuardExpiryStatus { get; set; } = BatchExpiryStatuses.Valid;
+        public DateOnly GuardExpirationDate { get; set; } = new(2026, 12, 31);
+        public decimal GuardAvailableQuantity { get; set; } = 10m;
+        public decimal GuardActiveLockedQuantity { get; set; }
         public RunPickingList List { get; }
         public RunPickingGather Gather { get; }
         public RunPickingSplit First { get; }
@@ -190,6 +219,10 @@ public sealed class PickingServiceTests
             Task.FromResult(f.Events.SingleOrDefault(x => x.OperationKey == key));
         public Task<BatchQrLabel?> FindLabelForUpdateAsync(string code, CancellationToken ct) =>
             Task.FromResult<BatchQrLabel?>(code == f.Label.QrCode ? f.Label : null);
+        public Task<BatchPickGuard?> FindBatchPickGuardAsync(Guid batchId, CancellationToken ct) =>
+            Task.FromResult<BatchPickGuard?>(new BatchPickGuard(
+                f.Gather.BatchCodeSnapshot, f.GuardExpiryStatus, f.GuardExpirationDate,
+                f.GuardAvailableQuantity, f.GuardActiveLockedQuantity));
         public Task<string> NextQrCodeAsync(CancellationToken ct) => Task.FromResult("TEM-000124");
         public Task<string> NextShipmentCodeAsync(CancellationToken ct) =>
             Task.FromResult($"SHIP-{1000 + Shipments.Count:000000}");

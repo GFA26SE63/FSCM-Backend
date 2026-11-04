@@ -47,8 +47,12 @@ public sealed class RefundStore(AppDbContext db) : IRefundStore
 
     public async Task<(decimal Pending, decimal Refunded)> TotalsAsync(Guid paymentId, CancellationToken ct)
     {
+        // EvidenceRejected is still an open obligation (awaiting corrected evidence), so it counts
+        // toward pending alongside PendingRefund and AwaitingVerification; only Refunded is settled.
         var pending = await db.ManualRefundRecords.Where(x => x.PaymentId == paymentId &&
-            (x.Status == RefundStatuses.PendingRefund || x.Status == RefundStatuses.AwaitingVerification)).SumAsync(x => (decimal?)x.Amount, ct) ?? 0;
+            (x.Status == RefundStatuses.PendingRefund
+                || x.Status == RefundStatuses.AwaitingVerification
+                || x.Status == RefundStatuses.EvidenceRejected)).SumAsync(x => (decimal?)x.Amount, ct) ?? 0;
         var refunded = await db.ManualRefundRecords.Where(x => x.PaymentId == paymentId && x.Status == RefundStatuses.Refunded)
             .SumAsync(x => (decimal?)x.Amount, ct) ?? 0;
         return (pending, refunded);

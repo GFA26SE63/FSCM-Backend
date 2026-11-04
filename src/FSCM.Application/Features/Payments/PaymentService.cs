@@ -209,6 +209,8 @@ public sealed class PaymentService(
             if (adjusted > view.Payment.Amount)
                 throw PaymentOperationException.Conflict(
                     "Adjustment cannot restore the payment obligation above the approved final total.");
+            // Reducing below what was already collected is allowed: the excess becomes a refund
+            // obligation (RefundDueAmount), handled by F101 — see F5 step 16. Not blocked here.
 
             var now = timeProvider.GetUtcNow();
             var oldValues = new { view.Payment.AdjustedAmount, view.Payment.Status, view.Payment.Version };

@@ -19,6 +19,14 @@ public sealed class PaymentReceiptsController(PaymentReceiptService service) : C
     public Task<PaymentReceiptResult> Reverse(Guid receiptId, ReversePaymentReceiptRequest request, CancellationToken cancellationToken) =>
         service.ReverseAsync(receiptId, request.Reason, UserId(), Role(), cancellationToken);
 
+    // F5 step 4: suggested allocation (overdue → earliest due → earliest created → order code).
+    // Read-only; the user still confirms via /confirm.
+    [HttpPost("propose-allocation")]
+    public Task<ReceiptAllocationProposalResult> ProposeAllocation(
+        ProposeReceiptAllocationRequest request, CancellationToken cancellationToken) =>
+        service.ProposeAllocationAsync(
+            new(request.RetailerId, request.ReceivedAmount), UserId(), Role(), cancellationToken);
+
     private Guid UserId() => Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var id) ? id : throw PaymentOperationException.Validation("Authenticated user identifier is invalid.");
     private string Role() => User.FindFirstValue(ClaimTypes.Role) ?? throw PaymentOperationException.Forbidden("Authenticated user role is invalid.");
 }

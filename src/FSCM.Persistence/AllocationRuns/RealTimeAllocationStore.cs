@@ -21,7 +21,10 @@ public sealed class RealTimeAllocationStore(AppDbContext db) : IRealTimeAllocati
             from location in locations.DefaultIfEmpty()
             where productIds.Contains(batch.ProductId) && warehouse.IsActive
             select new RealTimeInventoryCandidate(batch, balance, warehouse, product,
-                location == null ? null : location.Latitude, location == null ? null : location.Longitude)).ToArrayAsync(ct);
+                location == null ? null : location.Latitude, location == null ? null : location.Longitude,
+                // F100: quantity held by active inventory locks, excluded from the issuable pool.
+                db.InventoryLockRecords.Where(l => l.BatchId == batch.Id && l.Status == "Active")
+                    .Sum(l => (decimal?)l.LockedQuantity) ?? 0m)).ToArrayAsync(ct);
         var retailerLocation = await db.MapLocationRecords.AsNoTracking().SingleOrDefaultAsync(x => x.RetailerId == order.RetailerId, ct);
         var nextAttempt = (await db.AllocationRunRecords.Where(x => x.SalesOrderId == orderId).MaxAsync(x => (int?)x.AttemptNumber, ct) ?? 0) + 1;
         return new(order, lines, retailerLocation, positions, nextAttempt);

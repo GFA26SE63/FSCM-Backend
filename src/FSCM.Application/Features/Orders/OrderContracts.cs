@@ -294,18 +294,12 @@ public static class OrderStatuses
     public const string PaymentPending = "PaymentPending";
     public const string ConvertedToPo = "ConvertedToPo";
 
-    public const string PendingApproval = Allocating;
-
-    /// <summary>
-    /// Reviewed and waiting for the next allocation run. Approval commits no stock: the run
-    /// decides which batches an order gets, and only run approval reserves them (F87, F88).
-    /// </summary>
-    public const string PendingAllocation = Allocating;
-
-    public const string Approved = Quoted;
+    // Review 2: the canonical order lifecycle is Allocating → Quoted → PaymentPending →
+    // ConvertedToPo → Picking → Issued → Delivering → Delivered → Completed, plus the terminal
+    // exits Withdrawn / QuoteRejected / QuoteExpired / OutOfStock / AllocationConflict. The legacy
+    // PendingApproval / PendingAllocation / Approved / Rejected / Cancelled aliases were removed
+    // along with SO approval.
     public const string Picking = "Picking";
-    public const string Rejected = QuoteRejected;
-    public const string Cancelled = Withdrawn;
     public const string Issued = "Issued";
     public const string Delivering = "Delivering";
     public const string Delivered = "Delivered";

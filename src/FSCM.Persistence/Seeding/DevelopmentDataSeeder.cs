@@ -90,12 +90,8 @@ public sealed class DevelopmentDataSeeder(
         var paymentSeedReference = "CHỜ-PHÂN-BỔ";
         if (!demoOrder.FinalPricePendingAllocation)
         {
-            if (demoOrder.Status is OrderStatuses.PendingApproval)
-            {
-                demoOrder = await orderService.ApproveAsync(
-                    demoOrder.Id, demoOrder.Version, users[SystemRoles.Operator].Id,
-                    SystemRoles.Operator, cancellationToken);
-            }
+            // Review 2: no SO approval step. A priced demo order is seeded straight into its
+            // payment ledger; real-time allocation is what moves an order to Quoted in the app.
             paymentSeedReference = $"SEED-S1E-{demoOrder.OrderCode}";
             var existingPayment = await dbContext.PaymentRecords.SingleOrDefaultAsync(
                 item => item.SalesOrderId == demoOrder.Id, cancellationToken);

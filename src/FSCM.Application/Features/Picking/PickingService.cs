@@ -1,4 +1,5 @@
 using FSCM.Application.Features.AllocationRuns;
+using FSCM.Application.Features.Inventory;
 using FSCM.Application.Features.QrLabels;
 using FSCM.Application.Features.Shipments;
 using FSCM.Domain.Authorization;
@@ -81,6 +82,20 @@ public sealed class PickingService(IRunPickingStore store, TimeProvider timeProv
 
             var gather = view.Gathers.SingleOrDefault(x => x.BatchId == label.BatchId)
                 ?? throw PickingOperationException.Conflict("QR label batch is not approved on this picking sheet.");
+
+            // F4 step 10 / F100: never pick an expired or locked batch, even if it was approved on
+            // the sheet earlier. A batch can expire or be locked (damaged/quality hold) after the
+            // picking list was issued.
+            var guard = await store.FindBatchPickGuardAsync(label.BatchId, txCt)
+                ?? throw PickingOperationException.Conflict("Batch inventory state was not found.");
+            var today = DateOnly.FromDateTime(timeProvider.GetUtcNow().UtcDateTime);
+            if (guard.ExpiryStatus == BatchExpiryStatuses.Expired || guard.ExpirationDate < today)
+                throw PickingOperationException.Conflict($"Batch {guard.BatchCode} has expired and cannot be picked.");
+            var issuable = Math.Max(0m, guard.AvailableQuantity - guard.ActiveLockedQuantity);
+            if (requestQuantity > issuable)
+                throw PickingOperationException.Conflict(
+                    $"Batch {guard.BatchCode} has only {issuable:0.###} issuable cartons; " +
+                    $"{guard.ActiveLockedQuantity:0.###} are locked and cannot be picked.");
             var requested = data.Splits.ToDictionary(x => x.AllocationRunAllocationId);
             var targets = view.Splits.Where(x => x.RunPickingGatherId == gather.Id &&
                                                  requested.ContainsKey(x.AllocationRunAllocationId)).ToArray();
