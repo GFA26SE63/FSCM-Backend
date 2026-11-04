@@ -61,6 +61,8 @@ public sealed record OrderAllocationFragmentView(
     string WarehouseCode,
     decimal Quantity,
     int Sequence,
+    decimal WeightedScore,
+    decimal? DistanceMeters,
     DateTimeOffset EstimatedArrivalAt,
     decimal RemainingLifeHoursAtArrival,
     decimal ListUnitPrice,

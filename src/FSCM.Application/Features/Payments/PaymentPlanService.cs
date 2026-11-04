@@ -132,4 +132,21 @@ public sealed class PaymentPlanService(IPaymentStore store) : IPaymentPlanServic
             CreatedAt = deliveredAt
         });
     }
+
+    public async Task CancelUnpaidAsync(
+        Guid orderId, string reason, DateTimeOffset cancelledAt,
+        CancellationToken cancellationToken)
+    {
+        var existing = await store.FindByOrderAsync(orderId, true, cancellationToken);
+        if (existing is null || existing.Payment.Status == PaymentStatuses.Cancelled) return;
+        if (existing.Payment.ConfirmedAmount > 0 || existing.Payment.Status == PaymentStatuses.Paid)
+            throw PaymentOperationException.Conflict(
+                "An order with confirmed payment cannot be cancelled through the order screen.");
+        existing.Payment.Status = PaymentStatuses.Cancelled;
+        existing.Payment.AdjustedAmount = 0;
+        existing.Payment.Note = reason;
+        existing.Payment.Version++;
+        existing.Payment.UpdatedAt = cancelledAt;
+        await store.SaveChangesAsync(cancellationToken);
+    }
 }

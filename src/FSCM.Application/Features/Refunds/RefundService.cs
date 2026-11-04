@@ -2,12 +2,14 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using FSCM.Application.Features.Payments;
+using FSCM.Application.Features.Notifications;
 using FSCM.Domain.Authorization;
 using FSCM.Domain.Entities;
 
 namespace FSCM.Application.Features.Refunds;
 
-public sealed class RefundService(IRefundStore store, IPaymentStore paymentStore, TimeProvider timeProvider)
+public sealed class RefundService(IRefundStore store, IPaymentStore paymentStore, TimeProvider timeProvider,
+    OrderNotificationService? notifications = null)
 {
     public async Task<RefundResult> CreateAsync(CreateRefundData data, string operationKey,
         Guid actorUserId, string actorRole, CancellationToken cancellationToken)
@@ -124,7 +126,18 @@ public sealed class RefundService(IRefundStore store, IPaymentStore paymentStore
                 refund.EvidenceRequestHash = null;
             }
         }, data.Approved ? "RefundVerified" : "RefundEvidenceRejected", cancellationToken);
-        return await Reload(id, cancellationToken);
+        var result = await Reload(id, cancellationToken);
+        if (notifications is not null)
+        {
+            await notifications.PublishRetailerAsync(result.SalesOrderId,
+                data.Approved ? "RefundCompleted" : "RefundEvidenceRejected",
+                data.Approved ? "Khoản hoàn tiền đã được xác nhận" : "Bằng chứng hoàn tiền cần bổ sung",
+                data.Approved
+                    ? $"Khoản hoàn {result.Amount:0.##} VND cho đơn {result.OrderCode} đã được Admin xác nhận."
+                    : $"Bằng chứng hoàn tiền cho đơn {result.OrderCode} chưa hợp lệ và sẽ được Operator bổ sung.",
+                result.Id, $"/retailer/orders/{result.SalesOrderId}", cancellationToken);
+        }
+        return result;
     }
 
     public async Task<RefundResult> GetAsync(Guid id, Guid actorUserId, string actorRole, CancellationToken ct)

@@ -5,6 +5,8 @@ using System.Text.Json;
 using FSCM.Application.Features.AllocationRuns;
 using FSCM.Application.Features.Inventory;
 using FSCM.Application.Features.Picking;
+using FSCM.Application.Features.Payments;
+using FSCM.Application.Features.Notifications;
 using FSCM.Domain.Authorization;
 using FSCM.Domain.Entities;
 
@@ -17,7 +19,9 @@ public sealed class OrderService(
     IPickingPlanService pickingPlanService,
     OrderReleaseService releaseService,
     TimeProvider timeProvider,
-    IRealTimeAllocationService? realTimeAllocationService = null)
+    IRealTimeAllocationService? realTimeAllocationService = null,
+    PaymentPlanService? paymentPlanService = null,
+    OrderNotificationService? notifications = null)
 {
     private const string OrderStepKey = "order.order_step_cartons";
     private static readonly TimeZoneInfo VietnamTimeZone = TimeZoneInfo.FindSystemTimeZoneById("Asia/Ho_Chi_Minh");
@@ -318,16 +322,16 @@ public sealed class OrderService(
             var view = await store.FindAsync(orderId, true, transactionCancellationToken)
                 ?? throw OrderOperationException.NotFound("Order was not found.");
             if (view.Order.Status == OrderStatuses.Cancelled) return;
-            if (actorRole == SystemRoles.Sales &&
-                (view.Order.CreatedByUserId != actorUserId || view.Order.Status != OrderStatuses.PendingApproval))
+            if (actorRole == SystemRoles.Sales && view.Order.CreatedByUserId != actorUserId)
             {
-                throw OrderOperationException.Forbidden("Sales can only cancel their own pending order.");
+                throw OrderOperationException.Forbidden("Sales can only cancel their own order.");
             }
 
-            if (view.Order.Status is not (OrderStatuses.PendingApproval or OrderStatuses.PendingAllocation))
+            if (view.Order.Status is not (OrderStatuses.Allocating or OrderStatuses.Quoted or
+                OrderStatuses.PaymentPending))
             {
                 throw OrderOperationException.Conflict(
-                    "Only an order that has not entered an allocation run can be cancelled here.");
+                    "Only an order that has not become a PO can be cancelled here.");
             }
 
             EnsureOrderVersion(view.Order, expectedVersion);
@@ -341,6 +345,12 @@ public sealed class OrderService(
             await ReleaseInventoryAsync(view, actorUserId, transactionCancellationToken);
             await releaseService.ReleaseAsync(
                 view.Order.Id, actorUserId, view.Order.OrderCode, transactionCancellationToken);
+            if (paymentPlanService is not null)
+            {
+                await paymentPlanService.CancelUnpaidAsync(view.Order.Id,
+                    reason ?? "Order was cancelled before PO conversion.",
+                    timeProvider.GetUtcNow(), transactionCancellationToken);
+            }
             var fromStatus = view.Order.Status;
             var now = timeProvider.GetUtcNow();
             ApplyTransition(view.Order, OrderStatuses.Cancelled, actorUserId, reason, now);
@@ -350,7 +360,15 @@ public sealed class OrderService(
         }, cancellationToken);
 
         store.ClearTracking();
-        return await GetAsync(orderId, actorUserId, actorRole, cancellationToken);
+        var result = await GetAsync(orderId, actorUserId, actorRole, cancellationToken);
+        if (notifications is not null)
+        {
+            await notifications.PublishRetailerAsync(orderId, "OrderCancelled",
+                "Đơn hàng đã bị hủy",
+                $"Đơn {result.OrderCode} đã được hủy trước khi phát hành PO; lượng hàng giữ trước đã được trả về tồn khả dụng.",
+                orderId, $"/retailer/orders/{orderId}", cancellationToken);
+        }
+        return result;
     }
 
     private async Task<OrderDetailResult> TransitionAsync(
@@ -882,7 +900,8 @@ public sealed class OrderService(
                 .Select(fragment => new OrderAllocationFragmentResult(
                     fragment.AllocationId, fragment.PlanPriceId, fragment.BatchId, fragment.BatchCode,
                     fragment.BatchExpirationDate, fragment.WarehouseId, fragment.WarehouseCode,
-                    fragment.Quantity, fragment.Sequence, fragment.EstimatedArrivalAt,
+                    fragment.Quantity, fragment.Sequence, fragment.WeightedScore,
+                    fragment.DistanceMeters, fragment.EstimatedArrivalAt,
                     fragment.RemainingLifeHoursAtArrival, fragment.ListUnitPrice,
                     fragment.ListUnitPrice - fragment.BaseUnitPrice, fragment.BaseUnitPrice,
                     fragment.RemainingShelfLifePercent, fragment.DiscountRuleId,
