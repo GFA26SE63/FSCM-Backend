@@ -155,6 +155,18 @@ public sealed class RefundServiceTests
         }
         public Task<IReadOnlyCollection<RefundView>> ListAsync(Guid? orderId, string? status, Guid actor, string role, CancellationToken ct) =>
             Task.FromResult<IReadOnlyCollection<RefundView>>(Refunds.Where(x => (!orderId.HasValue || x.SalesOrderId == orderId) && (status is null || x.Status == status)).Select(View).ToArray());
+        public Dictionary<Guid, RefundClaimSource> Claims { get; } = [];
+
+        public Task<RefundClaimSource?> FindClaimSourceAsync(Guid claimId, CancellationToken ct)
+        {
+            if (!Claims.TryGetValue(claimId, out var claim)) return Task.FromResult<RefundClaimSource?>(null);
+            var linked = Refunds.Where(x => x.ReceiptDiscrepancyId == claimId).Sum(x => x.Amount);
+            return Task.FromResult<RefundClaimSource?>(claim with { AlreadyLinkedAmount = linked });
+        }
+
+        public Task<IReadOnlyCollection<RefundObligationResult>> ListObligationsAsync(CancellationToken ct) =>
+            Task.FromResult<IReadOnlyCollection<RefundObligationResult>>([]);
+
         public Task<(decimal Pending, decimal Refunded)> TotalsAsync(Guid paymentId, CancellationToken ct) =>
             Task.FromResult((Refunds.Where(x => x.Status is RefundStatuses.PendingRefund or RefundStatuses.AwaitingVerification or RefundStatuses.EvidenceRejected).Sum(x => x.Amount),
                 Refunds.Where(x => x.Status == RefundStatuses.Refunded).Sum(x => x.Amount)));
@@ -169,6 +181,7 @@ public sealed class RefundServiceTests
         public Task<IReadOnlyCollection<PaymentView>> ListAsync(Guid actor, string role, CancellationToken ct) => Task.FromResult<IReadOnlyCollection<PaymentView>>([]);
         public Task<bool> CanViewAsync(PaymentView view, Guid actor, string role, CancellationToken ct) => Task.FromResult(true);
         public void Add(Payment payment) { }
+        public void AddReceipt(PaymentReceipt receipt, PaymentReceiptAllocation allocation) { }
         public Task ExecuteInTransactionAsync(Func<CancellationToken, Task> action, CancellationToken ct) => action(ct);
         public void ClearTracking() { }
 

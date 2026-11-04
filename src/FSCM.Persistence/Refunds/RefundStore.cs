@@ -58,6 +58,53 @@ public sealed class RefundStore(AppDbContext db) : IRefundStore
         return (pending, refunded);
     }
 
+    public async Task<RefundClaimSource?> FindClaimSourceAsync(Guid claimId, CancellationToken ct)
+    {
+        var claim = await db.ReceiptDiscrepancyRecords.AsNoTracking()
+            .SingleOrDefaultAsync(x => x.Id == claimId, ct);
+        if (claim is null) return null;
+        var adjustment = await db.ReceiptDiscrepancyItemRecords.AsNoTracking()
+            .Where(x => x.ReceiptDiscrepancyId == claimId)
+            .SumAsync(x => (decimal?)x.AdjustmentAmount, ct) ?? 0m;
+        // Every refund record raised for this claim counts against it, whether or not it has been
+        // transferred yet, so the same claim cannot be refunded twice.
+        var linked = await db.ManualRefundRecords.AsNoTracking()
+            .Where(x => x.ReceiptDiscrepancyId == claimId)
+            .SumAsync(x => (decimal?)x.Amount, ct) ?? 0m;
+        return new RefundClaimSource(claim.Id, claim.SalesOrderId, claim.ResolvedAt.HasValue,
+            claim.ResolutionType, adjustment, linked);
+    }
+
+    public async Task<IReadOnlyCollection<RefundObligationResult>> ListObligationsAsync(CancellationToken ct)
+    {
+        var rows = await (from payment in db.PaymentRecords.AsNoTracking()
+                          where payment.ConfirmedAmount > payment.AdjustedAmount
+                          join order in db.SalesOrderRecords.AsNoTracking() on payment.SalesOrderId equals order.Id
+                          select new { payment, order.OrderCode, order.RetailerNameSnapshot }).ToArrayAsync(ct);
+        var paymentIds = rows.Select(x => x.payment.Id).ToArray();
+        var refunds = await db.ManualRefundRecords.AsNoTracking()
+            .Where(x => paymentIds.Contains(x.PaymentId))
+            .Select(x => new { x.PaymentId, x.Amount, x.Status }).ToArrayAsync(ct);
+        var orderIds = rows.Select(x => x.payment.SalesOrderId).ToArray();
+        var claims = await db.ReceiptDiscrepancyRecords.AsNoTracking()
+            .Where(x => orderIds.Contains(x.SalesOrderId) && x.ResolutionType == "PaymentAdjusted")
+            .Select(x => new { x.Id, x.SalesOrderId }).ToArrayAsync(ct);
+        var result = new List<RefundObligationResult>();
+        foreach (var row in rows)
+        {
+            var mine = refunds.Where(x => x.PaymentId == row.payment.Id).ToArray();
+            var refunded = mine.Where(x => x.Status == RefundStatuses.Refunded).Sum(x => x.Amount);
+            var pending = mine.Where(x => RefundStatuses.Open.Contains(x.Status)).Sum(x => x.Amount);
+            var unrequested = row.payment.ConfirmedAmount - row.payment.AdjustedAmount - refunded - pending;
+            if (unrequested <= 0) continue;
+            result.Add(new RefundObligationResult(row.payment.Id, row.payment.SalesOrderId, row.OrderCode,
+                row.RetailerNameSnapshot, row.payment.ConfirmedAmount, row.payment.AdjustedAmount, refunded,
+                pending, unrequested,
+                claims.Where(x => x.SalesOrderId == row.payment.SalesOrderId).Select(x => x.Id).ToArray()));
+        }
+        return result.OrderBy(x => x.OrderCode, StringComparer.Ordinal).ToArray();
+    }
+
     public void Add(ManualRefund refund) => db.ManualRefundRecords.Add(refund);
     public void AddAuditLog(AuditLog auditLog) => db.AuditLogRecords.Add(auditLog);
     public async Task SaveChangesAsync(CancellationToken ct)

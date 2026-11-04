@@ -16,20 +16,26 @@ public sealed class RefundsController(RefundService service) : ControllerBase
     public Task<IReadOnlyCollection<RefundResult>> List([FromQuery] Guid? orderId, [FromQuery] string? status,
         CancellationToken ct) => service.ListAsync(orderId, status, UserId(), Role(), ct);
 
+    /// <summary>S3-101-4: payments owed a refund that has not been raised as a refund record yet.</summary>
+    [HttpGet("obligations")]
+    [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator}")]
+    public Task<IReadOnlyCollection<RefundObligationResult>> Obligations(CancellationToken ct) =>
+        service.ListObligationsAsync(Role(), ct);
+
     [HttpGet("{id:guid}")]
     public Task<RefundResult> Get(Guid id, CancellationToken ct) => service.GetAsync(id, UserId(), Role(), ct);
 
     [HttpPost]
-    [Authorize(Roles = SystemRoles.Operator)]
+    [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator}")]
     public async Task<IActionResult> Create(CreateRefundRequest request, CancellationToken ct)
     {
-        var result = await service.CreateAsync(new(request.SalesOrderId, request.Amount, request.Recipient, request.Reason),
+        var result = await service.CreateAsync(new(request.SalesOrderId, request.Amount, request.Recipient, request.Reason, request.ReceiptDiscrepancyId),
             Request.Headers["Idempotency-Key"].ToString(), UserId(), Role(), ct);
         return CreatedAtAction(nameof(Get), new { id = result.Id }, result);
     }
 
     [HttpPost("{id:guid}/evidence")]
-    [Authorize(Roles = SystemRoles.Operator)]
+    [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator}")]
     public Task<RefundResult> Evidence(Guid id, SubmitRefundEvidenceRequest request, CancellationToken ct) =>
         service.SubmitEvidenceAsync(id, new(request.ExpectedVersion, request.TransferredAt,
             request.TransactionReference, request.EvidenceReference), Request.Headers["Idempotency-Key"].ToString(), UserId(), Role(), ct);

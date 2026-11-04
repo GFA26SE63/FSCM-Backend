@@ -19,7 +19,7 @@ public sealed class RefundService(IRefundStore store, IPaymentStore paymentStore
         ValidateAmount(data.Amount);
         var recipient = Required(data.Recipient, 200, "Recipient");
         var reason = Required(data.Reason, 500, "Reason");
-        var hash = Hash(data.SalesOrderId, data.Amount, recipient, reason);
+        var hash = Hash(data.SalesOrderId, data.Amount, recipient, reason, data.ReceiptDiscrepancyId);
         var prior = await store.FindByOperationKeyAsync(operationKey, cancellationToken);
         if (prior is not null) return Replay(prior, hash, prior.Refund.CreateRequestHash);
 
@@ -32,6 +32,20 @@ public sealed class RefundService(IRefundStore store, IPaymentStore paymentStore
             var refundDue = Math.Max(0, ledger.Payment.ConfirmedAmount - ledger.Payment.AdjustedAmount - totals.Refunded);
             if (data.Amount + totals.Pending > refundDue)
                 throw RefundOperationException.Conflict($"Refund exceeds available refund obligation of {Math.Max(0, refundDue - totals.Pending):0.##} VND.");
+            if (data.ReceiptDiscrepancyId.HasValue)
+            {
+                // S3-101-2: a refund tied to a claim can only be raised for a decided financial
+                // adjustment of the same order, and never for more than that claim adjusted.
+                var claim = await store.FindClaimSourceAsync(data.ReceiptDiscrepancyId.Value, ct)
+                    ?? throw RefundOperationException.NotFound("Claim was not found.");
+                if (claim.SalesOrderId != data.SalesOrderId)
+                    throw RefundOperationException.Validation("The claim does not belong to this order.");
+                if (!claim.IsDecided || claim.ResolutionType != "PaymentAdjusted")
+                    throw RefundOperationException.Conflict("Only an approved financial adjustment can be refunded.");
+                if (data.Amount + claim.AlreadyLinkedAmount > claim.AdjustmentAmount)
+                    throw RefundOperationException.Conflict(
+                        $"Refund exceeds the claim adjustment; {Math.Max(0, claim.AdjustmentAmount - claim.AlreadyLinkedAmount):0.##} VND remains.");
+            }
             var now = timeProvider.GetUtcNow();
             var refund = new ManualRefund
             {
@@ -42,6 +56,7 @@ public sealed class RefundService(IRefundStore store, IPaymentStore paymentStore
                 Recipient = recipient,
                 Reason = reason,
                 Status = RefundStatuses.PendingRefund,
+                ReceiptDiscrepancyId = data.ReceiptDiscrepancyId,
                 CreateOperationKey = operationKey,
                 CreateRequestHash = hash,
                 CreatedByUserId = actorUserId,
@@ -141,6 +156,15 @@ public sealed class RefundService(IRefundStore store, IPaymentStore paymentStore
         return result;
     }
 
+    /// <summary>S3-101-4: refund amounts owed after a claim adjustment that have no refund record yet.</summary>
+    public async Task<IReadOnlyCollection<RefundObligationResult>> ListObligationsAsync(
+        string actorRole, CancellationToken ct)
+    {
+        if (actorRole is not (SystemRoles.Admin or SystemRoles.Operator))
+            throw RefundOperationException.Forbidden("Only Admin or Operator can list refund obligations.");
+        return await store.ListObligationsAsync(ct);
+    }
+
     public async Task<RefundResult> GetAsync(Guid id, Guid actorUserId, string actorRole, CancellationToken ct)
     {
         EnsureRead(actorRole);
@@ -216,10 +240,13 @@ public sealed class RefundService(IRefundStore store, IPaymentStore paymentStore
             v.Refund.SubmittedByUserId, v.Refund.SubmittedAt, v.Refund.VerifiedByUserId,
             v.Refund.VerifiedAt, v.Refund.VerificationNote, v.Refund.Version, v.Payment.Amount,
             v.Payment.AdjustedAmount, v.Payment.ConfirmedAmount, v.PendingRefundAmount,
-            v.RefundedAmount, due, v.Refund.CreatedAt, v.Refund.UpdatedAt);
+            v.RefundedAmount, due, v.Refund.CreatedAt, v.Refund.UpdatedAt)
+        {
+            ReceiptDiscrepancyId = v.Refund.ReceiptDiscrepancyId
+        };
     }
 
-    private static void EnsureOperator(string role) { if (role != SystemRoles.Operator) throw RefundOperationException.Forbidden("Only Operator can create refunds and submit transfer evidence."); }
+    private static void EnsureOperator(string role) { if (role is not (SystemRoles.Operator or SystemRoles.Admin)) throw RefundOperationException.Forbidden("Only Operator or Admin can create refunds and submit transfer evidence."); }
     private static void EnsureRead(string role) { if (role is not (SystemRoles.Admin or SystemRoles.Operator or SystemRoles.SalesManager or SystemRoles.Sales or SystemRoles.Retailer)) throw RefundOperationException.Forbidden("Role cannot view refunds."); }
     private static void ValidateAmount(decimal amount) { if (amount <= 0 || decimal.Round(amount, 2) != amount) throw RefundOperationException.Validation("Refund amount must be positive with at most two decimal places."); }
     private static string Key(string value) => Required(value, 80, "Idempotency-Key");

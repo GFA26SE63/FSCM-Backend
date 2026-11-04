@@ -276,7 +276,7 @@ public sealed class OrderServiceTests
     }
 
     [Fact]
-    public async Task Approved_run_read_preserves_each_batch_price_and_warehouse_progress()
+    public async Task Allocation_read_preserves_each_batch_price_and_warehouse_progress()
     {
         var fixture = new Fixture();
         var created = await fixture.CreateAsync(10);
@@ -295,13 +295,12 @@ public sealed class OrderServiceTests
 
         var result = await fixture.Service.GetAsync(created.Id, fixture.SalesUserId, SystemRoles.Sales, default);
 
-        Assert.Equal(740m, result.OfficialAmount);
         Assert.Equal("RUN-20261020", result.AllocationRunCode);
-        Assert.Equal(3, result.AllocationPlanVersion);
+        // The order is still Allocating (it has not reached Quoted), so the state follows its status.
+        Assert.Equal("Allocating", result.AllocationState);
         var fragments = Assert.Single(result.Lines).AllocationFragments.OrderBy(item => item.Sequence).ToArray();
         Assert.Equal([80m, 70m], fragments.Select(item => item.FinalUnitPrice));
         Assert.Equal([320m, 420m], fragments.Select(item => item.NetAmount));
-        Assert.Equal(740m, result.Lines.Single().OfficialNetAmount);
         Assert.Equal("SHP-001", Assert.Single(result.WarehouseProgress).ShipmentCode);
     }
 
