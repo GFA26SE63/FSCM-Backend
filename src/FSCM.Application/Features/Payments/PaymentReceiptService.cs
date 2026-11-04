@@ -10,6 +10,23 @@ public sealed record ConfirmPaymentReceiptData(Guid RetailerId, decimal Received
 public sealed record PaymentReceiptResult(Guid Id, string ReceiptCode, PaymentReceiptStatus Status, decimal ReceivedAmount, decimal UnappliedCreditAmount, DateTimeOffset? ConfirmedAt, DateTimeOffset? ReversedAt, IReadOnlyCollection<ReceiptAllocationData> Allocations);
 public sealed record ReceiptPaymentView(Payment Payment, SalesOrder Order);
 
+// F64 / F5 step 4: auto-allocation proposal when the retailer does not name invoices.
+public sealed record ProposeReceiptAllocationData(Guid RetailerId, decimal ReceivedAmount);
+
+/// <summary>One outstanding receivable with the fields the proposal orders by.</summary>
+public sealed record OutstandingReceivableView(
+    Guid PaymentId, Guid SalesOrderId, string OrderCode,
+    decimal OutstandingAmount, DateOnly? DueDate, DateTimeOffset CreatedAt, bool IsOverdue);
+
+/// <summary>One proposed receipt line: how much of the receipt to apply to this receivable.</summary>
+public sealed record ProposedReceiptAllocation(
+    Guid PaymentId, Guid SalesOrderId, string OrderCode,
+    decimal OutstandingAmount, decimal ProposedAmount, DateOnly? DueDate, bool IsOverdue);
+
+public sealed record ReceiptAllocationProposalResult(
+    Guid RetailerId, decimal ReceivedAmount, decimal AllocatedAmount, decimal UnappliedCreditAmount,
+    IReadOnlyCollection<ProposedReceiptAllocation> Allocations);
+
 public interface IPaymentReceiptStore
 {
     Task<PaymentReceipt?> FindReceiptByOperationKeyAsync(string operationKey, bool forUpdate, CancellationToken cancellationToken);
@@ -17,6 +34,14 @@ public interface IPaymentReceiptStore
     Task<IReadOnlyCollection<PaymentReceiptAllocation>> ListAllocationsAsync(Guid receiptId, CancellationToken cancellationToken);
     Task<IReadOnlyCollection<ReceiptPaymentView>> FindPaymentsForUpdateAsync(IReadOnlyCollection<Guid> paymentIds, CancellationToken cancellationToken);
     Task<decimal> ConfirmedAllocationTotalAsync(Guid paymentId, Guid? excludedReceiptId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// F5 step 4: a retailer's receivables that still owe money, for the auto-allocation proposal.
+    /// Outstanding = AdjustedAmount − already-confirmed collections; only rows with a positive
+    /// balance are returned.
+    /// </summary>
+    Task<IReadOnlyCollection<OutstandingReceivableView>> ListOutstandingReceivablesByRetailerAsync(
+        Guid retailerId, DateOnly today, CancellationToken cancellationToken);
     void AddReceipt(PaymentReceipt receipt);
     void AddAllocations(IEnumerable<PaymentReceiptAllocation> allocations);
     void AddAuditLog(AuditLog auditLog);
@@ -31,6 +56,8 @@ public sealed class PaymentReceiptService(
     TimeProvider timeProvider,
     OrderCompletionService? completionService = null)
 {
+    private static readonly TimeSpan VietnamOffset = TimeSpan.FromHours(7);
+
     public async Task<PaymentReceiptResult> ConfirmAsync(ConfirmPaymentReceiptData data, string operationKey,
         Guid actorUserId, string actorRole, CancellationToken cancellationToken)
     {
@@ -92,6 +119,51 @@ public sealed class PaymentReceiptService(
                 await completionService.EvaluateAsync(orderId, actorUserId, cancellationToken);
         }
         return await ToResultAsync((await store.FindReceiptByOperationKeyAsync(operationKey, false, cancellationToken))!, cancellationToken);
+    }
+
+    /// <summary>
+    /// F5 step 4: proposes how to spread a received amount across a retailer's outstanding
+    /// receivables when they do not name invoices — overdue first, then earliest due date, then
+    /// earliest created, then order code. Read-only: the user still confirms via ConfirmAsync. Any
+    /// surplus beyond the total outstanding is reported as unapplied credit.
+    /// </summary>
+    public async Task<ReceiptAllocationProposalResult> ProposeAllocationAsync(
+        ProposeReceiptAllocationData data, Guid actorUserId, string actorRole, CancellationToken cancellationToken)
+    {
+        if (actorRole is not (SystemRoles.Admin or SystemRoles.Operator))
+            throw PaymentOperationException.Forbidden("Only Admin or Operator can propose a receipt allocation.");
+        if (data.RetailerId == Guid.Empty)
+            throw PaymentOperationException.Validation("Retailer is required.");
+        if (data.ReceivedAmount <= 0 || decimal.Round(data.ReceivedAmount, 2) != data.ReceivedAmount)
+            throw PaymentOperationException.Validation(
+                "Received amount must be positive with at most two decimal places.");
+
+        var today = DateOnly.FromDateTime(timeProvider.GetUtcNow().ToOffset(VietnamOffset).DateTime);
+        var outstanding = await store.ListOutstandingReceivablesByRetailerAsync(
+            data.RetailerId, today, cancellationToken);
+
+        var ordered = outstanding
+            .OrderByDescending(item => item.IsOverdue)
+            .ThenBy(item => item.DueDate ?? DateOnly.MaxValue)
+            .ThenBy(item => item.CreatedAt)
+            .ThenBy(item => item.OrderCode, StringComparer.Ordinal);
+
+        var proposals = new List<ProposedReceiptAllocation>();
+        var remaining = data.ReceivedAmount;
+        foreach (var receivable in ordered)
+        {
+            if (remaining <= 0) break;
+            var apply = Math.Min(remaining, receivable.OutstandingAmount);
+            if (apply <= 0) continue;
+            proposals.Add(new ProposedReceiptAllocation(
+                receivable.PaymentId, receivable.SalesOrderId, receivable.OrderCode,
+                receivable.OutstandingAmount, apply, receivable.DueDate, receivable.IsOverdue));
+            remaining -= apply;
+        }
+
+        var allocated = proposals.Sum(item => item.ProposedAmount);
+        return new ReceiptAllocationProposalResult(
+            data.RetailerId, data.ReceivedAmount, allocated, data.ReceivedAmount - allocated, proposals);
     }
 
     public async Task<PaymentReceiptResult> ReverseAsync(Guid receiptId, string reason, Guid actorUserId, string actorRole, CancellationToken cancellationToken)

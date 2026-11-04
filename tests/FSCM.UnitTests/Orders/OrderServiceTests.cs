@@ -20,7 +20,7 @@ public sealed class OrderServiceTests
 
         var result = await fixture.CreateAsync(quantity: 10);
 
-        Assert.Equal(OrderStatuses.PendingApproval, result.Status);
+        Assert.Equal(OrderStatuses.Allocating, result.Status);
         Assert.Equal(1_000m, result.SubtotalAmount);
         Assert.Equal(100m, result.DiscountAmount);
         Assert.Equal(900m, result.FinalAmount);
@@ -134,7 +134,7 @@ public sealed class OrderServiceTests
 
         var result = await fixture.CreateAsync(10);
 
-        Assert.Equal(OrderStatuses.PendingApproval, result.Status);
+        Assert.Equal(OrderStatuses.Allocating, result.Status);
         Assert.Single(fixture.Store.Orders);
         Assert.Empty(fixture.Store.Allocations);
         Assert.Equal(5m, fixture.Store.Balance.AvailableQuantity);
@@ -152,93 +152,48 @@ public sealed class OrderServiceTests
         Assert.Empty(fixture.Store.Orders);
     }
 
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task Reject_or_cancel_has_no_inventory_side_effect_before_allocation(bool cancel)
+    // Review 2: there is no SO approval/rejection. The only pre-allocation exit is Withdraw while
+    // the order is still Allocating; after Quoted the retailer rejects the quote instead.
+    [Fact]
+    public async Task Sales_can_withdraw_their_own_order_before_allocation_without_inventory_side_effect()
     {
         var fixture = new Fixture();
         var created = await fixture.CreateAsync(10);
 
-        var result = cancel
-            ? await fixture.Service.CancelAsync(created.Id, created.Version, fixture.SalesUserId,
-                SystemRoles.Sales, "Khách hàng đổi kế hoạch", default)
-            : await fixture.Service.RejectAsync(created.Id, created.Version,
-                "Không đáp ứng lịch giao", fixture.OperatorUserId, SystemRoles.Operator, default);
+        var result = await fixture.Service.CancelAsync(created.Id, created.Version, fixture.SalesUserId,
+            SystemRoles.Sales, "Khách hàng đổi kế hoạch", default);
 
-        Assert.Equal(cancel ? OrderStatuses.Cancelled : OrderStatuses.Rejected, result.Status);
+        Assert.Equal(OrderStatuses.Withdrawn, result.Status);
         Assert.Equal(50m, fixture.Store.Balance.AvailableQuantity);
         Assert.Equal(0, fixture.Inventory.ReleaseCalls);
-        Assert.Equal(cancel ? 1 : 0, fixture.PickingPlan.CancelCalls);
+        Assert.Equal(1, fixture.PickingPlan.CancelCalls);
     }
 
     [Fact]
-    public async Task Admin_can_review_an_order_not_only_Operator()
+    public async Task Operator_can_withdraw_an_order_still_awaiting_allocation()
     {
         var fixture = new Fixture();
         var created = await fixture.CreateAsync(10);
 
-        var approved = await fixture.Service.ApproveAsync(
-            created.Id, created.Version, fixture.OperatorUserId, SystemRoles.Admin, default);
-
-        Assert.Equal(OrderStatuses.PendingAllocation, approved.Status);
-    }
-
-    [Fact]
-    public async Task Warehouse_keeper_cannot_review_an_order()
-    {
-        var fixture = new Fixture();
-        var created = await fixture.CreateAsync(10);
-
-        var exception = await Assert.ThrowsAsync<OrderOperationException>(() =>
-            fixture.Service.ApproveAsync(created.Id, created.Version, fixture.OperatorUserId,
-                SystemRoles.WarehouseKeeper, default));
-
-        Assert.Equal("forbidden", exception.Code);
-    }
-
-    [Fact]
-    public async Task Reviewing_twice_is_a_no_op_rather_than_a_second_decision()
-    {
-        var fixture = new Fixture();
-        var created = await fixture.CreateAsync(10);
-        var approved = await fixture.Service.ApproveAsync(
-            created.Id, created.Version, fixture.OperatorUserId, SystemRoles.Operator, default);
-
-        var again = await fixture.Service.ApproveAsync(
-            approved.Id, approved.Version, fixture.OperatorUserId, SystemRoles.Operator, default);
-
-        Assert.Equal(approved.Version, again.Version);
-        Assert.Equal(0, fixture.Inventory.ReserveCalls);
-        Assert.Equal(0, fixture.PickingPlan.Calls);
-    }
-
-    [Fact]
-    public async Task An_order_waiting_for_the_run_can_still_be_cancelled()
-    {
-        var fixture = new Fixture();
-        var created = await fixture.CreateAsync(10);
-        var approved = await fixture.Service.ApproveAsync(
-            created.Id, created.Version, fixture.OperatorUserId, SystemRoles.Operator, default);
-
-        var cancelled = await fixture.Service.CancelAsync(approved.Id, approved.Version,
+        var withdrawn = await fixture.Service.CancelAsync(created.Id, created.Version,
             fixture.OperatorUserId, SystemRoles.Operator, "Retailer đóng cửa", default);
 
-        Assert.Equal(OrderStatuses.Cancelled, cancelled.Status);
+        Assert.Equal(OrderStatuses.Withdrawn, withdrawn.Status);
     }
 
     [Fact]
-    public async Task Rejecting_without_a_reason_is_refused()
+    public async Task Withdrawing_twice_is_idempotent()
     {
         var fixture = new Fixture();
         var created = await fixture.CreateAsync(10);
+        var withdrawn = await fixture.Service.CancelAsync(created.Id, created.Version,
+            fixture.OperatorUserId, SystemRoles.Operator, "Retailer đóng cửa", default);
 
-        var exception = await Assert.ThrowsAsync<OrderOperationException>(() =>
-            fixture.Service.RejectAsync(created.Id, created.Version, "   ",
-                fixture.OperatorUserId, SystemRoles.Operator, default));
+        var again = await fixture.Service.CancelAsync(withdrawn.Id, withdrawn.Version,
+            fixture.OperatorUserId, SystemRoles.Operator, "Retailer đóng cửa", default);
 
-        Assert.Equal("validation_error", exception.Code);
-        Assert.Equal(OrderStatuses.PendingApproval, fixture.Store.Orders.Single().Status);
+        Assert.Equal(OrderStatuses.Withdrawn, again.Status);
+        Assert.Equal(withdrawn.Version, again.Version);
     }
 
     [Fact]
@@ -249,7 +204,7 @@ public sealed class OrderServiceTests
         var result = await fixture.SubmitOfflineAsync(quantity: 10, estimate: 900m);
 
         Assert.Equal(OrderSources.Offline, result.Source);
-        Assert.Equal(OrderStatuses.PendingApproval, result.Status);
+        Assert.Equal(OrderStatuses.Allocating, result.Status);
         Assert.Equal(900m, result.FinalAmount);
         Assert.Equal(900m, result.OfflineEstimatedAmount);
         Assert.False(result.HasOfflineDifference);

@@ -61,6 +61,21 @@ public sealed class RunPickingStore(AppDbContext dbContext) : IRunPickingStore
     public Task<BatchQrLabel?> FindLabelForUpdateAsync(string code, CancellationToken ct) =>
         dbContext.BatchQrLabelRecords.SingleOrDefaultAsync(x => x.QrCode == code, ct);
 
+    public Task<BatchPickGuard?> FindBatchPickGuardAsync(Guid batchId, CancellationToken ct) =>
+        dbContext.BatchRecords.AsNoTracking()
+            .Where(batch => batch.Id == batchId)
+            .Join(dbContext.InventoryBalanceRecords.AsNoTracking(),
+                batch => batch.Id, balance => balance.BatchId, (batch, balance) => new { batch, balance })
+            .Select(item => new BatchPickGuard(
+                item.batch.BatchCode,
+                item.batch.ExpiryStatus,
+                item.batch.ExpirationDate,
+                item.balance.AvailableQuantity,
+                dbContext.InventoryLockRecords.AsNoTracking()
+                    .Where(l => l.BatchId == batchId && l.Status == "Active")
+                    .Sum(l => (decimal?)l.LockedQuantity) ?? 0m))
+            .SingleOrDefaultAsync(ct);
+
     public async Task<string> NextQrCodeAsync(CancellationToken ct)
     {
         var connection = dbContext.Database.GetDbConnection();

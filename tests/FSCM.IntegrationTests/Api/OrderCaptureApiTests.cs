@@ -358,7 +358,7 @@ public sealed class OrderCaptureApiTests
         Assert.Equal(store.Retailer.Id, syncedOrder.GetProperty("retailerId").GetGuid());
         Assert.Equal(OrderPaymentMethods.Prepaid,
             syncedOrder.GetProperty("paymentMethod").GetString());
-        Assert.Equal(OrderStatuses.PendingApproval, syncedOrder.GetProperty("status").GetString());
+        Assert.Equal(OrderStatuses.Allocating, syncedOrder.GetProperty("status").GetString());
         Assert.True(syncedOrder.GetProperty("finalPricePendingAllocation").GetBoolean());
         Assert.Equal(900m, syncedOrder.GetProperty("finalAmount").GetDecimal());
         Assert.Empty(syncedOrder.GetProperty("lines")[0].GetProperty("allocations").EnumerateArray());

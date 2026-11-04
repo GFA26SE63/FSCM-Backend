@@ -275,33 +275,10 @@ public sealed class OrderService(
                 "Sales can only request retailer pricing inside the assigned territory.");
     }
 
-    /// <summary>
-    /// Reviewing an order parks it for the next run. It holds no stock: the run picks the
-    /// batches and only run approval reserves them, so two approved orders can still compete for
-    /// the same batch and the earlier acceptance time wins.
-    /// </summary>
-    public Task<OrderDetailResult> ApproveAsync(
-        Guid orderId,
-        int expectedVersion,
-        Guid reviewerUserId,
-        string actorRole,
-        CancellationToken cancellationToken) =>
-        TransitionAsync(orderId, expectedVersion, reviewerUserId, actorRole,
-            OrderStatuses.PendingAllocation, null, cancellationToken);
-
-    public Task<OrderDetailResult> RejectAsync(
-        Guid orderId,
-        int expectedVersion,
-        string reason,
-        Guid reviewerUserId,
-        string actorRole,
-        CancellationToken cancellationToken)
-    {
-        reason = CleanOptional(reason, 1_000)
-            ?? throw OrderOperationException.Validation("Rejection reason is required.");
-        return TransitionAsync(orderId, expectedVersion, reviewerUserId, actorRole,
-            OrderStatuses.Rejected, reason, cancellationToken);
-    }
+    // Review 2: there is no Admin/Operator approval or rejection of a sales order. After validation
+    // the order goes straight to Allocating and real-time allocation runs; the only pre-commit exit
+    // for the retailer/sales side is Withdraw (see CancelAsync), and after Quoted it is quote
+    // rejection (QuotesController). The former ApproveAsync/RejectAsync/TransitionAsync were removed.
 
     public async Task<OrderDetailResult> CancelAsync(
         Guid orderId,
@@ -313,7 +290,7 @@ public sealed class OrderService(
     {
         if (actorRole is not (SystemRoles.Sales or SystemRoles.Operator or SystemRoles.Admin))
         {
-            throw OrderOperationException.Forbidden("Role cannot cancel orders.");
+            throw OrderOperationException.Forbidden("Role cannot withdraw orders.");
         }
 
         reason = CleanOptional(reason, 1_000);
@@ -321,27 +298,28 @@ public sealed class OrderService(
         {
             var view = await store.FindAsync(orderId, true, transactionCancellationToken)
                 ?? throw OrderOperationException.NotFound("Order was not found.");
-            if (view.Order.Status == OrderStatuses.Cancelled) return;
-            if (actorRole == SystemRoles.Sales && view.Order.CreatedByUserId != actorUserId)
+            // Withdraw is idempotent and only valid before allocation commits a reservation.
+            if (view.Order.Status == OrderStatuses.Withdrawn) return;
+            if (actorRole == SystemRoles.Sales &&
+                (view.Order.CreatedByUserId != actorUserId || view.Order.Status != OrderStatuses.Allocating))
             {
-                throw OrderOperationException.Forbidden("Sales can only cancel their own order.");
+                throw OrderOperationException.Forbidden("Sales can only withdraw their own order before allocation.");
             }
 
-            if (view.Order.Status is not (OrderStatuses.Allocating or OrderStatuses.Quoted or
-                OrderStatuses.PaymentPending))
+            // Review 2: the only pre-commit exit is Withdraw while the order is still Allocating.
+            // Once Quoted (reservation held), the retailer rejects the quote instead.
+            if (view.Order.Status != OrderStatuses.Allocating)
             {
                 throw OrderOperationException.Conflict(
-                    "Only an order that has not become a PO can be cancelled here.");
+                    "Only an order that has not been quoted can be withdrawn; reject the quote instead.");
             }
 
             EnsureOrderVersion(view.Order, expectedVersion);
             await pickingPlanService.CancelForOrderAsync(
                 view.Order.Id, timeProvider.GetUtcNow(), transactionCancellationToken);
-            // Two models can hold stock here. The older per-order one is what ReleaseInventoryAsync
-            // walks, and it is still right for orders captured before the daily runs; every order
-            // since holds its stock through the run, which is what the release service lets go of.
-            // Both run inside this transaction: an order marked cancelled while its stock is still
-            // held would be invisible to the next run and have no screen that explains it.
+            // Release any stock held for the order under either model (legacy per-order hold and the
+            // run-based reservation), inside this transaction so a withdrawn order never leaves
+            // stock held with no screen to explain it.
             await ReleaseInventoryAsync(view, actorUserId, transactionCancellationToken);
             await releaseService.ReleaseAsync(
                 view.Order.Id, actorUserId, view.Order.OrderCode, transactionCancellationToken);
@@ -353,8 +331,8 @@ public sealed class OrderService(
             }
             var fromStatus = view.Order.Status;
             var now = timeProvider.GetUtcNow();
-            ApplyTransition(view.Order, OrderStatuses.Cancelled, actorUserId, reason, now);
-            store.AddHistory(NewHistory(view.Order.Id, fromStatus, OrderStatuses.Cancelled,
+            ApplyTransition(view.Order, OrderStatuses.Withdrawn, actorUserId, reason, now);
+            store.AddHistory(NewHistory(view.Order.Id, fromStatus, OrderStatuses.Withdrawn,
                 actorUserId, reason, now));
             await store.SaveChangesAsync(transactionCancellationToken);
         }, cancellationToken);
@@ -369,48 +347,6 @@ public sealed class OrderService(
                 orderId, $"/retailer/orders/{orderId}", cancellationToken);
         }
         return result;
-    }
-
-    private async Task<OrderDetailResult> TransitionAsync(
-        Guid orderId,
-        int expectedVersion,
-        Guid actorUserId,
-        string actorRole,
-        string targetStatus,
-        string? reason,
-        CancellationToken cancellationToken)
-    {
-        if (actorRole is not (SystemRoles.Operator or SystemRoles.Admin))
-        {
-            throw OrderOperationException.Forbidden("Only Admin or Operator can approve or reject orders.");
-        }
-
-        await store.ExecuteInTransactionAsync(async transactionCancellationToken =>
-        {
-            var view = await store.FindAsync(orderId, true, transactionCancellationToken)
-                ?? throw OrderOperationException.NotFound("Order was not found.");
-            // Re-sending the same decision is a no-op: nothing is reserved or issued here.
-            if (view.Order.Status == targetStatus) return;
-            if (view.Order.Status != OrderStatuses.PendingApproval)
-            {
-                throw OrderOperationException.Conflict("Only pending orders can be approved or rejected.");
-            }
-
-            EnsureOrderVersion(view.Order, expectedVersion);
-            var now = timeProvider.GetUtcNow();
-            if (targetStatus == OrderStatuses.Rejected)
-            {
-                await ReleaseInventoryAsync(view, actorUserId, transactionCancellationToken);
-            }
-
-            ApplyTransition(view.Order, targetStatus, actorUserId, reason, now);
-            store.AddHistory(NewHistory(view.Order.Id, OrderStatuses.PendingApproval,
-                targetStatus, actorUserId, reason, now));
-            await store.SaveChangesAsync(transactionCancellationToken);
-        }, cancellationToken);
-
-        store.ClearTracking();
-        return await GetAsync(orderId, actorUserId, actorRole, cancellationToken);
     }
 
     private async Task ReleaseInventoryAsync(
@@ -729,13 +665,9 @@ public sealed class OrderService(
         string? reason,
         DateTimeOffset now)
     {
+        // Only the Withdraw transition flows through here now; it records the reason on the order.
         order.Status = targetStatus;
-        if (targetStatus is OrderStatuses.PendingAllocation or OrderStatuses.Rejected)
-        {
-            order.ReviewedByUserId = actorUserId;
-            order.ReviewedAt = now;
-        }
-        order.RejectionReason = targetStatus == OrderStatuses.Rejected ? reason : order.RejectionReason;
+        order.RejectionReason = targetStatus == OrderStatuses.Withdrawn ? reason : order.RejectionReason;
         order.Version++;
         order.UpdatedAt = now;
     }
@@ -927,7 +859,7 @@ public sealed class OrderService(
 
     private static string AllocationState(OrderView view) => view.Order.Status switch
     {
-        OrderStatuses.Cancelled or OrderStatuses.Rejected => "NotApplicable",
+        OrderStatuses.Withdrawn or OrderStatuses.QuoteRejected => "NotApplicable",
         _ when view.AllocationContext is not null => view.AllocationContext.PlanStatus == AllocationPlanVersionStatuses.Approved
             ? "Allocated" : "Proposed",
         _ when view.Lines.SelectMany(item => item.Allocations).Any() =>

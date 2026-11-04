@@ -74,8 +74,11 @@ public sealed class RefundService(IRefundStore store, IPaymentStore paymentStore
         if (prior is not null) return Replay(prior, hash, prior.Refund.EvidenceRequestHash);
         await MutateAsync(id, data.ExpectedVersion, actorUserId, ct =>
         {
-            if (ct.Status != RefundStatuses.PendingRefund)
-                throw RefundOperationException.Conflict("Only a pending refund can receive transfer evidence.");
+            // Evidence can be submitted on a fresh refund (PendingRefund) or resubmitted after a
+            // rejection (EvidenceRejected); either way it re-enters AwaitingVerification.
+            if (ct.Status is not (RefundStatuses.PendingRefund or RefundStatuses.EvidenceRejected))
+                throw RefundOperationException.Conflict(
+                    "Only a pending or evidence-rejected refund can receive transfer evidence.");
             ct.Status = RefundStatuses.AwaitingVerification;
             ct.TransferredAt = data.TransferredAt;
             ct.TransactionReference = transaction;
@@ -84,6 +87,10 @@ public sealed class RefundService(IRefundStore store, IPaymentStore paymentStore
             ct.SubmittedAt = timeProvider.GetUtcNow();
             ct.EvidenceOperationKey = operationKey;
             ct.EvidenceRequestHash = hash;
+            // Clear the previous rejection outcome so the record cleanly awaits a new decision.
+            ct.VerificationNote = null;
+            ct.VerificationOperationKey = null;
+            ct.VerificationRequestHash = null;
         }, "RefundEvidenceSubmitted", cancellationToken);
         return await Reload(id, cancellationToken);
     }
@@ -107,24 +114,18 @@ public sealed class RefundService(IRefundStore store, IPaymentStore paymentStore
                 throw RefundOperationException.Conflict("Only a refund awaiting verification can be verified.");
             if (refund.SubmittedByUserId == actorUserId)
                 throw RefundOperationException.Forbidden("The evidence submitter cannot verify the same refund.");
+            // F5 step 18: rejecting evidence moves to EvidenceRejected (not back to PendingRefund).
+            // The refund obligation and the prior evidence are kept on the same record for history;
+            // the Operator resubmits corrected evidence from EvidenceRejected. Only the verification
+            // outcome fields change here.
             refund.Status = data.Approved
                 ? RefundStatuses.Refunded
-                : RefundStatuses.PendingRefund;
+                : RefundStatuses.EvidenceRejected;
             refund.VerifiedByUserId = data.Approved ? actorUserId : null;
             refund.VerifiedAt = data.Approved ? timeProvider.GetUtcNow() : null;
             refund.VerificationNote = note;
             refund.VerificationOperationKey = operationKey;
             refund.VerificationRequestHash = hash;
-            if (!data.Approved)
-            {
-                refund.TransferredAt = null;
-                refund.TransactionReference = null;
-                refund.EvidenceReference = null;
-                refund.SubmittedByUserId = null;
-                refund.SubmittedAt = null;
-                refund.EvidenceOperationKey = null;
-                refund.EvidenceRequestHash = null;
-            }
         }, data.Approved ? "RefundVerified" : "RefundEvidenceRejected", cancellationToken);
         var result = await Reload(id, cancellationToken);
         if (notifications is not null)
