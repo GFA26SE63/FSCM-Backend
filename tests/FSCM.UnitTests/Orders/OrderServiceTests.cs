@@ -354,7 +354,7 @@ public sealed class OrderServiceTests
         Guid lineId, Guid batchId, Guid warehouseId, decimal quantity,
         decimal finalUnitPrice, decimal netAmount, int sequence) => new(
         Guid.NewGuid(), Guid.NewGuid(), lineId, batchId, $"BATCH-{sequence}", new DateOnly(2026, 11, 30),
-        warehouseId, "WH-TD", quantity, sequence, Now.AddHours(8), 500m,
+        warehouseId, "WH-TD", quantity, sequence, 0.9m, 1000m, Now.AddHours(8), 500m,
         100m, 90m, 60m, Guid.NewGuid(), "Sku", "SKU001", 4,
         "Percentage", 10m, 10m, finalUnitPrice, netAmount, "Giảm giá theo hạn sử dụng");
 

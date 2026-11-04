@@ -1,4 +1,5 @@
 using FSCM.Application.Features.Inventory;
+using FSCM.Application.Features.Notifications;
 using FSCM.Application.Features.Orders;
 using FSCM.Application.Features.Quotes;
 using FSCM.Domain.Allocation;
@@ -14,6 +15,8 @@ public sealed record RealTimeAllocationContext(SalesOrder Order, IReadOnlyCollec
 public interface IRealTimeAllocationStore
 {
     Task<RealTimeAllocationContext?> LoadForUpdateAsync(Guid orderId, CancellationToken cancellationToken);
+    Task<(string OrderCode, string Status)> ReadOrderStateAsync(
+        Guid orderId, CancellationToken cancellationToken);
     void AddRun(AllocationRun run);
     void AddAllocation(Allocation allocation);
     void AddReservation(Reservation reservation);
@@ -34,7 +37,8 @@ public sealed class RealTimeAllocationService(
     IRealTimeAllocationStore store,
     AllocationEngine engine,
     AllocationPricingService pricingService,
-    TimeProvider timeProvider)
+    TimeProvider timeProvider,
+    OrderNotificationService? notifications = null)
     : IRealTimeAllocationService
 {
     private static readonly TimeSpan DefaultTransit = TimeSpan.FromHours(24);
@@ -47,6 +51,24 @@ public sealed class RealTimeAllocationService(
             {
                 await store.ExecuteInTransactionAsync(token => AllocateOnceAsync(orderId, actorUserId, token), cancellationToken);
                 store.ClearTracking();
+                if (notifications is not null)
+                {
+                    var state = await store.ReadOrderStateAsync(orderId, cancellationToken);
+                    if (state.Status == OrderStatuses.Quoted)
+                    {
+                        await notifications.PublishRetailerAsync(orderId, "QuoteIssued",
+                            "Báo giá mới đã sẵn sàng",
+                            $"Đơn {state.OrderCode} đã chọn batch, tính giá theo HSD và đang chờ bạn xác nhận.",
+                            orderId, $"/retailer/orders/{orderId}", cancellationToken);
+                    }
+                    else if (state.Status == OrderStatuses.OutOfStock)
+                    {
+                        await notifications.PublishRetailerAsync(orderId, "AllocationOutOfStock",
+                            "Đơn chưa đủ hàng",
+                            $"Đơn {state.OrderCode} chưa tìm được đủ batch đáp ứng MLOR.",
+                            orderId, $"/retailer/orders/{orderId}", cancellationToken);
+                    }
+                }
                 return;
             }
             catch (AllocationConcurrencyException) when (attempt < 3)
