@@ -15,6 +15,9 @@ public sealed class PaymentReceiptsController(PaymentReceiptService service) : C
     public Task<PaymentReceiptResult> Confirm(ConfirmPaymentReceiptRequest request, [FromHeader(Name = "Idempotency-Key")] string operationKey, CancellationToken cancellationToken) =>
         service.ConfirmAsync(new(request.RetailerId, request.ReceivedAmount, request.Reference, request.Note, request.Allocations.Select(x => new ReceiptAllocationData(x.PaymentId, x.Amount)).ToArray()), operationKey, UserId(), Role(), cancellationToken);
 
+    [HttpPost("{receiptId:guid}/apply-credit")]
+    public Task<PaymentReceiptResult> ApplyCredit(Guid receiptId, ApplyReceiptCreditRequest request, CancellationToken cancellationToken) =>
+        service.ApplyUnappliedCreditAsync(receiptId, request.ExpectedVersion, request.Allocations.Select(x => new ReceiptAllocationData(x.PaymentId, x.Amount)).ToArray(), UserId(), Role(), cancellationToken);
     [HttpPost("{receiptId:guid}/reverse")]
     public Task<PaymentReceiptResult> Reverse(Guid receiptId, ReversePaymentReceiptRequest request, CancellationToken cancellationToken) =>
         service.ReverseAsync(receiptId, request.Reason, UserId(), Role(), cancellationToken);

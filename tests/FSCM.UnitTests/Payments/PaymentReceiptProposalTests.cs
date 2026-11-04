@@ -73,6 +73,8 @@ public sealed class PaymentReceiptProposalTests
         public Task<IReadOnlyCollection<PaymentReceiptAllocation>> ListAllocationsAsync(Guid id, CancellationToken ct) => Task.FromResult<IReadOnlyCollection<PaymentReceiptAllocation>>([]);
         public Task<IReadOnlyCollection<ReceiptPaymentView>> FindPaymentsForUpdateAsync(IReadOnlyCollection<Guid> ids, CancellationToken ct) => Task.FromResult<IReadOnlyCollection<ReceiptPaymentView>>([]);
         public Task<decimal> ConfirmedAllocationTotalAsync(Guid id, Guid? excluded, CancellationToken ct) => Task.FromResult(0m);
+    public Task<bool> ReferenceInUseAsync(Guid retailerId, string reference, CancellationToken ct) => Task.FromResult(false);
+    public Task<PaymentReceiptAllocation?> FindAllocationForUpdateAsync(Guid receiptId, Guid paymentId, CancellationToken ct) => Task.FromResult<PaymentReceiptAllocation?>(null);
         public void AddReceipt(PaymentReceipt item) { }
         public void AddAllocations(IEnumerable<PaymentReceiptAllocation> items) { }
         public void AddAuditLog(AuditLog item) { }

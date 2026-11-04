@@ -106,6 +106,30 @@ public sealed class PaymentService(
                 throw PaymentOperationException.Conflict("Payment has no outstanding amount to collect.");
 
             var now = timeProvider.GetUtcNow();
+            // D5: credit money is only ever collected through a PaymentReceipt, so a single-order
+            // collection records one too. The receipt carries the amount that settles this order and
+            // reverses like any other receipt.
+            var receipt = new PaymentReceipt
+            {
+                Id = Guid.NewGuid(),
+                ReceiptCode = $"PT-{now:yyMMdd}-{Guid.NewGuid().ToString("N")[..6].ToUpperInvariant()}",
+                RetailerId = view.Order.RetailerId,
+                ReceivedAmount = outstanding,
+                UnappliedCreditAmount = 0,
+                Status = PaymentReceiptStatus.Confirmed,
+                Note = NormalizeNote(data.Note),
+                ConfirmedByUserId = actorUserId,
+                ConfirmedAt = now,
+                OperationKey = $"collect:{view.Payment.Id:N}:{view.Payment.Version}",
+                Version = 1,
+                CreatedAt = now,
+                UpdatedAt = now
+            };
+            store.AddReceipt(receipt, new PaymentReceiptAllocation
+            {
+                Id = Guid.NewGuid(), PaymentReceiptId = receipt.Id, PaymentId = view.Payment.Id,
+                Amount = outstanding, CreatedAt = now
+            });
             var oldValues = new
             {
                 view.Payment.Status,
@@ -486,7 +510,7 @@ public sealed class PaymentService(
     {
         if (string.IsNullOrWhiteSpace(value)) return null;
         value = value.Trim();
-        if (value is PaymentStatuses.Unpaid or PaymentStatuses.Paid or PaymentStatuses.Overdue or PaymentStatuses.Cancelled) return value;
+        if (value is PaymentStatuses.Unpaid or PaymentStatuses.PartiallyPaid or PaymentStatuses.Paid or PaymentStatuses.Overdue or PaymentStatuses.Cancelled) return value;
         throw PaymentOperationException.Validation("Payment status filter is invalid.");
     }
 
@@ -608,3 +632,4 @@ public sealed class PaymentService(
                 "Payment amount must be positive and have at most two decimal places.");
     }
 }
+

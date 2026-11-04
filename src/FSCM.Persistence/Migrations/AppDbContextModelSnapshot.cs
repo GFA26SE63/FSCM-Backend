@@ -142,14 +142,47 @@ namespace FSCM.Persistence.Migrations
                         .HasPrecision(18, 2)
                         .HasColumnType("numeric(18,2)");
 
+                    b.Property<decimal?>("PostPromotionUnitPrice")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<DateTimeOffset?>("PricedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("PricingExplanation")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
                     b.Property<Guid?>("PromotionId")
                         .HasColumnType("uuid");
 
                     b.Property<int>("RemainingLifeHoursAtArrival")
                         .HasColumnType("integer");
 
+                    b.Property<decimal?>("RemainingShelfLifePercent")
+                        .HasPrecision(5, 2)
+                        .HasColumnType("numeric(5,2)");
+
                     b.Property<Guid>("SalesOrderLineId")
                         .HasColumnType("uuid");
+
+                    b.Property<decimal?>("ShelfLifeDiscountPerUnit")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<int?>("ShelfLifeDiscountTableVersion")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid?>("ShelfLifeDiscountTierId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ShelfLifeDiscountType")
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<decimal?>("ShelfLifeDiscountValue")
+                        .HasPrecision(18, 4)
+                        .HasColumnType("numeric(18,4)");
 
                     b.Property<decimal>("ShelfLifeScore")
                         .HasPrecision(9, 6)
@@ -1783,6 +1816,9 @@ namespace FSCM.Persistence.Migrations
                         .HasMaxLength(500)
                         .HasColumnType("character varying(500)");
 
+                    b.Property<Guid?>("ReceiptDiscrepancyId")
+                        .HasColumnType("uuid");
+
                     b.Property<string>("Recipient")
                         .IsRequired()
                         .HasMaxLength(200)
@@ -1846,6 +1882,8 @@ namespace FSCM.Persistence.Migrations
                         .HasFilter("\"EvidenceOperationKey\" IS NOT NULL");
 
                     b.HasIndex("PaymentId");
+
+                    b.HasIndex("ReceiptDiscrepancyId");
 
                     b.HasIndex("SubmittedByUserId");
 
@@ -5471,6 +5509,11 @@ namespace FSCM.Persistence.Migrations
                         .HasForeignKey("PaymentId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
+
+                    b.HasOne("FSCM.Domain.Entities.ReceiptDiscrepancy", null)
+                        .WithMany()
+                        .HasForeignKey("ReceiptDiscrepancyId")
+                        .OnDelete(DeleteBehavior.Restrict);
 
                     b.HasOne("FSCM.Domain.Entities.SalesOrder", null)
                         .WithMany()

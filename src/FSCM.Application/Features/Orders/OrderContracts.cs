@@ -156,7 +156,6 @@ public sealed record OrderLineResult(
     public decimal OrdinaryPromotionDiscountAmount => DiscountAmount;
     public decimal IndicativeNetAmount => NetAmount;
     public IReadOnlyCollection<OrderAllocationFragmentResult> AllocationFragments { get; init; } = [];
-    public decimal? OfficialNetAmount { get; init; }
 }
 
 public sealed record OrderStatusHistoryResult(
@@ -180,7 +179,6 @@ public sealed record OrderSummaryResult(
     bool FinalPricePendingAllocation,
     string AllocationState,
     Guid? AllocationRunId,
-    string? AllocationProposalStatus,
     string? AllocationResult,
     int ShipmentCount,
     int TotalCartons,
@@ -190,7 +188,6 @@ public sealed record OrderSummaryResult(
     DateTimeOffset CreatedAt)
 {
     public decimal IndicativeAmount => FinalAmount;
-    public decimal? OfficialAmount { get; init; }
 }
 
 public sealed record OrderListQuery(
@@ -237,7 +234,6 @@ public sealed record OrderDetailResult(
     string RetailerName,
     Guid SalesGroupId,
     Guid CreatedByUserId,
-    Guid? ReviewedByUserId,
     string Source,
     string Status,
     string? PaymentMethod,
@@ -251,7 +247,6 @@ public sealed record OrderDetailResult(
     bool FinalPricePendingAllocation,
     string AllocationState,
     Guid? AllocationRunId,
-    string? AllocationProposalStatus,
     string? AllocationResult,
     string? RejectionReason,
     decimal? OfflineEstimatedAmount,
@@ -265,12 +260,23 @@ public sealed record OrderDetailResult(
     IReadOnlyCollection<OrderShipmentLinkResult> Shipments)
 {
     public decimal IndicativeAmount => FinalAmount;
-    public decimal? OfficialAmount { get; init; }
     public string? AllocationRunCode { get; init; }
-    public int? AllocationPlanVersion { get; init; }
-    public DateTimeOffset? OfficialPricedAt { get; init; }
     public IReadOnlyCollection<OrderWarehouseProgressResult> WarehouseProgress { get; init; } = [];
+    public OrderPaymentSummaryResult? Payment { get; init; }
+    public decimal QuantityPromotionTotal { get; init; }
+    public decimal ShelfLifeDiscountTotal { get; init; }
 }
+
+/// <summary>Payment state of an order as the Retailer sees it (prepaid status or credit receivable).</summary>
+public sealed record OrderPaymentSummaryResult(
+    string Method,
+    string Status,
+    decimal Amount,
+    decimal AdjustedAmount,
+    decimal ConfirmedAmount,
+    decimal OutstandingAmount,
+    DateOnly? DueDate,
+    bool IsOverdue);
 
 public sealed record OrderTimelineResult(
     Guid OrderId,
@@ -278,7 +284,6 @@ public sealed record OrderTimelineResult(
     string CurrentStatus,
     string AllocationState,
     Guid? AllocationRunId,
-    string? AllocationProposalStatus,
     string? AllocationResult,
     IReadOnlyCollection<OrderStatusHistoryResult> Events,
     IReadOnlyCollection<OrderShipmentLinkResult> Shipments);
@@ -339,3 +344,4 @@ public static class OrderPaymentMethods
 
     public static bool IsSupported(string? value) => value is Prepaid or Credit;
 }
+

@@ -1,4 +1,4 @@
-using FSCM.Application.Features.Inventory;
+﻿using FSCM.Application.Features.Inventory;
 using FSCM.Application.Features.Notifications;
 using FSCM.Application.Features.Orders;
 using FSCM.Application.Features.Quotes;
@@ -200,7 +200,16 @@ public sealed class RealTimeAllocationService(
                 DiscountSourceCode = priced.ShelfLifeDiscountPerUnit > 0
                     ? $"HSD-V{priced.DiscountTableVersion}"
                     : row.Line.DiscountSourceCode,
-                Status = AllocationInventoryStatuses.Reserved, CreatedAt = now
+                Status = AllocationInventoryStatuses.Reserved, CreatedAt = now,
+                PostPromotionUnitPrice = priced.BaseNetUnitPrice,
+                ShelfLifeDiscountPerUnit = priced.ShelfLifeDiscountPerUnit,
+                RemainingShelfLifePercent = priced.RemainingPercent,
+                ShelfLifeDiscountTierId = priced.TierId,
+                ShelfLifeDiscountType = priced.DiscountType,
+                ShelfLifeDiscountValue = priced.DiscountValue,
+                ShelfLifeDiscountTableVersion = priced.DiscountTableVersion,
+                PricingExplanation = priced.Explanation?.Length > 500 ? priced.Explanation[..500] : priced.Explanation,
+                PricedAt = now
             };
             store.AddAllocation(allocation);
             store.AddReservation(new Reservation { Id = Guid.NewGuid(), AllocationId = allocation.Id, BatchId = allocation.BatchId, Quantity = allocation.AllocatedQuantity, Status = ReservationStatuses.Active, ReservedAt = now });
@@ -269,3 +278,4 @@ public sealed class RealTimeAllocationService(
 }
 
 public sealed class AllocationConcurrencyException(string message) : Exception(message);
+

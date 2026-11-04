@@ -18,15 +18,14 @@ public sealed class ShipmentServiceTests
     private static readonly DateTimeOffset Now = new(2026, 10, 20, 9, 0, 0, TimeSpan.Zero);
 
     [Fact]
-    public async Task List_reconciles_one_shipment_per_completed_picking_list()
+    public async Task Sync_creates_one_shipment_per_completed_picking_list()
     {
         var fixture = new Fixture();
         // Order fans out across two warehouses → two completed picking lists.
-        fixture.AddCompletedPickingList(fixture.WarehouseA, totalPicked: 8);
-        fixture.AddCompletedPickingList(fixture.WarehouseB, totalPicked: 5);
+        fixture.AddPendingPickingList(fixture.WarehouseA, totalPicked: 8);
+        fixture.AddPendingPickingList(fixture.WarehouseB, totalPicked: 5);
 
-        var result = await fixture.Service.ListAsync(
-            Guid.Empty, SystemRoles.Operator, fixture.Order.Id, null, null, default);
+        var result = await fixture.Service.SyncOrderAsync(fixture.Order.Id, SystemRoles.Operator, default);
 
         Assert.Equal(2, result.Count);
         Assert.All(result, item => Assert.Equal(ShipmentStatuses.Ready, item.Status));
@@ -35,15 +34,28 @@ public sealed class ShipmentServiceTests
     }
 
     [Fact]
-    public async Task Reconcile_is_idempotent_across_repeated_reads()
+    public async Task Sync_is_idempotent_across_repeated_calls()
     {
         var fixture = new Fixture();
-        fixture.AddCompletedPickingList(fixture.WarehouseA, totalPicked: 8);
+        fixture.AddPendingPickingList(fixture.WarehouseA, totalPicked: 8);
 
-        await fixture.Service.ListAsync(Guid.Empty, SystemRoles.Operator, fixture.Order.Id, null, null, default);
-        await fixture.Service.ListAsync(Guid.Empty, SystemRoles.Operator, fixture.Order.Id, null, null, default);
+        await fixture.Service.SyncOrderAsync(fixture.Order.Id, SystemRoles.Operator, default);
+        await fixture.Service.SyncOrderAsync(fixture.Order.Id, SystemRoles.Operator, default);
 
         Assert.Single(fixture.Store.Shipments);
+    }
+
+    [Fact]
+    public async Task Reading_shipments_never_creates_them()
+    {
+        var fixture = new Fixture();
+        fixture.AddPendingPickingList(fixture.WarehouseA, totalPicked: 8);
+
+        var result = await fixture.Service.ListAsync(
+            Guid.Empty, SystemRoles.Operator, fixture.Order.Id, null, null, default);
+
+        Assert.Empty(result);
+        Assert.Empty(fixture.Store.Shipments);
     }
 
     [Fact]
@@ -661,9 +673,19 @@ public sealed class ShipmentServiceTests
 
         public FakePaymentStore PaymentStore { get; private set; } = null!;
 
-        public void AddCompletedPickingList(Guid warehouseId, decimal totalPicked) =>
+        /// <summary>A completed sheet whose shipment part has not been created yet (Sync repairs it).</summary>
+        public void AddPendingPickingList(Guid warehouseId, decimal totalPicked) =>
             Store.PendingLists.Add(new PendingShipmentSource(
                 Guid.NewGuid(), Order.Id, warehouseId, totalPicked));
+
+        /// <summary>A completed sheet: the part exists the moment the warehouse closes it.</summary>
+        public void AddCompletedPickingList(Guid warehouseId, decimal totalPicked) =>
+            Store.Shipments.Add(new Shipment
+            {
+                Id = Guid.NewGuid(), SalesOrderId = Order.Id, WarehouseId = warehouseId,
+                RunPickingListId = Guid.NewGuid(), ShipmentCode = $"SHIP-00300{Store.Shipments.Count}",
+                Status = ShipmentStatuses.Ready, TotalQuantity = totalPicked, Version = 1
+            });
 
         /// <summary>
         /// A warehouse that carries this order on a sheet it has not closed, so no shipment part
@@ -902,6 +924,7 @@ public sealed class ShipmentServiceTests
             FSCM.Application.Features.Payments.PaymentView view, Guid actorUserId, string actorRole,
             CancellationToken cancellationToken) => Task.FromResult(true);
         public void Add(FSCM.Domain.Entities.Payment payment) { }
+        public void AddReceipt(PaymentReceipt receipt, PaymentReceiptAllocation allocation) { }
         public void AddAuditLog(AuditLog auditLog) { }
         public Task SaveChangesAsync(CancellationToken cancellationToken) => Task.CompletedTask;
         public Task ExecuteInTransactionAsync(Func<CancellationToken, Task> operation, CancellationToken cancellationToken) =>

@@ -33,6 +33,7 @@ public interface IPaymentStore
     Task<bool> CanViewAsync(
         PaymentView view, Guid actorUserId, string actorRole, CancellationToken cancellationToken);
     void Add(Payment payment);
+    void AddReceipt(PaymentReceipt receipt, PaymentReceiptAllocation allocation);
     void AddAuditLog(AuditLog auditLog);
     Task SaveChangesAsync(CancellationToken cancellationToken);
     Task ExecuteInTransactionAsync(Func<CancellationToken, Task> operation, CancellationToken cancellationToken);
