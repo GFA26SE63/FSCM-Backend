@@ -106,8 +106,10 @@ public static class DependencyInjection
         services.AddScoped<IMapStore, MapStore>();
         services.AddScoped<IMobileSnapshotStore, MobileSnapshotStore>();
         services.AddScoped<INotificationStore, NotificationStore>();
+        services.AddScoped<IOrderNotificationStore, OrderNotificationStore>();
         services.AddScoped<IOrderStore, OrderStore>();
         services.AddScoped<IOrderReleaseStore, OrderReleaseStore>();
+        services.AddScoped<IOrderDeadlineStore, OrderDeadlineStore>();
         services.AddScoped<IPurchaseOrderGateStore, PurchaseOrderGateStore>();
         services.AddScoped<IPaymentStore, PaymentStore>();
         services.AddScoped<IPaymentReceiptStore, PaymentReceiptStore>();

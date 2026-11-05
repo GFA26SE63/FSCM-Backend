@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using FSCM.Application.Features.Orders;
+using FSCM.Application.Features.Notifications;
 using FSCM.Domain.Authorization;
 using FSCM.Domain.Entities;
 
@@ -13,7 +14,8 @@ public sealed class PaymentService(
     IPayOsGateway payOsGateway,
     TimeProvider timeProvider,
     PurchaseOrderGateService? purchaseOrderGateService = null,
-    OrderCompletionService? completionService = null)
+    OrderCompletionService? completionService = null,
+    OrderNotificationService? notifications = null)
 {
     private static readonly TimeSpan VietnamOffset = TimeSpan.FromHours(7);
 
@@ -72,6 +74,8 @@ public sealed class PaymentService(
                 throw PaymentOperationException.Forbidden("You cannot collect this payment.");
             if (prior.Payment.Status == PaymentStatuses.Paid && completionService is not null)
                 await completionService.EvaluateAsync(orderId, actorUserId, cancellationToken);
+            if (prior.Payment.Status == PaymentStatuses.Paid && notifications is not null)
+                await NotifyPaidAsync(prior, cancellationToken);
             return ToResult(prior, Today());
         }
 
@@ -102,6 +106,30 @@ public sealed class PaymentService(
                 throw PaymentOperationException.Conflict("Payment has no outstanding amount to collect.");
 
             var now = timeProvider.GetUtcNow();
+            // D5: credit money is only ever collected through a PaymentReceipt, so a single-order
+            // collection records one too. The receipt carries the amount that settles this order and
+            // reverses like any other receipt.
+            var receipt = new PaymentReceipt
+            {
+                Id = Guid.NewGuid(),
+                ReceiptCode = $"PT-{now:yyMMdd}-{Guid.NewGuid().ToString("N")[..6].ToUpperInvariant()}",
+                RetailerId = view.Order.RetailerId,
+                ReceivedAmount = outstanding,
+                UnappliedCreditAmount = 0,
+                Status = PaymentReceiptStatus.Confirmed,
+                Note = NormalizeNote(data.Note),
+                ConfirmedByUserId = actorUserId,
+                ConfirmedAt = now,
+                OperationKey = $"collect:{view.Payment.Id:N}:{view.Payment.Version}",
+                Version = 1,
+                CreatedAt = now,
+                UpdatedAt = now
+            };
+            store.AddReceipt(receipt, new PaymentReceiptAllocation
+            {
+                Id = Guid.NewGuid(), PaymentReceiptId = receipt.Id, PaymentId = view.Payment.Id,
+                Amount = outstanding, CreatedAt = now
+            });
             var oldValues = new
             {
                 view.Payment.Status,
@@ -153,6 +181,8 @@ public sealed class PaymentService(
                 "Payment was committed but could not be reloaded.");
         if (committed.Payment.Status == PaymentStatuses.Paid && completionService is not null)
             await completionService.EvaluateAsync(orderId, actorUserId, cancellationToken);
+        if (committed.Payment.Status == PaymentStatuses.Paid && notifications is not null)
+            await NotifyPaidAsync(committed, cancellationToken);
         return ToResult(committed, Today());
     }
 
@@ -209,6 +239,8 @@ public sealed class PaymentService(
             if (adjusted > view.Payment.Amount)
                 throw PaymentOperationException.Conflict(
                     "Adjustment cannot restore the payment obligation above the approved final total.");
+            // Reducing below what was already collected is allowed: the excess becomes a refund
+            // obligation (RefundDueAmount), handled by F101 — see F5 step 16. Not blocked here.
 
             var now = timeProvider.GetUtcNow();
             var oldValues = new { view.Payment.AdjustedAmount, view.Payment.Status, view.Payment.Version };
@@ -270,6 +302,8 @@ public sealed class PaymentService(
             throw PaymentOperationException.Conflict("Only a prepaid order can use payOS checkout.");
         if (view.Payment.Status == PaymentStatuses.Paid)
             throw PaymentOperationException.Conflict("Payment was already collected in full.");
+        if (view.Payment.Status == PaymentStatuses.Cancelled)
+            throw PaymentOperationException.Conflict("Payment deadline has passed and the order was cancelled.");
         if (view.Payment.PayOsPaymentLinkId is not null) return ToCheckoutResult(view.Payment);
         ValidatePayOsEligible(view, data.ExpectedVersion);
 
@@ -412,15 +446,28 @@ public sealed class PaymentService(
         }, cancellationToken);
         if (result?.Processed == true && purchaseOrderGateService is not null)
             await purchaseOrderGateService.TryCreateAsync(existing.Order.Id, cancellationToken);
+        if (result?.Processed == true && notifications is not null)
+        {
+            var paid = await store.FindByOrderAsync(existing.Order.Id, false, cancellationToken);
+            if (paid is not null) await NotifyPaidAsync(paid, cancellationToken);
+        }
         return result ?? throw PaymentOperationException.Conflict("Payment webhook could not be processed.");
     }
+
+    private Task NotifyPaidAsync(PaymentView view, CancellationToken cancellationToken) =>
+        notifications!.PublishRetailerAsync(view.Order.Id, "PaymentConfirmed",
+            "Đã xác nhận thanh toán",
+            view.Payment.Method == OrderPaymentMethods.Prepaid
+                ? $"Đơn {view.Order.OrderCode} đã thanh toán đủ và được chuyển thành PO để soạn hàng."
+                : $"Công nợ đơn {view.Order.OrderCode} đã được thu đủ.",
+            view.Payment.Id, $"/retailer/orders/{view.Order.Id}", cancellationToken);
 
     private DateOnly Today() =>
         DateOnly.FromDateTime(timeProvider.GetUtcNow().ToOffset(VietnamOffset).DateTime);
 
     private static PaymentResult ToResult(PaymentView view, DateOnly today)
     {
-        var overdue = view.Payment.Status != PaymentStatuses.Paid &&
+        var overdue = view.Payment.Status is not (PaymentStatuses.Paid or PaymentStatuses.Cancelled) &&
                       view.Payment.DueDate.HasValue && today > view.Payment.DueDate.Value;
         var effectiveStatus = overdue ? PaymentStatuses.Overdue : view.Payment.Status;
         var daysOverdue = overdue ? today.DayNumber - view.Payment.DueDate!.Value.DayNumber : 0;
@@ -463,7 +510,7 @@ public sealed class PaymentService(
     {
         if (string.IsNullOrWhiteSpace(value)) return null;
         value = value.Trim();
-        if (value is PaymentStatuses.Unpaid or PaymentStatuses.Paid or PaymentStatuses.Overdue) return value;
+        if (value is PaymentStatuses.Unpaid or PaymentStatuses.PartiallyPaid or PaymentStatuses.Paid or PaymentStatuses.Overdue or PaymentStatuses.Cancelled) return value;
         throw PaymentOperationException.Validation("Payment status filter is invalid.");
     }
 
@@ -515,6 +562,8 @@ public sealed class PaymentService(
                 "PayOS checkout requires a final allocation approval snapshot.");
         if (view.Payment.Status == PaymentStatuses.Paid)
             throw PaymentOperationException.Conflict("Payment was already collected in full.");
+        if (view.Payment.Status == PaymentStatuses.Cancelled)
+            throw PaymentOperationException.Conflict("Payment deadline has passed and the order was cancelled.");
         if (view.Payment.ConfirmedAmount != 0)
             throw PaymentOperationException.Conflict(
                 "PayOS checkout requires the full final approved amount to remain outstanding.");
@@ -549,6 +598,9 @@ public sealed class PaymentService(
 
     private static void ValidatePayOsWebhook(Payment payment, PayOsWebhookPayload data)
     {
+        if (payment.Status == PaymentStatuses.Cancelled)
+            throw PaymentOperationException.Conflict(
+                "Payment deadline has passed and the order was cancelled; the transfer requires manual reconciliation.");
         if (payment.PayOsPaymentLinkId != data.PaymentLinkId)
             throw PaymentOperationException.Conflict("payOS payment-link identifier does not match.");
         if (ToPayOsAmount(payment.Amount) != data.Amount)
@@ -580,3 +632,4 @@ public sealed class PaymentService(
                 "Payment amount must be positive and have at most two decimal places.");
     }
 }
+

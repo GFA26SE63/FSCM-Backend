@@ -1,6 +1,7 @@
 using FSCM.Application.Features.Orders;
 using FSCM.Application.Features.Payments;
 using FSCM.Application.Features.Loyalty;
+using FSCM.Application.Features.Notifications;
 using FSCM.Domain.Authorization;
 using FSCM.Application.Features.Storage;
 using FSCM.Domain.Entities;
@@ -13,7 +14,8 @@ public sealed class ComplaintService(
     TimeProvider timeProvider,
     ImageUploadService images,
     PaymentService? payments = null,
-    LoyaltyAccrualService? loyalty = null)
+    LoyaltyAccrualService? loyalty = null,
+    OrderNotificationService? notifications = null)
 {
     private const ImageCategory Category = ImageCategory.ClaimEvidence;
 
@@ -53,6 +55,16 @@ public sealed class ComplaintService(
         // An order held back only by this complaint can now earn its points, and nothing else is
         // going to ask again on its behalf.
         await completion.EvaluateAsync(resolved.SalesOrderId, actor, ct);
+        if (notifications is not null)
+        {
+            await notifications.PublishRetailerAsync(resolved.SalesOrderId,
+                data.Approved ? "ComplaintApproved" : "ComplaintRejected",
+                data.Approved ? "Khiếu nại đã được chấp nhận" : "Khiếu nại đã bị từ chối",
+                data.Approved
+                    ? $"Khiếu nại {resolved.Code} đã được duyệt và nghĩa vụ thanh toán được điều chỉnh theo phần hàng ảnh hưởng."
+                    : $"Khiếu nại {resolved.Code} đã bị từ chối. Xem kết quả xử lý để biết lý do.",
+                resolved.Id, "/retailer/complaints", ct);
+        }
         return resolved;
     }
 

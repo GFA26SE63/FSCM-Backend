@@ -8,7 +8,16 @@ public sealed record ReservableAllocation(
     AllocationRunAllocation Allocation,
     Batch Batch,
     InventoryBalance Balance,
-    bool AlreadyReserved);
+    bool AlreadyReserved,
+    decimal ActiveLockedQuantity = 0m)
+{
+    /// <summary>
+    /// F100: stock issuable to this hold, i.e. available minus active inventory locks, floored at
+    /// zero. Available already nets off Reserved, so the lock subtraction cannot double-count the
+    /// portion overlapping reserved stock.
+    /// </summary>
+    public decimal IssuableQuantity => Math.Max(0m, Balance.AvailableQuantity - ActiveLockedQuantity);
+}
 
 public sealed record ReservationOutcome(
     int ReservedCount,
@@ -153,10 +162,12 @@ public sealed class AllocationReservationService(IAllocationRunStore store, Time
                 $"Batch {row.Batch.BatchCode} expired after the plan was built.");
         }
 
-        if (row.Balance.AvailableQuantity < row.Allocation.Quantity)
+        // F100: compare against issuable stock (available minus active locks), so a batch locked
+        // between plan-build and approval cannot be held.
+        if (row.IssuableQuantity < row.Allocation.Quantity)
         {
             throw AllocationRunOperationException.Conflict(
-                $"Batch {row.Batch.BatchCode} has {row.Balance.AvailableQuantity:0.###} available " +
+                $"Batch {row.Batch.BatchCode} has {row.IssuableQuantity:0.###} issuable " +
                 $"but the plan needs {row.Allocation.Quantity:0.###}.");
         }
     }

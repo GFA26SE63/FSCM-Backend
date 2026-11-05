@@ -1,4 +1,5 @@
-using FSCM.Application.Features.Inventory;
+﻿using FSCM.Application.Features.Inventory;
+using FSCM.Application.Features.Notifications;
 using FSCM.Application.Features.Orders;
 using FSCM.Application.Features.Quotes;
 using FSCM.Domain.Allocation;
@@ -7,13 +8,24 @@ using FSCM.Domain.Entities;
 namespace FSCM.Application.Features.AllocationRuns;
 
 public sealed record RealTimeInventoryCandidate(Batch Batch, InventoryBalance Balance, Warehouse Warehouse,
-    Product Product, decimal? WarehouseLatitude, decimal? WarehouseLongitude);
+    Product Product, decimal? WarehouseLatitude, decimal? WarehouseLongitude, decimal ActiveLockedQuantity = 0m)
+{
+    /// <summary>
+    /// F100: stock issuable to an order. Active inventory locks (damaged/expired/quality hold) are
+    /// held out of the pool without moving OnHand, so allocation must never offer locked quantity.
+    /// Available already nets off Reserved, so subtracting the lock total here cannot double-count
+    /// the portion that overlaps reserved stock; the result is floored at zero.
+    /// </summary>
+    public decimal IssuableQuantity => Math.Max(0m, Balance.AvailableQuantity - ActiveLockedQuantity);
+}
 public sealed record RealTimeAllocationContext(SalesOrder Order, IReadOnlyCollection<SalesOrderLine> Lines,
     MapLocation? RetailerLocation, IReadOnlyCollection<RealTimeInventoryCandidate> Candidates, int NextAttemptNumber);
 
 public interface IRealTimeAllocationStore
 {
     Task<RealTimeAllocationContext?> LoadForUpdateAsync(Guid orderId, CancellationToken cancellationToken);
+    Task<(string OrderCode, string Status)> ReadOrderStateAsync(
+        Guid orderId, CancellationToken cancellationToken);
     void AddRun(AllocationRun run);
     void AddAllocation(Allocation allocation);
     void AddReservation(Reservation reservation);
@@ -34,7 +46,8 @@ public sealed class RealTimeAllocationService(
     IRealTimeAllocationStore store,
     AllocationEngine engine,
     AllocationPricingService pricingService,
-    TimeProvider timeProvider)
+    TimeProvider timeProvider,
+    OrderNotificationService? notifications = null)
     : IRealTimeAllocationService
 {
     private static readonly TimeSpan DefaultTransit = TimeSpan.FromHours(24);
@@ -47,6 +60,24 @@ public sealed class RealTimeAllocationService(
             {
                 await store.ExecuteInTransactionAsync(token => AllocateOnceAsync(orderId, actorUserId, token), cancellationToken);
                 store.ClearTracking();
+                if (notifications is not null)
+                {
+                    var state = await store.ReadOrderStateAsync(orderId, cancellationToken);
+                    if (state.Status == OrderStatuses.Quoted)
+                    {
+                        await notifications.PublishRetailerAsync(orderId, "QuoteIssued",
+                            "Báo giá mới đã sẵn sàng",
+                            $"Đơn {state.OrderCode} đã chọn batch, tính giá theo HSD và đang chờ bạn xác nhận.",
+                            orderId, $"/retailer/orders/{orderId}", cancellationToken);
+                    }
+                    else if (state.Status == OrderStatuses.OutOfStock)
+                    {
+                        await notifications.PublishRetailerAsync(orderId, "AllocationOutOfStock",
+                            "Đơn chưa đủ hàng",
+                            $"Đơn {state.OrderCode} chưa tìm được đủ batch đáp ứng MLOR.",
+                            orderId, $"/retailer/orders/{orderId}", cancellationToken);
+                    }
+                }
                 return;
             }
             catch (AllocationConcurrencyException) when (attempt < 3)
@@ -75,7 +106,8 @@ public sealed class RealTimeAllocationService(
         store.AddRun(run);
 
         var selected = new List<(SalesOrderLine Line, AllocationDecision Decision)>();
-        var remainingByBatch = context.Candidates.ToDictionary(item => item.Batch.Id, item => item.Balance.AvailableQuantity);
+        // F100: the planner works off issuable stock (available minus active locks), not raw available.
+        var remainingByBatch = context.Candidates.ToDictionary(item => item.Batch.Id, item => item.IssuableQuantity);
         foreach (var line in context.Lines.OrderBy(item => item.LineNumber))
         {
             var productCandidates = context.Candidates.Where(item => item.Product.Id == line.ProductId).ToArray();
@@ -111,7 +143,8 @@ public sealed class RealTimeAllocationService(
         {
             var candidate = context.Candidates.Single(item => item.Batch.Id == group.Key);
             var quantity = group.Sum(item => item.Decision.Quantity);
-            if (candidate.Balance.AvailableQuantity < quantity) throw new AllocationConcurrencyException("Inventory changed during allocation.");
+            // F100: re-check against issuable stock so a lock placed during allocation also blocks the hold.
+            if (candidate.IssuableQuantity < quantity) throw new AllocationConcurrencyException("Inventory changed during allocation.");
             candidate.Balance.ReservedQuantity += quantity;
             candidate.Balance.AvailableQuantity = candidate.Balance.PhysicalQuantity - candidate.Balance.ReservedQuantity;
             candidate.Balance.Version++; candidate.Balance.UpdatedAt = now;
@@ -167,7 +200,16 @@ public sealed class RealTimeAllocationService(
                 DiscountSourceCode = priced.ShelfLifeDiscountPerUnit > 0
                     ? $"HSD-V{priced.DiscountTableVersion}"
                     : row.Line.DiscountSourceCode,
-                Status = AllocationInventoryStatuses.Reserved, CreatedAt = now
+                Status = AllocationInventoryStatuses.Reserved, CreatedAt = now,
+                PostPromotionUnitPrice = priced.BaseNetUnitPrice,
+                ShelfLifeDiscountPerUnit = priced.ShelfLifeDiscountPerUnit,
+                RemainingShelfLifePercent = priced.RemainingPercent,
+                ShelfLifeDiscountTierId = priced.TierId,
+                ShelfLifeDiscountType = priced.DiscountType,
+                ShelfLifeDiscountValue = priced.DiscountValue,
+                ShelfLifeDiscountTableVersion = priced.DiscountTableVersion,
+                PricingExplanation = priced.Explanation?.Length > 500 ? priced.Explanation[..500] : priced.Explanation,
+                PricedAt = now
             };
             store.AddAllocation(allocation);
             store.AddReservation(new Reservation { Id = Guid.NewGuid(), AllocationId = allocation.Id, BatchId = allocation.BatchId, Quantity = allocation.AllocatedQuantity, Status = ReservationStatuses.Active, ReservedAt = now });
@@ -236,3 +278,4 @@ public sealed class RealTimeAllocationService(
 }
 
 public sealed class AllocationConcurrencyException(string message) : Exception(message);
+

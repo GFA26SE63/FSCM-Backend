@@ -1,4 +1,4 @@
-using System.Data;
+﻿using System.Data;
 using FSCM.Application.Features.Picking;
 using FSCM.Application.Features.QrLabels;
 using FSCM.Domain.Authorization;
@@ -118,6 +118,21 @@ public sealed class PickingStore(AppDbContext dbContext) : IPickingStore
         dbContext.QrLabelEventRecords.AsNoTracking()
             .SingleOrDefaultAsync(item => item.OperationKey == operationKey, cancellationToken);
 
+    public Task<BatchPickState?> FindBatchPickStateAsync(Guid batchId, CancellationToken cancellationToken) =>
+        dbContext.BatchRecords.AsNoTracking()
+            .Where(batch => batch.Id == batchId)
+            .Join(dbContext.InventoryBalanceRecords.AsNoTracking(),
+                batch => batch.Id, balance => balance.BatchId, (batch, balance) => new { batch, balance })
+            .Select(item => new BatchPickState(
+                item.batch.BatchCode, item.batch.ExpiryStatus, item.batch.ExpirationDate,
+                item.balance.PhysicalQuantity, item.balance.ReservedQuantity,
+                dbContext.InventoryLockRecords.AsNoTracking()
+                    .Where(l => l.BatchId == batchId && l.Status == "Active")
+                    .Sum(l => (decimal?)l.LockedQuantity) ?? 0m,
+                dbContext.InventoryLockRecords.AsNoTracking()
+                    .Any(l => l.BatchId == batchId && l.Status == "Active" && l.RequiresResolution)))
+            .SingleOrDefaultAsync(cancellationToken);
+
     public Task<BatchQrLabel?> FindLabelForUpdateAsync(string qrCode, CancellationToken cancellationToken) =>
         dbContext.BatchQrLabelRecords.SingleOrDefaultAsync(item => item.QrCode == qrCode, cancellationToken);
 
@@ -216,3 +231,4 @@ public sealed class PickingStore(AppDbContext dbContext) : IPickingStore
 
     public void ClearTracking() => dbContext.ChangeTracker.Clear();
 }
+

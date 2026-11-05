@@ -13,6 +13,8 @@ public interface IRefundStore
     Task<IReadOnlyCollection<RefundView>> ListAsync(Guid? orderId, string? status,
         Guid actorUserId, string actorRole, CancellationToken cancellationToken);
     Task<(decimal Pending, decimal Refunded)> TotalsAsync(Guid paymentId, CancellationToken cancellationToken);
+    Task<RefundClaimSource?> FindClaimSourceAsync(Guid claimId, CancellationToken cancellationToken);
+    Task<IReadOnlyCollection<RefundObligationResult>> ListObligationsAsync(CancellationToken cancellationToken);
     void Add(ManualRefund refund);
     void AddAuditLog(AuditLog auditLog);
     Task SaveChangesAsync(CancellationToken cancellationToken);

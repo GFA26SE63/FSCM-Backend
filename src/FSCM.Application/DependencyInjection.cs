@@ -68,8 +68,10 @@ public static class DependencyInjection
         services.AddScoped<MapService>();
         services.AddScoped<MobileSnapshotService>();
         services.AddScoped<NotificationService>();
+        services.AddScoped<OrderNotificationService>();
         services.AddScoped<OrderService>();
         services.AddScoped<OrderReleaseService>();
+        services.AddScoped<OrderDeadlineService>();
         services.AddScoped<PurchaseOrderGateService>();
         services.AddScoped<IOrderPricingService, OrderPricingService>();
         services.AddScoped<PaymentService>();

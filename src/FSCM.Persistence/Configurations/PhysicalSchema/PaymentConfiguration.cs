@@ -60,7 +60,7 @@ public sealed class PaymentConfiguration : IEntityTypeConfiguration<Payment>
             table.HasCheckConstraint("CK_PAYMENT_ConfirmedAmount",
                 "\"ConfirmedAmount\" >= 0 AND \"ConfirmedAmount\" <= \"Amount\"");
             table.HasCheckConstraint("CK_PAYMENT_Method", "\"Method\" BETWEEN 0 AND 1");
-            table.HasCheckConstraint("CK_PAYMENT_Status", "\"Status\" BETWEEN 0 AND 3");
+            table.HasCheckConstraint("CK_PAYMENT_Status", "\"Status\" BETWEEN 0 AND 4");
         });
         builder.HasOne<SalesOrder>()
             .WithMany()

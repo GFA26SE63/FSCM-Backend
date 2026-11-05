@@ -6,6 +6,7 @@ public static class PaymentStatuses
     public const string PartiallyPaid = "PartiallyPaid";
     public const string Paid = "Paid";
     public const string Overdue = "Overdue";
+    public const string Cancelled = "Cancelled";
 }
 
 public static class PaymentCollectionMethods

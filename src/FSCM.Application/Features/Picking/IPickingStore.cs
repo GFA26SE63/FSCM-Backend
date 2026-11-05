@@ -1,4 +1,4 @@
-using FSCM.Application.Features.Orders;
+﻿using FSCM.Application.Features.Orders;
 using FSCM.Domain.Entities;
 
 namespace FSCM.Application.Features.Picking;
@@ -19,6 +19,19 @@ public sealed record PickingView(
     IReadOnlyCollection<PickingScanView> Scans,
     IReadOnlyDictionary<Guid, int> InventoryVersions);
 
+/// <summary>
+/// Batch state a pick must respect (F4 step 10, F100): expiry, and whether active locks (damaged or
+/// quality hold) eat into stock already reserved for orders.
+/// </summary>
+public sealed record BatchPickState(
+    string BatchCode,
+    string ExpiryStatus,
+    DateOnly ExpirationDate,
+    decimal PhysicalQuantity,
+    decimal ReservedQuantity,
+    decimal ActiveLockedQuantity,
+    bool HasLockRequiringResolution);
+
 public interface IPickingPlanService
 {
     Task CancelForOrderAsync(Guid orderId, DateTimeOffset now, CancellationToken cancellationToken);
@@ -35,6 +48,7 @@ public interface IPickingStore
     Task<QrLabelEvent?> FindOperationAsync(string operationKey, CancellationToken cancellationToken);
     Task<BatchQrLabel?> FindLabelForUpdateAsync(string qrCode, CancellationToken cancellationToken);
     Task<BatchQrLabel?> FindLabelByIdAsync(Guid id, CancellationToken cancellationToken);
+    Task<BatchPickState?> FindBatchPickStateAsync(Guid batchId, CancellationToken cancellationToken);
     Task<string> NextQrCodeAsync(CancellationToken cancellationToken);
     Task<string> NextShipmentCodeAsync(CancellationToken cancellationToken);
     Task<bool> ShipmentExistsAsync(Guid salesOrderId, Guid warehouseId, CancellationToken cancellationToken);
@@ -48,3 +62,4 @@ public interface IPickingStore
     Task ExecuteInTransactionAsync(Func<CancellationToken, Task> operation, CancellationToken cancellationToken);
     void ClearTracking();
 }
+

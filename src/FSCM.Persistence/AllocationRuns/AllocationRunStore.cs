@@ -30,8 +30,10 @@ public sealed class AllocationRunStore(AppDbContext dbContext) : IAllocationRunS
     public async Task<IReadOnlyCollection<EligibleOrderView>> ListEligibleOrdersAsync(
         DateTimeOffset cutoffAt, CancellationToken cancellationToken)
     {
+        // Legacy batch-run eligibility (superseded by real-time allocation). Kept pointing at the
+        // canonical Allocating state after the PendingAllocation alias was removed.
         var orders = await dbContext.SalesOrderRecords.AsNoTracking()
-            .Where(item => item.Status == OrderStatuses.PendingAllocation
+            .Where(item => item.Status == OrderStatuses.Allocating
                 && item.ServerReceivedAt < cutoffAt
                 && item.ReviewedAt != null && item.ReviewedAt < cutoffAt)
             .ToArrayAsync(cancellationToken);
@@ -65,6 +67,9 @@ public sealed class AllocationRunStore(AppDbContext dbContext) : IAllocationRunS
     {
         if (productIds.Count == 0) return [];
         var ids = productIds.ToArray();
+        // F100: subtract active inventory locks from available so locked stock never enters the
+        // pool. Available already nets off Reserved, so flooring the difference at zero also handles
+        // a lock that overlaps reserved stock without double-counting it.
         return await dbContext.BatchRecords.AsNoTracking()
             .Where(batch => ids.Contains(batch.ProductId)
                 && batch.ExpiryStatus != BatchExpiryStatuses.Expired
@@ -72,9 +77,18 @@ public sealed class AllocationRunStore(AppDbContext dbContext) : IAllocationRunS
             .Join(dbContext.InventoryBalanceRecords.AsNoTracking(),
                 batch => batch.Id, balance => balance.BatchId,
                 (batch, balance) => new { batch, balance })
-            .Where(item => item.balance.AvailableQuantity > 0)
+            .Select(item => new
+            {
+                item.batch,
+                item.balance,
+                Issuable = item.balance.AvailableQuantity
+                    - (dbContext.InventoryLockRecords.AsNoTracking()
+                        .Where(l => l.BatchId == item.batch.Id && l.Status == "Active")
+                        .Sum(l => (decimal?)l.LockedQuantity) ?? 0m)
+            })
+            .Where(item => item.Issuable > 0)
             .Select(item => new AvailableBatchView(
-                item.batch, item.batch.WarehouseId, item.balance.AvailableQuantity, item.balance.Version))
+                item.batch, item.batch.WarehouseId, item.Issuable, item.balance.Version))
             .ToArrayAsync(cancellationToken);
     }
 
@@ -250,9 +264,18 @@ public sealed class AllocationRunStore(AppDbContext dbContext) : IAllocationRunS
             .ToArrayAsync(cancellationToken);
         var heldSet = held.ToHashSet();
 
+        // F100: active-lock total per batch, so the hold is re-checked against issuable stock.
+        var batchIds = rows.Select(item => item.batch.Id).Distinct().ToArray();
+        var lockedByBatch = await dbContext.InventoryLockRecords.AsNoTracking()
+            .Where(item => batchIds.Contains(item.BatchId) && item.Status == "Active")
+            .GroupBy(item => item.BatchId)
+            .Select(group => new { BatchId = group.Key, Locked = group.Sum(item => item.LockedQuantity) })
+            .ToDictionaryAsync(item => item.BatchId, item => item.Locked, cancellationToken);
+
         return rows
             .Select(item => new ReservableAllocation(
-                item.allocation, item.batch, item.balance, heldSet.Contains(item.allocation.Id)))
+                item.allocation, item.batch, item.balance, heldSet.Contains(item.allocation.Id),
+                lockedByBatch.GetValueOrDefault(item.batch.Id)))
             .ToArray();
     }
 

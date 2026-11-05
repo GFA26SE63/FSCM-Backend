@@ -1,4 +1,5 @@
 using FSCM.Application.Features.Orders;
+using FSCM.Application.Features.Inventory;
 using FSCM.Application.Features.QrLabels;
 using FSCM.Application.Features.Shipments;
 using FSCM.Domain.Authorization;
@@ -67,6 +68,21 @@ public sealed class CurrentPickingService(IPickingStore store, TimeProvider time
             if (label.Status != QrLabelStatuses.Available || label.CurrentWarehouseId != view.List.WarehouseId)
                 throw PickingOperationException.Conflict(
                     "QR label must be available in the picking warehouse.");
+
+            // F4 step 10 / F100: never pick an expired batch or one whose active lock eats into
+            // stock already reserved for orders, even if it was valid when the sheet was issued.
+            var batchState = await store.FindBatchPickStateAsync(label.BatchId, token)
+                ?? throw PickingOperationException.Conflict("Batch inventory state was not found.");
+            var today = DateOnly.FromDateTime(timeProvider.GetUtcNow().UtcDateTime);
+            if (batchState.ExpiryStatus == BatchExpiryStatuses.Expired ||
+                batchState.ExpirationDate < today)
+                throw PickingOperationException.Conflict(
+                    $"Batch {batchState.BatchCode} has expired and cannot be picked.");
+            if (batchState.HasLockRequiringResolution ||
+                batchState.PhysicalQuantity - batchState.ActiveLockedQuantity < batchState.ReservedQuantity)
+                throw PickingOperationException.Conflict(
+                    $"Batch {batchState.BatchCode} has {batchState.ActiveLockedQuantity:0.###} cartons locked " +
+                    "that overlap reserved stock; resolve the lock before picking.");
 
             var requested = data.Splits?.ToDictionary(item => item.AllocationRunAllocationId,
                 item => item.Quantity) ?? [];

@@ -425,6 +425,9 @@ public sealed class PaymentServiceTests
             actorRole == SystemRoles.Retailer && view.Retailer.UserAccountId == actorUserId);
 
         public void Add(Payment payment) => Payments.Add(payment);
+        public List<PaymentReceipt> Receipts { get; } = [];
+        public List<PaymentReceiptAllocation> ReceiptAllocations { get; } = [];
+        public void AddReceipt(PaymentReceipt receipt, PaymentReceiptAllocation allocation) { Receipts.Add(receipt); ReceiptAllocations.Add(allocation); }
         public void AddAuditLog(AuditLog auditLog) => Audits.Add(auditLog);
         public Task SaveChangesAsync(CancellationToken cancellationToken) => Task.CompletedTask;
         public Task ExecuteInTransactionAsync(Func<CancellationToken, Task> operation,

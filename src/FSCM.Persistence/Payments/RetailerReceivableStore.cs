@@ -1,3 +1,4 @@
+﻿using FSCM.Application.Features.Orders;
 using FSCM.Application.Features.Payments;
 using FSCM.Application.Features.Refunds;
 using FSCM.Domain.Entities;
@@ -17,6 +18,7 @@ public sealed class RetailerReceivableStore(AppDbContext dbContext) : IRetailerR
                               join retailer in dbContext.RetailerRecords.AsNoTracking()
                                   on order.RetailerId equals retailer.Id
                               where retailer.UserAccountId == retailerUserId
+                                    && payment.Method == OrderPaymentMethods.Credit
                               orderby payment.DueDate, order.OrderCode
                               select order.Id).ToArrayAsync(cancellationToken);
         var results = new List<RetailerReceivableView>(orderIds.Length);
@@ -50,7 +52,7 @@ public sealed class RetailerReceivableStore(AppDbContext dbContext) : IRetailerR
             .Select(item => new ReceivableRefundHistory(item.Id, item.Amount, item.Status,
                 item.TransferredAt, item.TransactionReference, item.VerifiedAt, item.Reason))
             .ToArrayAsync(cancellationToken);
-        var pendingRefund = refunds.Where(item => item.Status is RefundStatuses.PendingRefund or RefundStatuses.AwaitingVerification)
+        var pendingRefund = refunds.Where(item => RefundStatuses.Open.Contains(item.Status))
             .Sum(item => item.Amount);
         var completedRefund = refunds.Where(item => item.Status == RefundStatuses.Refunded)
             .Sum(item => item.Amount);
@@ -77,33 +79,20 @@ public sealed class RetailerReceivableStore(AppDbContext dbContext) : IRetailerR
         var disputes = new List<ReceivableDisputeHistory>(discrepancyRows.Length);
         foreach (var discrepancy in discrepancyRows)
         {
-            var affected = await (from item in dbContext.ReceiptDiscrepancyItemRecords.AsNoTracking()
-                                  join receiptItem in dbContext.ReceiptConfirmationItemRecords.AsNoTracking()
-                                      on new { discrepancy.ReceiptConfirmationId, item.BatchId }
-                                      equals new { receiptItem.ReceiptConfirmationId, BatchId = (Guid?)receiptItem.BatchId }
-                                  where item.ReceiptDiscrepancyId == discrepancy.Id && receiptItem.SalesOrderLineId != null
-                                  select new
-                                  {
-                                      LineId = receiptItem.SalesOrderLineId!.Value,
-                                      receiptItem.BatchId,
-                                      Quantity = receiptItem.MissingQuantity + receiptItem.DamagedQuantity
-                                  }).ToArrayAsync(cancellationToken);
-            decimal amount = 0;
-            foreach (var part in affected)
-            {
-                var allocation = await dbContext.AllocationRecords.AsNoTracking()
-                    .Where(item => item.SalesOrderLineId == part.LineId && item.BatchId == part.BatchId)
-                    .OrderByDescending(item => item.CreatedAt)
-                    .FirstOrDefaultAsync(cancellationToken);
-                if (allocation is not null && allocation.AllocatedQuantity > 0)
-                    amount += part.Quantity * (allocation.NetAmount / allocation.AllocatedQuantity);
-            }
+            // Single source of truth: the adjustment the claim already stored at the final price
+            // of exactly the affected shipment part (no recomputation from current tables).
+            var amount = await dbContext.ReceiptDiscrepancyItemRecords.AsNoTracking()
+                .Where(item => item.ReceiptDiscrepancyId == discrepancy.Id)
+                .SumAsync(item => (decimal?)item.AdjustmentAmount, cancellationToken) ?? 0m;
             disputes.Add(new(discrepancy.Id, discrepancy.Status, decimal.Round(amount, 2),
                 discrepancy.ReportedAt, discrepancy.ResolvedAt, discrepancy.Note));
         }
 
         var paymentView = new PaymentView(core.payment, core.order, core.retailer,
-            pendingRefund, completedRefund, disputes.Any(item => item.Status != "Resolved"));
+            pendingRefund, completedRefund, disputes.Any(item => item.ResolvedAt == null));
         return new(paymentView, collections, disputes, refunds);
     }
 }
+
+
+

@@ -1,4 +1,4 @@
-using System.Security.Claims;
+﻿using System.Security.Claims;
 using FSCM.API.Contracts.Deliveries;
 using FSCM.API.Contracts.Orders;
 using FSCM.Application.Features.Deliveries;
@@ -109,28 +109,8 @@ public sealed class OrdersController(
         service.CancelAsync(id, request.ExpectedVersion, GetActorUserId(), GetActorRole(),
             request.Reason, cancellationToken);
 
-    [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator}")]
-    [HttpPost("{id:guid}/dispatch")]
-    public Task<DeliveryResult> Dispatch(
-        Guid id,
-        DispatchOrderRequest request,
-        [FromHeader(Name = "Idempotency-Key")] string operationKey,
-        CancellationToken cancellationToken) =>
-        deliveryService.DispatchAsync(id, new(
-            request.DriverId, request.VehicleId, request.ExpectedOrderVersion, request.Note),
-            operationKey, GetActorUserId(), GetActorRole(), cancellationToken);
-
-    [Authorize(Roles = SystemRoles.Retailer)]
-    [Obsolete("Use POST /api/v1/shipments/{id}/receipt for per-shipment actual quantities.")]
-    [HttpPost("{id:guid}/confirm-receipt")]
-    public Task<DeliveryResult> ConfirmReceipt(
-        Guid id,
-        ConfirmRetailerReceiptRequest request,
-        [FromHeader(Name = "Idempotency-Key")] string operationKey,
-        CancellationToken cancellationToken) =>
-        deliveryService.ConfirmReceiptAsync(id, new(
-            request.QrCodes, request.ExpectedOrderVersion, request.Note),
-            operationKey, GetActorUserId(), GetActorRole(), cancellationToken);
+    // Order-level dispatch and receipt were removed (Review 2): delivery is per warehouse shipment
+    // (POST /api/v1/shipments/{id}/dispatch and /receipt).
 
     private Guid GetActorUserId() =>
         Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var userId)
@@ -141,3 +121,4 @@ public sealed class OrdersController(
         User.FindFirstValue(ClaimTypes.Role)
         ?? throw OrderOperationException.Validation("Authenticated user role is invalid.");
 }
+
