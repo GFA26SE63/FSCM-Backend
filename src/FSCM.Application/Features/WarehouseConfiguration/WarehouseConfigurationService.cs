@@ -408,13 +408,18 @@ public sealed partial class WarehouseConfigurationService(
                 break;
             case BusinessConfigurationKeys.EtaSchedule:
                 if (value.ValueKind != JsonValueKind.Object ||
-                    !TryGetLocalTime(value, "allocationRunLocalTime", out var runAt) ||
-                    !TryGetLocalTime(value, "planApprovalDeadlineLocalTime", out var approveBy) ||
-                    approveBy <= runAt ||
+                    !value.TryGetProperty("timeZone", out var timeZone) ||
+                    timeZone.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(timeZone.GetString()) ||
+                    !value.TryGetProperty("preparationMinutes", out var preparation) ||
+                    !preparation.TryGetInt32(out var preparationMinutes) || preparationMinutes < 0 ||
+                    !value.TryGetProperty("bufferMinutes", out var buffer) ||
+                    !buffer.TryGetInt32(out var bufferMinutes) || bufferMinutes < 0 ||
                     !value.TryGetProperty("dispatchSlotsLocalTime", out var slots) ||
-                    slots.ValueKind != JsonValueKind.Array || slots.GetArrayLength() == 0)
+                    slots.ValueKind != JsonValueKind.Array || slots.GetArrayLength() == 0 ||
+                    slots.EnumerateArray().Any(slot => slot.ValueKind != JsonValueKind.String ||
+                        !TimeOnly.TryParse(slot.GetString(), out _)))
                     throw WarehouseConfigurationOperationException.Validation(
-                        "ETA schedule needs a run time, a later approval deadline, and at least one dispatch slot.");
+                        "ETA schedule needs a time zone, non-negative preparation/buffer minutes, and at least one valid dispatch slot.");
                 break;
             case BusinessConfigurationKeys.SalesKpi:
                 if (value.ValueKind != JsonValueKind.Object ||
