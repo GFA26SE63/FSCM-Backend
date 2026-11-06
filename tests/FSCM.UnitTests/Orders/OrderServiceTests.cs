@@ -14,6 +14,30 @@ public sealed class OrderServiceTests
     private static readonly DateTimeOffset Now = new(2026, 10, 14, 3, 0, 0, TimeSpan.Zero);
 
     [Fact]
+    public async Task Retailer_creates_own_order_with_promotions_and_replays_without_duplicates()
+    {
+        var fixture = new Fixture();
+        fixture.Store.Retailer.UserAccountId = fixture.SalesUserId;
+        var request = fixture.Request(10);
+        var result = await fixture.Service.CreateAsync(request, fixture.SalesUserId, default, SystemRoles.Retailer);
+        var replay = await fixture.Service.CreateAsync(request, fixture.SalesUserId, default, SystemRoles.Retailer);
+        Assert.Equal(result.Id, replay.Id);
+        Assert.Equal(100m, result.DiscountAmount);
+        Assert.Single(fixture.Store.Orders);
+    }
+
+    [Fact]
+    public async Task Retailer_cannot_order_or_price_an_unlinked_store_even_with_sales_membership()
+    {
+        var fixture = new Fixture();
+        await Assert.ThrowsAsync<OrderOperationException>(() =>
+            fixture.Service.CreateAsync(fixture.Request(10), fixture.SalesUserId, default, SystemRoles.Retailer));
+        await Assert.ThrowsAsync<OrderOperationException>(() =>
+            fixture.Service.EnsurePricingScopeAsync(fixture.Store.Retailer.Id, fixture.SalesUserId, SystemRoles.Retailer, default));
+        Assert.Empty(fixture.Store.Orders);
+    }
+
+    [Fact]
     public async Task Sales_captures_indicative_order_without_selecting_batch_or_changing_inventory()
     {
         var fixture = new Fixture();
@@ -460,6 +484,9 @@ public sealed class OrderServiceTests
 
         public Task<SalesOrder?> FindByClientOrderKeyAsync(Guid clientOrderKey, CancellationToken cancellationToken) =>
             Task.FromResult(Orders.SingleOrDefault(item => item.ClientOrderKey == clientOrderKey));
+        public Task<OrderRetailerContext?> FindLinkedRetailerContextAsync(Guid userId, Guid retailerId, CancellationToken cancellationToken) =>
+            Task.FromResult<OrderRetailerContext?>(Retailer.UserAccountId == userId && retailerId == Retailer.Id
+                ? new(Retailer, Guid.Parse("20000000-0000-0000-0000-000000000001")) : null);
         public Task<OrderRetailerContext?> FindRetailerContextAsync(Guid userId, Guid retailerId, CancellationToken cancellationToken) =>
             Task.FromResult<OrderRetailerContext?>(TerritoryAllowed && userId == salesUserId && retailerId == Retailer.Id
                 ? new(Retailer, Guid.Parse("20000000-0000-0000-0000-000000000001")) : null);
