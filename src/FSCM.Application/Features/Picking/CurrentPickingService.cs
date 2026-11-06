@@ -9,11 +9,13 @@ namespace FSCM.Application.Features.Picking;
 
 public sealed record CurrentPickingItemResult(
     Guid Id, Guid AllocationId, string Sku, string ProductName, Guid BatchId, string BatchCode,
-    decimal RequestedQuantity, decimal PickedQuantity, decimal RemainingQuantity, string Status);
+    DateOnly ExpirationDate, decimal RequestedQuantity, decimal PickedQuantity,
+    decimal RemainingQuantity, string Status);
 
 public sealed record CurrentPickingResult(
     Guid Id, string PickingCode, Guid OrderId, string OrderCode, Guid WarehouseId,
-    string WarehouseCode, Guid? AssignedToUserId, string Status, int Version,
+    string WarehouseCode, string WarehouseName, string RetailerCode, string RetailerName,
+    Guid? AssignedToUserId, string Status, int Version,
     DateTimeOffset? StartedAt, DateTimeOffset? ConfirmedAt,
     IReadOnlyCollection<CurrentPickingItemResult> Items,
     IReadOnlyCollection<PickingScanResult> Scans);
@@ -246,11 +248,14 @@ public sealed class CurrentPickingService(IPickingStore store, TimeProvider time
 
     private static CurrentPickingResult ToResult(PickingView view) => new(
         view.List.Id, view.List.PickingCode, view.Order.Id, view.Order.OrderCode,
-        view.Warehouse.Id, view.Warehouse.Code, view.List.AssignedToUserId, view.List.Status,
+        view.Warehouse.Id, view.Warehouse.Code, view.Warehouse.Name,
+        view.Order.RetailerCodeSnapshot, view.Order.RetailerNameSnapshot,
+        view.List.AssignedToUserId, view.List.Status,
         view.List.Version, view.List.StartedAt, view.List.ConfirmedAt,
         view.Items.Select(item => new CurrentPickingItemResult(
             item.Item.Id, item.Allocation.Id, item.OrderLine.SkuSnapshot,
             item.OrderLine.ProductNameSnapshot, item.Batch.Id, item.Batch.BatchCode,
+            item.Batch.ExpirationDate,
             item.Item.RequestedQuantity, item.Item.PickedQuantity,
             item.Item.RequestedQuantity - item.Item.PickedQuantity, item.Item.Status)).ToArray(),
         view.Scans.Select(item => new PickingScanResult(
