@@ -30,8 +30,11 @@ public sealed class OrderService(
     public async Task<OrderDetailResult> CreateAsync(
         CreateAssistedOrderData data,
         Guid salesUserId,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string actorRole = SystemRoles.Sales)
     {
+        if (actorRole is not (SystemRoles.Sales or SystemRoles.Retailer))
+            throw OrderOperationException.Forbidden("Role cannot create orders.");
         var normalized = Normalize(data);
         var requestHash = ComputeRequestHash(normalized, salesUserId);
         var existing = await store.FindByClientOrderKeyAsync(normalized.ClientOrderKey, cancellationToken);
@@ -42,11 +45,12 @@ public sealed class OrderService(
                 throw OrderOperationException.Conflict("Client order key was already used for a different request.");
             }
 
-            return await GetAsync(existing.Id, salesUserId, SystemRoles.Sales, cancellationToken);
+            return await GetAsync(existing.Id, salesUserId, actorRole, cancellationToken);
         }
 
-        var retailerContext = await store.FindRetailerContextAsync(
-            salesUserId, normalized.RetailerId, cancellationToken)
+        var retailerContext = await (actorRole == SystemRoles.Retailer
+            ? store.FindLinkedRetailerContextAsync(salesUserId, normalized.RetailerId, cancellationToken)
+            : store.FindRetailerContextAsync(salesUserId, normalized.RetailerId, cancellationToken))
             ?? throw OrderOperationException.Forbidden(
                 "Sales can only create orders for an active retailer in the assigned territory.");
         if (retailerContext.Retailer.Status != "Active")
@@ -80,13 +84,13 @@ public sealed class OrderService(
             var concurrent = await store.FindByClientOrderKeyAsync(normalized.ClientOrderKey, cancellationToken);
             if (concurrent is null || concurrent.CreatedByUserId != salesUserId || concurrent.RequestHash != requestHash)
                 throw;
-            return await GetAsync(concurrent.Id, salesUserId, SystemRoles.Sales, cancellationToken);
+            return await GetAsync(concurrent.Id, salesUserId, actorRole, cancellationToken);
         }
 
         store.ClearTracking();
         if (realTimeAllocationService is not null)
             await realTimeAllocationService.AllocateAsync(plan.Order.Id, salesUserId, cancellationToken);
-        return await GetAsync(plan.Order.Id, salesUserId, SystemRoles.Sales, cancellationToken);
+        return await GetAsync(plan.Order.Id, salesUserId, actorRole, cancellationToken);
     }
 
     /// <summary>
@@ -267,10 +271,14 @@ public sealed class OrderService(
         CancellationToken cancellationToken)
     {
         if (actorRole is SystemRoles.Admin or SystemRoles.Operator) return;
-        if (actorRole != SystemRoles.Sales)
+        if (actorRole is not (SystemRoles.Sales or SystemRoles.Retailer))
             throw OrderOperationException.Forbidden("Role cannot request an order price snapshot.");
+        if (actorRole == SystemRoles.Retailer && !retailerId.HasValue)
+            throw OrderOperationException.Forbidden("Retailer pricing requires the linked store.");
         if (!retailerId.HasValue) return;
-        if (await store.FindRetailerContextAsync(actorUserId, retailerId.Value, cancellationToken) is null)
+        if (await (actorRole == SystemRoles.Retailer
+            ? store.FindLinkedRetailerContextAsync(actorUserId, retailerId.Value, cancellationToken)
+            : store.FindRetailerContextAsync(actorUserId, retailerId.Value, cancellationToken)) is null)
             throw OrderOperationException.Forbidden(
                 "Sales can only request retailer pricing inside the assigned territory.");
     }

@@ -45,7 +45,7 @@ public sealed class OrdersController(
     public Task<OrderTimelineResult> Timeline(Guid id, CancellationToken cancellationToken) =>
         service.GetTimelineAsync(id, GetActorUserId(), GetActorRole(), cancellationToken);
 
-    [Authorize(Roles = SystemRoles.Sales)]
+    [Authorize(Roles = $"{SystemRoles.Sales},{SystemRoles.Retailer}")]
     [HttpPost]
     [ProducesResponseType<OrderDetailResult>(StatusCodes.Status201Created)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
@@ -65,7 +65,7 @@ public sealed class OrdersController(
             request.Note,
             request.Lines.Select(item => new CreateOrderLineData(item.ProductId, item.Quantity)).ToArray()),
             GetActorUserId(),
-            cancellationToken);
+            cancellationToken, GetActorRole());
         return CreatedAtAction(nameof(Get), new { id = result.Id }, result);
     }
 

@@ -9,7 +9,7 @@ using Microsoft.AspNetCore.Mvc;
 namespace FSCM.API.Controllers;
 
 [ApiController]
-[Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator},{SystemRoles.Sales}")]
+[Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator},{SystemRoles.Sales},{SystemRoles.Retailer}")]
 [Route("api/v1/pricing")]
 public sealed class PricingController(
     PromotionService service,

@@ -33,6 +33,19 @@ public sealed class OrderStore(AppDbContext dbContext) : IOrderStore
         return match is null ? null : new(match.Retailer, match.SalesGroupId);
     }
 
+    public async Task<OrderRetailerContext?> FindLinkedRetailerContextAsync(
+        Guid salesUserId, Guid retailerId, CancellationToken cancellationToken)
+    {
+        return await (
+            from retailer in dbContext.RetailerRecords.AsNoTracking()
+            join assignment in dbContext.RetailerSalesAssignmentRecords.AsNoTracking()
+                on retailer.Id equals assignment.RetailerId
+            where retailer.Id == retailerId && retailer.UserAccountId == salesUserId &&
+                  retailer.Status == "Active" && assignment.IsActive
+            select new OrderRetailerContext(retailer, assignment.SalesGroupId))
+            .SingleOrDefaultAsync(cancellationToken);
+    }
+
     public Task<Product?> FindPublishedProductAsync(Guid productId, CancellationToken cancellationToken) =>
         dbContext.ProductRecords.AsNoTracking().SingleOrDefaultAsync(
             item => item.Id == productId && item.Status == ProductStatuses.Published, cancellationToken);
