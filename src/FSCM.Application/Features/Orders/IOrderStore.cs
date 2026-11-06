@@ -105,6 +105,8 @@ public sealed record OrderWarehouseProgressView(
 public interface IOrderStore
 {
     Task<SalesOrder?> FindByClientOrderKeyAsync(Guid clientOrderKey, CancellationToken cancellationToken);
+    Task<OrderRetailerContext?> FindLinkedRetailerContextAsync(Guid userId, Guid retailerId, CancellationToken cancellationToken) =>
+        Task.FromResult<OrderRetailerContext?>(null);
     Task<OrderRetailerContext?> FindRetailerContextAsync(Guid salesUserId, Guid retailerId, CancellationToken cancellationToken);
     Task<Product?> FindPublishedProductAsync(Guid productId, CancellationToken cancellationToken);
     Task<IReadOnlyCollection<OrderInventoryCandidate>> ListCandidatesAsync(Guid productId, CancellationToken cancellationToken);

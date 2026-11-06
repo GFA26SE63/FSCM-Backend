@@ -83,8 +83,9 @@ public sealed class S1BMasterDataApiTests
         etaResponse.EnsureSuccessStatusCode();
         var eta = JsonDocument.Parse(await etaResponse.Content.ReadAsStringAsync()).RootElement;
         var breakdown = eta.GetProperty("breakdown");
-        Assert.Equal(240, breakdown.GetProperty("waitForRunMinutes").GetInt32());
-        Assert.Equal(660, breakdown.GetProperty("waitForDispatchSlotMinutes").GetInt32());
+        Assert.Equal(0, breakdown.GetProperty("waitForRunMinutes").GetInt32());
+        Assert.Equal(0, breakdown.GetProperty("approvalMinutes").GetInt32());
+        Assert.Equal(60, breakdown.GetProperty("waitForDispatchSlotMinutes").GetInt32());
         Assert.Equal(180_000m, eta.GetProperty("estimatedCostAmount").GetDecimal());
 
         var removedGraphQlResponse = await client.PostAsJsonAsync("/graphql", new
@@ -307,8 +308,7 @@ public sealed class S1BMasterDataApiTests
             Task.FromResult<SystemConfiguration?>(new()
             {
                 ConfigKey = "eta.schedule",
-                ConfigValue = "{\"timeZone\":\"Asia/Ho_Chi_Minh\",\"allocationRunLocalTime\":\"12:00\"," +
-                    "\"planApprovalDeadlineLocalTime\":\"14:00\",\"preparationMinutes\":240," +
+                ConfigValue = "{\"timeZone\":\"Asia/Ho_Chi_Minh\",\"preparationMinutes\":240," +
                     "\"bufferMinutes\":60,\"dispatchSlotsLocalTime\":[\"06:00\",\"14:00\"]}",
                 Version = 3,
                 IsActive = true
