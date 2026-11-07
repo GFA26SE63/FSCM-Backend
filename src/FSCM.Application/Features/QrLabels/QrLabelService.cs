@@ -52,12 +52,20 @@ public sealed class QrLabelService(IQrLabelStore store, IQrCodeRenderer qrCodeRe
         var builder = new System.Text.StringBuilder();
         builder.Append("<!DOCTYPE html><html lang=\"vi\"><head><meta charset=\"utf-8\">");
         builder.Append("<title>Tem TEM + QR</title><style>");
+        // One physical label per sheet. The printable area is the 70x50mm sheet minus the 2mm
+        // margin on every side, i.e. 66x46mm. The label box must fit inside that with its border
+        // included, so it is sized a hair under 46mm and uses border-box; otherwise the border and
+        // sub-pixel rounding push the last line (HSD) onto a second page.
         builder.Append("@page{size:70mm 50mm;margin:2mm}");
-        builder.Append("body{font-family:Arial,Helvetica,sans-serif;margin:0}");
-        builder.Append(".label{width:66mm;height:46mm;padding:2mm;box-sizing:border-box;page-break-after:always;");
-        builder.Append("display:flex;gap:3mm;align-items:center;border:1px solid #000}");
-        builder.Append(".qr{width:30mm;height:30mm;flex:0 0 auto}.qr svg{width:100%;height:100%}");
-        builder.Append(".info{font-size:9pt;line-height:1.3}.code{font-size:12pt;font-weight:bold}");
+        builder.Append("html,body{margin:0;padding:0}");
+        builder.Append("body{font-family:Arial,Helvetica,sans-serif}");
+        builder.Append(".label{width:66mm;height:45mm;padding:1.5mm;box-sizing:border-box;overflow:hidden;");
+        builder.Append("display:flex;gap:2.5mm;align-items:center;border:1px solid #000}");
+        // Break only between labels, never after the last one (a trailing break = blank page).
+        builder.Append(".label{break-after:page;page-break-after:always}");
+        builder.Append(".label:last-child{break-after:auto;page-break-after:auto}");
+        builder.Append(".qr{width:28mm;height:28mm;flex:0 0 auto}.qr svg{width:100%;height:100%;display:block}");
+        builder.Append(".info{font-size:8pt;line-height:1.25;overflow:hidden}.code{font-size:11pt;font-weight:bold}");
         builder.Append(".exp{color:#b00}</style></head><body>");
         foreach (var label in labels)
         {
