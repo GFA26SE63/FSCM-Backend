@@ -34,6 +34,8 @@ The algorithm applies route/radius and remaining-life-at-arrival filters before 
 
 Inspect `allocationFragments` in order detail for persisted scoring/distance snapshots. The legacy `allocations` projection may contain zero diagnostic fields and should not be used as the explanation source. The Web order allocation dialog uses fragments.
 
+The order API exposes `officialAmount`, each line's `officialNetAmount`, and `officialPricedAt` once allocation is complete. Indicative totals exclude the later shelf-life reduction; ordinary-promotion amounts come only from the campaign snapshot. For DH-001059 the indicative total is 96,600,000 VND and the official batch total is 93,050,000 VND. The Web no longer reports a false reconciliation error, and allocation scores display three decimal places.
+
 ## Promotion visibility check
 
 KM-004 (the team's saved campaign) still exists and is paused. Creation deliberately stores a campaign inactive until activation. The management list must request `includeInactive=true`, otherwise newly saved and paused campaigns disappear. KM-005 is a separate, paused demo campaign used to verify create → activate → deactivate → reload against PostgreSQL. It remains inactive and does not affect pricing.
