@@ -1,3 +1,5 @@
+using FSCM.Application.Features.Promotions;
+
 namespace FSCM.Application.Features.MobileSnapshots;
 
 public sealed record MobileSnapshotRetailer(
@@ -20,7 +22,11 @@ public sealed record MobileSnapshotPromotion(
     Guid Id, string Code, string Name, string Type, decimal MinimumQuantity,
     decimal DiscountPercent, DateTimeOffset StartAt, DateTimeOffset EndAt, bool IsActive,
     IReadOnlyCollection<Guid> ProductIds, IReadOnlyCollection<Guid> CategoryIds,
-    IReadOnlyCollection<Guid> RetailerIds, DateTimeOffset UpdatedAt);
+    IReadOnlyCollection<Guid> RetailerIds, DateTimeOffset UpdatedAt)
+{
+    public string CampaignMode { get; init; } = "ProductGroup";
+    public IReadOnlyCollection<PromotionProductRule> ProductRules { get; init; } = [];
+}
 
 public sealed record MobileSnapshotMlor(
     Guid Id, Guid RetailerId, Guid? CategoryId, Guid? ProductId, decimal MinimumLifeRatio,

@@ -4,7 +4,10 @@ namespace FSCM.Application.Features.Promotions;
 
 public sealed record PromotionView(
     Promotion Promotion, IReadOnlyCollection<Guid> ProductIds,
-    IReadOnlyCollection<Guid> CategoryIds, IReadOnlyCollection<Guid> RetailerIds);
+    IReadOnlyCollection<Guid> CategoryIds, IReadOnlyCollection<Guid> RetailerIds)
+{
+    public IReadOnlyCollection<PromotionProductRule> ProductRules { get; init; } = [];
+}
 
 public sealed record BatchDiscountView(
     BatchPromotion Assignment, Promotion Promotion, Batch Batch,
@@ -21,6 +24,7 @@ public interface IPromotionStore
     Task<IReadOnlyCollection<PromotionView>> ListPromotionsAsync(bool includeInactive, CancellationToken cancellationToken);
     Task<PromotionView?> FindPromotionViewAsync(Guid id, CancellationToken cancellationToken);
     Task<Promotion?> FindPromotionAsync(Guid id, CancellationToken cancellationToken);
+    Task<bool> HasAppliedOrdersAsync(Guid promotionId, CancellationToken cancellationToken);
     Task<string> NextPromotionCodeAsync(CancellationToken cancellationToken);
     Task<IReadOnlyCollection<Product>> FindProductsAsync(IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken);
     Task<IReadOnlyCollection<ProductCategory>> FindCategoriesAsync(IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken);

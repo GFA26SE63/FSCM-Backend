@@ -6,5 +6,7 @@ public sealed class PromotionProduct
 {
     public Guid Id { get; set; }
     public Guid PromotionId { get; set; }
+    public decimal? MinimumQuantity { get; set; }
+    public decimal? DiscountPercent { get; set; }
     public Guid ProductId { get; set; }
 }

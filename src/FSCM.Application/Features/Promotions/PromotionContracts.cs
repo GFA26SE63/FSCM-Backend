@@ -1,16 +1,20 @@
 namespace FSCM.Application.Features.Promotions;
 
+public sealed record PromotionProductRule(Guid ProductId, decimal MinimumQuantity, decimal DiscountPercent);
+
 public sealed record CreatePromotionData(
     string Name, decimal MinimumQuantity, decimal DiscountPercent,
     DateTimeOffset StartAt, DateTimeOffset EndAt,
     IReadOnlyCollection<Guid> ProductIds, IReadOnlyCollection<Guid> CategoryIds,
-    IReadOnlyCollection<Guid> RetailerIds);
+    IReadOnlyCollection<Guid> RetailerIds,
+    string CampaignMode = "ProductGroup", IReadOnlyCollection<PromotionProductRule>? ProductRules = null, bool ActivateOnSave = false);
 
 public sealed record UpdatePromotionData(
     string Name, decimal MinimumQuantity, decimal DiscountPercent,
     DateTimeOffset StartAt, DateTimeOffset EndAt,
     IReadOnlyCollection<Guid> ProductIds, IReadOnlyCollection<Guid> CategoryIds,
-    IReadOnlyCollection<Guid> RetailerIds);
+    IReadOnlyCollection<Guid> RetailerIds,
+    string CampaignMode = "ProductGroup", IReadOnlyCollection<PromotionProductRule>? ProductRules = null);
 
 public sealed record ApplyBatchDiscountData(
     decimal DiscountPercent, DateTimeOffset StartAt, DateTimeOffset EndAt);
@@ -20,7 +24,12 @@ public sealed record PromotionResult(
     decimal DiscountPercent, DateTimeOffset StartAt, DateTimeOffset EndAt, bool IsActive,
     Guid CreatedByUserId, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt,
     IReadOnlyCollection<Guid> ProductIds, IReadOnlyCollection<Guid> CategoryIds,
-    IReadOnlyCollection<Guid> RetailerIds);
+    IReadOnlyCollection<Guid> RetailerIds)
+{
+    public string CampaignMode { get; init; } = "ProductGroup";
+    public IReadOnlyCollection<PromotionProductRule> ProductRules { get; init; } = [];
+}
+
 
 public sealed record BatchDiscountResult(
     Guid Id, Guid BatchId, string BatchCode, Guid WarehouseId, string WarehouseCode,

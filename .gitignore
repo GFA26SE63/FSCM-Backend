@@ -39,3 +39,6 @@ logs/
 *.log
 *.tmp
 *.temp
+
+# Isolated local build outputs (may contain copied local configuration)
+.artifacts-*/

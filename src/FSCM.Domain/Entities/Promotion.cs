@@ -7,6 +7,7 @@ public sealed class Promotion
     public Guid Id { get; set; }
     public string Code { get; set; } = string.Empty;
     public string Name { get; set; } = string.Empty;
+    public string CampaignMode { get; set; } = "ProductGroup";
     public string PromotionType { get; set; } = string.Empty;
     public decimal MinimumQuantity { get; set; }
     public decimal DiscountPercent { get; set; }

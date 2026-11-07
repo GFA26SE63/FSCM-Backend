@@ -7,6 +7,50 @@ public sealed class PromotionServiceTests
 {
     private static readonly DateTimeOffset Now = new(2026, 10, 13, 5, 0, 0, TimeSpan.Zero);
 
+    [Theory]
+    [InlineData(9, 30, 0, 7)]
+    [InlineData(10, 29, 5, 0)]
+    [InlineData(10, 30, 5, 7)]
+    public async Task Per_sku_thresholds_and_discounts_are_independent(int q1, int q2, int pct1, int pct2)
+    {
+        var f = new Fixture();
+        var created = await f.Service.CreateAsync(new("Loại 1 đúng prototype", 0, 0, Now.AddDays(-1), Now.AddDays(1),
+            [f.Store.Product.Id, f.Store.Product2.Id], [], [], "PerSku",
+            [new(f.Store.Product.Id, 10, 5), new(f.Store.Product2.Id, 30, 7)], true), f.ActorId, default);
+        Assert.True(created.IsActive);
+        Assert.Equal(2, created.ProductRules.Count);
+        var prices = await f.Service.CalculateIndicativePricesAsync([new(f.Store.Product.Id,q1),new(f.Store.Product2.Id,q2)], f.Store.Retailer.Id, Now, default);
+        Assert.Equal((decimal)pct1, prices[f.Store.Product.Id].DiscountPercent);
+        Assert.Equal((decimal)pct2, prices[f.Store.Product2.Id].DiscountPercent);
+        var single = await f.Service.CalculateIndicativePriceAsync(f.Store.Product.Id, q1, f.Store.Retailer.Id, Now, default);
+        Assert.Equal((decimal)pct1, single.DiscountPercent);
+    }
+
+    [Fact]
+    public async Task Applied_campaign_conditions_are_frozen_but_pause_remains_available()
+    {
+        var f = new Fixture();
+        var created = await f.Service.CreateAsync(new("Khuyến mãi đã dùng",10,5,Now.AddDays(-1),Now.AddDays(1),[f.Store.Product.Id],[],[],ActivateOnSave:true),f.ActorId,default);
+        f.Store.HasAppliedOrders = true;
+        await Assert.ThrowsAsync<PromotionOperationException>(() => f.Service.UpdateAsync(created.Id,
+            new("Thay đổi điều kiện",20,9,Now.AddDays(-1),Now.AddDays(1),[f.Store.Product.Id],[],[]),f.ActorId,default));
+        var paused = await f.Service.DeactivateAsync(created.Id,f.ActorId,default);
+        Assert.False(paused.IsActive);
+        Assert.Equal(5m,paused.DiscountPercent);
+    }
+
+    [Fact]
+    public async Task Matching_campaigns_choose_the_best_rate_without_stacking()
+    {
+        var f = new Fixture();
+        await f.Service.CreateAsync(new("Theo SKU", 0,0,Now.AddDays(-1),Now.AddDays(1),[f.Store.Product.Id],[],[],"PerSku",
+            [new(f.Store.Product.Id,10,8)],true), f.ActorId,default);
+        await f.Service.CreateAsync(new("Theo nhóm",10,12,Now.AddDays(-1),Now.AddDays(1),[f.Store.Product.Id,f.Store.Product2.Id],[],[],"ProductGroup",null,true), f.ActorId,default);
+        var prices = await f.Service.CalculateIndicativePricesAsync([new(f.Store.Product.Id,10),new(f.Store.Product2.Id,4)], f.Store.Retailer.Id, Now, default);
+        Assert.Equal(12m, prices[f.Store.Product.Id].DiscountPercent);
+        Assert.Equal(12m, prices[f.Store.Product2.Id].DiscountPercent);
+    }
+
     [Fact]
     public async Task Campaign_is_created_as_audited_draft_with_distinct_scopes()
     {
@@ -220,9 +264,11 @@ public sealed class PromotionServiceTests
         public Task<PromotionView?> FindPromotionViewAsync(Guid id, CancellationToken cancellationToken) =>
             Task.FromResult(Promotions.SingleOrDefault(item => item.Id == id) is { } promotion ? View(promotion) : null);
         public Task<Promotion?> FindPromotionAsync(Guid id, CancellationToken cancellationToken) => Task.FromResult(Promotions.SingleOrDefault(item => item.Id == id));
+        public bool HasAppliedOrders { get; set; }
+        public Task<bool> HasAppliedOrdersAsync(Guid promotionId, CancellationToken cancellationToken) => Task.FromResult(HasAppliedOrders);
         public Task<string> NextPromotionCodeAsync(CancellationToken cancellationToken) => Task.FromResult($"KM-{Promotions.Count + 4:000}");
         public Task<IReadOnlyCollection<Product>> FindProductsAsync(IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken) =>
-            Task.FromResult<IReadOnlyCollection<Product>>(ids.Contains(Product.Id) ? [Product] : []);
+            Task.FromResult<IReadOnlyCollection<Product>>(new[] { Product, Product2 }.Where(p => ids.Contains(p.Id)).ToArray());
         public Task<IReadOnlyCollection<ProductCategory>> FindCategoriesAsync(IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyCollection<ProductCategory>>(ids.Contains(Category.Id) ? [Category] : []);
         public Task<IReadOnlyCollection<Retailer>> FindRetailersAsync(IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken) =>
@@ -272,7 +318,9 @@ public sealed class PromotionServiceTests
         private PromotionView View(Promotion promotion) => new(promotion,
             ProductLinks.Where(item => item.PromotionId == promotion.Id).Select(item => item.ProductId).ToArray(),
             CategoryLinks.Where(item => item.PromotionId == promotion.Id).Select(item => item.ProductCategoryId).ToArray(),
-            RetailerLinks.Where(item => item.PromotionId == promotion.Id).Select(item => item.RetailerId).ToArray());
+            RetailerLinks.Where(item => item.PromotionId == promotion.Id).Select(item => item.RetailerId).ToArray())
+        { ProductRules = ProductLinks.Where(item => item.PromotionId == promotion.Id && item.MinimumQuantity.HasValue)
+            .Select(item => new PromotionProductRule(item.ProductId, item.MinimumQuantity!.Value, item.DiscountPercent!.Value)).ToArray() };
 
         private static Promotion NewPromotion(string type, decimal percent, DateTimeOffset start, DateTimeOffset end) => new()
         {
