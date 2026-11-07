@@ -73,7 +73,9 @@ public sealed class MobileSnapshotStore(AppDbContext dbContext) : IMobileSnapsho
             promotionCategories.Where(y => y.PromotionId == x.Id).Select(y => y.ProductCategoryId).ToArray(),
             promotionRetailers.Where(y => y.PromotionId == x.Id && retailerIds.Contains(y.RetailerId))
                 .Select(y => y.RetailerId).ToArray(),
-            x.UpdatedAt)).ToArray();
+            x.UpdatedAt) { CampaignMode = x.CampaignMode, ProductRules = promotionProducts
+                .Where(y => y.PromotionId == x.Id && y.MinimumQuantity.HasValue && y.DiscountPercent.HasValue)
+                .Select(y => new PromotionProductRule(y.ProductId, y.MinimumQuantity!.Value, y.DiscountPercent!.Value)).ToArray() }).ToArray();
         var mlors = await mlorQuery.OrderBy(x => x.RetailerId).ThenBy(x => x.Version)
             .Select(x => new MobileSnapshotMlor(x.Id, x.RetailerId, x.ProductCategoryId, x.ProductId,
                 x.MinimumLifeRatio, x.MinimumLifeHours, x.Version, x.EffectiveFrom, x.EffectiveTo,

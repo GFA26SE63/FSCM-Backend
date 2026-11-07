@@ -445,6 +445,7 @@ public sealed class OrderCaptureApiTests
             Task.FromResult<IReadOnlyCollection<PromotionView>>([]);
         public Task<PromotionView?> FindPromotionViewAsync(Guid id, CancellationToken cancellationToken) => Task.FromResult<PromotionView?>(null);
         public Task<Promotion?> FindPromotionAsync(Guid id, CancellationToken cancellationToken) => Task.FromResult<Promotion?>(null);
+        public Task<bool> HasAppliedOrdersAsync(Guid promotionId, CancellationToken cancellationToken) => Task.FromResult(false);
         public Task<string> NextPromotionCodeAsync(CancellationToken cancellationToken) => Task.FromResult("KM-002");
         public Task<IReadOnlyCollection<Product>> FindProductsAsync(IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyCollection<Product>>([]);
         public Task<IReadOnlyCollection<ProductCategory>> FindCategoriesAsync(IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyCollection<ProductCategory>>([]);

@@ -13,6 +13,8 @@ public sealed class PromotionProductConfiguration : IEntityTypeConfiguration<Pro
         builder.Property(entity => entity.Id).HasColumnType("uuid").IsRequired();
         builder.Property(entity => entity.PromotionId).HasColumnType("uuid").IsRequired();
         builder.Property(entity => entity.ProductId).HasColumnType("uuid").IsRequired();
+        builder.Property(entity => entity.MinimumQuantity).HasPrecision(18, 3);
+        builder.Property(entity => entity.DiscountPercent).HasPrecision(5, 2);
         builder.HasIndex(entity => new { entity.PromotionId, entity.ProductId }).IsUnique();
         builder.HasOne<Promotion>()
             .WithMany()

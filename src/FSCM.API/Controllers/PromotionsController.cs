@@ -27,7 +27,7 @@ public sealed class PromotionsController(PromotionService service) : ControllerB
     {
         var result = await service.CreateAsync(new(request.Name, request.MinimumQuantity,
             request.DiscountPercent, request.StartAt, request.EndAt, request.ProductIds,
-            request.CategoryIds, request.RetailerIds), ActorId(), cancellationToken);
+            request.CategoryIds, request.RetailerIds, request.CampaignMode, request.ProductRules, request.ActivateOnSave), ActorId(), cancellationToken);
         return CreatedAtAction(nameof(Get), new { id = result.Id }, result);
     }
 
@@ -37,7 +37,7 @@ public sealed class PromotionsController(PromotionService service) : ControllerB
         CancellationToken cancellationToken) =>
         service.UpdateAsync(id, new(request.Name, request.MinimumQuantity,
             request.DiscountPercent, request.StartAt, request.EndAt, request.ProductIds,
-            request.CategoryIds, request.RetailerIds), ActorId(), cancellationToken);
+            request.CategoryIds, request.RetailerIds, request.CampaignMode, request.ProductRules), ActorId(), cancellationToken);
 
     [Authorize(Roles = SystemRoles.Admin)]
     [HttpPost("{id:guid}/activate")]

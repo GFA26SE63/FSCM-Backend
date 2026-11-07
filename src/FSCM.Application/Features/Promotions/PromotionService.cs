@@ -16,10 +16,14 @@ public sealed class PromotionService(IPromotionStore store, TimeProvider timePro
     public async Task<PromotionResult> CreateAsync(
         CreatePromotionData data, Guid actorUserId, CancellationToken cancellationToken)
     {
+        var rules = NormalizeRules(data.CampaignMode, data.ProductRules, data.ProductIds, data.CategoryIds);
+        if (data.CampaignMode == "PerSku") data = data with { MinimumQuantity = rules.Min(r => r.MinimumQuantity), DiscountPercent = rules.Max(r => r.DiscountPercent) };
         var normalized = await ValidateCampaignAsync(data.Name, data.MinimumQuantity,
             data.DiscountPercent, data.StartAt, data.EndAt, data.ProductIds,
             data.CategoryIds, data.RetailerIds, cancellationToken);
         var now = timeProvider.GetUtcNow();
+        if (data.ActivateOnSave && data.EndAt < now)
+            throw PromotionOperationException.Conflict("Không thể kích hoạt chương trình đã hết hạn.");
         var startAt = data.StartAt.ToUniversalTime();
         var endAt = data.EndAt.ToUniversalTime();
         var promotion = new Promotion
@@ -28,19 +32,20 @@ public sealed class PromotionService(IPromotionStore store, TimeProvider timePro
             Code = await store.NextPromotionCodeAsync(cancellationToken),
             Name = normalized.Name,
             PromotionType = PromotionTypes.Campaign,
+            CampaignMode = data.CampaignMode,
             MinimumQuantity = data.MinimumQuantity,
             DiscountPercent = data.DiscountPercent,
             StartAt = startAt,
             EndAt = endAt,
-            IsActive = false,
+            IsActive = data.ActivateOnSave,
             CreatedByUserId = actorUserId,
             CreatedAt = now,
             UpdatedAt = now
         };
         store.AddPromotion(promotion);
-        AddScopeLinks(promotion.Id, normalized.ProductIds, normalized.CategoryIds, normalized.RetailerIds);
+        AddScopeLinks(promotion.Id, normalized.ProductIds, normalized.CategoryIds, normalized.RetailerIds, rules);
         AddAudit(promotion.Id, actorUserId, PromotionAuditActions.Created, null,
-            new { promotion.Code, promotion.Name, promotion.DiscountPercent, promotion.StartAt, promotion.EndAt }, now);
+            new { promotion.Code, promotion.Name, promotion.CampaignMode, promotion.DiscountPercent, promotion.StartAt, promotion.EndAt, promotion.IsActive, ProductRules = rules }, now);
         await store.SaveChangesAsync(cancellationToken);
         return await GetAsync(promotion.Id, cancellationToken);
     }
@@ -52,6 +57,10 @@ public sealed class PromotionService(IPromotionStore store, TimeProvider timePro
             ?? throw PromotionOperationException.NotFound("Promotion was not found.");
         if (promotion.PromotionType != PromotionTypes.Campaign)
             throw PromotionOperationException.Validation("Batch discounts must be managed through the batch discount API.");
+        if (await store.HasAppliedOrdersAsync(id, cancellationToken))
+            throw PromotionOperationException.Conflict("Chương trình đã có đơn áp dụng. Chỉ có thể tạm dừng hoặc tạo chương trình mới.");
+        var rules = NormalizeRules(data.CampaignMode, data.ProductRules, data.ProductIds, data.CategoryIds);
+        if (data.CampaignMode == "PerSku") data = data with { MinimumQuantity = rules.Min(r => r.MinimumQuantity), DiscountPercent = rules.Max(r => r.DiscountPercent) };
         var normalized = await ValidateCampaignAsync(data.Name, data.MinimumQuantity,
             data.DiscountPercent, data.StartAt, data.EndAt, data.ProductIds,
             data.CategoryIds, data.RetailerIds, cancellationToken);
@@ -69,6 +78,7 @@ public sealed class PromotionService(IPromotionStore store, TimeProvider timePro
             CategoryIds = oldCategories.Select(item => item.ProductCategoryId),
             RetailerIds = oldRetailers.Select(item => item.RetailerId)
         };
+        promotion.CampaignMode = data.CampaignMode;
         promotion.Name = normalized.Name;
         promotion.MinimumQuantity = data.MinimumQuantity;
         promotion.DiscountPercent = data.DiscountPercent;
@@ -79,7 +89,7 @@ public sealed class PromotionService(IPromotionStore store, TimeProvider timePro
         store.RemovePromotionProducts(oldProducts);
         store.RemovePromotionCategories(oldCategories);
         store.RemovePromotionRetailers(oldRetailers);
-        AddScopeLinks(id, normalized.ProductIds, normalized.CategoryIds, normalized.RetailerIds);
+        AddScopeLinks(id, normalized.ProductIds, normalized.CategoryIds, normalized.RetailerIds, rules);
         AddAudit(id, actorUserId, PromotionAuditActions.Updated, oldValues,
             new
             {
@@ -237,7 +247,7 @@ public sealed class PromotionService(IPromotionStore store, TimeProvider timePro
         var eligible = new List<AppliedPromotionSnapshot>();
         var campaigns = await store.ListEligibleCampaignsAsync(productId,
             productView.Product.ProductCategoryId, retailerId, quantity, pricedAt, cancellationToken);
-        eligible.AddRange(campaigns.Select(item => ToSnapshot(item.Promotion)));
+        eligible.AddRange(campaigns.Select(item => CampaignSnapshot(item, productId, quantity, quantity)).OfType<AppliedPromotionSnapshot>());
         if (batch is not null)
         {
             var discounts = await store.ListEligibleBatchDiscountsAsync(batch.Id, quantity, pricedAt, cancellationToken);
@@ -299,8 +309,8 @@ public sealed class PromotionService(IPromotionStore store, TimeProvider timePro
         {
             var product = products[line.ProductId];
             var eligible = candidates[line.ProductId]
-                .Where(item => totals[item.Promotion.Id] >= item.Promotion.MinimumQuantity)
-                .Select(item => ToSnapshot(item.Promotion)).ToArray();
+                .Select(item => CampaignSnapshot(item, line.ProductId, line.Quantity, totals[item.Promotion.Id]))
+                .OfType<AppliedPromotionSnapshot>().ToArray();
             var applied = eligible.OrderByDescending(item => item.DiscountPercent)
                 .ThenBy(item => item.Code, StringComparer.Ordinal).FirstOrDefault();
             var gross = Math.Round(product.Price.UnitPrice * line.Quantity, 0, MidpointRounding.AwayFromZero);
@@ -314,6 +324,41 @@ public sealed class PromotionService(IPromotionStore store, TimeProvider timePro
                 product.Price.EffectiveTo);
         }
         return result;
+    }
+
+    private static IReadOnlyCollection<PromotionProductRule> NormalizeRules(string mode,
+        IReadOnlyCollection<PromotionProductRule>? rules, IReadOnlyCollection<Guid> productIds,
+        IReadOnlyCollection<Guid> categoryIds)
+    {
+        if (mode is not ("PerSku" or "ProductGroup"))
+            throw PromotionOperationException.Validation("Campaign mode must be PerSku or ProductGroup.");
+        var rows = rules ?? [];
+        if (mode == "ProductGroup")
+        {
+            if (rows.Count > 0) throw PromotionOperationException.Validation("Group campaigns use a shared threshold and discount.");
+            return [];
+        }
+        if (categoryIds.Count > 0 || rows.Count == 0 || rows.Select(r => r.ProductId).Distinct().Count() != rows.Count ||
+            !rows.Select(r => r.ProductId).ToHashSet().SetEquals(productIds))
+            throw PromotionOperationException.Validation("Each selected SKU must have exactly one rule; SKU campaigns cannot target categories.");
+        foreach (var row in rows)
+        {
+            if (row.MinimumQuantity <= 0 || row.MinimumQuantity != decimal.Truncate(row.MinimumQuantity))
+                throw PromotionOperationException.Validation("Each SKU requires a positive whole-carton threshold.");
+            ValidateDiscount(row.DiscountPercent, 100m, "SKU discount");
+        }
+        return rows;
+    }
+
+    private static AppliedPromotionSnapshot? CampaignSnapshot(PromotionView view, Guid productId,
+        decimal lineQuantity, decimal groupQuantity)
+    {
+        if (view.Promotion.CampaignMode != "PerSku")
+            return groupQuantity >= view.Promotion.MinimumQuantity ? ToSnapshot(view.Promotion) : null;
+        var rule = view.ProductRules.SingleOrDefault(r => r.ProductId == productId);
+        return rule is not null && lineQuantity >= rule.MinimumQuantity
+            ? ToSnapshot(view.Promotion) with { MinimumQuantity = rule.MinimumQuantity, DiscountPercent = rule.DiscountPercent }
+            : null;
     }
 
     private async Task<PromotionResult> SetCampaignActiveAsync(
@@ -376,10 +421,10 @@ public sealed class PromotionService(IPromotionStore store, TimeProvider timePro
     }
 
     private void AddScopeLinks(Guid promotionId, IEnumerable<Guid> products,
-        IEnumerable<Guid> categories, IEnumerable<Guid> retailers)
+        IEnumerable<Guid> categories, IEnumerable<Guid> retailers, IReadOnlyCollection<PromotionProductRule> rules)
     {
         foreach (var id in products)
-            store.AddPromotionProduct(new PromotionProduct { Id = Guid.NewGuid(), PromotionId = promotionId, ProductId = id });
+            store.AddPromotionProduct(new PromotionProduct { Id = Guid.NewGuid(), PromotionId = promotionId, ProductId = id, MinimumQuantity = rules.FirstOrDefault(r => r.ProductId == id)?.MinimumQuantity, DiscountPercent = rules.FirstOrDefault(r => r.ProductId == id)?.DiscountPercent });
         foreach (var id in categories)
             store.AddPromotionCategory(new PromotionCategory { Id = Guid.NewGuid(), PromotionId = promotionId, ProductCategoryId = id });
         foreach (var id in retailers)
@@ -405,7 +450,8 @@ public sealed class PromotionService(IPromotionStore store, TimeProvider timePro
         view.Promotion.PromotionType, view.Promotion.MinimumQuantity,
         view.Promotion.DiscountPercent, view.Promotion.StartAt, view.Promotion.EndAt,
         view.Promotion.IsActive, view.Promotion.CreatedByUserId, view.Promotion.CreatedAt,
-        view.Promotion.UpdatedAt, view.ProductIds, view.CategoryIds, view.RetailerIds);
+        view.Promotion.UpdatedAt, view.ProductIds, view.CategoryIds, view.RetailerIds)
+    { CampaignMode = view.Promotion.CampaignMode, ProductRules = view.ProductRules };
 
     private static BatchDiscountResult ToResult(BatchDiscountView view) => new(
         view.Assignment.Id, view.Batch.Id, view.Batch.BatchCode, view.Warehouse.Id,
