@@ -14,6 +14,29 @@ public sealed class OrderServiceTests
 {
     private static readonly DateTimeOffset Now = new(2026, 10, 14, 3, 0, 0, TimeSpan.Zero);
 
+    [Fact]
+    public async Task Price_contract_separates_quantity_promotion_from_final_shelf_life_discount()
+    {
+        var captured = await new Fixture().CreateAsync(quantity: 10);
+        Assert.Null(captured.OfficialAmount);
+        Assert.Null(Assert.Single(captured.Lines).OfficialNetAmount);
+        var pricedLine = Assert.Single(captured.Lines) with
+        {
+            DiscountAmount = 145m, NetAmount = 855m, FinalPricePendingAllocation = false
+        };
+        var priced = captured with
+        {
+            FinalAmount = 855m, DiscountAmount = 145m,
+            FinalPricePendingAllocation = false, Lines = [pricedLine]
+        };
+        Assert.Equal(100m, pricedLine.OrdinaryPromotionDiscountAmount);
+        Assert.Equal(900m, pricedLine.IndicativeNetAmount);
+        Assert.Equal(855m, pricedLine.OfficialNetAmount);
+        Assert.Equal(900m, priced.IndicativeAmount);
+        Assert.Equal(855m, priced.OfficialAmount);
+        Assert.Equal(0m, (pricedLine with { OrdinaryPromotion = null }).OrdinaryPromotionDiscountAmount);
+    }
+
     [Theory]
     [InlineData(2, 0, 0)]
     [InlineData(30, 0, 50)]
