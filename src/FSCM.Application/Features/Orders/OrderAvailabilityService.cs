@@ -3,7 +3,13 @@ using FSCM.Domain.Allocation;
 
 namespace FSCM.Application.Features.Orders;
 
-public sealed record OrderAvailabilityItem(Guid ProductId, string Sku, decimal EligibleQuantity);
+public sealed record OrderWarehouseAvailability(
+    Guid WarehouseId, string WarehouseCode, string WarehouseName,
+    decimal EligibleQuantity, decimal? DistanceMeters, string? UnavailableReason);
+public sealed record OrderAvailabilityItem(Guid ProductId, string Sku, decimal EligibleQuantity)
+{
+    public IReadOnlyCollection<OrderWarehouseAvailability> Warehouses { get; init; } = [];
+}
 public sealed record OrderAvailabilityResult(DateTimeOffset CheckedAt, IReadOnlyCollection<OrderAvailabilityItem> Items);
 
 public sealed class OrderAvailabilityService(
@@ -24,13 +30,15 @@ public sealed class OrderAvailabilityService(
         {
             var product = await store.FindPublishedProductAsync(productId, cancellationToken)
                 ?? throw OrderOperationException.NotFound("Published product was not found.");
+            var positions = await store.ListCandidatesAsync(productId, cancellationToken);
             var mlor = await store.ResolveMlorAsync(retailerId, productId, now, cancellationToken);
             if (mlor is null)
             {
-                items.Add(new(productId, product.Sku, 0));
+                items.Add(new(productId, product.Sku, 0) { Warehouses = positions.GroupBy(p => p.Warehouse.Id)
+                    .Select(g => new OrderWarehouseAvailability(g.Key, g.First().Warehouse.Code,
+                        g.First().Warehouse.Name, 0, null, "MissingMlor")).ToArray() });
                 continue;
             }
-            var positions = await store.ListCandidatesAsync(productId, cancellationToken);
             var candidates = positions.Select(position => {
                 var inventory = new RealTimeInventoryCandidate(position.Batch, position.Balance,
                     position.Warehouse, product, position.WarehouseLatitude, position.WarehouseLongitude,
@@ -42,9 +50,24 @@ public sealed class OrderAvailabilityService(
             var eligibleIds = result.FilterTrace
                 .Where(trace => trace.Stage == AllocationFilterStage.Delivery && trace.Passed)
                 .Select(trace => trace.BatchId).ToHashSet();
-            items.Add(new(productId, product.Sku,
-                candidates.Where(candidate => eligibleIds.Contains(candidate.BatchId))
-                    .Sum(candidate => candidate.AvailableQuantity)));
+            var warehouses = positions.GroupBy(p => p.Warehouse.Id).Select(group =>
+            {
+                var warehouse = group.First().Warehouse;
+                var rows = candidates.Where(c => c.WarehouseId == group.Key).ToArray();
+                var quantity = rows.Where(c => eligibleIds.Contains(c.BatchId)).Sum(c => c.AvailableQuantity);
+                var failures = result.FilterTrace.Where(t => t.WarehouseId == group.Key && !t.Passed)
+                    .Select(t => t.Reason).ToHashSet();
+                var reason = quantity > 0 ? null
+                    : rows.All(c => c.AvailableQuantity <= 0) ? "NoIssuableStock"
+                    : failures.Contains(AllocationFilterReason.OutsideServiceRadius) ? "OutsideServiceRadius"
+                    : failures.Contains(AllocationFilterReason.RouteUnavailable) ? "RouteUnavailable"
+                    : failures.Contains(AllocationFilterReason.BelowMlor) ? "BelowMlor" : "NoEligibleStock";
+                return new OrderWarehouseAvailability(warehouse.Id, warehouse.Code, warehouse.Name,
+                    quantity, rows.FirstOrDefault(c => c.EstimatedArrivalAt.HasValue)?.DistanceMeters, reason);
+            }).OrderBy(w => w.EligibleQuantity > 0 ? 0 : 1).ThenBy(w => w.DistanceMeters ?? decimal.MaxValue)
+                .ThenBy(w => w.WarehouseCode, StringComparer.Ordinal).ToArray();
+            // Backward-compatible total for quantity validation; the UI receives each warehouse separately.
+            items.Add(new(productId, product.Sku, warehouses.Sum(w => w.EligibleQuantity)) { Warehouses = warehouses });
         }
         return new(now, items);
     }
