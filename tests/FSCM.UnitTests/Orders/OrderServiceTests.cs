@@ -77,16 +77,20 @@ public sealed class OrderServiceTests
         Assert.Empty(fixture.Store.Orders);
     }
 
-    [Fact]
-    public async Task Availability_excludes_stock_outside_the_store_service_radius()
+    [Theory]
+    [InlineData(0)]
+    [InlineData(50)]
+    public async Task Availability_excludes_stock_outside_the_store_service_radius(int available)
     {
         var fixture = new Fixture();
         fixture.Store.RetailerLocation.Latitude = 0;
+        fixture.Store.Balance.AvailableQuantity = available;
         var service = new OrderAvailabilityService(fixture.Store, fixture.Service,
             new AllocationEngine(), new FixedTimeProvider(Now));
         var result = await service.CheckAsync(fixture.Store.Retailer.Id,
             [fixture.Store.Product.Id], fixture.SalesUserId, SystemRoles.Sales, default);
         Assert.Equal(0, Assert.Single(result.Items).EligibleQuantity);
+        Assert.Equal("OutsideServiceRadius", Assert.Single(Assert.Single(result.Items).Warehouses).UnavailableReason);
     }
 
     [Fact]

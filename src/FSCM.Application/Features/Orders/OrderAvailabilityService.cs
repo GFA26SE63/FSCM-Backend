@@ -31,20 +31,23 @@ public sealed class OrderAvailabilityService(
             var product = await store.FindPublishedProductAsync(productId, cancellationToken)
                 ?? throw OrderOperationException.NotFound("Published product was not found.");
             var positions = await store.ListCandidatesAsync(productId, cancellationToken);
-            var mlor = await store.ResolveMlorAsync(retailerId, productId, now, cancellationToken);
-            if (mlor is null)
-            {
-                items.Add(new(productId, product.Sku, 0) { Warehouses = positions.GroupBy(p => p.Warehouse.Id)
-                    .Select(g => new OrderWarehouseAvailability(g.Key, g.First().Warehouse.Code,
-                        g.First().Warehouse.Name, 0, null, "MissingMlor")).ToArray() });
-                continue;
-            }
             var candidates = positions.Select(position => {
                 var inventory = new RealTimeInventoryCandidate(position.Batch, position.Balance,
                     position.Warehouse, product, position.WarehouseLatitude, position.WarehouseLongitude,
                     position.ActiveLockedQuantity);
                 return RealTimeAllocationService.ToBatchCandidate(inventory, location, inventory.IssuableQuantity, now);
             }).ToArray();
+            var mlor = await store.ResolveMlorAsync(retailerId, productId, now, cancellationToken);
+            if (mlor is null)
+            {
+                items.Add(new(productId, product.Sku, 0) { Warehouses = positions.GroupBy(p => p.Warehouse.Id)
+                    .Select(g => new OrderWarehouseAvailability(g.Key, g.First().Warehouse.Code,
+                        g.First().Warehouse.Name, 0,
+                        candidates.FirstOrDefault(c => c.WarehouseId == g.Key && c.EstimatedArrivalAt.HasValue)?.DistanceMeters,
+                        candidates.Where(c => c.WarehouseId == g.Key).All(engine.IsOutsideServiceRadius)
+                            ? "OutsideServiceRadius" : "MissingMlor")).ToArray() });
+                continue;
+            }
             var result = engine.Allocate(new AllocationRequest(product.Sku, 1,
                 product.ShelfLifeHours, mlor.MinimumLifeRatio, null), candidates);
             var eligibleIds = result.FilterTrace
@@ -58,6 +61,7 @@ public sealed class OrderAvailabilityService(
                 var failures = result.FilterTrace.Where(t => t.WarehouseId == group.Key && !t.Passed)
                     .Select(t => t.Reason).ToHashSet();
                 var reason = quantity > 0 ? null
+                    : rows.All(engine.IsOutsideServiceRadius) ? "OutsideServiceRadius"
                     : rows.All(c => c.AvailableQuantity <= 0) ? "NoIssuableStock"
                     : failures.Contains(AllocationFilterReason.OutsideServiceRadius) ? "OutsideServiceRadius"
                     : failures.Contains(AllocationFilterReason.RouteUnavailable) ? "RouteUnavailable"
