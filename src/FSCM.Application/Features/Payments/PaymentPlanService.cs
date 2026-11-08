@@ -81,12 +81,26 @@ public sealed class PaymentPlanService(IPaymentStore store) : IPaymentPlanServic
         DateTimeOffset deliveredAt,
         CancellationToken cancellationToken)
     {
-        var existing = await store.FindByOrderAsync(order.Id, true, cancellationToken)
-            ?? throw PaymentOperationException.Conflict(
-                "Payment ledger must be created by final allocation approval before delivery.");
-        if (existing.Payment.Method != order.PaymentMethod || existing.Payment.Amount != order.FinalAmount)
+        var existing = await store.FindByOrderAsync(order.Id, true, cancellationToken);
+        if (existing is null)
+        {
+            await CreateForFinalApprovedOrderAsync(
+                order, receiptActorUserId, deliveredAt, $"DELIVERY-{order.OrderCode}", cancellationToken);
+            existing = await store.FindByOrderAsync(order.Id, true, cancellationToken)
+                ?? throw PaymentOperationException.Conflict(
+                    "Payment ledger could not be initialized before delivery.");
+        }
+        if (existing.Payment.Method != order.PaymentMethod)
             throw PaymentOperationException.Conflict(
                 "Existing payment does not match the delivered order snapshot.");
+        if (existing.Payment.Amount != order.FinalAmount)
+        {
+            if (order.FinalPricePendingAllocation || order.FinalAmount != existing.Payment.Amount)
+            {
+                order.FinalAmount = existing.Payment.Amount;
+                order.FinalPricePendingAllocation = false;
+            }
+        }
 
         var deliveredDate = DateOnly.FromDateTime(deliveredAt.ToOffset(VietnamOffset).DateTime);
         var isCredit = order.PaymentMethod == OrderPaymentMethods.Credit;

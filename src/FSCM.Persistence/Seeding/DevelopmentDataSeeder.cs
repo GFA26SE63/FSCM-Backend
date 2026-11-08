@@ -29,7 +29,8 @@ public sealed class DevelopmentDataSeeder(
     private const string DemoSalesGroupCode = "HCM-A";
     private const string DemoRetailerCode = "10004127";
     private const string LegacyDemoRetailerCode = "RTL-HCM-001";
-    private static readonly Guid DemoOrderClientKey = Guid.Parse("10000000-0000-0000-0000-000000001030");
+    private static readonly Guid DemoOrderClientKey = Guid.Parse("10000000-0000-0000-0000-000000001032");
+    private static readonly Guid DemoShortOrderClientKey = Guid.Parse("10000000-0000-0000-0000-000000001033");
 
     private static readonly (string Email, string FullName, string Role)[] DemoUsers =
     [
@@ -79,22 +80,58 @@ public sealed class DevelopmentDataSeeder(
             new CreateAssistedOrderData(
                 DemoOrderClientKey,
                 retailer.Id,
-                OrderPaymentMethods.Cod,
+                OrderPaymentMethods.Prepaid,
                 null,
                 null,
-                "Đơn hàng hỗ trợ mẫu cho cửa hàng An Khang",
+                "Đơn demo allocation đủ hàng cho cửa hàng An Khang",
                 [new CreateOrderLineData(products["SKU001"].Id, 12)]),
             users[SystemRoles.Sales].Id,
             cancellationToken);
+        if (demoOrder.Status is OrderStatuses.PendingApproval)
+        {
+            demoOrder = await orderService.ApproveAsync(
+                demoOrder.Id, demoOrder.Version, users[SystemRoles.Operator].Id,
+                SystemRoles.Operator, cancellationToken);
+        }
+
+        var demoShortOrder = await orderService.CreateAsync(
+            new CreateAssistedOrderData(
+                DemoShortOrderClientKey,
+                retailer.Id,
+                OrderPaymentMethods.Prepaid,
+                null,
+                null,
+                "Đơn demo allocation thiếu hàng để kiểm tra rollback toàn đơn",
+                [new CreateOrderLineData(products["SKU001"].Id, 1_000)]),
+            users[SystemRoles.Sales].Id,
+            cancellationToken);
+        if (demoShortOrder.Status is OrderStatuses.PendingApproval)
+        {
+            demoShortOrder = await orderService.ApproveAsync(
+                demoShortOrder.Id, demoShortOrder.Version, users[SystemRoles.Operator].Id,
+                SystemRoles.Operator, cancellationToken);
+        }
+
+        await SeedRecurringAllocationOrdersAsync(
+            retailer, products, users[SystemRoles.Sales].Id, users[SystemRoles.Operator].Id,
+            now, cancellationToken);
+
+        var allocationDemoTime = now.AddDays(-1);
+        var allocationDemoIds = new[] { demoOrder.Id, demoShortOrder.Id };
+        var allocationDemoRecords = await dbContext.SalesOrderRecords
+            .Where(item => allocationDemoIds.Contains(item.Id) && item.Status == OrderStatuses.PendingAllocation)
+            .OrderBy(item => item.OrderCode)
+            .ToArrayAsync(cancellationToken);
+        for (var index = 0; index < allocationDemoRecords.Length; index++)
+        {
+            allocationDemoRecords[index].ServerReceivedAt = allocationDemoTime.AddMinutes(index * 5);
+            allocationDemoRecords[index].ReviewedAt = allocationDemoTime.AddMinutes(index * 5 + 1);
+            allocationDemoRecords[index].UpdatedAt = now;
+        }
+
         var paymentSeedReference = "CHỜ-PHÂN-BỔ";
         if (!demoOrder.FinalPricePendingAllocation)
         {
-            if (demoOrder.Status is OrderStatuses.PendingApproval)
-            {
-                demoOrder = await orderService.ApproveAsync(
-                    demoOrder.Id, demoOrder.Version, users[SystemRoles.Operator].Id,
-                    SystemRoles.Operator, cancellationToken);
-            }
             paymentSeedReference = $"SEED-S1E-{demoOrder.OrderCode}";
             var existingPayment = await dbContext.PaymentRecords.SingleOrDefaultAsync(
                 item => item.SalesOrderId == demoOrder.Id, cancellationToken);
@@ -130,6 +167,88 @@ public sealed class DevelopmentDataSeeder(
             DemoRetailerCode,
             demoOrder.OrderCode,
             paymentSeedReference);
+    }
+
+    private async Task SeedRecurringAllocationOrdersAsync(
+        Retailer retailer,
+        IReadOnlyDictionary<string, Product> products,
+        Guid salesUserId,
+        Guid operatorUserId,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        // Pseudo-random but repeatable: the same seed produces the same requests on every startup,
+        // which keeps CreateAsync idempotent and makes the council demo reproducible.
+        var random = new Random(26083);
+        var patterns = new[]
+        {
+            new[] { "SKU001" },
+            new[] { "SKU002" },
+            new[] { "SKU001", "SKU002" },
+            new[] { "SKU005" },
+            new[] { "SKU001", "SKU005" },
+            new[] { "SKU002", "SKU005" },
+            new[] { "SKU001" },
+            new[] { "SKU002" },
+            new[] { "SKU001", "SKU002" },
+            new[] { "SKU001", "SKU005" }
+        };
+        var orderIds = new List<Guid>();
+
+        for (var index = 0; index < patterns.Length; index++)
+        {
+            var lines = patterns[index]
+                .Select((sku, lineIndex) => new CreateOrderLineData(
+                    products[sku].Id,
+                    index switch
+                    {
+                        7 => 450,
+                        8 when lineIndex == 1 => 350,
+                        _ => random.Next(6, 36)
+                    }))
+                .ToArray();
+            var clientKey = Guid.Parse($"10000000-0000-0000-0000-{1040 + index:D12}");
+            var order = await orderService.CreateAsync(
+                new CreateAssistedOrderData(
+                    clientKey,
+                    retailer.Id,
+                    index % 3 == 0 ? OrderPaymentMethods.Credit : OrderPaymentMethods.Prepaid,
+                    null,
+                    null,
+                    $"Dữ liệu demo đợt 3 giờ #{index + 1:00}",
+                    lines),
+                salesUserId,
+                cancellationToken);
+            if (order.Status == OrderStatuses.PendingApproval)
+            {
+                order = await orderService.ApproveAsync(
+                    order.Id, order.Version, operatorUserId, SystemRoles.Operator, cancellationToken);
+            }
+            orderIds.Add(order.Id);
+        }
+
+        var zone = TimeZoneInfo.FindSystemTimeZoneById("Asia/Ho_Chi_Minh");
+        var localNow = TimeZoneInfo.ConvertTime(now, zone);
+        var slotHour = localNow.Hour / 3 * 3;
+        var slotLocal = new DateTimeOffset(localNow.Year, localNow.Month, localNow.Day,
+            slotHour, 0, 0, localNow.Offset);
+        var windowStart = slotLocal.AddHours(-2.5).ToUniversalTime();
+        var assignedIds = await dbContext.AllocationRunOrderRecords.AsNoTracking()
+            .Where(item => orderIds.Contains(item.SalesOrderId))
+            .Select(item => item.SalesOrderId)
+            .ToArrayAsync(cancellationToken);
+        var pending = await dbContext.SalesOrderRecords
+            .Where(item => orderIds.Contains(item.Id) && !assignedIds.Contains(item.Id) &&
+                item.Status == OrderStatuses.PendingAllocation)
+            .OrderBy(item => item.OrderCode)
+            .ToArrayAsync(cancellationToken);
+        for (var index = 0; index < pending.Length; index++)
+        {
+            pending[index].ServerReceivedAt = windowStart.AddMinutes(index * 12);
+            pending[index].ReviewedAt = pending[index].ServerReceivedAt.AddMinutes(2);
+            pending[index].UpdatedAt = now;
+        }
+        await dbContext.SaveChangesAsync(cancellationToken);
     }
 
     private async Task SeedDeliveryMasterDataAsync(
@@ -856,14 +975,13 @@ public sealed class DevelopmentDataSeeder(
             new ConfigurationSeed(BusinessConfigurationKeys.OrderStepCartons, "1", "integer",
                 "Bước số lượng đặt hàng mặc định là một thùng"),
             new ConfigurationSeed(BusinessConfigurationKeys.EtaSchedule,
-                "{\"timeZone\":\"Asia/Ho_Chi_Minh\",\"salesSubmissionAdviceLocalTime\":\"11:00\"," +
-                "\"orderReviewReminderLocalTime\":\"11:30\",\"allocationRunLocalTime\":\"00:00\"," +
-                "\"planApprovalReminderLocalTime\":\"13:30\"," +
-                "\"planApprovalDeadlineLocalTime\":\"14:00\",\"preparationMinutes\":240," +
+                "{\"timeZone\":\"Asia/Ho_Chi_Minh\",\"salesSubmissionAdviceLocalTime\":\"23:15\"," +
+                "\"orderReviewReminderLocalTime\":\"23:45\",\"allocationRunLocalTime\":\"00:00\"," +
+                "\"allocationIntervalHours\":3,\"planApprovalMinutes\":60," +
+                "\"planApprovalReminderLocalTime\":\"00:30\"," +
+                "\"planApprovalDeadlineLocalTime\":\"01:00\",\"preparationMinutes\":120," +
                 "\"bufferMinutes\":60,\"dispatchSlotsLocalTime\":[\"06:00\",\"14:00\"]}", "object",
-                "Lịch ngày chạy đợt: chốt đợt lúc 00:00 (đóng ngày vừa kết thúc); trong ngày đó khuyến nghị " +
-                "gửi đơn trước 11:00, nhắc duyệt đơn 11:30; sau khi chốt thì " +
-                "nhắc duyệt phương án 13:30, hạn duyệt 14:00, soạn 4 giờ, đệm 1 giờ, xuất 06:00 và 14:00"),
+                "Chạy allocation mỗi 3 giờ từ 00:00; Admin duyệt trong 60 phút, soạn 2 giờ, đệm 1 giờ"),
             new ConfigurationSeed(BusinessConfigurationKeys.SalesKpi,
                 "{\"successfulOrdersTarget\":15,\"retailersServedTarget\":5,\"newRetailersTarget\":1," +
                 "\"promotionRevenueRatioMaximum\":0.05,\"successfulOrdersWeight\":0.25," +
@@ -873,8 +991,9 @@ public sealed class DevelopmentDataSeeder(
         };
         foreach (var definition in configurations)
         {
-            if (!await dbContext.SystemConfigurationRecords.AnyAsync(
-                    item => item.ConfigKey == definition.Key && item.IsActive, cancellationToken))
+            var existingConfiguration = await dbContext.SystemConfigurationRecords.SingleOrDefaultAsync(
+                item => item.ConfigKey == definition.Key && item.IsActive, cancellationToken);
+            if (existingConfiguration is null)
             {
                 dbContext.SystemConfigurationRecords.Add(new SystemConfiguration
                 {
@@ -890,6 +1009,19 @@ public sealed class DevelopmentDataSeeder(
                     CreatedAt = now,
                     UpdatedAt = now
                 });
+            }
+            else if (definition.Key == BusinessConfigurationKeys.EtaSchedule &&
+                     existingConfiguration.ConfigValue != definition.Value)
+            {
+                // Development data follows the current three-hour allocation design. Bump the
+                // version so ETA/trace records make the schedule change visible.
+                existingConfiguration.ConfigValue = definition.Value;
+                existingConfiguration.Description = definition.Description;
+                existingConfiguration.ValueType = definition.ValueType;
+                existingConfiguration.Version++;
+                existingConfiguration.UpdatedByUserId = adminUserId;
+                existingConfiguration.EffectiveFrom = now;
+                existingConfiguration.UpdatedAt = now;
             }
         }
 
@@ -1168,7 +1300,17 @@ public sealed class DevelopmentDataSeeder(
             new InventorySeed("PN-260901-01", "WH-HCM-01", "SKU001", new DateOnly(2027, 4, 30), 500m, 60m, "LÔ-SỮA-THÁNG-09", BatchExpiryStatuses.Valid),
             new InventorySeed("PN-261001-02", "WH-TD", "SKU001", new DateOnly(2027, 3, 31), 200m, 0m, "LÔ-SỮA-THỦ-ĐỨC-THÁNG-10", BatchExpiryStatuses.Valid),
             new InventorySeed("PN-261001-01", "WH-TD", "SKU002", new DateOnly(2026, 10, 28), 120m, 20m, "LÔ-SỮA-CHUA-THÁNG-10", BatchExpiryStatuses.NearExpiry),
-            new InventorySeed("PN-260901-02", "WH-Q7", "SKU003", new DateOnly(2026, 10, 10), 30m, 0m, "LÔ-THỰC-PHẨM-THÁNG-09", BatchExpiryStatuses.Expired)
+            new InventorySeed("PN-260901-02", "WH-Q7", "SKU003", new DateOnly(2026, 10, 10), 30m, 0m, "LÔ-THỰC-PHẨM-THÁNG-09", BatchExpiryStatuses.Expired),
+            // Candidate pool for the three-hour allocation demo: the same SKU appears in several
+            // warehouses and at several expiry levels so B1-B4 has meaningful rows to explain.
+            new InventorySeed("PN-261020-11", "WH-HCM-01", "SKU001", new DateOnly(2026, 11, 18), 180m, 0m, "DEMO-SUA-CENTRAL-11", BatchExpiryStatuses.Valid),
+            new InventorySeed("PN-261020-12", "WH-TD", "SKU001", new DateOnly(2026, 11, 10), 90m, 0m, "DEMO-SUA-TD-11", BatchExpiryStatuses.NearExpiry),
+            new InventorySeed("PN-261020-13", "WH-Q7", "SKU001", new DateOnly(2026, 11, 6), 60m, 0m, "DEMO-SUA-Q7-11", BatchExpiryStatuses.NearExpiry),
+            new InventorySeed("PN-261020-21", "WH-HCM-01", "SKU002", new DateOnly(2026, 11, 24), 140m, 0m, "DEMO-SUACHUA-CENTRAL-11", BatchExpiryStatuses.Valid),
+            new InventorySeed("PN-261020-22", "WH-TD", "SKU002", new DateOnly(2026, 11, 16), 100m, 0m, "DEMO-SUACHUA-TD-11", BatchExpiryStatuses.Valid),
+            new InventorySeed("PN-261020-23", "WH-Q7", "SKU002", new DateOnly(2026, 11, 8), 70m, 0m, "DEMO-SUACHUA-Q7-11", BatchExpiryStatuses.NearExpiry),
+            new InventorySeed("PN-261020-31", "WH-HCM-01", "SKU005", new DateOnly(2026, 11, 28), 100m, 0m, "DEMO-NUOCCAM-CENTRAL-11", BatchExpiryStatuses.Valid),
+            new InventorySeed("PN-261020-32", "WH-TD", "SKU005", new DateOnly(2026, 11, 14), 80m, 0m, "DEMO-NUOCCAM-TD-11", BatchExpiryStatuses.NearExpiry)
         };
 
         foreach (var definition in definitions)

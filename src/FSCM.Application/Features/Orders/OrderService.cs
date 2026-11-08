@@ -220,6 +220,23 @@ public sealed class OrderService(
         return ToDetail(view);
     }
 
+    public async Task<OrderDetailResult> GetByCodeAsync(
+        string orderCode,
+        Guid actorUserId,
+        string actorRole,
+        CancellationToken cancellationToken)
+    {
+        ValidateReadRole(actorRole);
+        var view = await store.FindByCodeAsync(orderCode, false, cancellationToken)
+            ?? throw OrderOperationException.NotFound($"Order '{orderCode}' was not found.");
+        if (!await store.CanViewAsync(view, actorUserId, actorRole, cancellationToken))
+        {
+            throw OrderOperationException.Forbidden("User cannot access this order.");
+        }
+
+        return ToDetail(view);
+    }
+
     public async Task<OrderTimelineResult> GetTimelineAsync(
         Guid orderId,
         Guid actorUserId,
@@ -650,7 +667,7 @@ public sealed class OrderService(
 
     private static void EnsureOrderVersion(SalesOrder order, int expectedVersion)
     {
-        if (order.Version != expectedVersion)
+        if (expectedVersion > 0 && order.Version != expectedVersion)
             throw OrderOperationException.Conflict(
                 $"Order version is {order.Version}; refresh and retry with the current version.");
     }
@@ -713,7 +730,8 @@ public sealed class OrderService(
         view.Order.Version,
         view.Order.CreatedAt)
     {
-        OfficialAmount = OfficialAmount(view)
+        OfficialAmount = OfficialAmount(view),
+        CreatedByUserName = view.CreatedByUserName
     };
 
     private static OrderDetailResult ToDetail(OrderView view) => new(
@@ -760,7 +778,8 @@ public sealed class OrderService(
             new OrderWarehouseProgressResult(
                 item.WarehouseId, item.WarehouseCode, item.PickingListId, item.PickingCode,
                 item.PickingStatus, item.ShipmentId, item.ShipmentCode, item.ShipmentStatus,
-                item.PlannedQuantity, item.PickedQuantity, item.ReceivedQuantity)).ToArray() ?? []
+                item.PlannedQuantity, item.PickedQuantity, item.ReceivedQuantity)).ToArray() ?? [],
+        CreatedByUserName = view.CreatedByUserName
     };
 
     private static OrderLineResult ToLine(OrderView view, OrderLineView item) => new(

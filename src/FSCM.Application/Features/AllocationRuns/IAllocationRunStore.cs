@@ -75,6 +75,10 @@ public sealed record AllocationRunView(
     IReadOnlyCollection<AllocationRunLine> Lines,
     IReadOnlyCollection<AllocationRunStock> Pool);
 
+public sealed record AllocationRunSummaryView(
+    AllocationRun Run,
+    AllocationPlanVersion? LatestPlanVersion);
+
 /// <summary>An order eligible for a run, with the lines and product facts the snapshot needs.</summary>
 public sealed record EligibleOrderView(
     SalesOrder Order,
@@ -93,6 +97,10 @@ public sealed record AvailableBatchView(
 
 public interface IAllocationRunStore
 {
+    Task<IReadOnlyCollection<AllocationRunSummaryView>> ListAsync(
+        DateOnly? fromDate, DateOnly? toDate, CancellationToken cancellationToken);
+    Task<AllocationRun?> FindByCutoffAsync(DateTimeOffset cutoffAt, CancellationToken cancellationToken);
+    Task<AllocationRunView?> FindViewByCutoffAsync(DateTimeOffset cutoffAt, CancellationToken cancellationToken);
     Task<AllocationRun?> FindByBusinessDateAsync(DateOnly businessDate, CancellationToken cancellationToken);
     Task<AllocationRunView?> FindViewAsync(Guid runId, CancellationToken cancellationToken);
 

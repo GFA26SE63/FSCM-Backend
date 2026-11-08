@@ -1,4 +1,4 @@
-using FSCM.Application.Features.WarehouseConfiguration;
+﻿using FSCM.Application.Features.WarehouseConfiguration;
 using FSCM.Domain.Entities;
 
 namespace FSCM.UnitTests.WarehouseConfiguration;
@@ -163,6 +163,37 @@ public sealed class WarehouseConfigurationServiceTests
 
         Assert.Equal("validation_error", exception.Code);
         Assert.Empty(fixture.Store.Configurations);
+    }
+
+    [Theory]
+    [InlineData("""{"allocationRunLocalTime":"00:00","allocationIntervalHours":5,"planApprovalDeadlineLocalTime":"14:00","dispatchSlotsLocalTime":["06:00"]}""")]
+    [InlineData("""{"allocationRunLocalTime":"00:00","planApprovalMinutes":0,"planApprovalDeadlineLocalTime":"14:00","dispatchSlotsLocalTime":["06:00"]}""")]
+    public async Task Eta_schedule_configuration_validates_recurring_interval_and_approval_minutes(string invalidJson)
+    {
+        var fixture = new Fixture();
+
+        var exception = await Assert.ThrowsAsync<WarehouseConfigurationOperationException>(() =>
+            fixture.Service.UpdateConfigurationAsync(BusinessConfigurationKeys.EtaSchedule,
+                invalidJson, Guid.NewGuid(), CancellationToken.None));
+
+        Assert.Equal("validation_error", exception.Code);
+        Assert.Empty(fixture.Store.Configurations);
+    }
+
+    [Fact]
+    public async Task Eta_schedule_configuration_accepts_valid_recurring_definition()
+    {
+        var fixture = new Fixture();
+        const string valid = """
+            {"allocationRunLocalTime":"00:00","allocationIntervalHours":3,"planApprovalMinutes":60,"planApprovalDeadlineLocalTime":"14:00","dispatchSlotsLocalTime":["06:00","14:00"]}
+            """;
+
+        var result = await fixture.Service.UpdateConfigurationAsync(BusinessConfigurationKeys.EtaSchedule,
+            valid, Guid.NewGuid(), CancellationToken.None);
+
+        Assert.Equal(1, result.Version);
+        Assert.True(result.IsActive);
+        Assert.Single(fixture.Store.Configurations);
     }
 
     private sealed class Fixture

@@ -10,8 +10,9 @@ public sealed class QuoteStore(AppDbContext db) : IQuoteStore
     public Task<QuoteView?> FindAsync(Guid id, bool forUpdate, CancellationToken ct)
     {
         var quotes = forUpdate ? db.SalesOrderQuoteRecords : db.SalesOrderQuoteRecords.AsNoTracking();
+        var orders = forUpdate ? db.SalesOrderRecords : db.SalesOrderRecords.AsNoTracking();
         return (from quote in quotes
-                join order in db.SalesOrderRecords.AsNoTracking() on quote.SalesOrderId equals order.Id
+                join order in orders on quote.SalesOrderId equals order.Id
                 join po0 in db.PurchaseOrderRecords.AsNoTracking() on quote.PurchaseOrderId equals po0.Id into pos
                 from po in pos.DefaultIfEmpty()
                 where quote.Id == id

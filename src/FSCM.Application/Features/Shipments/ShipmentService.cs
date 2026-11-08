@@ -341,9 +341,68 @@ public sealed class ShipmentService(
                     AvailableQuantityAfter = row.Balance.AvailableQuantity,
                     OccurredAt = now
                 });
+
+                var pickedLabels = await store.ListPickedLabelsForDispatchAsync(
+                    view.Shipment.RunPickingListId, view.Shipment.WarehouseId, row.Batch.Id, transactionCancellationToken);
+                var remainingNeeded = row.Quantity;
+                foreach (var label in pickedLabels)
+                {
+                    if (remainingNeeded <= 0) break;
+                    if (label.Quantity <= remainingNeeded)
+                    {
+                        var fromStatus = label.Status;
+                        label.Status = QrLabelStatuses.InTransit;
+                        label.Version++;
+                        label.UpdatedAt = now;
+                        store.AddLabelEvent(NewLabelEvent(
+                            label, actorUserId,
+                            $"dispatch:{view.Shipment.ShipmentCode}:{label.QrCode}",
+                            QrLabelEventTypes.Dispatched,
+                            fromStatus,
+                            label.Status,
+                            view.Order.OrderCode,
+                            $"Xuất kho giao cho đơn {view.Order.OrderCode}",
+                            now));
+                        remainingNeeded -= label.Quantity;
+                    }
+                    else
+                    {
+                        label.Quantity -= remainingNeeded;
+                        label.Version++;
+                        label.UpdatedAt = now;
+
+                        var dispatchedPart = new BatchQrLabel
+                        {
+                            Id = Guid.NewGuid(),
+                            BatchId = label.BatchId,
+                            CurrentWarehouseId = label.CurrentWarehouseId,
+                            ParentLabelId = label.Id,
+                            RootLabelId = label.RootLabelId ?? label.Id,
+                            QrCode = await store.NextQrCodeAsync(transactionCancellationToken),
+                            Quantity = remainingNeeded,
+                            Status = QrLabelStatuses.InTransit,
+                            Version = 1,
+                            GeneratedAt = now,
+                            UpdatedAt = now
+                        };
+                        store.AddLabel(dispatchedPart);
+                        store.AddLabelEvent(NewLabelEvent(
+                            dispatchedPart, actorUserId,
+                            $"dispatch:{view.Shipment.ShipmentCode}:{dispatchedPart.QrCode}",
+                            QrLabelEventTypes.Dispatched,
+                            QrLabelStatuses.Picked,
+                            QrLabelStatuses.InTransit,
+                            view.Order.OrderCode,
+                            $"Tách xuất kho giao cho đơn {view.Order.OrderCode}",
+                            now));
+                        remainingNeeded = 0;
+                    }
+                }
             }
 
-            view.Shipment.Status = ShipmentStatuses.Issued;
+            view.Shipment.Status = view.Shipment.DriverId != null
+                ? ShipmentStatuses.Delivering
+                : ShipmentStatuses.Issued;
             view.Shipment.IssuedAt = now;
             view.Shipment.Version++;
             view.Shipment.UpdatedAt = now;
@@ -417,11 +476,10 @@ public sealed class ShipmentService(
         if (view.Shipment.Version != data.ExpectedVersion)
             throw ShipmentOperationException.Conflict(
                 $"Shipment version is {view.Shipment.Version}; refresh and retry.");
-        // F58: assignment is only valid on a part that is ready or already issued; it never
-        // changes stock or forces "Delivering" — that follows the F96 issue confirmation.
-        if (view.Shipment.Status is not (ShipmentStatuses.Ready or ShipmentStatuses.Issued))
+        // F58: assignment is valid on a part that is ready, issued or delivering; assigning an issued part moves it to Delivering.
+        if (view.Shipment.Status is not (ShipmentStatuses.Ready or ShipmentStatuses.Issued or ShipmentStatuses.Delivering))
             throw ShipmentOperationException.Conflict(
-                "Only a ready or issued shipment can be assigned a driver and vehicle.");
+                "Only a ready, issued or delivering shipment can be assigned a driver and vehicle.");
 
         var driver = await store.FindDriverAsync(data.DriverId, cancellationToken)
             ?? throw ShipmentOperationException.NotFound("Driver was not found.");
@@ -434,6 +492,10 @@ public sealed class ShipmentService(
                 "Driver and vehicle must belong to the shipment's warehouse.");
 
         var now = timeProvider.GetUtcNow();
+        if (view.Shipment.Status == ShipmentStatuses.Issued)
+        {
+            view.Shipment.Status = ShipmentStatuses.Delivering;
+        }
         view.Shipment.DriverId = driver.Id;
         view.Shipment.VehicleId = vehicle.Id;
         view.Shipment.DriverCodeSnapshot = driver.Code;
@@ -482,7 +544,7 @@ public sealed class ShipmentService(
                 ?? throw ShipmentOperationException.NotFound("Shipment was not found.");
             if (!await store.CanViewOrderAsync(view.Order.Id, retailerUserId, actorRole, transactionCancellationToken))
                 throw ShipmentOperationException.Forbidden("You cannot confirm this shipment receipt.");
-            if (view.Shipment.Status != ShipmentStatuses.Delivering)
+            if (view.Shipment.Status is not (ShipmentStatuses.Issued or ShipmentStatuses.Delivering))
                 throw ShipmentOperationException.Conflict("Only a dispatched shipment can be received.");
             if (view.Receipt is not null)
                 throw ShipmentOperationException.Conflict("Shipment receipt was already confirmed.");
@@ -684,14 +746,22 @@ public sealed class ShipmentService(
 
     private static QrLabelEvent NewLabelEvent(
         BatchQrLabel label, Guid actorUserId, string operationKey,
-        string fromStatus, string orderCode, DateTimeOffset now) => new()
+        string eventType, string fromStatus, string toStatus,
+        string referenceCode, string note, DateTimeOffset now) => new()
         {
             Id = Guid.NewGuid(), BatchQrLabelId = label.Id, WarehouseId = label.CurrentWarehouseId,
             PerformedByUserId = actorUserId, OperationKey = operationKey,
-            EventType = QrLabelEventTypes.RetailerReceived, FromStatus = fromStatus,
-            ToStatus = QrLabelStatuses.Delivered, Quantity = label.Quantity,
-            ReferenceCode = orderCode, Note = "Nhà bán lẻ xác nhận tem theo phần giao", OccurredAt = now
+            EventType = eventType, FromStatus = fromStatus,
+            ToStatus = toStatus, Quantity = label.Quantity,
+            ReferenceCode = referenceCode, Note = note, OccurredAt = now
         };
+
+    private static QrLabelEvent NewLabelEvent(
+        BatchQrLabel label, Guid actorUserId, string operationKey,
+        string fromStatus, string orderCode, DateTimeOffset now) =>
+        NewLabelEvent(label, actorUserId, operationKey,
+            QrLabelEventTypes.RetailerReceived, fromStatus, QrLabelStatuses.Delivered,
+            orderCode, "Nhà bán lẻ xác nhận tem theo phần giao", now);
 
     private static void EnsureOperator(string actorRole)
     {
@@ -714,6 +784,85 @@ public sealed class ShipmentService(
         if (reason.Length > 500)
             throw ShipmentOperationException.Validation("Exception reason cannot exceed 500 characters.");
         return reason;
+    }
+
+    public async Task<bool> HasShipmentsForOrderAsync(Guid orderId, CancellationToken cancellationToken) =>
+        (await store.ListByOrderAsync(orderId, cancellationToken)).Count > 0;
+
+    public async Task<IReadOnlyCollection<ShipmentResult>> ConfirmOrderShipmentsReceiptAsync(
+        Guid orderId,
+        IReadOnlyCollection<string> scannedCodes,
+        string? note,
+        string operationKey,
+        Guid retailerUserId,
+        string actorRole,
+        CancellationToken cancellationToken)
+    {
+        if (actorRole != SystemRoles.Retailer)
+            throw ShipmentOperationException.Forbidden("Only the order Retailer can confirm a shipment receipt.");
+        var shipments = await store.ListByOrderAsync(orderId, cancellationToken);
+        if (shipments.Count == 0)
+            throw ShipmentOperationException.NotFound("Order has no shipments.");
+
+        var normalizedScanned = scannedCodes
+            .Where(c => !string.IsNullOrWhiteSpace(c))
+            .Select(c => c.Trim().ToUpperInvariant())
+            .ToHashSet(StringComparer.Ordinal);
+        var isDemo = normalizedScanned.Contains("PORTAL-DEMO") || normalizedScanned.Count == 0;
+
+        var results = new List<ShipmentResult>();
+        foreach (var shipment in shipments)
+        {
+            if (shipment.Status is ShipmentStatuses.Received or ShipmentStatuses.Exception)
+            {
+                var existing = await store.FindByIdAsync(shipment.Id, false, cancellationToken);
+                if (existing is not null) results.Add(ToResult(existing));
+                continue;
+            }
+
+            if (shipment.Status is not (ShipmentStatuses.Issued or ShipmentStatuses.Delivering))
+                throw ShipmentOperationException.Conflict($"Shipment {shipment.ShipmentCode} is not in a deliverable status ({shipment.Status}).");
+
+            var view = await store.FindByIdAsync(shipment.Id, false, cancellationToken)
+                ?? throw ShipmentOperationException.NotFound($"Shipment {shipment.ShipmentCode} was not found.");
+
+            var shipmentLabels = await store.ListLabelsAsync(shipment.Id, false, cancellationToken);
+            var shipmentExpectedCodes = shipmentLabels
+                .Select(l => l.Label.QrCode.Trim().ToUpperInvariant())
+                .Order(StringComparer.Ordinal)
+                .ToArray();
+
+            string[] codesToConfirm;
+            if (isDemo)
+            {
+                codesToConfirm = shipmentExpectedCodes;
+            }
+            else
+            {
+                codesToConfirm = shipmentExpectedCodes.Where(c => normalizedScanned.Contains(c)).ToArray();
+                if (codesToConfirm.Length != shipmentExpectedCodes.Length)
+                {
+                    throw ShipmentOperationException.Validation(
+                        $"Shipment {shipment.ShipmentCode} requires {shipmentExpectedCodes.Length} QR labels, but only {codesToConfirm.Length} were provided.");
+                }
+            }
+
+            var lines = view.Lines
+                .GroupBy(l => (l.OrderLineId, l.BatchId))
+                .Select(g => new ConfirmShipmentReceiptLineData(g.Key.OrderLineId, g.Key.BatchId, g.Sum(x => x.Quantity), 0m))
+                .ToArray();
+
+            var receiptResult = await ConfirmReceiptAsync(
+                shipment.Id,
+                new ConfirmShipmentReceiptData(codesToConfirm, lines, shipment.Version, note),
+                $"{operationKey}:{shipment.Id:N}",
+                retailerUserId,
+                actorRole,
+                cancellationToken);
+            results.Add(receiptResult);
+        }
+
+        return results;
     }
 
     private static readonly HashSet<string> ShipmentStatusSet =

@@ -466,7 +466,9 @@ namespace FSCM.Persistence.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("BusinessDate")
+                    b.HasIndex("BusinessDate");
+
+                    b.HasIndex("CutoffAt")
                         .IsUnique();
 
                     b.HasIndex("RunCode")

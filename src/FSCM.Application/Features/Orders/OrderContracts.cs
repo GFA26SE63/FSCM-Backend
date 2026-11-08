@@ -189,6 +189,7 @@ public sealed record OrderSummaryResult(
 {
     public decimal IndicativeAmount => FinalAmount;
     public decimal? OfficialAmount { get; init; }
+    public string CreatedByUserName { get; init; } = string.Empty;
 }
 
 public sealed record OrderListQuery(
@@ -268,6 +269,7 @@ public sealed record OrderDetailResult(
     public int? AllocationPlanVersion { get; init; }
     public DateTimeOffset? OfficialPricedAt { get; init; }
     public IReadOnlyCollection<OrderWarehouseProgressResult> WarehouseProgress { get; init; } = [];
+    public string CreatedByUserName { get; init; } = string.Empty;
 }
 
 public sealed record OrderTimelineResult(

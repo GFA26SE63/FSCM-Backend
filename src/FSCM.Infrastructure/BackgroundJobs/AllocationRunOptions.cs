@@ -1,7 +1,7 @@
 namespace FSCM.Infrastructure.BackgroundJobs;
 
 /// <summary>
-/// Configuration for the daily allocation run. Bound from the <c>BackgroundJobs:AllocationRun</c>
+/// Fallback configuration for the recurring allocation run.
 /// configuration section.
 /// </summary>
 public sealed class AllocationRunOptions
@@ -22,4 +22,7 @@ public sealed class AllocationRunOptions
     /// publishes wins, so that the ETA, the portal and this job cannot disagree about the hour.
     /// </summary>
     public string CutoffLocalTime { get; set; } = "00:00";
+
+    /// <summary>Fallback recurrence when no published schedule can be read.</summary>
+    public int IntervalHours { get; set; } = 3;
 }

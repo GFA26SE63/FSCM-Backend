@@ -443,6 +443,79 @@ public sealed class ShipmentServiceTests
     }
 
     [Fact]
+    public async Task ConfirmIssue_dispatches_picked_labels_to_in_transit_and_receipt_succeeds()
+    {
+        var fixture = new Fixture();
+        var (shipment, _, _) = fixture.AddReadyShipment(fixture.WarehouseA, 8m, onHand: 50m);
+        var batchId = fixture.Store.Issuable[shipment.Id].First().BatchId;
+        var line = fixture.Store.Lines[shipment.Id].First();
+        var label = new BatchQrLabel
+        {
+            Id = Guid.NewGuid(),
+            BatchId = batchId,
+            CurrentWarehouseId = fixture.WarehouseA,
+            QrCode = "TEM-009999",
+            Quantity = 8m,
+            Status = QrLabelStatuses.Picked,
+            Version = 1
+        };
+        fixture.Store.PickedLabels.Add(label);
+        fixture.Store.Labels.Add(new ShipmentLabelView(label, batchId));
+
+        await fixture.Service.ConfirmIssueAsync(
+            shipment.Id, new ConfirmShipmentIssueData(shipment.Version),
+            Guid.NewGuid(), SystemRoles.WarehouseKeeper, CancellationToken.None);
+
+        Assert.Equal(QrLabelStatuses.InTransit, label.Status);
+
+        var result = await fixture.Service.ConfirmReceiptAsync(
+            shipment.Id,
+            new ConfirmShipmentReceiptData(["TEM-009999"],
+                [new ConfirmShipmentReceiptLineData(line.OrderLineId, batchId, 8, 0)],
+                shipment.Version, "Đã nhận đủ tại cửa hàng"),
+            "receipt-full-issue-test", fixture.RetailerUserId, SystemRoles.Retailer, default);
+
+        Assert.Equal(ShipmentStatuses.Received, result.Status);
+        Assert.Equal(8, result.ReceivedQuantity);
+        Assert.Equal(QrLabelStatuses.Delivered, label.Status);
+    }
+
+    [Fact]
+    public async Task ConfirmOrderShipmentsReceipt_confirms_all_shipments_for_order()
+    {
+        var fixture = new Fixture();
+        var (shipment, _, _) = fixture.AddReadyShipment(fixture.WarehouseA, 8m, onHand: 50m);
+        var batchId = fixture.Store.Issuable[shipment.Id].First().BatchId;
+        var label = new BatchQrLabel
+        {
+            Id = Guid.NewGuid(),
+            BatchId = batchId,
+            CurrentWarehouseId = fixture.WarehouseA,
+            QrCode = "TEM-008888",
+            Quantity = 8m,
+            Status = QrLabelStatuses.Picked,
+            Version = 1
+        };
+        fixture.Store.PickedLabels.Add(label);
+        fixture.Store.Labels.Add(new ShipmentLabelView(label, batchId));
+
+        await fixture.Service.ConfirmIssueAsync(
+            shipment.Id, new ConfirmShipmentIssueData(shipment.Version),
+            Guid.NewGuid(), SystemRoles.WarehouseKeeper, CancellationToken.None);
+
+        Assert.Equal(QrLabelStatuses.InTransit, label.Status);
+
+        var results = await fixture.Service.ConfirmOrderShipmentsReceiptAsync(
+            fixture.Order.Id, ["PORTAL-DEMO"], "Test portal receipt",
+            "order-receipt-op-1", fixture.RetailerUserId, SystemRoles.Retailer, default);
+
+        var singleResult = Assert.Single(results);
+        Assert.Equal(ShipmentStatuses.Received, singleResult.Status);
+        Assert.Equal(QrLabelStatuses.Delivered, label.Status);
+        Assert.Equal(OrderStatuses.Delivered, fixture.Order.Status);
+    }
+
+    [Fact]
     public async Task One_warehouse_in_exception_stops_every_part_that_has_not_left()
     {
         var fixture = new Fixture();
@@ -772,6 +845,19 @@ public sealed class ShipmentServiceTests
         public Task<IReadOnlyCollection<ShipmentIssueRow>> ListIssuableAsync(
             Guid shipmentId, CancellationToken cancellationToken) =>
             Task.FromResult(Issuable.GetValueOrDefault(shipmentId) ?? []);
+
+        public List<BatchQrLabel> PickedLabels { get; } = [];
+
+        public Task<IReadOnlyCollection<BatchQrLabel>> ListPickedLabelsForDispatchAsync(
+            Guid runPickingListId, Guid warehouseId, Guid batchId, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyCollection<BatchQrLabel>>(PickedLabels
+                .Where(l => l.CurrentWarehouseId == warehouseId && l.BatchId == batchId && l.Status == QrLabelStatuses.Picked)
+                .ToArray());
+
+        public void AddLabel(BatchQrLabel label) => PickedLabels.Add(label);
+
+        public Task<string> NextQrCodeAsync(CancellationToken cancellationToken) =>
+            Task.FromResult($"TEM-{_nextCode++:000000}");
 
         public void AddInventoryTransaction(InventoryTransaction transaction) =>
             InventoryTransactions.Add(transaction);

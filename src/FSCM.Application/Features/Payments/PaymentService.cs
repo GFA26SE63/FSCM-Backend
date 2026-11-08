@@ -421,7 +421,7 @@ public sealed class PaymentService(
         return new(
             view.Payment.Id, view.Order.Id, view.Order.OrderCode, view.Retailer.Id,
             view.Order.RetailerCodeSnapshot, view.Order.RetailerNameSnapshot,
-            view.Order.CreatedByUserId, view.Payment.Method, effectiveStatus,
+            view.Order.CreatedByUserId, view.SalesUserName, view.Payment.Method, effectiveStatus,
             view.Payment.Amount, view.Payment.AdjustedAmount, view.Payment.ConfirmedAmount,
             Math.Max(0, view.Payment.AdjustedAmount - view.Payment.ConfirmedAmount),
             view.PendingRefundAmount, view.RefundedAmount,

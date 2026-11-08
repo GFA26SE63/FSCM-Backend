@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using FSCM.Application.Features.DeliveryEta;
 using FSCM.Application.Features.TransitTables;
 using FSCM.Domain.Entities;
@@ -283,6 +283,58 @@ public sealed class DeliveryEtaServiceTests
             schedule.Milestones.Select(item => item.LocalTime));
     }
 
+    [Theory]
+    [InlineData(0)]
+    [InlineData(5)]
+    [InlineData(7)]
+    [InlineData(25)]
+    public async Task An_invalid_allocation_interval_is_rejected(int invalidInterval)
+    {
+        var fixture = await Fixture.CreateAsync();
+        fixture.Store.ScheduleConfiguration!.ConfigValue = Fixture.ScheduleJson(
+            allocationIntervalHours: invalidInterval);
+
+        var exception = await Assert.ThrowsAsync<DeliveryEtaOperationException>(() =>
+            fixture.Service.GetScheduleAsync(null, CancellationToken.None));
+
+        Assert.Equal("validation_error", exception.Code);
+        Assert.Contains("must divide 24", exception.Message);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(180)]
+    [InlineData(200)]
+    public async Task Plan_approval_minutes_longer_than_or_equal_to_interval_is_rejected(int invalidMinutes)
+    {
+        var fixture = await Fixture.CreateAsync();
+        fixture.Store.ScheduleConfiguration!.ConfigValue = Fixture.ScheduleJson(
+            allocationIntervalHours: 3, planApprovalMinutes: invalidMinutes);
+
+        var exception = await Assert.ThrowsAsync<DeliveryEtaOperationException>(() =>
+            fixture.Service.GetScheduleAsync(null, CancellationToken.None));
+
+        Assert.Equal("validation_error", exception.Code);
+        Assert.Contains("shorter than the allocation interval", exception.Message);
+    }
+
+    [Fact]
+    public async Task Recurring_schedule_advances_to_the_next_recurring_slot()
+    {
+        var fixture = await Fixture.CreateAsync();
+        fixture.Store.ScheduleConfiguration!.ConfigValue = Fixture.ScheduleJson(
+            runLocalTime: "00:00",
+            allocationIntervalHours: 3,
+            planApprovalMinutes: 60);
+
+        var result = await fixture.Service.EstimateAsync(fixture.Request(), CancellationToken.None);
+
+        var local = TimeZoneInfo.ConvertTime(result.Breakdown.AllocationRunAt, Fixture.Vietnam);
+        Assert.Equal(new DateTime(2026, 10, 21, 12, 0, 0), local.DateTime);
+        Assert.Equal(120, result.Breakdown.WaitForRunMinutes);
+        Assert.Equal(60, result.Breakdown.ApprovalMinutes);
+    }
+
     private sealed class Fixture
     {
         public static readonly TimeZoneInfo Vietnam = TimeZoneInfo.FindSystemTimeZoneById("Asia/Ho_Chi_Minh");
@@ -321,15 +373,19 @@ public sealed class DeliveryEtaServiceTests
             string approvalDeadlineLocalTime = "14:00",
             string? salesAdviceLocalTime = null,
             string? orderReviewReminderLocalTime = null,
-            string? planApprovalReminderLocalTime = null) =>
+            string? planApprovalReminderLocalTime = null,
+            int? allocationIntervalHours = null,
+            int? planApprovalMinutes = null) =>
             JsonSerializer.Serialize(new
             {
                 timeZone = "Asia/Ho_Chi_Minh",
                 salesSubmissionAdviceLocalTime = salesAdviceLocalTime,
                 orderReviewReminderLocalTime,
                 allocationRunLocalTime = runLocalTime,
+                allocationIntervalHours,
                 planApprovalReminderLocalTime,
                 planApprovalDeadlineLocalTime = approvalDeadlineLocalTime,
+                planApprovalMinutes,
                 preparationMinutes = 240,
                 bufferMinutes = 60,
                 dispatchSlotsLocalTime = new[] { "06:00", "14:00" }

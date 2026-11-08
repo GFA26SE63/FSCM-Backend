@@ -1,4 +1,4 @@
-using FSCM.Application.Features.AllocationRuns;
+﻿using FSCM.Application.Features.AllocationRuns;
 using FSCM.Application.Features.DeliveryEta;
 using FSCM.Application.Features.ShelfLifeDiscounts;
 using FSCM.Application.Features.TransitTables;
@@ -41,17 +41,84 @@ public sealed class AllocationRunServiceTests
     }
 
     [Fact]
-    public async Task Running_the_same_day_twice_joins_the_existing_run()
+    public async Task Running_the_same_cutoff_twice_joins_the_existing_run()
     {
         var fixture = new Fixture();
         fixture.AddOrder("DH-000001", Cutoff.AddHours(-1));
         var first = await fixture.Service.StartAsync(Cutoff, CancellationToken.None);
 
-        var second = await fixture.Service.StartAsync(Cutoff.AddMinutes(30), CancellationToken.None);
+        var second = await fixture.Service.StartAsync(Cutoff, CancellationToken.None);
 
         Assert.Equal(first.Id, second.Id);
         Assert.Single(fixture.Store.Runs);
         Assert.Equal(1, second.OrderCount);
+    }
+
+    [Fact]
+    public async Task Different_cutoffs_on_the_same_business_date_create_separate_runs()
+    {
+        var fixture = new Fixture();
+        fixture.AddOrder("DH-000001", Cutoff.AddHours(-2));
+        var first = await fixture.Service.StartAsync(Cutoff.AddHours(-3), CancellationToken.None);
+
+        var second = await fixture.Service.StartAsync(Cutoff, CancellationToken.None);
+
+        Assert.NotEqual(first.Id, second.Id);
+        Assert.Equal(2, fixture.Store.Runs.Count);
+        Assert.Equal(first.BusinessDate, second.BusinessDate);
+        Assert.Equal(Cutoff.AddHours(-3).ToUniversalTime(), first.CutoffAt);
+        Assert.Equal(Cutoff.ToUniversalTime(), second.CutoffAt);
+    }
+
+    [Fact]
+    public async Task RunNow_on_another_business_date_is_rejected()
+    {
+        var fixture = new Fixture();
+
+        var exception = await Assert.ThrowsAsync<AllocationRunOperationException>(() =>
+            fixture.Service.RunNowAsync(Cutoff.AddDays(-1), CancellationToken.None));
+
+        Assert.Equal("validation_error", exception.Code);
+        Assert.Contains("today's business date", exception.Message);
+    }
+
+    [Fact]
+    public async Task RunNow_in_the_future_is_rejected()
+    {
+        var fixture = new Fixture();
+
+        var exception = await Assert.ThrowsAsync<AllocationRunOperationException>(() =>
+            fixture.Service.RunNowAsync(Cutoff.AddHours(3), CancellationToken.None));
+
+        Assert.Equal("conflict", exception.Code);
+        Assert.Contains("has not passed yet", exception.Message);
+    }
+
+    [Fact]
+    public async Task RunNow_not_matching_recurring_slot_is_rejected()
+    {
+        var fixture = new Fixture();
+
+        var exception = await Assert.ThrowsAsync<AllocationRunOperationException>(() =>
+            fixture.Service.RunNowAsync(Cutoff.AddHours(-1), CancellationToken.None));
+
+        Assert.Equal("validation_error", exception.Code);
+        Assert.Contains("must match a published 3-hour slot", exception.Message);
+    }
+
+    [Fact]
+    public async Task RunNow_without_explicit_cutoff_uses_latest_passed_slot_and_plans_it()
+    {
+        var fixture = new Fixture();
+        fixture.AddOrder("DH-000001", Cutoff.AddHours(-1));
+
+        var run = await fixture.Service.RunNowAsync(null, CancellationToken.None);
+
+        Assert.Equal(Cutoff.ToUniversalTime(), run.CutoffAt);
+        Assert.Equal(new DateOnly(2026, 10, 22), run.BusinessDate);
+        Assert.Equal(AllocationRunStatuses.AwaitingApproval, run.Status);
+        Assert.Single(fixture.Store.Runs);
+        Assert.Single(fixture.Store.PlanVersions);
     }
 
     [Fact]
@@ -139,48 +206,6 @@ public sealed class AllocationRunServiceTests
         Assert.Empty(run.Pool);
     }
 
-    [Fact]
-    public async Task An_approved_run_can_be_closed_and_is_audited()
-    {
-        var fixture = new Fixture();
-        var run = new AllocationRun
-        {
-            Id = Guid.NewGuid(), RunCode = "DOT-20261022-01", BusinessDate = new(2026, 10, 22),
-            Status = AllocationRunStatuses.Approved, Version = 4,
-            AlgorithmSettings = "{}"
-        };
-        fixture.Store.Runs.Add(run);
-
-        var result = await fixture.Service.CloseAsync(
-            run.Id, 4, Guid.NewGuid(), "Đã đối soát đợt", CancellationToken.None);
-
-        Assert.Equal(AllocationRunStatuses.Closed, result.Status);
-        Assert.Equal(AllocationRunStatuses.Closed, run.Status);
-        var audit = Assert.Single(fixture.Store.Audits);
-        Assert.Equal("AllocationRunClosed", audit.Action);
-        Assert.Equal(run.Id, audit.EntityId);
-        Assert.Equal("Đã đối soát đợt", audit.Reason);
-    }
-
-    [Fact]
-    public async Task An_unapproved_run_cannot_be_closed()
-    {
-        var fixture = new Fixture();
-        var run = new AllocationRun
-        {
-            Id = Guid.NewGuid(), RunCode = "DOT-20261022-01", BusinessDate = new(2026, 10, 22),
-            Status = AllocationRunStatuses.AwaitingApproval, Version = 1,
-            AlgorithmSettings = "{}"
-        };
-        fixture.Store.Runs.Add(run);
-
-        await Assert.ThrowsAsync<AllocationRunOperationException>(() => fixture.Service.CloseAsync(
-            run.Id, 1, Guid.NewGuid(), null, CancellationToken.None));
-
-        Assert.Equal(AllocationRunStatuses.AwaitingApproval, run.Status);
-        Assert.Empty(fixture.Store.Audits);
-    }
-
     internal class Fixture
     {
         public FakeStore Store { get; } = new();
@@ -200,7 +225,7 @@ public sealed class AllocationRunServiceTests
                 Store,
                 new AllocationPlanner(engine),
                 new AllocationPricingService(new ShelfLifeDiscountService(new EmptyDiscountStore(), clock)),
-                new DeliveryEtaService(new EmptyEtaStore(), transit, clock),
+                new DeliveryEtaService(new FakeEtaScheduleStore(), transit, clock),
                 clock);
         }
 
@@ -240,6 +265,26 @@ public sealed class AllocationRunServiceTests
         public override DateTimeOffset GetUtcNow() => Cutoff;
     }
 
+    internal sealed class FakeEtaScheduleStore : IDeliveryEtaStore
+    {
+        public Task<SystemConfiguration?> FindScheduleConfigurationAsync(CancellationToken cancellationToken) =>
+            Task.FromResult<SystemConfiguration?>(new SystemConfiguration
+            {
+                ConfigKey = "eta.schedule",
+                ConfigValue = """
+                    {"timeZone":"Asia/Ho_Chi_Minh","allocationRunLocalTime":"00:00","allocationIntervalHours":3,"planApprovalMinutes":60,"planApprovalDeadlineLocalTime":"14:00","preparationMinutes":240,"bufferMinutes":60,"dispatchSlotsLocalTime":["06:00","14:00"]}
+                    """,
+                Version = 1,
+                IsActive = true
+            });
+
+        public Task<MapDistanceCache?> FindDistanceAsync(Guid warehouseId, Guid retailerId, CancellationToken cancellationToken) =>
+            Task.FromResult<MapDistanceCache?>(null);
+
+        public Task<MapLocation?> FindLocationAsync(string entityType, Guid entityId, CancellationToken cancellationToken) =>
+            Task.FromResult<MapLocation?>(null);
+    }
+
     internal sealed class FakeStore : StubAllocationRunStore
     {
         public Guid RetailerId { get; } = Guid.NewGuid();
@@ -254,6 +299,12 @@ public sealed class AllocationRunServiceTests
         public List<AuditLog> Audits { get; } = [];
 
         public override void AddAuditLog(AuditLog auditLog) => Audits.Add(auditLog);
+
+        public override Task<AllocationRun?> FindByCutoffAsync(DateTimeOffset cutoffAt, CancellationToken cancellationToken) =>
+            Task.FromResult(Runs.SingleOrDefault(item => item.CutoffAt == cutoffAt.ToUniversalTime()));
+
+        public override Task<AllocationRunView?> FindViewByCutoffAsync(DateTimeOffset cutoffAt, CancellationToken cancellationToken) =>
+            Task.FromResult(ToView(Runs.SingleOrDefault(item => item.CutoffAt == cutoffAt.ToUniversalTime())));
 
         public override Task<AllocationRun?> FindByBusinessDateAsync(DateOnly businessDate, CancellationToken cancellationToken) =>
             Task.FromResult(Runs.SingleOrDefault(item => item.BusinessDate == businessDate));

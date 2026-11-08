@@ -204,7 +204,7 @@ The development catalog dump contains:
 | Sales groups | `HCM-A`, `HCM-B`, `BD-A`, and inactive `LA-A`, all with Vietnamese names |
 | Assignment history | Current and previous Sales/retailer territory assignments for transfer testing |
 | Promotions | Two Vietnamese campaigns (`KM-001`, `KM-002`) and one near-expiry batch discount (`KM-003`) |
-| Assisted order | One idempotent Vietnamese `Approved` order for retailer `10004127`, including price/allocation snapshots, an active reservation, and an open Thủ Đức picking list |
+| Allocation demo orders | Two idempotent Vietnamese `PendingAllocation` orders for retailer `10004127`: one fulfilled-size order and one intentionally oversized order for whole-order rollback |
 | Picking QR | `TEM-000208` labels the seeded Thủ Đức `SKU001` batch and can demonstrate partial-label splitting during picking |
 | Delivery | `NG-010`–`NG-012` and three Vietnamese warehouse vehicles support order dispatch demonstrations |
 

@@ -113,6 +113,49 @@ public sealed class RunPickingIssueTests
         Assert.Contains("nothing to pick", exception.Message);
     }
 
+    [Fact]
+    public async Task Only_orders_with_accepted_quote_and_po_are_picked_and_rejected_are_released()
+    {
+        var runId = Guid.NewGuid();
+        var store = new FakeStore(runId, AllocationRunStatuses.Approved);
+        var order1Id = Guid.NewGuid();
+        var order2Id = Guid.NewGuid();
+        var order3Id = Guid.NewGuid();
+        var warehouseId = Guid.NewGuid();
+
+        store.AddCustom(order1Id, "DH-000001", warehouseId, "B-001", 10m);
+        store.AddCustom(order2Id, "DH-000002", warehouseId, "B-001", 5m);
+        store.AddCustom(order3Id, "DH-000003", warehouseId, "B-001", 3m);
+
+        var quotes = new FakeQuoteStore();
+        quotes.Views.Add(new FSCM.Application.Features.Quotes.QuoteView(
+            new SalesOrderQuote { Id = Guid.NewGuid(), SalesOrderId = order1Id, Status = FSCM.Application.Features.Quotes.SalesOrderQuoteStatuses.Accepted },
+            new SalesOrder { Id = order1Id, OrderCode = "DH-000001" },
+            new PurchaseOrder { Id = Guid.NewGuid(), PurchaseOrderCode = "PO-001" }));
+        quotes.Views.Add(new FSCM.Application.Features.Quotes.QuoteView(
+            new SalesOrderQuote { Id = Guid.NewGuid(), SalesOrderId = order2Id, Status = FSCM.Application.Features.Quotes.SalesOrderQuoteStatuses.PendingRetailerAcceptance },
+            new SalesOrder { Id = order2Id, OrderCode = "DH-000002" },
+            null));
+        quotes.Views.Add(new FSCM.Application.Features.Quotes.QuoteView(
+            new SalesOrderQuote { Id = Guid.NewGuid(), SalesOrderId = order3Id, Status = FSCM.Application.Features.Quotes.SalesOrderQuoteStatuses.Rejected },
+            new SalesOrder { Id = order3Id, OrderCode = "DH-000003" },
+            null));
+
+        var releaseStore = new FSCM.UnitTests.Orders.FakeOrderReleaseStore();
+        var releaseService = new FSCM.Application.Features.Orders.OrderReleaseService(releaseStore, new FixedClock());
+
+        var service = new RunPickingIssueService(store, new FixedClock(), quotes, releaseService);
+
+        var lists = await service.IssueAsync(runId, CancellationToken.None);
+
+        var list = Assert.Single(lists);
+        var gather = Assert.Single(list.Gathers);
+        Assert.Equal(10m, gather.RequiredQuantity);
+        var split = Assert.Single(gather.Splits);
+        Assert.Equal("DH-000001", split.OrderCode);
+        Assert.Equal(10m, split.Quantity);
+    }
+
     private sealed class Fixture
     {
         public FakeStore Store { get; }
@@ -198,6 +241,30 @@ public sealed class RunPickingIssueTests
 
         public override void AddRunPickingSplits(IEnumerable<RunPickingSplit> splits) => Splits.AddRange(splits);
 
+        public void AddCustom(Guid orderId, string orderCode, Guid warehouseId, string batchCode, decimal quantity)
+        {
+            var batchId = BatchIds.TryGetValue(batchCode, out var known) ? known : Guid.NewGuid();
+            BatchIds[batchCode] = batchId;
+            var lineId = Guid.NewGuid();
+
+            Pickable.Add(new PickableAllocation(
+                new AllocationRunAllocation
+                {
+                    Id = Guid.NewGuid(),
+                    AllocationPlanVersionId = PlanVersionId,
+                    AllocationRunLineId = lineId,
+                    BatchId = batchId,
+                    WarehouseId = warehouseId,
+                    Quantity = quantity
+                },
+                new AllocationRunLine { Id = lineId, ProductId = Guid.NewGuid(), SkuSnapshot = "SKU001" },
+                Guid.NewGuid(),
+                orderId,
+                Guid.NewGuid(),
+                orderCode,
+                batchCode));
+        }
+
         private RunPickingListView ToView(RunPickingList list)
         {
             var gathers = Gathers.Where(item => item.RunPickingListId == list.Id).ToArray();
@@ -205,5 +272,28 @@ public sealed class RunPickingIssueTests
             return new RunPickingListView(
                 list, gathers, Splits.Where(item => ids.Contains(item.RunPickingGatherId)).ToArray());
         }
+    }
+
+    private sealed class FakeQuoteStore : FSCM.Application.Features.Quotes.IQuoteStore
+    {
+        public List<FSCM.Application.Features.Quotes.QuoteView> Views { get; } = [];
+
+        public Task<FSCM.Application.Features.Quotes.QuoteView?> FindAsync(Guid id, bool forUpdate, CancellationToken cancellationToken) =>
+            Task.FromResult(Views.FirstOrDefault(x => x.Quote.Id == id));
+
+        public Task<IReadOnlyCollection<FSCM.Application.Features.Quotes.QuoteView>> ListForOrderAsync(Guid orderId, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyCollection<FSCM.Application.Features.Quotes.QuoteView>>(Views.Where(x => x.Order.Id == orderId).ToArray());
+
+        public Task<IReadOnlyCollection<FSCM.Application.Features.Quotes.QuoteView>> ListForRunAsync(Guid runId, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyCollection<FSCM.Application.Features.Quotes.QuoteView>>(Views);
+
+        public Task<bool> CanRetailerAccessAsync(Guid quoteId, Guid userId, CancellationToken cancellationToken) => Task.FromResult(true);
+
+        public Task<IReadOnlyCollection<FSCM.Application.Features.Quotes.QuoteIssueOrder>> ListOrdersForPlanAsync(Guid allocationPlanVersionId, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyCollection<FSCM.Application.Features.Quotes.QuoteIssueOrder>>([]);
+
+        public void Add(SalesOrderQuote quote) { }
+        public void AddPurchaseOrder(PurchaseOrder purchaseOrder) { }
+        public Task SaveChangesAsync(CancellationToken cancellationToken) => Task.CompletedTask;
     }
 }

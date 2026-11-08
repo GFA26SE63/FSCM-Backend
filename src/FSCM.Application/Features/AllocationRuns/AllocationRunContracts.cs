@@ -200,6 +200,22 @@ public sealed record AllocationRunResult(
     IReadOnlyCollection<AllocationRunOrderResult> Orders,
     IReadOnlyCollection<AllocationRunStockResult> Pool);
 
+public sealed record AllocationRunSummaryResult(
+    Guid Id,
+    string RunCode,
+    DateOnly BusinessDate,
+    DateTimeOffset CutoffAt,
+    string Status,
+    int OrderCount,
+    DateTimeOffset StartedAt,
+    DateTimeOffset? CompletedAt,
+    int Version,
+    int? PlanVersionNumber,
+    string? PlanStatus,
+    int FulfilledOrderCount,
+    int ShortOrderCount,
+    decimal TotalFinalAmount);
+
 /// <summary>Weights and service radius frozen for one run, so a later config change cannot move a plan.</summary>
 public sealed record AllocationSettings(
     decimal ShelfLifeWeight,

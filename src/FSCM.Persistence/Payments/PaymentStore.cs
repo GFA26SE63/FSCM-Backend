@@ -139,6 +139,10 @@ public sealed class PaymentStore(AppDbContext dbContext) : IPaymentStore
         var order = await orderQuery.SingleAsync(cancellationToken);
         var retailer = await dbContext.RetailerRecords.AsNoTracking()
             .SingleAsync(item => item.Id == order.RetailerId, cancellationToken);
+        var salesUserName = await dbContext.UserAccountRecords.AsNoTracking()
+            .Where(item => item.Id == order.CreatedByUserId)
+            .Select(item => item.FullName)
+            .SingleAsync(cancellationToken);
         var pendingRefundAmount = await dbContext.ManualRefundRecords.AsNoTracking()
             .Where(item => item.PaymentId == payment.Id &&
                 (item.Status == RefundStatuses.PendingRefund || item.Status == RefundStatuses.AwaitingVerification))
@@ -149,6 +153,6 @@ public sealed class PaymentStore(AppDbContext dbContext) : IPaymentStore
         var hasOpenDispute = await dbContext.ReceiptDiscrepancyRecords.AsNoTracking()
             .AnyAsync(item => item.SalesOrderId == payment.SalesOrderId && item.Status != "Resolved",
                 cancellationToken);
-        return new(payment, order, retailer, pendingRefundAmount, refundedAmount, hasOpenDispute);
+        return new(payment, order, retailer, pendingRefundAmount, refundedAmount, hasOpenDispute, salesUserName);
     }
 }

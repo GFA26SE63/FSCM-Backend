@@ -89,6 +89,11 @@ public interface IShipmentStore
     Task<IReadOnlyCollection<ExpectedWarehousePart>> ListExpectedWarehousesAsync(
         Guid orderId, CancellationToken cancellationToken);
 
+    Task<IReadOnlyCollection<BatchQrLabel>> ListPickedLabelsForDispatchAsync(
+        Guid runPickingListId, Guid warehouseId, Guid batchId, CancellationToken cancellationToken);
+    void AddLabel(BatchQrLabel label);
+    Task<string> NextQrCodeAsync(CancellationToken cancellationToken);
+
     Task<IReadOnlyCollection<PendingShipmentSource>> ListPendingSourcesAsync(
         Guid? orderId, CancellationToken cancellationToken);
 

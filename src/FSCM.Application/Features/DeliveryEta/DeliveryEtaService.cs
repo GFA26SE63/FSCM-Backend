@@ -51,6 +51,7 @@ public sealed class DeliveryEtaService(
             date,
             schedule.TimeZone,
             view.Version,
+            schedule.AllocationIntervalHours,
             [
                 Milestone("sales_submission_advice", "Khuyến nghị Sales gửi đơn trước",
                     schedule.SalesSubmissionAdviceLocalTime, true, true),
@@ -89,8 +90,9 @@ public sealed class DeliveryEtaService(
         // reads the table version that run actually used.
         var transit = await transitTables.LookupAsync(distance.DistanceMeters, referenceAt, cancellationToken);
 
-        var allocationRunAt = NextLocalTime(referenceAt, schedule.AllocationRunLocalTime, zone);
-        var approvalMinutes = (int)(schedule.PlanApprovalDeadlineLocalTime - schedule.AllocationRunLocalTime).TotalMinutes;
+        var allocationRunAt = NextRecurringLocalTime(
+            referenceAt, schedule.AllocationRunLocalTime, schedule.AllocationIntervalHours, zone);
+        var approvalMinutes = schedule.PlanApprovalMinutes;
         var planApprovedAt = allocationRunAt.AddMinutes(approvalMinutes);
         var pickingDoneAt = planApprovedAt.AddMinutes(schedule.PreparationMinutes);
         var readyToLoadAt = pickingDoneAt.AddMinutes(transit.HandlingMinutes);
@@ -137,6 +139,19 @@ public sealed class DeliveryEtaService(
         var local = TimeZoneInfo.ConvertTime(from, zone);
         var candidate = ToOffset(DateOnly.FromDateTime(local.DateTime), localTime, zone);
         return candidate >= from ? candidate : ToOffset(DateOnly.FromDateTime(local.DateTime).AddDays(1), localTime, zone);
+    }
+
+    private static DateTimeOffset NextRecurringLocalTime(
+        DateTimeOffset from, TimeOnly firstLocalTime, int intervalHours, TimeZoneInfo zone)
+    {
+        var local = TimeZoneInfo.ConvertTime(from, zone);
+        var date = DateOnly.FromDateTime(local.DateTime);
+        var first = ToOffset(date, firstLocalTime, zone);
+        for (var slot = first; slot < first.AddDays(1); slot = slot.AddHours(intervalHours))
+        {
+            if (slot >= from) return slot;
+        }
+        return first.AddDays(1);
     }
 
     private static DateTimeOffset NextDispatchSlot(
@@ -228,8 +243,10 @@ public sealed class DeliveryEtaService(
         string? SalesSubmissionAdviceLocalTime,
         string? OrderReviewReminderLocalTime,
         string? AllocationRunLocalTime,
+        int? AllocationIntervalHours,
         string? PlanApprovalReminderLocalTime,
         string? PlanApprovalDeadlineLocalTime,
+        int? PlanApprovalMinutes,
         int PreparationMinutes,
         int BufferMinutes,
         IReadOnlyList<string>? DispatchSlotsLocalTime)
@@ -255,6 +272,12 @@ public sealed class DeliveryEtaService(
                 OrderReviewReminderLocalTime, nameof(OrderReviewReminderLocalTime), DefaultOrderReviewReminder);
             var planReminder = OptionalTime(
                 PlanApprovalReminderLocalTime, nameof(PlanApprovalReminderLocalTime), DefaultPlanApprovalReminder);
+            var intervalHours = AllocationIntervalHours ?? 24;
+            if (intervalHours is < 1 or > 24 || 24 % intervalHours != 0)
+            {
+                throw DeliveryEtaOperationException.Validation(
+                    "AllocationIntervalHours must divide 24 into equal recurring slots.");
+            }
 
             // Ordered as instants, not as times of day.
             //
@@ -297,6 +320,13 @@ public sealed class DeliveryEtaService(
                     "The plan approval deadline must come after the allocation run.");
             }
 
+            var approvalMinutes = PlanApprovalMinutes ?? (int)(deadlineAt - runAt).TotalMinutes;
+            if (approvalMinutes <= 0 || approvalMinutes >= intervalHours * 60)
+            {
+                throw DeliveryEtaOperationException.Validation(
+                    "PlanApprovalMinutes must be positive and shorter than the allocation interval.");
+            }
+
             if (PreparationMinutes < 0 || BufferMinutes < 0)
             {
                 throw DeliveryEtaOperationException.Validation(
@@ -313,8 +343,10 @@ public sealed class DeliveryEtaService(
                 salesAdvice,
                 orderReminder,
                 run,
+                intervalHours,
                 planReminder,
                 deadline,
+                approvalMinutes,
                 PreparationMinutes,
                 BufferMinutes,
                 DispatchSlotsLocalTime

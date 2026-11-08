@@ -35,7 +35,7 @@ public sealed class AllocationRunService(
         // parameter. The business date is still read in Vietnam, where the day is defined.
         cutoffAt = cutoffAt.ToUniversalTime();
         var businessDate = ToBusinessDate(cutoffAt);
-        var existing = await store.FindViewByBusinessDateAsync(businessDate, cancellationToken);
+        var existing = await store.FindViewByCutoffAsync(cutoffAt, cancellationToken);
         if (existing is not null)
         {
             return ToResult(existing);
@@ -45,7 +45,7 @@ public sealed class AllocationRunService(
         await store.ExecuteInTransactionAsync(async transactionCancellationToken =>
         {
             // Re-check inside the transaction: two schedulers can reach the check above together.
-            if (await store.FindByBusinessDateAsync(businessDate, transactionCancellationToken) is not null)
+            if (await store.FindByCutoffAsync(cutoffAt, transactionCancellationToken) is not null)
             {
                 return;
             }
@@ -169,7 +169,8 @@ public sealed class AllocationRunService(
         }, cancellationToken);
 
         store.ClearTracking();
-        return await GetByBusinessDateAsync(businessDate, cancellationToken);
+        return ToResult(await store.FindViewByCutoffAsync(cutoffAt, cancellationToken)
+            ?? throw AllocationRunOperationException.NotFound("Allocation run was not found after creation."));
     }
 
     /// <summary>
@@ -181,7 +182,7 @@ public sealed class AllocationRunService(
     /// cannot replace a plan an Admin is in the middle of reviewing.
     /// </summary>
     /// <summary>
-    /// Runs today's allocation by hand: close the run at its cutoff, then plan it.
+    /// Runs the latest passed allocation slot by hand, then plans it.
     ///
     /// The scheduled job is the normal path. It is also the only one, which means a deployment that
     /// was down at the cutoff has no way to produce the day's plan at all - the orders simply sit
@@ -200,9 +201,10 @@ public sealed class AllocationRunService(
         DateTimeOffset? cutoffAt, CancellationToken cancellationToken)
     {
         var schedule = await deliveryEta.GetScheduleAsync(null, cancellationToken);
-        var scheduled = schedule.Milestones.Single(item => item.Key == "allocation_run").At;
+        var firstSlot = schedule.Milestones.Single(item => item.Key == "allocation_run").At;
         var now = timeProvider.GetUtcNow();
-        var cutoff = cutoffAt ?? scheduled;
+        var latestSlot = LatestSlotAtOrBefore(now, firstSlot, schedule.AllocationIntervalHours);
+        var cutoff = (cutoffAt ?? latestSlot).ToUniversalTime();
 
         // The business date goes first, and the order is the whole point. The published time this is
         // measured against is today's, so a cutoff on any other day fails one of the two checks
@@ -222,11 +224,13 @@ public sealed class AllocationRunService(
                 $"The cutoff {InVietnam(cutoff):HH:mm} has not passed yet; a run cannot close before it.");
         }
 
-        if (cutoff < scheduled)
+        var slotOffsetMinutes = (cutoff - firstSlot.ToUniversalTime()).TotalMinutes;
+        var intervalMinutes = schedule.AllocationIntervalHours * 60;
+        if (slotOffsetMinutes < 0 || Math.Abs(slotOffsetMinutes % intervalMinutes) > 0.001)
         {
             throw AllocationRunOperationException.Validation(
-                $"The cutoff cannot be earlier than the published {InVietnam(scheduled):HH:mm}: moving " +
-                "it back would drop orders that belong to this run.");
+                $"The cutoff must match a published {schedule.AllocationIntervalHours}-hour slot " +
+                $"starting at {InVietnam(firstSlot):HH:mm}.");
         }
 
         var run = await StartAsync(cutoff, cancellationToken);
@@ -234,6 +238,14 @@ public sealed class AllocationRunService(
 
         await PlanAsync(run.Id, cancellationToken);
         return await GetAsync(run.Id, cancellationToken);
+    }
+
+    private static DateTimeOffset LatestSlotAtOrBefore(
+        DateTimeOffset now, DateTimeOffset firstSlot, int intervalHours)
+    {
+        var candidate = firstSlot;
+        while (candidate.AddHours(intervalHours) <= now) candidate = candidate.AddHours(intervalHours);
+        return candidate;
     }
 
     public async Task<AllocationPricing> PlanAsync(Guid runId, CancellationToken cancellationToken)
@@ -563,6 +575,32 @@ public sealed class AllocationRunService(
             await store.SaveChangesAsync(transactionCancellationToken);
         }, cancellationToken);
 
+    public async Task<IReadOnlyCollection<AllocationRunSummaryResult>> ListAsync(
+        DateOnly? fromDate, DateOnly? toDate, CancellationToken cancellationToken)
+    {
+        if (fromDate is { } from && toDate is { } to && from > to)
+        {
+            throw AllocationRunOperationException.Validation("fromDate must not be after toDate.");
+        }
+
+        var rows = await store.ListAsync(fromDate, toDate, cancellationToken);
+        return rows.Select(item => new AllocationRunSummaryResult(
+            item.Run.Id,
+            item.Run.RunCode,
+            item.Run.BusinessDate,
+            item.Run.CutoffAt,
+            item.Run.Status,
+            item.Run.OrderCount,
+            item.Run.StartedAt,
+            item.Run.CompletedAt,
+            item.Run.Version,
+            item.LatestPlanVersion?.VersionNumber,
+            item.LatestPlanVersion?.Status,
+            item.LatestPlanVersion?.FulfilledOrderCount ?? 0,
+            item.LatestPlanVersion?.ShortOrderCount ?? 0,
+            item.LatestPlanVersion?.TotalFinalAmount ?? 0m)).ToArray();
+    }
+
     public async Task<AllocationRunResult> GetAsync(Guid runId, CancellationToken cancellationToken) =>
         ToResult(await store.FindViewAsync(runId, cancellationToken)
             ?? throw AllocationRunOperationException.NotFound("Allocation run was not found."));
@@ -578,50 +616,6 @@ public sealed class AllocationRunService(
     /// transition only; all reservations and picking rows remain immutable. The existing AuditLog
     /// table records who closed it, so this does not require a schema change.
     /// </summary>
-    public async Task<AllocationRunResult> CloseAsync(
-        Guid runId, int expectedVersion, Guid actorUserId, string? reason,
-        CancellationToken cancellationToken)
-    {
-        await store.ExecuteInTransactionAsync(async transactionCancellationToken =>
-        {
-            var run = await store.FindRunForUpdateAsync(runId, transactionCancellationToken)
-                ?? throw AllocationRunOperationException.NotFound("Allocation run was not found.");
-
-            if (run.Version != expectedVersion)
-            {
-                throw AllocationRunOperationException.Conflict(
-                    $"Allocation run {run.RunCode} changed. Reload it before closing.");
-            }
-
-            if (run.Status == AllocationRunStatuses.Closed) return;
-            if (run.Status != AllocationRunStatuses.Approved)
-            {
-                throw AllocationRunOperationException.Conflict(
-                    "Only an approved allocation run can be closed.");
-            }
-
-            var now = timeProvider.GetUtcNow();
-            run.Status = AllocationRunStatuses.Closed;
-            run.Version++;
-            run.UpdatedAt = now;
-            store.AddAuditLog(new AuditLog
-            {
-                Id = Guid.NewGuid(),
-                UserAccountId = actorUserId,
-                EntityName = nameof(AllocationRun),
-                EntityId = run.Id,
-                Action = "AllocationRunClosed",
-                OldValues = JsonSerializer.Serialize(new { Status = AllocationRunStatuses.Approved }),
-                NewValues = JsonSerializer.Serialize(new { Status = AllocationRunStatuses.Closed }),
-                Reason = string.IsNullOrWhiteSpace(reason) ? null : reason.Trim(),
-                CreatedAt = now
-            });
-            await store.SaveChangesAsync(transactionCancellationToken);
-        }, cancellationToken);
-
-        return await GetAsync(runId, cancellationToken);
-    }
-
     /// <summary>
     /// The same instant in Vietnam, for a message someone reads. A cutoff arrives in whatever offset
     /// its caller built it in - the schedule in local time, an API client quite possibly in UTC - and
@@ -690,3 +684,4 @@ public sealed class AllocationRunService(
                 item.InventoryVersion)).ToArray());
     }
 }
+

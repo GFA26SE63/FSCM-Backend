@@ -4,7 +4,8 @@ namespace FSCM.Application.Features.Payments;
 
 public sealed record PaymentView(
     Payment Payment, SalesOrder Order, Retailer Retailer,
-    decimal PendingRefundAmount = 0, decimal RefundedAmount = 0, bool HasOpenDispute = false);
+    decimal PendingRefundAmount = 0, decimal RefundedAmount = 0, bool HasOpenDispute = false,
+    string SalesUserName = "");
 
 public interface IPaymentPlanService
 {

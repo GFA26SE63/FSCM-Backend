@@ -27,9 +27,9 @@ public sealed class AllocationRunConfiguration : IEntityTypeConfiguration<Alloca
         builder.Property(entity => entity.CreatedAt).HasColumnType("timestamp with time zone").IsRequired();
         builder.Property(entity => entity.UpdatedAt).HasColumnType("timestamp with time zone").IsRequired();
 
-        // One run per Vietnam business day. This is what stops a retry, a second scheduler instance
-        // or a manual trigger from starting a competing run.
-        builder.HasIndex(entity => entity.BusinessDate).IsUnique();
+        builder.HasIndex(entity => entity.BusinessDate);
+        // One run per exact three-hour cutoff. Several slots may exist on the same business date.
+        builder.HasIndex(entity => entity.CutoffAt).IsUnique();
         builder.HasIndex(entity => entity.RunCode).IsUnique();
     }
 }

@@ -6,4 +6,5 @@ namespace FSCM.API.Contracts.AllocationRuns;
 /// </summary>
 public sealed record StartAllocationRunRequest(DateTimeOffset? CutoffAt);
 
+/// <summary>F95: <c>Reason</c> records why the run was closed, for the audit trail.</summary>
 public sealed record CloseAllocationRunRequest(int ExpectedVersion, string? Reason);

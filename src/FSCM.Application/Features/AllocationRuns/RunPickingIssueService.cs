@@ -77,7 +77,11 @@ public sealed record RunPickingListResult(
 ///
 /// Issuing moves no stock. The plan already holds it (F88); the goods leave on dispatch (F96).
 /// </summary>
-public sealed class RunPickingIssueService(IAllocationRunStore store, TimeProvider timeProvider, IQuoteStore? quotes = null)
+public sealed class RunPickingIssueService(
+    IAllocationRunStore store,
+    TimeProvider timeProvider,
+    IQuoteStore? quotes = null,
+    FSCM.Application.Features.Orders.OrderReleaseService? releaseService = null)
 {
     /// <summary>
     /// Issues every warehouse's sheet for an approved run. Re-running returns what already exists
@@ -118,16 +122,36 @@ public sealed class RunPickingIssueService(IAllocationRunStore store, TimeProvid
             }
             if (quotes is not null)
             {
-                var quoteByOrder = (await quotes.ListForRunAsync(runId, transactionCancellationToken))
-                    .ToDictionary(item => item.Quote.SalesOrderId);
-                var notReady = allocations.Select(item => item.SalesOrderId).Distinct()
-                    .Where(orderId => !quoteByOrder.TryGetValue(orderId, out var quote)
-                        || quote.Quote.Status != SalesOrderQuoteStatuses.Accepted
-                        || quote.PurchaseOrder is null)
-                    .ToArray();
-                if (notReady.Length > 0)
+                var quoteViews = await quotes.ListForRunAsync(runId, transactionCancellationToken);
+                var quoteByOrder = quoteViews.ToDictionary(item => item.Quote.SalesOrderId);
+
+                // Option A: Auto-release held stock for orders whose quote was rejected or expired
+                if (releaseService is not null)
+                {
+                    foreach (var qv in quoteViews)
+                    {
+                        if (qv.Quote.Status is SalesOrderQuoteStatuses.Rejected or SalesOrderQuoteStatuses.Expired)
+                        {
+                            await releaseService.ReleaseAsync(
+                                qv.Order.Id, Guid.Empty, $"Quote {qv.Quote.Status} - auto released", transactionCancellationToken);
+                        }
+                    }
+                }
+
+                // Filter allocations to only include orders with an accepted quote and valid PO
+                var readyOrderIds = allocations.Select(item => item.SalesOrderId).Distinct()
+                    .Where(orderId => quoteByOrder.TryGetValue(orderId, out var quote)
+                        && quote.Quote.Status == SalesOrderQuoteStatuses.Accepted
+                        && quote.PurchaseOrder is not null)
+                    .ToHashSet();
+
+                if (readyOrderIds.Count == 0)
+                {
                     throw AllocationRunOperationException.Conflict(
-                        $"Run {run.RunCode} has orders without a retailer-accepted quote and PO: {notReady.Length}.");
+                        $"Run {run.RunCode} has no orders with a retailer-accepted quote and PO to pick.");
+                }
+
+                allocations = allocations.Where(item => readyOrderIds.Contains(item.SalesOrderId)).ToArray();
             }
 
             var now = timeProvider.GetUtcNow();

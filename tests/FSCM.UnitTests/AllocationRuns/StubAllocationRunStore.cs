@@ -12,6 +12,9 @@ internal abstract class StubAllocationRunStore : IAllocationRunStore
     private static Exception NotSetUp([System.Runtime.CompilerServices.CallerMemberName] string member = "") =>
         new NotSupportedException($"{member} is not set up for this test.");
 
+    public virtual Task<IReadOnlyCollection<AllocationRunSummaryView>> ListAsync(DateOnly? fromDate, DateOnly? toDate, CancellationToken cancellationToken) => throw NotSetUp();
+    public virtual Task<AllocationRun?> FindByCutoffAsync(DateTimeOffset cutoffAt, CancellationToken cancellationToken) => FindByBusinessDateAsync(DateOnly.FromDateTime(cutoffAt.DateTime), cancellationToken);
+    public virtual Task<AllocationRunView?> FindViewByCutoffAsync(DateTimeOffset cutoffAt, CancellationToken cancellationToken) => FindViewByBusinessDateAsync(DateOnly.FromDateTime(cutoffAt.DateTime), cancellationToken);
     public virtual Task<AllocationRun?> FindByBusinessDateAsync(DateOnly businessDate, CancellationToken cancellationToken) => throw NotSetUp();
     public virtual Task<AllocationRunView?> FindViewAsync(Guid runId, CancellationToken cancellationToken) => throw NotSetUp();
     public virtual Task<AllocationRunView?> FindViewForUpdateAsync(Guid runId, CancellationToken cancellationToken) => FindViewAsync(runId, cancellationToken);

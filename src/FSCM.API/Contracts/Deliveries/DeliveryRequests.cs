@@ -7,9 +7,20 @@ public sealed record DispatchOrderRequest(
     string? Note);
 
 public sealed record ConfirmRetailerReceiptRequest(
-    IReadOnlyCollection<string> QrCodes,
-    int ExpectedOrderVersion,
-    string? Note);
+    IReadOnlyCollection<string>? QrCodes,
+    int? ExpectedOrderVersion,
+    string? Note,
+    IReadOnlyCollection<string>? LabelCodes = null,
+    string? QrToken = null)
+{
+    public IReadOnlyCollection<string> ResolveQrCodes()
+    {
+        if (QrCodes is { Count: > 0 }) return QrCodes;
+        if (LabelCodes is { Count: > 0 }) return LabelCodes;
+        if (!string.IsNullOrWhiteSpace(QrToken)) return [QrToken];
+        return [];
+    }
+}
 
 public sealed record CreateDriverRequest(
     Guid WarehouseId,

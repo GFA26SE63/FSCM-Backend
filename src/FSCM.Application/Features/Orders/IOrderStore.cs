@@ -35,6 +35,7 @@ public sealed record OrderView(
     IReadOnlyDictionary<Guid, int> InventoryVersions)
 {
     public OrderAllocationReadContext? AllocationContext { get; init; }
+    public string CreatedByUserName { get; init; } = string.Empty;
 }
 
 public sealed record OrderAllocationReadContext(

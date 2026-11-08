@@ -410,12 +410,17 @@ public sealed partial class WarehouseConfigurationService(
             case BusinessConfigurationKeys.EtaSchedule:
                 if (value.ValueKind != JsonValueKind.Object ||
                     !TryGetLocalTime(value, "allocationRunLocalTime", out var runAt) ||
+                    value.TryGetProperty("allocationIntervalHours", out var intervalProperty) &&
+                    (!intervalProperty.TryGetInt32(out var intervalHours) || intervalHours is < 1 or > 24 ||
+                     24 % intervalHours != 0) ||
+                    value.TryGetProperty("planApprovalMinutes", out var approvalMinutesProperty) &&
+                    (!approvalMinutesProperty.TryGetInt32(out var approvalMinutes) || approvalMinutes <= 0) ||
                     !TryGetLocalTime(value, "planApprovalDeadlineLocalTime", out var approveBy) ||
                     approveBy <= runAt ||
                     !value.TryGetProperty("dispatchSlotsLocalTime", out var slots) ||
                     slots.ValueKind != JsonValueKind.Array || slots.GetArrayLength() == 0)
                     throw WarehouseConfigurationOperationException.Validation(
-                        "ETA schedule needs a run time, a later approval deadline, and at least one dispatch slot.");
+                        "ETA schedule needs recurring slots, an approval window shorter than the interval, and at least one dispatch slot.");
                 break;
             case BusinessConfigurationKeys.SalesKpi:
                 if (value.ValueKind != JsonValueKind.Object ||

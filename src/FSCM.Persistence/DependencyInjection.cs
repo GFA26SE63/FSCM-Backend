@@ -106,6 +106,7 @@ public static class DependencyInjection
         services.AddScoped<INotificationStore, NotificationStore>();
         services.AddScoped<IOrderStore, OrderStore>();
         services.AddScoped<IOrderReleaseStore, OrderReleaseStore>();
+        services.AddScoped<IAllocationRunReportStore, AllocationRunReportStore>();
         services.AddScoped<IPaymentStore, PaymentStore>();
         services.AddScoped<IRetailerReceivableStore, RetailerReceivableStore>();
         services.AddScoped<IPickingStore, PickingStore>();

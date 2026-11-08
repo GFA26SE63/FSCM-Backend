@@ -17,12 +17,17 @@ public sealed record EtaSchedule(
     /// <summary>The cutoff itself: the run takes the orders accepted and reviewed before it.</summary>
     TimeOnly AllocationRunLocalTime,
 
+    /// <summary>Hours between allocation slots. Three means 00:00, 03:00, ... 21:00.</summary>
+    int AllocationIntervalHours,
+
     /// <summary>Reminder that a proposal is still undecided.</summary>
     TimeOnly PlanApprovalReminderLocalTime,
 
     /// <summary>When a decision is expected. Nothing approves itself after it; a late decision has
     /// to be re-checked against the ETA, because the plan was estimated from the run moment.</summary>
     TimeOnly PlanApprovalDeadlineLocalTime,
+
+    int PlanApprovalMinutes,
 
     int PreparationMinutes,
     int BufferMinutes,
@@ -44,6 +49,7 @@ public sealed record AllocationScheduleResult(
     DateOnly BusinessDate,
     string TimeZone,
     int ScheduleVersion,
+    int AllocationIntervalHours,
     IReadOnlyList<ScheduleMilestone> Milestones,
     int PreparationMinutes,
     int BufferMinutes,

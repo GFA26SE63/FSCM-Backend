@@ -18,8 +18,26 @@ public sealed class AllocationRunsController(
     AllocationPriceLookupService prices,
     AllocationTraceService traces,
     OrderService orders,
-    AllocationRunResultService results) : ControllerBase
+    AllocationRunResultService results,
+    AllocationRunClosureService closure) : ControllerBase
 {
+    /// <summary>
+    /// F95: everything the run did, in one read - which orders it served, what it drew from which
+    /// batch and what became of that stock, what went wrong, and what is still owed to somebody.
+    ///
+    /// <c>blockers</c> is why the run cannot be closed yet, in words; empty means it can.
+    /// </summary>
+    [HttpGet("{runId:guid}/report")]
+    public Task<AllocationRunReport> Report(Guid runId, CancellationToken cancellationToken) =>
+        closure.GetReportAsync(runId, cancellationToken);
+
+    [HttpGet]
+    public Task<IReadOnlyCollection<AllocationRunSummaryResult>> List(
+        [FromQuery] DateOnly? fromDate,
+        [FromQuery] DateOnly? toDate,
+        CancellationToken cancellationToken) =>
+        runs.ListAsync(fromDate, toDate, cancellationToken);
+
     /// <summary>
     /// Runs today's allocation now, for the case where the scheduled job did not. Idempotent on the
     /// business date, and the cutoff comes from the published schedule unless an Admin overrides it
@@ -39,12 +57,23 @@ public sealed class AllocationRunsController(
     public Task<AllocationRunResult> ByDate(DateOnly businessDate, CancellationToken cancellationToken) =>
         runs.GetByBusinessDateAsync(businessDate, cancellationToken);
 
-    /// <summary>F95: closes an approved run and freezes its auditable run report.</summary>
-    [Authorize(Roles = SystemRoles.Admin)]
+    /// <summary>
+    /// F95: closes an approved run, once nothing about its goods can still move.
+    ///
+    /// Open complaints and unpaid refunds do not stand in the way - they change what is owed, not
+    /// what the run moved, and the report keeps them reachable afterwards. Returns the report, so
+    /// the screen that asked shows the frozen numbers rather than having to read them again.
+    /// </summary>
+    [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator}")]
     [HttpPost("{runId:guid}/close")]
-    public Task<AllocationRunResult> Close(
+    public Task<AllocationRunReport> Close(
         Guid runId, CloseAllocationRunRequest request, CancellationToken cancellationToken) =>
-        runs.CloseAsync(runId, request.ExpectedVersion, ActorId(), request.Reason, cancellationToken);
+        closure.CloseAsync(
+            runId,
+            new CloseAllocationRunData(request.ExpectedVersion, request.Reason),
+            ActorId(),
+            ActorRole(),
+            cancellationToken);
 
     [HttpGet("{runId:guid}/plan-versions")]
     public Task<IReadOnlyCollection<AllocationPlanVersionResult>> PlanVersions(

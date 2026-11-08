@@ -121,6 +121,60 @@ public sealed class ShipmentStore(AppDbContext dbContext) : IShipmentStore
             .Select(item => new ShipmentLabelView(item, item.BatchId)).ToArray();
     }
 
+    public async Task<IReadOnlyCollection<BatchQrLabel>> ListPickedLabelsForDispatchAsync(
+        Guid runPickingListId, Guid warehouseId, Guid batchId, CancellationToken cancellationToken)
+    {
+        var pickingCode = await dbContext.RunPickingListRecords.AsNoTracking()
+            .Where(item => item.Id == runPickingListId)
+            .Select(item => item.PickingCode)
+            .SingleOrDefaultAsync(cancellationToken);
+        if (pickingCode is null) return [];
+
+        var dispatchedIds = dbContext.QrLabelEventRecords.AsNoTracking()
+            .Where(e => e.EventType == QrLabelEventTypes.Dispatched)
+            .Select(e => e.BatchQrLabelId);
+
+        var pickedLabelIds = await (
+            from labelEvent in dbContext.QrLabelEventRecords.AsNoTracking()
+            join label in dbContext.BatchQrLabelRecords
+                on labelEvent.BatchQrLabelId equals label.Id
+            where labelEvent.EventType == QrLabelEventTypes.Picked
+                  && labelEvent.ReferenceCode == pickingCode
+                  && label.CurrentWarehouseId == warehouseId
+                  && label.BatchId == batchId
+                  && label.Status == QrLabelStatuses.Picked
+                  && !dispatchedIds.Contains(label.Id)
+            select label.Id)
+            .Distinct()
+            .ToArrayAsync(cancellationToken);
+
+        return await dbContext.BatchQrLabelRecords
+            .Where(item => pickedLabelIds.Contains(item.Id))
+            .OrderBy(item => item.GeneratedAt)
+            .ThenBy(item => item.QrCode)
+            .ToArrayAsync(cancellationToken);
+    }
+
+    public void AddLabel(BatchQrLabel label) => dbContext.BatchQrLabelRecords.Add(label);
+
+    public async Task<string> NextQrCodeAsync(CancellationToken cancellationToken)
+    {
+        var connection = dbContext.Database.GetDbConnection();
+        var openedHere = connection.State != ConnectionState.Open;
+        if (openedHere) await connection.OpenAsync(cancellationToken);
+        try
+        {
+            await using var command = connection.CreateCommand();
+            command.CommandText = "SELECT nextval('\"QrLabelCodeSequence\"');";
+            var number = Convert.ToInt64(await command.ExecuteScalarAsync(cancellationToken));
+            return $"TEM-{number:000000}";
+        }
+        finally
+        {
+            if (openedHere) await connection.CloseAsync();
+        }
+    }
+
     public async Task<IReadOnlyCollection<ExpectedWarehousePart>> ListExpectedWarehousesAsync(
         Guid orderId, CancellationToken cancellationToken)
     {

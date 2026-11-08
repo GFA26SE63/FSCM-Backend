@@ -2,8 +2,8 @@
 
 namespace FSCM.Domain.Entities;
 
-// One daily allocation run. BusinessDate is the Vietnam calendar day and is unique, so a retry or a
-// second scheduler instance joins the existing run instead of starting a competing one.
+// One recurring allocation run. Several runs can share a Vietnam business date; CutoffAt identifies
+// the three-hour slot so a retry or a second scheduler instance joins the same run.
 public sealed class AllocationRun
 {
     public Guid Id { get; set; }

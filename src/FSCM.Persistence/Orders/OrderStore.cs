@@ -312,9 +312,14 @@ public sealed class OrderStore(AppDbContext dbContext) : IOrderStore
                 .ThenBy(item => item.Id)
                 .FirstOrDefault())).ToArray();
         var allocationContext = await LoadAllocationContextAsync(order.Id, lineIds, cancellationToken);
+        var createdByUserName = await dbContext.UserAccountRecords.AsNoTracking()
+            .Where(item => item.Id == order.CreatedByUserId)
+            .Select(item => item.FullName)
+            .SingleOrDefaultAsync(cancellationToken) ?? order.CreatedByUserId.ToString();
         return new OrderView(order, lineViews, history, deliveries, batchCodes, warehouseCodes, inventoryVersions)
         {
-            AllocationContext = allocationContext
+            AllocationContext = allocationContext,
+            CreatedByUserName = createdByUserName
         };
     }
 

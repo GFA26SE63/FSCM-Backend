@@ -7,4 +7,5 @@ public sealed class AllocationRunOperationException(string code, string message)
     public static AllocationRunOperationException Validation(string message) => new("validation_error", message);
     public static AllocationRunOperationException NotFound(string message) => new("not_found", message);
     public static AllocationRunOperationException Conflict(string message) => new("conflict", message);
+    public static AllocationRunOperationException Forbidden(string message) => new("forbidden", message);
 }

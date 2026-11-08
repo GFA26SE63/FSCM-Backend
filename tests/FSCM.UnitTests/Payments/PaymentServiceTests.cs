@@ -1,4 +1,4 @@
-using FSCM.Application.Features.Orders;
+﻿using FSCM.Application.Features.Orders;
 using FSCM.Application.Features.Payments;
 using FSCM.Domain.Authorization;
 using FSCM.Domain.Entities;
@@ -60,6 +60,7 @@ public sealed class PaymentServiceTests
         Assert.Equal(PaymentStatuses.Paid, result.Status);
         Assert.Equal(fixture.Order.FinalAmount, result.Amount);
         Assert.Equal(fixture.SalesUserId, result.ConfirmedByUserId);
+        Assert.Equal("Trần Thị Sales", result.SalesUserName);
         Assert.Equal(1, result.Version);
         var audit = Assert.Single(fixture.Store.Audits);
         Assert.Equal("Collected", audit.Action);
@@ -365,24 +366,24 @@ public sealed class PaymentServiceTests
         public Task<PaymentView?> FindByOrderAsync(Guid orderId, bool forUpdate,
             CancellationToken cancellationToken) => Task.FromResult<PaymentView?>(
             Payments.SingleOrDefault(item => item.SalesOrderId == orderId) is { } payment
-                ? new(payment, fixture.Order, fixture.Retailer, HasOpenDispute: HasOpenDispute)
+                ? new(payment, fixture.Order, fixture.Retailer, HasOpenDispute: HasOpenDispute, SalesUserName: "Trần Thị Sales")
                 : null);
 
         public Task<PaymentView?> FindByOperationKeyAsync(string operationKey,
             CancellationToken cancellationToken) => Task.FromResult<PaymentView?>(
             Payments.SingleOrDefault(item => item.OperationKey == operationKey) is { } payment
-                ? new(payment, fixture.Order, fixture.Retailer)
+                ? new(payment, fixture.Order, fixture.Retailer, SalesUserName: "Trần Thị Sales")
                 : null);
 
         public Task<PaymentView?> FindByPayOsOrderCodeAsync(long payOsOrderCode, bool forUpdate,
             CancellationToken cancellationToken) => Task.FromResult<PaymentView?>(
             Payments.SingleOrDefault(item => item.PayOsOrderCode == payOsOrderCode) is { } payment
-                ? new(payment, fixture.Order, fixture.Retailer)
+                ? new(payment, fixture.Order, fixture.Retailer, SalesUserName: "Trần Thị Sales")
                 : null);
 
         public Task<IReadOnlyCollection<PaymentView>> ListAsync(Guid actorUserId, string actorRole,
             CancellationToken cancellationToken) => Task.FromResult<IReadOnlyCollection<PaymentView>>(
-            Payments.Select(item => new PaymentView(item, fixture.Order, fixture.Retailer)).ToArray());
+            Payments.Select(item => new PaymentView(item, fixture.Order, fixture.Retailer, SalesUserName: "Trần Thị Sales")).ToArray());
 
         public Task<bool> CanViewAsync(PaymentView view, Guid actorUserId, string actorRole,
             CancellationToken cancellationToken) => Task.FromResult(

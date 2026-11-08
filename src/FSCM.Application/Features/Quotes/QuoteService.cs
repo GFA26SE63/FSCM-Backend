@@ -1,9 +1,15 @@
+using FSCM.Application.Features.Orders;
+using FSCM.Application.Features.Payments;
 using FSCM.Domain.Authorization;
 using FSCM.Domain.Entities;
 
 namespace FSCM.Application.Features.Quotes;
 
-public sealed class QuoteService(IQuoteStore store, TimeProvider timeProvider)
+public sealed class QuoteService(
+    IQuoteStore store,
+    TimeProvider timeProvider,
+    OrderReleaseService? orderReleaseService = null,
+    IPaymentPlanService? paymentPlanService = null)
 {
     public async Task IssueForPlanAsync(Guid allocationPlanVersionId, CancellationToken ct)
     {
@@ -44,14 +50,28 @@ public sealed class QuoteService(IQuoteStore store, TimeProvider timeProvider)
         if (now > view.Quote.ExpiresAt)
         {
             view.Quote.Status = SalesOrderQuoteStatuses.Expired; view.Quote.Version++; view.Quote.UpdatedAt = now;
+            if (orderReleaseService is not null)
+            {
+                await orderReleaseService.ReleaseAsync(
+                    view.Order.Id, actor, "Quote acceptance deadline has passed", ct);
+            }
             await store.SaveChangesAsync(ct);
             throw QuoteOperationException.Conflict("Quote acceptance deadline has passed.");
         }
         view.Quote.Status = SalesOrderQuoteStatuses.Accepted;
         view.Quote.AcceptedByUserId = actor; view.Quote.AcceptedAt = now; view.Quote.Version++; view.Quote.UpdatedAt = now;
+        view.Order.FinalAmount = view.Quote.TotalAmount;
+        view.Order.FinalPricePendingAllocation = false;
+        view.Order.Version++;
+        view.Order.UpdatedAt = now;
         var po = new PurchaseOrder { Id = Guid.NewGuid(), PurchaseOrderCode = $"PO-{view.Order.OrderCode}-{view.Quote.RevisionNumber:00}", SalesOrderId = view.Order.Id, SalesOrderQuoteId = view.Quote.Id, Status = PurchaseOrderStatuses.Issued, PaymentMethod = view.Order.PaymentMethod, IssuedAt = now, IssuedByUserId = actor, Version = 0, CreatedAt = now, UpdatedAt = now };
         view.Quote.PurchaseOrderId = po.Id;
         store.AddPurchaseOrder(po);
+        if (paymentPlanService is not null)
+        {
+            await paymentPlanService.CreateForFinalApprovedOrderAsync(
+                view.Order, actor, now, po.PurchaseOrderCode, ct);
+        }
         await store.SaveChangesAsync(ct);
         return ToResult(await store.FindAsync(id, false, ct) ?? throw QuoteOperationException.Conflict("Accepted quote could not be reloaded."));
     }
@@ -64,6 +84,11 @@ public sealed class QuoteService(IQuoteStore store, TimeProvider timeProvider)
         RequirePending(view.Quote, expectedVersion);
         if (string.IsNullOrWhiteSpace(reason)) throw QuoteOperationException.Validation("Rejection reason is required.");
         var now = timeProvider.GetUtcNow(); view.Quote.Status = SalesOrderQuoteStatuses.Rejected; view.Quote.RejectionReason = reason.Trim(); view.Quote.AcceptedByUserId = actor; view.Quote.AcceptedAt = now; view.Quote.Version++; view.Quote.UpdatedAt = now;
+        if (orderReleaseService is not null)
+        {
+            await orderReleaseService.ReleaseAsync(
+                view.Order.Id, actor, $"Quote rejected by retailer: {reason.Trim()}", ct);
+        }
         await store.SaveChangesAsync(ct);
         return ToResult(await store.FindAsync(id, false, ct) ?? throw QuoteOperationException.Conflict("Rejected quote could not be reloaded."));
     }

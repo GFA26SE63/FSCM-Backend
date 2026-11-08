@@ -108,6 +108,7 @@ public sealed record PaymentResult(
     string RetailerCode,
     string RetailerName,
     Guid SalesUserId,
+    string SalesUserName,
     string OrderPaymentMethod,
     string Status,
     decimal Amount,

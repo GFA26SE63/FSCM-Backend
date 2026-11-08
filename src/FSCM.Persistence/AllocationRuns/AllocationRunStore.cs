@@ -11,16 +11,51 @@ namespace FSCM.Persistence.AllocationRuns;
 
 public sealed class AllocationRunStore(AppDbContext dbContext) : IAllocationRunStore
 {
+    public async Task<IReadOnlyCollection<AllocationRunSummaryView>> ListAsync(
+        DateOnly? fromDate, DateOnly? toDate, CancellationToken cancellationToken)
+    {
+        var query = dbContext.AllocationRunRecords.AsNoTracking().AsQueryable();
+        if (fromDate is { } from) query = query.Where(item => item.BusinessDate >= from);
+        if (toDate is { } to) query = query.Where(item => item.BusinessDate <= to);
+
+        var runs = await query.OrderByDescending(item => item.BusinessDate)
+            .ThenByDescending(item => item.StartedAt)
+            .ToArrayAsync(cancellationToken);
+        if (runs.Length == 0) return [];
+
+        var runIds = runs.Select(item => item.Id).ToArray();
+        var versions = await dbContext.AllocationPlanVersionRecords.AsNoTracking()
+            .Where(item => runIds.Contains(item.AllocationRunId))
+            .OrderByDescending(item => item.VersionNumber)
+            .ToArrayAsync(cancellationToken);
+        var latestByRun = versions.GroupBy(item => item.AllocationRunId)
+            .ToDictionary(group => group.Key, group => group.First());
+
+        return runs.Select(run => new AllocationRunSummaryView(
+            run, latestByRun.GetValueOrDefault(run.Id))).ToArray();
+    }
+
+    public Task<AllocationRun?> FindByCutoffAsync(DateTimeOffset cutoffAt, CancellationToken cancellationToken) =>
+        dbContext.AllocationRunRecords.SingleOrDefaultAsync(item => item.CutoffAt == cutoffAt, cancellationToken);
+
     public Task<AllocationRun?> FindByBusinessDateAsync(DateOnly businessDate, CancellationToken cancellationToken) =>
-        dbContext.AllocationRunRecords.SingleOrDefaultAsync(item => item.BusinessDate == businessDate, cancellationToken);
+        dbContext.AllocationRunRecords.Where(item => item.BusinessDate == businessDate)
+            .OrderByDescending(item => item.CutoffAt).FirstOrDefaultAsync(cancellationToken);
 
     public Task<AllocationRunView?> FindViewAsync(Guid runId, CancellationToken cancellationToken) =>
         BuildViewAsync(dbContext.AllocationRunRecords.AsNoTracking().Where(item => item.Id == runId), cancellationToken);
 
+    public Task<AllocationRunView?> FindViewByCutoffAsync(
+        DateTimeOffset cutoffAt, CancellationToken cancellationToken) =>
+        BuildViewAsync(
+            dbContext.AllocationRunRecords.AsNoTracking().Where(item => item.CutoffAt == cutoffAt),
+            cancellationToken);
+
     public Task<AllocationRunView?> FindViewByBusinessDateAsync(
         DateOnly businessDate, CancellationToken cancellationToken) =>
         BuildViewAsync(
-            dbContext.AllocationRunRecords.AsNoTracking().Where(item => item.BusinessDate == businessDate),
+            dbContext.AllocationRunRecords.AsNoTracking().Where(item => item.BusinessDate == businessDate)
+                .OrderByDescending(item => item.CutoffAt),
             cancellationToken);
 
     /// <summary>
@@ -30,10 +65,13 @@ public sealed class AllocationRunStore(AppDbContext dbContext) : IAllocationRunS
     public async Task<IReadOnlyCollection<EligibleOrderView>> ListEligibleOrdersAsync(
         DateTimeOffset cutoffAt, CancellationToken cancellationToken)
     {
+        var alreadyAssignedOrderIds = dbContext.AllocationRunOrderRecords.AsNoTracking()
+            .Select(item => item.SalesOrderId);
         var orders = await dbContext.SalesOrderRecords.AsNoTracking()
             .Where(item => item.Status == OrderStatuses.PendingAllocation
                 && item.ServerReceivedAt < cutoffAt
-                && item.ReviewedAt != null && item.ReviewedAt < cutoffAt)
+                && item.ReviewedAt != null && item.ReviewedAt < cutoffAt
+                && !alreadyAssignedOrderIds.Contains(item.Id))
             .ToArrayAsync(cancellationToken);
         if (orders.Length == 0) return [];
 
@@ -592,7 +630,7 @@ public sealed class AllocationRunStore(AppDbContext dbContext) : IAllocationRunS
     private async Task<AllocationRunView?> BuildViewAsync(
         IQueryable<AllocationRun> runs, CancellationToken cancellationToken, bool forUpdate = false)
     {
-        var run = await runs.SingleOrDefaultAsync(cancellationToken);
+        var run = await runs.FirstOrDefaultAsync(cancellationToken);
         if (run is null) return null;
 
         var orderQuery = forUpdate

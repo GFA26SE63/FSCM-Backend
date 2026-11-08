@@ -8,8 +8,8 @@ using Microsoft.Extensions.Options;
 namespace FSCM.Infrastructure.BackgroundJobs;
 
 /// <summary>
-/// The daily allocation run (F85). Wakes at the published cutoff, default 00:00
-/// Asia/Ho_Chi_Minh, closes the run and builds the plan.
+/// The recurring allocation run. Wakes every configured interval (three hours by default),
+/// closes that slot and builds its proposal.
 ///
 /// Closing is idempotent on the business day, so a restart, a second instance or a late wake-up
 /// joins the run that already exists instead of splitting one day's orders across two plans. A
@@ -38,10 +38,13 @@ public sealed class AllocationRunHostedService(
 
         TimeZoneInfo fallbackZone;
         TimeSpan fallbackCutoff;
+        var fallbackInterval = settings.IntervalHours;
         try
         {
             fallbackZone = TimeZoneInfo.FindSystemTimeZoneById(settings.TimeZone);
             fallbackCutoff = TimeSpan.ParseExact(settings.CutoffLocalTime, @"hh\:mm", null);
+            if (fallbackInterval is < 1 or > 24 || 24 % fallbackInterval != 0)
+                throw new FormatException("IntervalHours must divide 24.");
         }
         catch (Exception exception) when (exception is TimeZoneNotFoundException or FormatException)
         {
@@ -53,10 +56,12 @@ public sealed class AllocationRunHostedService(
 
         while (!stoppingToken.IsCancellationRequested)
         {
-            var (timeZone, cutoff) = await ResolveCutoffAsync(fallbackZone, fallbackCutoff, stoppingToken);
-            var delay = GetDelayUntilNextCutoff(timeZone, cutoff);
+            var (timeZone, cutoff, intervalHours) = await ResolveCutoffAsync(
+                fallbackZone, fallbackCutoff, fallbackInterval, stoppingToken);
+            var nextCutoff = GetNextCutoff(timeZone, cutoff, intervalHours);
+            var delay = nextCutoff - timeProvider.GetUtcNow();
             logger.LogInformation(
-                "Next allocation run at {Cutoff} ({TimeZone}), in {Delay}.", cutoff, timeZone.Id, delay);
+                "Next allocation run at {CutoffAt} ({TimeZone}), in {Delay}.", nextCutoff, timeZone.Id, delay);
 
             try
             {
@@ -67,7 +72,7 @@ public sealed class AllocationRunHostedService(
                 break;
             }
 
-            await RunAsync(timeZone, cutoff, stoppingToken);
+            await RunAsync(nextCutoff, stoppingToken);
         }
     }
 
@@ -76,8 +81,9 @@ public sealed class AllocationRunHostedService(
     /// that cannot be read is reported and the fallback used: a run at the wrong hour is recoverable,
     /// a day with no run at all is not.
     /// </summary>
-    private async Task<(TimeZoneInfo Zone, TimeSpan Cutoff)> ResolveCutoffAsync(
-        TimeZoneInfo fallbackZone, TimeSpan fallbackCutoff, CancellationToken cancellationToken)
+    private async Task<(TimeZoneInfo Zone, TimeSpan Cutoff, int IntervalHours)> ResolveCutoffAsync(
+        TimeZoneInfo fallbackZone, TimeSpan fallbackCutoff, int fallbackInterval,
+        CancellationToken cancellationToken)
     {
         try
         {
@@ -85,7 +91,8 @@ public sealed class AllocationRunHostedService(
             var eta = scope.ServiceProvider.GetRequiredService<DeliveryEtaService>();
             var schedule = await eta.GetScheduleAsync(null, cancellationToken);
             var cutoff = schedule.Milestones.Single(item => item.Key == "allocation_run").LocalTime;
-            return (TimeZoneInfo.FindSystemTimeZoneById(schedule.TimeZone), cutoff.ToTimeSpan());
+            return (TimeZoneInfo.FindSystemTimeZoneById(schedule.TimeZone), cutoff.ToTimeSpan(),
+                schedule.AllocationIntervalHours);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -96,21 +103,16 @@ public sealed class AllocationRunHostedService(
             logger.LogWarning(exception,
                 "Could not read the published run schedule; falling back to {Cutoff} ({TimeZone}).",
                 fallbackCutoff, fallbackZone.Id);
-            return (fallbackZone, fallbackCutoff);
+            return (fallbackZone, fallbackCutoff, fallbackInterval);
         }
     }
 
-    private async Task RunAsync(TimeZoneInfo timeZone, TimeSpan cutoff, CancellationToken cancellationToken)
+    private async Task RunAsync(DateTimeOffset cutoffAt, CancellationToken cancellationToken)
     {
         try
         {
             await using var scope = scopeFactory.CreateAsyncScope();
             var service = scope.ServiceProvider.GetRequiredService<AllocationRunService>();
-
-            // The cutoff instant, not "now": waking a few seconds late must not shift which orders
-            // qualify, otherwise the same day could include different orders on a retry.
-            var nowLocal = TimeZoneInfo.ConvertTime(timeProvider.GetUtcNow(), timeZone);
-            var cutoffAt = new DateTimeOffset(nowLocal.Date.Add(cutoff), nowLocal.Offset);
 
             var run = await service.StartAsync(cutoffAt, cancellationToken);
             logger.LogInformation(
@@ -141,13 +143,14 @@ public sealed class AllocationRunHostedService(
         }
     }
 
-    private TimeSpan GetDelayUntilNextCutoff(TimeZoneInfo timeZone, TimeSpan cutoff)
+    private DateTimeOffset GetNextCutoff(TimeZoneInfo timeZone, TimeSpan firstCutoff, int intervalHours)
     {
         var nowLocal = TimeZoneInfo.ConvertTime(timeProvider.GetUtcNow(), timeZone);
-        var nextLocal = new DateTimeOffset(nowLocal.Date.Add(cutoff), nowLocal.Offset);
-        if (nextLocal <= nowLocal) nextLocal = nextLocal.AddDays(1);
-
-        var delay = nextLocal - nowLocal;
-        return delay < TimeSpan.Zero ? TimeSpan.Zero : delay;
+        var firstLocal = new DateTimeOffset(nowLocal.Date.Add(firstCutoff), nowLocal.Offset);
+        for (var slot = firstLocal; slot < firstLocal.AddDays(1); slot = slot.AddHours(intervalHours))
+        {
+            if (slot > nowLocal) return slot;
+        }
+        return firstLocal.AddDays(1);
     }
 }
