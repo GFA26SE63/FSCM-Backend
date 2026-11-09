@@ -90,6 +90,7 @@ public sealed record ShipmentReceiptResult(
     string Status,
     DateTimeOffset ConfirmedAt,
     string? Note,
+    IReadOnlyCollection<string> QrCodes,
     IReadOnlyCollection<ShipmentReceiptLineResult> Lines);
 
 public sealed record ShipmentResult(
@@ -152,3 +153,6 @@ public sealed record RetailerOrderDeliveryResult(
     string OrderCode,
     IReadOnlyCollection<ShipmentResult> Shipments,
     OrderPaymentStatusResult? Payment);
+
+/// <summary>F92: an operator settles a shipment exception (the reason is required).</summary>
+public sealed record ResolveShipmentExceptionData(string Reason, int ExpectedVersion);

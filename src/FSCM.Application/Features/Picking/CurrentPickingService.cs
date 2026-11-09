@@ -1,4 +1,5 @@
 using FSCM.Application.Features.Orders;
+using FSCM.Application.Features.Inventory;
 using FSCM.Application.Features.QrLabels;
 using FSCM.Application.Features.Shipments;
 using FSCM.Domain.Authorization;
@@ -8,11 +9,13 @@ namespace FSCM.Application.Features.Picking;
 
 public sealed record CurrentPickingItemResult(
     Guid Id, Guid AllocationId, string Sku, string ProductName, Guid BatchId, string BatchCode,
-    decimal RequestedQuantity, decimal PickedQuantity, decimal RemainingQuantity, string Status);
+    DateOnly ExpirationDate, decimal RequestedQuantity, decimal PickedQuantity,
+    decimal RemainingQuantity, string Status);
 
 public sealed record CurrentPickingResult(
     Guid Id, string PickingCode, Guid OrderId, string OrderCode, Guid WarehouseId,
-    string WarehouseCode, Guid? AssignedToUserId, string Status, int Version,
+    string WarehouseCode, string WarehouseName, string RetailerCode, string RetailerName,
+    Guid? AssignedToUserId, string Status, int Version,
     DateTimeOffset? StartedAt, DateTimeOffset? ConfirmedAt,
     IReadOnlyCollection<CurrentPickingItemResult> Items,
     IReadOnlyCollection<PickingScanResult> Scans);
@@ -67,6 +70,21 @@ public sealed class CurrentPickingService(IPickingStore store, TimeProvider time
             if (label.Status != QrLabelStatuses.Available || label.CurrentWarehouseId != view.List.WarehouseId)
                 throw PickingOperationException.Conflict(
                     "QR label must be available in the picking warehouse.");
+
+            // F4 step 10 / F100: never pick an expired batch or one whose active lock eats into
+            // stock already reserved for orders, even if it was valid when the sheet was issued.
+            var batchState = await store.FindBatchPickStateAsync(label.BatchId, token)
+                ?? throw PickingOperationException.Conflict("Batch inventory state was not found.");
+            var today = DateOnly.FromDateTime(timeProvider.GetUtcNow().UtcDateTime);
+            if (batchState.ExpiryStatus == BatchExpiryStatuses.Expired ||
+                batchState.ExpirationDate < today)
+                throw PickingOperationException.Conflict(
+                    $"Batch {batchState.BatchCode} has expired and cannot be picked.");
+            if (batchState.HasLockRequiringResolution ||
+                batchState.PhysicalQuantity - batchState.ActiveLockedQuantity < batchState.ReservedQuantity)
+                throw PickingOperationException.Conflict(
+                    $"Batch {batchState.BatchCode} has {batchState.ActiveLockedQuantity:0.###} cartons locked " +
+                    "that overlap reserved stock; resolve the lock before picking.");
 
             var requested = data.Splits?.ToDictionary(item => item.AllocationRunAllocationId,
                 item => item.Quantity) ?? [];
@@ -230,11 +248,14 @@ public sealed class CurrentPickingService(IPickingStore store, TimeProvider time
 
     private static CurrentPickingResult ToResult(PickingView view) => new(
         view.List.Id, view.List.PickingCode, view.Order.Id, view.Order.OrderCode,
-        view.Warehouse.Id, view.Warehouse.Code, view.List.AssignedToUserId, view.List.Status,
+        view.Warehouse.Id, view.Warehouse.Code, view.Warehouse.Name,
+        view.Order.RetailerCodeSnapshot, view.Order.RetailerNameSnapshot,
+        view.List.AssignedToUserId, view.List.Status,
         view.List.Version, view.List.StartedAt, view.List.ConfirmedAt,
         view.Items.Select(item => new CurrentPickingItemResult(
             item.Item.Id, item.Allocation.Id, item.OrderLine.SkuSnapshot,
             item.OrderLine.ProductNameSnapshot, item.Batch.Id, item.Batch.BatchCode,
+            item.Batch.ExpirationDate,
             item.Item.RequestedQuantity, item.Item.PickedQuantity,
             item.Item.RequestedQuantity - item.Item.PickedQuantity, item.Item.Status)).ToArray(),
         view.Scans.Select(item => new PickingScanResult(

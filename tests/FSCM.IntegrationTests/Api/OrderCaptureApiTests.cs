@@ -215,7 +215,7 @@ public sealed class OrderCaptureApiTests
         var list = await client.GetFromJsonAsync<JsonElement>(
             "/api/v1/orders?createdByMe=true&page=1&pageSize=10&search=DH-");
         Assert.Equal(1, list.GetProperty("totalCount").GetInt32());
-        Assert.Equal("PendingRun", list.GetProperty("items")[0].GetProperty("allocationState").GetString());
+        Assert.Equal("Allocating", list.GetProperty("items")[0].GetProperty("allocationState").GetString());
 
         var detail = await client.GetFromJsonAsync<JsonElement>($"/api/v1/orders/{orderId}");
         Assert.Equal("KM-001", detail.GetProperty("lines")[0]
@@ -227,7 +227,7 @@ public sealed class OrderCaptureApiTests
                 query {
                   entities {
                     orderRead(id: "{{orderId}}") {
-                      id orderCode allocationState officialAmount
+                      id orderCode allocationState
                       lines { id allocationFragments { batchId finalUnitPrice netAmount } }
                     }
                     orderReads(createdByMe: true, search: "DH-") {
@@ -358,7 +358,7 @@ public sealed class OrderCaptureApiTests
         Assert.Equal(store.Retailer.Id, syncedOrder.GetProperty("retailerId").GetGuid());
         Assert.Equal(OrderPaymentMethods.Prepaid,
             syncedOrder.GetProperty("paymentMethod").GetString());
-        Assert.Equal(OrderStatuses.PendingApproval, syncedOrder.GetProperty("status").GetString());
+        Assert.Equal(OrderStatuses.Allocating, syncedOrder.GetProperty("status").GetString());
         Assert.True(syncedOrder.GetProperty("finalPricePendingAllocation").GetBoolean());
         Assert.Equal(900m, syncedOrder.GetProperty("finalAmount").GetDecimal());
         Assert.Empty(syncedOrder.GetProperty("lines")[0].GetProperty("allocations").EnumerateArray());

@@ -35,6 +35,7 @@ public sealed record ProductResult(
     int NearDateThresholdHours,
     string Status,
     decimal? CurrentUnitPrice,
+    string? ImageUrl,
     DateTimeOffset? PublishedAt,
     DateTimeOffset? InactivatedAt,
     DateTimeOffset CreatedAt,

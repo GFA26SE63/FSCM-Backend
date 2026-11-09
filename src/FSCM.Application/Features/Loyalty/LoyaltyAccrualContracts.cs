@@ -71,7 +71,8 @@ public sealed record LoyaltyAccrualView(
     LoyaltyProgramSnapshot? Program,
     RetailerBalanceSnapshot? Balance,
     bool AlreadyEarned,
-    bool HasLivePending);
+    bool HasLivePending,
+    int EarnedPointsForOrder = 0);
 
 public sealed record LoyaltyProgramSnapshot(Guid Id, decimal SpendAmountPerPoint);
 

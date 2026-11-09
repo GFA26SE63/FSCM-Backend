@@ -2,6 +2,7 @@ using System.Net.Http.Headers;
 using FSCM.Application.Features.Identity;
 using FSCM.Application.Features.Maps;
 using FSCM.Application.Features.QrLabels;
+using FSCM.Application.Features.Storage;
 using FSCM.Infrastructure.BackgroundJobs;
 using FSCM.Infrastructure.ExternalServices;
 using FSCM.Application.Features.Payments;
@@ -43,6 +44,9 @@ public static class DependencyInjection
         services.AddSingleton<IIdentityTokenProvider, JwtIdentityTokenProvider>();
         services.AddSingleton<IQrCodeRenderer, QrCoderQrCodeRenderer>();
 
+        services.Configure<FscmBlobStorageOptions>(configuration.GetSection(FscmBlobStorageOptions.SectionName));
+        services.AddSingleton<IImageStorage, AzureBlobImageStorage>();
+
         services.Configure<DateTrackerOptions>(configuration.GetSection(DateTrackerOptions.SectionName));
         services.AddHostedService<DateTrackerHostedService>();
         // Review 2 flow allocates each SO in real time. The legacy scheduled run still targets
@@ -50,6 +54,8 @@ public static class DependencyInjection
         services.Configure<AllocationRunOptions>(configuration.GetSection(AllocationRunOptions.SectionName));
         services.Configure<InventoryOutboxOptions>(configuration.GetSection(InventoryOutboxOptions.SectionName));
         services.AddHostedService<InventoryOutboxHostedService>();
+        services.Configure<OrderDeadlineOptions>(configuration.GetSection(OrderDeadlineOptions.SectionName));
+        services.AddHostedService<OrderDeadlineHostedService>();
         services.AddSingleton<IPayOsGateway>(_ => new PayOsGateway(configuration));
 
         services.AddHttpClient("OpenAI", client =>

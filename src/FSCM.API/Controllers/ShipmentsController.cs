@@ -1,4 +1,4 @@
-using System.Security.Claims;
+﻿using System.Security.Claims;
 using FSCM.API.Contracts.Shipments;
 using FSCM.Application.Features.Shipments;
 using FSCM.Domain.Authorization;
@@ -57,6 +57,15 @@ public sealed class ShipmentsController(ShipmentService service) : ControllerBas
             new FlagShipmentExceptionData(request.Reason, request.ExpectedVersion),
             GetActorRole(), cancellationToken);
 
+    /// <summary>F92: settle a shipment exception; the part leaves Exception and the order can reach Delivered.</summary>
+    [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator}")]
+    [HttpPost("{id:guid}/exception/resolve")]
+    public Task<ShipmentResult> ResolveException(
+        Guid id, [FromBody] ResolveShipmentExceptionRequest request, CancellationToken cancellationToken) =>
+        service.ResolveExceptionAsync(id,
+            new ResolveShipmentExceptionData(request.Reason, request.ExpectedVersion),
+            GetActorUserId(), GetActorRole(), cancellationToken);
+
     [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator}")]
     [HttpPatch("{id:guid}/assignment")]
     public Task<ShipmentResult> Assign(
@@ -107,3 +116,4 @@ public sealed class ShipmentsController(ShipmentService service) : ControllerBas
         User.FindFirstValue(ClaimTypes.Role)
         ?? throw ShipmentOperationException.Validation("Authenticated user role is invalid.");
 }
+

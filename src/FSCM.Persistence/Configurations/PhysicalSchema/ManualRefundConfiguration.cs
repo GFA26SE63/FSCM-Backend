@@ -31,6 +31,7 @@ public sealed class ManualRefundConfiguration : IEntityTypeConfiguration<ManualR
         builder.Property(x => x.VerifiedByUserId).HasColumnType("uuid");
         builder.Property(x => x.VerifiedAt).HasColumnType("timestamp with time zone");
         builder.Property(x => x.VerificationNote).HasMaxLength(500);
+        builder.Property(x => x.ReceiptDiscrepancyId).HasColumnType("uuid").IsRequired(false);
         builder.Property(x => x.CreatedByUserId).HasColumnType("uuid").IsRequired();
         builder.Property(x => x.Version).IsConcurrencyToken().IsRequired();
         builder.Property(x => x.CreatedAt).HasColumnType("timestamp with time zone").IsRequired();
@@ -39,9 +40,12 @@ public sealed class ManualRefundConfiguration : IEntityTypeConfiguration<ManualR
         builder.HasIndex(x => x.EvidenceOperationKey).IsUnique().HasFilter("\"EvidenceOperationKey\" IS NOT NULL");
         builder.HasIndex(x => x.VerificationOperationKey).IsUnique().HasFilter("\"VerificationOperationKey\" IS NOT NULL");
         builder.HasIndex(x => new { x.SalesOrderId, x.Status });
+        builder.HasIndex(x => x.ReceiptDiscrepancyId);
         builder.ToTable(table => table.HasCheckConstraint("CK_MANUAL_REFUND_Amount", "\"Amount\" > 0"));
         builder.HasOne<Payment>().WithMany().HasForeignKey(x => x.PaymentId).OnDelete(DeleteBehavior.Restrict);
         builder.HasOne<SalesOrder>().WithMany().HasForeignKey(x => x.SalesOrderId).OnDelete(DeleteBehavior.Restrict);
+        builder.HasOne<ReceiptDiscrepancy>().WithMany().HasForeignKey(x => x.ReceiptDiscrepancyId)
+            .OnDelete(DeleteBehavior.Restrict);
         builder.HasOne<UserAccount>().WithMany().HasForeignKey(x => x.CreatedByUserId).OnDelete(DeleteBehavior.Restrict);
         builder.HasOne<UserAccount>().WithMany().HasForeignKey(x => x.SubmittedByUserId).OnDelete(DeleteBehavior.Restrict);
         builder.HasOne<UserAccount>().WithMany().HasForeignKey(x => x.VerifiedByUserId).OnDelete(DeleteBehavior.Restrict);

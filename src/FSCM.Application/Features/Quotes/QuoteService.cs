@@ -2,6 +2,7 @@ using FSCM.Domain.Authorization;
 using FSCM.Domain.Entities;
 using FSCM.Application.Features.Orders;
 using FSCM.Application.Features.Payments;
+using FSCM.Application.Features.Notifications;
 
 namespace FSCM.Application.Features.Quotes;
 
@@ -10,7 +11,8 @@ public sealed class QuoteService(
     IPaymentPlanService paymentPlanService,
     PurchaseOrderGateService purchaseOrderGateService,
     OrderReleaseService releaseService,
-    TimeProvider timeProvider)
+    TimeProvider timeProvider,
+    OrderNotificationService? notifications = null)
 {
     public async Task<IReadOnlyCollection<SalesOrderQuoteResult>> ListForOrderAsync(Guid orderId, Guid actor, string role, CancellationToken ct)
     {
@@ -40,6 +42,7 @@ public sealed class QuoteService(
         if (!await store.CanRetailerAccessAsync(id, actor, ct)) throw QuoteOperationException.Forbidden("Retailer cannot access this quote.");
         var view = await store.FindAsync(id, true, ct) ?? throw QuoteOperationException.NotFound("Quote was not found.");
         RequirePending(view.Quote, expectedVersion);
+        RequireOrderAwaitingDecision(view.Order);
         paymentMethod = NormalizePaymentMethod(paymentMethod);
         if (paymentMethod == OrderPaymentMethods.Credit && view.Retailer.CreditTermDays is not (7 or 14 or 30))
             throw QuoteOperationException.Conflict("Retailer is not eligible for an approved credit term.");
@@ -69,6 +72,17 @@ public sealed class QuoteService(
         await store.SaveChangesAsync(ct);
         if (paymentMethod == OrderPaymentMethods.Credit)
             await purchaseOrderGateService.TryCreateAsync(view.Order.Id, ct);
+        if (notifications is not null)
+        {
+            var isCredit = paymentMethod == OrderPaymentMethods.Credit;
+            await notifications.PublishRetailerAsync(view.Order.Id,
+                isCredit ? "PurchaseOrderIssued" : "PrepaidPaymentRequired",
+                isCredit ? "Đơn mua hàng đã được phát hành" : "Đơn đang chờ thanh toán",
+                isCredit
+                    ? $"Báo giá đơn {view.Order.OrderCode} đã được chấp nhận theo công nợ và chuyển thành PO."
+                    : $"Hãy thanh toán đơn {view.Order.OrderCode} trong thời hạn quy định để hệ thống phát hành PO.",
+                view.Quote.Id, $"/retailer/orders/{view.Order.Id}", ct);
+        }
         return ToResult(await store.FindAsync(id, false, ct) ?? throw QuoteOperationException.Conflict("Accepted quote could not be reloaded."));
     }
 
@@ -78,6 +92,7 @@ public sealed class QuoteService(
         if (!await store.CanRetailerAccessAsync(id, actor, ct)) throw QuoteOperationException.Forbidden("Retailer cannot access this quote.");
         var view = await store.FindAsync(id, true, ct) ?? throw QuoteOperationException.NotFound("Quote was not found.");
         RequirePending(view.Quote, expectedVersion);
+        RequireOrderAwaitingDecision(view.Order);
         if (string.IsNullOrWhiteSpace(reason)) throw QuoteOperationException.Validation("Rejection reason is required.");
         var now = timeProvider.GetUtcNow(); view.Quote.Status = SalesOrderQuoteStatuses.Rejected; view.Quote.RejectionReason = reason.Trim(); view.Quote.AcceptedByUserId = actor; view.Quote.AcceptedAt = now; view.Quote.Version++; view.Quote.UpdatedAt = now;
         await releaseService.ReleaseAsync(view.Order.Id, actor, view.Order.OrderCode, ct);
@@ -91,6 +106,11 @@ public sealed class QuoteService(
     }
 
     private static void RequirePending(SalesOrderQuote q, int expected) { if (q.Version != expected) throw QuoteOperationException.Conflict("Quote changed; reload before deciding."); if (q.Status != SalesOrderQuoteStatuses.PendingRetailerAcceptance) throw QuoteOperationException.Conflict("Only a pending quote can be decided."); }
+    private static void RequireOrderAwaitingDecision(SalesOrder order)
+    {
+        if (order.Status != OrderStatuses.Quoted)
+            throw QuoteOperationException.Conflict("Order is no longer awaiting a quote decision.");
+    }
     private static void EnsureRetailer(string role) { if (role != SystemRoles.Retailer) throw QuoteOperationException.Forbidden("Only the retailer can decide a quote."); }
     private static string NormalizePaymentMethod(string value) => value?.Trim() switch
     {

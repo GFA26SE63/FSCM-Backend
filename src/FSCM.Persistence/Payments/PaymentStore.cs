@@ -85,6 +85,11 @@ public sealed class PaymentStore(AppDbContext dbContext) : IPaymentStore
         };
 
     public void Add(Payment payment) => dbContext.PaymentRecords.Add(payment);
+    public void AddReceipt(PaymentReceipt receipt, PaymentReceiptAllocation allocation)
+    {
+        dbContext.PaymentReceiptRecords.Add(receipt);
+        dbContext.PaymentReceiptAllocationRecords.Add(allocation);
+    }
 
     public void AddAuditLog(AuditLog auditLog) => dbContext.AuditLogRecords.Add(auditLog);
 
@@ -141,14 +146,15 @@ public sealed class PaymentStore(AppDbContext dbContext) : IPaymentStore
             .SingleAsync(item => item.Id == order.RetailerId, cancellationToken);
         var pendingRefundAmount = await dbContext.ManualRefundRecords.AsNoTracking()
             .Where(item => item.PaymentId == payment.Id &&
-                (item.Status == RefundStatuses.PendingRefund || item.Status == RefundStatuses.AwaitingVerification))
+                RefundStatuses.Open.Contains(item.Status))
             .SumAsync(item => (decimal?)item.Amount, cancellationToken) ?? 0;
         var refundedAmount = await dbContext.ManualRefundRecords.AsNoTracking()
             .Where(item => item.PaymentId == payment.Id && item.Status == RefundStatuses.Refunded)
             .SumAsync(item => (decimal?)item.Amount, cancellationToken) ?? 0;
         var hasOpenDispute = await dbContext.ReceiptDiscrepancyRecords.AsNoTracking()
-            .AnyAsync(item => item.SalesOrderId == payment.SalesOrderId && item.Status != "Resolved",
+            .AnyAsync(item => item.SalesOrderId == payment.SalesOrderId && item.ResolvedAt == null,
                 cancellationToken);
         return new(payment, order, retailer, pendingRefundAmount, refundedAmount, hasOpenDispute);
     }
 }
+

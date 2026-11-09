@@ -5,6 +5,8 @@ using System.Text.Json;
 using FSCM.Application.Features.AllocationRuns;
 using FSCM.Application.Features.Inventory;
 using FSCM.Application.Features.Picking;
+using FSCM.Application.Features.Payments;
+using FSCM.Application.Features.Notifications;
 using FSCM.Domain.Authorization;
 using FSCM.Domain.Entities;
 
@@ -17,7 +19,9 @@ public sealed class OrderService(
     IPickingPlanService pickingPlanService,
     OrderReleaseService releaseService,
     TimeProvider timeProvider,
-    IRealTimeAllocationService? realTimeAllocationService = null)
+    IRealTimeAllocationService? realTimeAllocationService = null,
+    PaymentPlanService? paymentPlanService = null,
+    OrderNotificationService? notifications = null)
 {
     private const string OrderStepKey = "order.order_step_cartons";
     private static readonly TimeZoneInfo VietnamTimeZone = TimeZoneInfo.FindSystemTimeZoneById("Asia/Ho_Chi_Minh");
@@ -26,8 +30,11 @@ public sealed class OrderService(
     public async Task<OrderDetailResult> CreateAsync(
         CreateAssistedOrderData data,
         Guid salesUserId,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string actorRole = SystemRoles.Sales)
     {
+        if (actorRole is not (SystemRoles.Sales or SystemRoles.Retailer))
+            throw OrderOperationException.Forbidden("Role cannot create orders.");
         var normalized = Normalize(data);
         var requestHash = ComputeRequestHash(normalized, salesUserId);
         var existing = await store.FindByClientOrderKeyAsync(normalized.ClientOrderKey, cancellationToken);
@@ -38,11 +45,12 @@ public sealed class OrderService(
                 throw OrderOperationException.Conflict("Client order key was already used for a different request.");
             }
 
-            return await GetAsync(existing.Id, salesUserId, SystemRoles.Sales, cancellationToken);
+            return await GetAsync(existing.Id, salesUserId, actorRole, cancellationToken);
         }
 
-        var retailerContext = await store.FindRetailerContextAsync(
-            salesUserId, normalized.RetailerId, cancellationToken)
+        var retailerContext = await (actorRole == SystemRoles.Retailer
+            ? store.FindLinkedRetailerContextAsync(salesUserId, normalized.RetailerId, cancellationToken)
+            : store.FindRetailerContextAsync(salesUserId, normalized.RetailerId, cancellationToken))
             ?? throw OrderOperationException.Forbidden(
                 "Sales can only create orders for an active retailer in the assigned territory.");
         if (retailerContext.Retailer.Status != "Active")
@@ -76,13 +84,13 @@ public sealed class OrderService(
             var concurrent = await store.FindByClientOrderKeyAsync(normalized.ClientOrderKey, cancellationToken);
             if (concurrent is null || concurrent.CreatedByUserId != salesUserId || concurrent.RequestHash != requestHash)
                 throw;
-            return await GetAsync(concurrent.Id, salesUserId, SystemRoles.Sales, cancellationToken);
+            return await GetAsync(concurrent.Id, salesUserId, actorRole, cancellationToken);
         }
 
         store.ClearTracking();
         if (realTimeAllocationService is not null)
             await realTimeAllocationService.AllocateAsync(plan.Order.Id, salesUserId, cancellationToken);
-        return await GetAsync(plan.Order.Id, salesUserId, SystemRoles.Sales, cancellationToken);
+        return await GetAsync(plan.Order.Id, salesUserId, actorRole, cancellationToken);
     }
 
     /// <summary>
@@ -224,7 +232,7 @@ public sealed class OrderService(
             throw OrderOperationException.Forbidden("User cannot access this order.");
         }
 
-        return ToDetail(view);
+        return MaskForRole(ToDetail(view), actorRole);
     }
 
     public async Task<OrderDetailResult> GetByCodeAsync(
@@ -241,7 +249,7 @@ public sealed class OrderService(
             ?? throw OrderOperationException.NotFound("Order was not found.");
         if (!await store.CanViewAsync(view, actorUserId, actorRole, cancellationToken))
             throw OrderOperationException.Forbidden("User cannot access this order.");
-        return ToDetail(view);
+        return MaskForRole(ToDetail(view), actorRole);
     }
 
     public async Task<OrderTimelineResult> GetTimelineAsync(
@@ -252,8 +260,8 @@ public sealed class OrderService(
     {
         var view = await GetViewableAsync(orderId, actorUserId, actorRole, cancellationToken);
         return new(view.Order.Id, view.Order.OrderCode, view.Order.Status, AllocationState(view),
-            view.AllocationContext?.RunId, view.AllocationContext?.PlanStatus, view.AllocationContext?.OrderResult,
-            ToHistory(view.History), ToShipments(view.Deliveries));
+            view.AllocationContext?.RunId, view.AllocationContext?.OrderResult,
+            ToHistory(view.History), ToShipments(view.Shipments));
     }
 
     public async Task EnsurePricingScopeAsync(
@@ -263,41 +271,22 @@ public sealed class OrderService(
         CancellationToken cancellationToken)
     {
         if (actorRole is SystemRoles.Admin or SystemRoles.Operator) return;
-        if (actorRole != SystemRoles.Sales)
+        if (actorRole is not (SystemRoles.Sales or SystemRoles.Retailer))
             throw OrderOperationException.Forbidden("Role cannot request an order price snapshot.");
+        if (actorRole == SystemRoles.Retailer && !retailerId.HasValue)
+            throw OrderOperationException.Forbidden("Retailer pricing requires the linked store.");
         if (!retailerId.HasValue) return;
-        if (await store.FindRetailerContextAsync(actorUserId, retailerId.Value, cancellationToken) is null)
+        if (await (actorRole == SystemRoles.Retailer
+            ? store.FindLinkedRetailerContextAsync(actorUserId, retailerId.Value, cancellationToken)
+            : store.FindRetailerContextAsync(actorUserId, retailerId.Value, cancellationToken)) is null)
             throw OrderOperationException.Forbidden(
                 "Sales can only request retailer pricing inside the assigned territory.");
     }
 
-    /// <summary>
-    /// Reviewing an order parks it for the next run. It holds no stock: the run picks the
-    /// batches and only run approval reserves them, so two approved orders can still compete for
-    /// the same batch and the earlier acceptance time wins.
-    /// </summary>
-    public Task<OrderDetailResult> ApproveAsync(
-        Guid orderId,
-        int expectedVersion,
-        Guid reviewerUserId,
-        string actorRole,
-        CancellationToken cancellationToken) =>
-        TransitionAsync(orderId, expectedVersion, reviewerUserId, actorRole,
-            OrderStatuses.PendingAllocation, null, cancellationToken);
-
-    public Task<OrderDetailResult> RejectAsync(
-        Guid orderId,
-        int expectedVersion,
-        string reason,
-        Guid reviewerUserId,
-        string actorRole,
-        CancellationToken cancellationToken)
-    {
-        reason = CleanOptional(reason, 1_000)
-            ?? throw OrderOperationException.Validation("Rejection reason is required.");
-        return TransitionAsync(orderId, expectedVersion, reviewerUserId, actorRole,
-            OrderStatuses.Rejected, reason, cancellationToken);
-    }
+    // Review 2: there is no Admin/Operator approval or rejection of a sales order. After validation
+    // the order goes straight to Allocating and real-time allocation runs; the only pre-commit exit
+    // for the retailer/sales side is Withdraw (see CancelAsync), and after Quoted it is quote
+    // rejection (QuotesController). The former ApproveAsync/RejectAsync/TransitionAsync were removed.
 
     public async Task<OrderDetailResult> CancelAsync(
         Guid orderId,
@@ -309,7 +298,7 @@ public sealed class OrderService(
     {
         if (actorRole is not (SystemRoles.Sales or SystemRoles.Operator or SystemRoles.Admin))
         {
-            throw OrderOperationException.Forbidden("Role cannot cancel orders.");
+            throw OrderOperationException.Forbidden("Role cannot withdraw orders.");
         }
 
         reason = CleanOptional(reason, 1_000);
@@ -317,82 +306,55 @@ public sealed class OrderService(
         {
             var view = await store.FindAsync(orderId, true, transactionCancellationToken)
                 ?? throw OrderOperationException.NotFound("Order was not found.");
-            if (view.Order.Status == OrderStatuses.Cancelled) return;
+            // Withdraw is idempotent and only valid before allocation commits a reservation.
+            if (view.Order.Status == OrderStatuses.Withdrawn) return;
             if (actorRole == SystemRoles.Sales &&
-                (view.Order.CreatedByUserId != actorUserId || view.Order.Status != OrderStatuses.PendingApproval))
+                (view.Order.CreatedByUserId != actorUserId || view.Order.Status != OrderStatuses.Allocating))
             {
-                throw OrderOperationException.Forbidden("Sales can only cancel their own pending order.");
+                throw OrderOperationException.Forbidden("Sales can only withdraw their own order before allocation.");
             }
 
-            if (view.Order.Status is not (OrderStatuses.PendingApproval or OrderStatuses.PendingAllocation))
+            // Review 2: the only pre-commit exit is Withdraw while the order is still Allocating.
+            // Once Quoted (reservation held), the retailer rejects the quote instead.
+            if (view.Order.Status != OrderStatuses.Allocating)
             {
                 throw OrderOperationException.Conflict(
-                    "Only an order that has not entered an allocation run can be cancelled here.");
+                    "Only an order that has not been quoted can be withdrawn; reject the quote instead.");
             }
 
             EnsureOrderVersion(view.Order, expectedVersion);
             await pickingPlanService.CancelForOrderAsync(
                 view.Order.Id, timeProvider.GetUtcNow(), transactionCancellationToken);
-            // Two models can hold stock here. The older per-order one is what ReleaseInventoryAsync
-            // walks, and it is still right for orders captured before the daily runs; every order
-            // since holds its stock through the run, which is what the release service lets go of.
-            // Both run inside this transaction: an order marked cancelled while its stock is still
-            // held would be invisible to the next run and have no screen that explains it.
+            // Release any stock held for the order under either model (legacy per-order hold and the
+            // run-based reservation), inside this transaction so a withdrawn order never leaves
+            // stock held with no screen to explain it.
             await ReleaseInventoryAsync(view, actorUserId, transactionCancellationToken);
             await releaseService.ReleaseAsync(
                 view.Order.Id, actorUserId, view.Order.OrderCode, transactionCancellationToken);
+            if (paymentPlanService is not null)
+            {
+                await paymentPlanService.CancelUnpaidAsync(view.Order.Id,
+                    reason ?? "Order was cancelled before PO conversion.",
+                    timeProvider.GetUtcNow(), transactionCancellationToken);
+            }
             var fromStatus = view.Order.Status;
             var now = timeProvider.GetUtcNow();
-            ApplyTransition(view.Order, OrderStatuses.Cancelled, actorUserId, reason, now);
-            store.AddHistory(NewHistory(view.Order.Id, fromStatus, OrderStatuses.Cancelled,
+            ApplyTransition(view.Order, OrderStatuses.Withdrawn, actorUserId, reason, now);
+            store.AddHistory(NewHistory(view.Order.Id, fromStatus, OrderStatuses.Withdrawn,
                 actorUserId, reason, now));
             await store.SaveChangesAsync(transactionCancellationToken);
         }, cancellationToken);
 
         store.ClearTracking();
-        return await GetAsync(orderId, actorUserId, actorRole, cancellationToken);
-    }
-
-    private async Task<OrderDetailResult> TransitionAsync(
-        Guid orderId,
-        int expectedVersion,
-        Guid actorUserId,
-        string actorRole,
-        string targetStatus,
-        string? reason,
-        CancellationToken cancellationToken)
-    {
-        if (actorRole is not (SystemRoles.Operator or SystemRoles.Admin))
+        var result = await GetAsync(orderId, actorUserId, actorRole, cancellationToken);
+        if (notifications is not null)
         {
-            throw OrderOperationException.Forbidden("Only Admin or Operator can approve or reject orders.");
+            await notifications.PublishRetailerAsync(orderId, "OrderCancelled",
+                "Đơn hàng đã bị hủy",
+                $"Đơn {result.OrderCode} đã được hủy trước khi phát hành PO; lượng hàng giữ trước đã được trả về tồn khả dụng.",
+                orderId, $"/retailer/orders/{orderId}", cancellationToken);
         }
-
-        await store.ExecuteInTransactionAsync(async transactionCancellationToken =>
-        {
-            var view = await store.FindAsync(orderId, true, transactionCancellationToken)
-                ?? throw OrderOperationException.NotFound("Order was not found.");
-            // Re-sending the same decision is a no-op: nothing is reserved or issued here.
-            if (view.Order.Status == targetStatus) return;
-            if (view.Order.Status != OrderStatuses.PendingApproval)
-            {
-                throw OrderOperationException.Conflict("Only pending orders can be approved or rejected.");
-            }
-
-            EnsureOrderVersion(view.Order, expectedVersion);
-            var now = timeProvider.GetUtcNow();
-            if (targetStatus == OrderStatuses.Rejected)
-            {
-                await ReleaseInventoryAsync(view, actorUserId, transactionCancellationToken);
-            }
-
-            ApplyTransition(view.Order, targetStatus, actorUserId, reason, now);
-            store.AddHistory(NewHistory(view.Order.Id, OrderStatuses.PendingApproval,
-                targetStatus, actorUserId, reason, now));
-            await store.SaveChangesAsync(transactionCancellationToken);
-        }, cancellationToken);
-
-        store.ClearTracking();
-        return await GetAsync(orderId, actorUserId, actorRole, cancellationToken);
+        return result;
     }
 
     private async Task ReleaseInventoryAsync(
@@ -711,13 +673,9 @@ public sealed class OrderService(
         string? reason,
         DateTimeOffset now)
     {
+        // Only the Withdraw transition flows through here now; it records the reason on the order.
         order.Status = targetStatus;
-        if (targetStatus is OrderStatuses.PendingAllocation or OrderStatuses.Rejected)
-        {
-            order.ReviewedByUserId = actorUserId;
-            order.ReviewedAt = now;
-        }
-        order.RejectionReason = targetStatus == OrderStatuses.Rejected ? reason : order.RejectionReason;
+        order.RejectionReason = targetStatus == OrderStatuses.Withdrawn ? reason : order.RejectionReason;
         order.Version++;
         order.UpdatedAt = now;
     }
@@ -753,17 +711,40 @@ public sealed class OrderService(
         FinalPricePendingAllocation(view),
         AllocationState(view),
         view.AllocationContext?.RunId,
-        view.AllocationContext?.PlanStatus,
         view.AllocationContext?.OrderResult,
-        view.AllocationContext?.WarehouseProgress.Count(item => item.ShipmentId.HasValue) ?? view.Deliveries.Count,
+        view.AllocationContext?.WarehouseProgress.Count(item => item.ShipmentId.HasValue) ?? view.Shipments.Count,
         (int)view.Lines.Sum(item => item.Line.OrderedQuantity),
         view.Lines.Count,
         view.Order.Source,
         view.Order.Version,
-        view.Order.CreatedAt)
+        view.Order.CreatedAt);
+
+    /// <summary>
+    /// Review 2: MLOR, allocation scores, distances and review internals are staff-only. A Retailer
+    /// sees the quoted batches, quantities and locked prices, never how a batch was ranked or the
+    /// freshness threshold configured for them.
+    /// </summary>
+    private static OrderDetailResult MaskForRole(OrderDetailResult detail, string actorRole)
     {
-        OfficialAmount = OfficialAmount(view)
-    };
+        if (actorRole != SystemRoles.Retailer) return detail;
+        var maskedMlor = new OrderMlorSnapshotResult(string.Empty, null, 0, null, 0m, null, default);
+        return detail with
+        {
+            AllocationRunId = null,
+            Lines = detail.Lines.Select(line => line with
+            {
+                Mlor = maskedMlor,
+                Allocations = line.Allocations.Select(allocation => allocation with
+                {
+                    DistanceMeters = 0,
+                    ShelfLifeScore = 0,
+                    DistanceScore = 0,
+                    CoverageScore = 0,
+                    WeightedScore = 0
+                }).ToArray()
+            }).ToArray()
+        };
+    }
 
     private static OrderDetailResult ToDetail(OrderView view) => new(
         view.Order.Id,
@@ -773,7 +754,6 @@ public sealed class OrderService(
         view.Order.RetailerNameSnapshot,
         view.Order.SalesGroupId,
         view.Order.CreatedByUserId,
-        view.Order.ReviewedByUserId,
         view.Order.Source,
         view.Order.Status,
         view.Order.PaymentMethod,
@@ -787,7 +767,6 @@ public sealed class OrderService(
         FinalPricePendingAllocation(view),
         AllocationState(view),
         view.AllocationContext?.RunId,
-        view.AllocationContext?.PlanStatus,
         view.AllocationContext?.OrderResult,
         view.Order.RejectionReason ?? view.AllocationContext?.ShortageReason,
         view.Order.OfflineEstimatedAmount,
@@ -798,19 +777,31 @@ public sealed class OrderService(
         view.Order.UpdatedAt,
         view.Lines.OrderBy(item => item.Line.LineNumber).Select(item => ToLine(view, item)).ToArray(),
         ToHistory(view.History),
-        ToShipments(view.Deliveries))
+        ToShipments(view.Shipments))
     {
-        OfficialAmount = OfficialAmount(view),
         AllocationRunCode = view.AllocationContext?.RunCode,
-        AllocationPlanVersion = view.AllocationContext?.PlanVersionNumber,
-        OfficialPricedAt = view.AllocationContext?.PlanStatus == AllocationPlanVersionStatuses.Approved
-            ? view.AllocationContext.PricedAt : null,
+        Payment = ToPaymentSummary(view.Payment),
+        // Locked price breakdown (F60): sum of the per-batch snapshot, never recomputed.
+        QuantityPromotionTotal = decimal.Round(view.AllocationContext?.Fragments
+            .Sum(fragment => (fragment.ListUnitPrice - fragment.BaseUnitPrice) * fragment.Quantity) ?? 0m, 2),
+        ShelfLifeDiscountTotal = decimal.Round(view.AllocationContext?.Fragments
+            .Sum(fragment => fragment.ShelfLifeDiscountPerUnit * fragment.Quantity) ?? 0m, 2),
         WarehouseProgress = view.AllocationContext?.WarehouseProgress.Select(item =>
             new OrderWarehouseProgressResult(
                 item.WarehouseId, item.WarehouseCode, item.PickingListId, item.PickingCode,
                 item.PickingStatus, item.ShipmentId, item.ShipmentCode, item.ShipmentStatus,
                 item.PlannedQuantity, item.PickedQuantity, item.ReceivedQuantity)).ToArray() ?? []
     };
+
+    private static OrderPaymentSummaryResult? ToPaymentSummary(Payment? payment)
+    {
+        if (payment is null) return null;
+        var today = DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, VietnamTimeZone).DateTime);
+        var outstanding = Math.Max(0, payment.AdjustedAmount - payment.ConfirmedAmount);
+        var overdue = outstanding > 0 && payment.DueDate.HasValue && today > payment.DueDate.Value;
+        return new(payment.Method, overdue ? PaymentStatuses.Overdue : payment.Status, payment.Amount,
+            payment.AdjustedAmount, payment.ConfirmedAmount, outstanding, payment.DueDate, overdue);
+    }
 
     private static OrderLineResult ToLine(OrderView view, OrderLineView item) => new(
             item.Line.Id,
@@ -882,17 +873,14 @@ public sealed class OrderService(
                 .Select(fragment => new OrderAllocationFragmentResult(
                     fragment.AllocationId, fragment.PlanPriceId, fragment.BatchId, fragment.BatchCode,
                     fragment.BatchExpirationDate, fragment.WarehouseId, fragment.WarehouseCode,
-                    fragment.Quantity, fragment.Sequence, fragment.EstimatedArrivalAt,
+                    fragment.Quantity, fragment.Sequence, fragment.WeightedScore,
+                    fragment.DistanceMeters, fragment.EstimatedArrivalAt,
                     fragment.RemainingLifeHoursAtArrival, fragment.ListUnitPrice,
                     fragment.ListUnitPrice - fragment.BaseUnitPrice, fragment.BaseUnitPrice,
                     fragment.RemainingShelfLifePercent, fragment.DiscountRuleId,
                     fragment.DiscountRuleScope, fragment.DiscountRuleCode, fragment.DiscountRuleVersion,
                     fragment.DiscountType, fragment.DiscountValue, fragment.ShelfLifeDiscountPerUnit,
-                    fragment.FinalUnitPrice, fragment.NetAmount, fragment.DiscountReason)).ToArray() ?? [],
-        OfficialNetAmount = view.AllocationContext?.PlanStatus == AllocationPlanVersionStatuses.Approved
-                ? view.AllocationContext.Fragments.Where(fragment => fragment.SalesOrderLineId == item.Line.Id)
-                    .Sum(fragment => fragment.NetAmount)
-                : null
+                    fragment.FinalUnitPrice, fragment.NetAmount, fragment.DiscountReason)).ToArray() ?? []
     };
 
     private static IReadOnlyCollection<OrderStatusHistoryResult> ToHistory(
@@ -902,28 +890,21 @@ public sealed class OrderService(
                 item.ChangedByUserId, item.ChangedAt)).ToArray();
 
     private static IReadOnlyCollection<OrderShipmentLinkResult> ToShipments(
-        IReadOnlyCollection<Delivery> deliveries) =>
-        deliveries.OrderBy(item => item.CreatedAt).ThenBy(item => item.Id).Select(item =>
-            new OrderShipmentLinkResult(item.Id, item.Status, item.DispatchedAt, item.DeliveredAt)).ToArray();
+        IReadOnlyCollection<OrderShipmentView> shipments) =>
+        shipments.OrderBy(item => item.Id).Select(item =>
+            new OrderShipmentLinkResult(item.Id, item.Status, item.DispatchedAt, item.ReceivedAt)).ToArray();
 
+    // Review 2: derived from the canonical order status. Allocation is real-time, so there is no
+    // proposed/approved plan: an order is being allocated, allocated (Quoted onwards) or failed.
     private static string AllocationState(OrderView view) => view.Order.Status switch
     {
-        OrderStatuses.Cancelled or OrderStatuses.Rejected => "NotApplicable",
-        _ when view.AllocationContext is not null => view.AllocationContext.PlanStatus == AllocationPlanVersionStatuses.Approved
-            ? "Allocated" : "Proposed",
-        _ when view.Lines.SelectMany(item => item.Allocations).Any() =>
-            view.Order.FinalPricePendingAllocation ? "Proposed" : "Allocated",
-        _ => "PendingRun"
+        OrderStatuses.Withdrawn or OrderStatuses.QuoteRejected or OrderStatuses.QuoteExpired => "NotApplicable",
+        OrderStatuses.Allocating => "Allocating",
+        OrderStatuses.OutOfStock or OrderStatuses.AllocationFailed or OrderStatuses.AllocationConflict => "Failed",
+        _ => "Allocated"
     };
 
-    private static decimal? OfficialAmount(OrderView view) =>
-        view.AllocationContext?.PlanStatus == AllocationPlanVersionStatuses.Approved
-            ? view.AllocationContext.Fragments.Sum(item => item.NetAmount)
-            : null;
-
-    private static bool FinalPricePendingAllocation(OrderView view) =>
-        view.AllocationContext?.PlanStatus != AllocationPlanVersionStatuses.Approved &&
-        view.Order.FinalPricePendingAllocation;
+    private static bool FinalPricePendingAllocation(OrderView view) => view.Order.FinalPricePendingAllocation;
 
     private static string ComputeRequestHash(CreateAssistedOrderData data, Guid salesUserId)
     {
@@ -983,3 +964,6 @@ public sealed class OrderService(
         OrderStatusHistory History,
         AuditLog Audit);
 }
+
+
+

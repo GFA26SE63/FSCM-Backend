@@ -1,4 +1,4 @@
-using FSCM.Domain.Entities;
+﻿using FSCM.Domain.Entities;
 
 namespace FSCM.Application.Features.Orders;
 
@@ -25,16 +25,26 @@ public sealed record OrderLineView(
     IReadOnlyCollection<Allocation> Allocations,
     OrderPromotion? OrdinaryPromotion);
 
+/// <summary>One warehouse shipment part (F92), as read for the order detail/timeline views.</summary>
+public sealed record OrderShipmentView(
+    Guid Id,
+    string Status,
+    DateTimeOffset? DispatchedAt,
+    DateTimeOffset? ReceivedAt);
+
 public sealed record OrderView(
     SalesOrder Order,
     IReadOnlyCollection<OrderLineView> Lines,
     IReadOnlyCollection<OrderStatusHistory> History,
-    IReadOnlyCollection<Delivery> Deliveries,
+    IReadOnlyCollection<OrderShipmentView> Shipments,
     IReadOnlyDictionary<Guid, string> BatchCodes,
     IReadOnlyDictionary<Guid, string> WarehouseCodes,
     IReadOnlyDictionary<Guid, int> InventoryVersions)
 {
     public OrderAllocationReadContext? AllocationContext { get; init; }
+
+    /// <summary>The order's payment ledger (F64), when one exists.</summary>
+    public Payment? Payment { get; init; }
 }
 
 public sealed record OrderAllocationReadContext(
@@ -61,6 +71,8 @@ public sealed record OrderAllocationFragmentView(
     string WarehouseCode,
     decimal Quantity,
     int Sequence,
+    decimal WeightedScore,
+    decimal? DistanceMeters,
     DateTimeOffset EstimatedArrivalAt,
     decimal RemainingLifeHoursAtArrival,
     decimal ListUnitPrice,
@@ -93,6 +105,8 @@ public sealed record OrderWarehouseProgressView(
 public interface IOrderStore
 {
     Task<SalesOrder?> FindByClientOrderKeyAsync(Guid clientOrderKey, CancellationToken cancellationToken);
+    Task<OrderRetailerContext?> FindLinkedRetailerContextAsync(Guid userId, Guid retailerId, CancellationToken cancellationToken) =>
+        Task.FromResult<OrderRetailerContext?>(null);
     Task<OrderRetailerContext?> FindRetailerContextAsync(Guid salesUserId, Guid retailerId, CancellationToken cancellationToken);
     Task<Product?> FindPublishedProductAsync(Guid productId, CancellationToken cancellationToken);
     Task<IReadOnlyCollection<OrderInventoryCandidate>> ListCandidatesAsync(Guid productId, CancellationToken cancellationToken);
@@ -118,3 +132,4 @@ public interface IOrderStore
         CancellationToken cancellationToken);
     void ClearTracking();
 }
+

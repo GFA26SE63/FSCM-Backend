@@ -9,6 +9,7 @@ public sealed record RetailerDetails(
     int CreditTermDays, int? RequestedCreditTermDays, string PotentialClass, string? AssessmentNote, Guid DeclaredByUserId,
     Guid? ReviewedByUserId, DateTimeOffset? ReviewedAt, string? ReviewReason,
     DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt,
+    string? StorefrontImageUrl,
     RetailerGeneralInformation GeneralInformation,
     IReadOnlyCollection<RetailerMlorDeclarationResult> MlorDeclarations,
     bool CanSubmitForReview);

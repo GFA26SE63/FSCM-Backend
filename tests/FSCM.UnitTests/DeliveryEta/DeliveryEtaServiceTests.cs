@@ -7,26 +7,28 @@ namespace FSCM.UnitTests.DeliveryEta;
 
 public sealed class DeliveryEtaServiceTests
 {
-    // 2026-10-21 03:00 UTC is 10:00 in Vietnam, two hours before the 12:00 allocation run.
+    // 2026-10-21 03:00 UTC is 10:00 in Vietnam.
     private static readonly DateTimeOffset Now = new(2026, 10, 21, 3, 0, 0, TimeSpan.Zero);
     private static readonly Guid Actor = Guid.Parse("11111111-1111-1111-1111-111111111111");
 
     [Fact]
-    public async Task Eta_waits_for_the_run_approval_picking_and_the_next_dispatch_slot()
+    public async Task Eta_starts_at_real_time_allocation_then_waits_for_preparation_and_dispatch()
     {
         var fixture = await Fixture.CreateAsync();
 
         var result = await fixture.Service.EstimateAsync(fixture.Request(), CancellationToken.None);
 
         var local = TimeZoneInfo.ConvertTime(result.EstimatedArrivalAt, Fixture.Vietnam);
-        // 10:00 -> run 12:00 -> approved 14:00 -> picked 18:00 -> loaded 19:00
+        // Allocation is immediate at 10:00 -> picked 14:00 -> loaded 15:00
         // -> next slot 06:00 next day -> +120 transit -> +60 buffer -> 09:00 on the 22nd.
         Assert.Equal(new DateTime(2026, 10, 22, 9, 0, 0), local.DateTime);
-        Assert.Equal(120, result.Breakdown.WaitForRunMinutes);
-        Assert.Equal(120, result.Breakdown.ApprovalMinutes);
+        Assert.Equal(Now, result.Breakdown.AllocationRunAt);
+        Assert.Equal(Now, result.Breakdown.PlanApprovedAt);
+        Assert.Equal(0, result.Breakdown.WaitForRunMinutes);
+        Assert.Equal(0, result.Breakdown.ApprovalMinutes);
         Assert.Equal(240, result.Breakdown.PreparationMinutes);
         Assert.Equal(60, result.Breakdown.HandlingMinutes);
-        Assert.Equal(660, result.Breakdown.WaitForDispatchSlotMinutes);
+        Assert.Equal(900, result.Breakdown.WaitForDispatchSlotMinutes);
         Assert.Equal(120, result.Breakdown.TransitMinutes);
         Assert.Equal(60, result.Breakdown.BufferMinutes);
     }
@@ -44,16 +46,16 @@ public sealed class DeliveryEtaServiceTests
     }
 
     [Fact]
-    public async Task An_order_arriving_after_the_cutoff_waits_for_the_next_day_run()
+    public async Task Any_reference_time_allocates_immediately_without_a_cutoff()
     {
         var fixture = await Fixture.CreateAsync();
-        // 06:00 UTC is 13:00 in Vietnam, one hour after the run has already started.
+        // 06:00 UTC is 13:00 in Vietnam; the former daily cutoff no longer matters.
         var afterCutoff = new DateTimeOffset(2026, 10, 21, 6, 0, 0, TimeSpan.Zero);
 
         var result = await fixture.Service.EstimateAsync(fixture.Request(afterCutoff), CancellationToken.None);
 
-        var runLocal = TimeZoneInfo.ConvertTime(result.Breakdown.AllocationRunAt, Fixture.Vietnam);
-        Assert.Equal(new DateTime(2026, 10, 22, 12, 0, 0), runLocal.DateTime);
+        Assert.Equal(afterCutoff, result.Breakdown.AllocationRunAt);
+        Assert.Equal(0, result.Breakdown.WaitForRunMinutes);
     }
 
     [Fact]
@@ -105,45 +107,33 @@ public sealed class DeliveryEtaServiceTests
     }
 
     [Fact]
-    public async Task A_schedule_whose_approval_deadline_does_not_follow_the_run_is_rejected()
+    public async Task Legacy_run_and_approval_fields_no_longer_gate_eta()
     {
         var fixture = await Fixture.CreateAsync();
-        // Nothing can be decided at the very moment the run closes.
         fixture.Store.ScheduleConfiguration!.ConfigValue =
             Fixture.ScheduleJson(runLocalTime: "14:00", approvalDeadlineLocalTime: "14:00");
 
-        var exception = await Assert.ThrowsAsync<DeliveryEtaOperationException>(() =>
-            fixture.Service.EstimateAsync(fixture.Request(), CancellationToken.None));
+        var result = await fixture.Service.EstimateAsync(fixture.Request(), CancellationToken.None);
 
-        Assert.Equal("validation_error", exception.Code);
+        Assert.Equal(0, result.Breakdown.WaitForRunMinutes);
+        Assert.Equal(0, result.Breakdown.ApprovalMinutes);
     }
 
     [Fact]
-    public async Task A_cutoff_at_midnight_is_a_schedule_the_system_can_hold()
+    public async Task Schedule_exposes_only_dispatch_slots_for_the_business_date()
     {
         var fixture = await Fixture.CreateAsync();
-        // The day closes at midnight and the run allocates what came in during the day that just
-        // ended. Nothing can be earlier in that calendar day than 00:00, so a timetable compared as
-        // times of day rejected this outright - which is what made the arrangement unreachable.
         fixture.Store.ScheduleConfiguration!.ConfigValue = Fixture.ScheduleJson(runLocalTime: "00:00");
 
         var schedule = await fixture.Service.GetScheduleAsync(
             new DateOnly(2026, 10, 26), CancellationToken.None);
 
-        var at = schedule.Milestones.ToDictionary(item => item.Key, item => item.At);
-        // The advice and the review reminder belong to the working day being closed.
-        Assert.Equal(new DateTimeOffset(2026, 10, 25, 11, 0, 0, TimeSpan.FromHours(7)),
-            at["sales_submission_advice"]);
-        Assert.Equal(new DateTimeOffset(2026, 10, 25, 11, 30, 0, TimeSpan.FromHours(7)),
-            at["order_review_reminder"]);
-        // The cutoff itself stays on the business date it belongs to.
-        Assert.Equal(new DateTimeOffset(2026, 10, 26, 0, 0, 0, TimeSpan.FromHours(7)),
-            at["allocation_run"]);
-        // The approval milestones belong to the day the run is on.
-        Assert.Equal(new DateTimeOffset(2026, 10, 26, 13, 30, 0, TimeSpan.FromHours(7)),
-            at["plan_approval_reminder"]);
+        Assert.Equal(["dispatch_slot_1", "dispatch_slot_2"],
+            schedule.Milestones.Select(item => item.Key));
+        Assert.Equal(new DateTimeOffset(2026, 10, 26, 6, 0, 0, TimeSpan.FromHours(7)),
+            schedule.Milestones[0].At);
         Assert.Equal(new DateTimeOffset(2026, 10, 26, 14, 0, 0, TimeSpan.FromHours(7)),
-            at["plan_approval_deadline"]);
+            schedule.Milestones[1].At);
     }
 
     [Fact]
@@ -181,37 +171,31 @@ public sealed class DeliveryEtaServiceTests
     }
 
     [Fact]
-    public async Task A_reminder_that_would_land_after_a_midnight_cutoff_is_still_rejected()
+    public async Task Legacy_reminder_times_are_ignored()
     {
         var fixture = await Fixture.CreateAsync();
-        // 00:30 is after the cutoff on the same day, and rolling it back a day would put it after
-        // the previous cutoff instead. Either way it reminds nobody in time.
         fixture.Store.ScheduleConfiguration!.ConfigValue = Fixture.ScheduleJson(
             runLocalTime: "00:00", orderReviewReminderLocalTime: "00:30");
 
-        var exception = await Assert.ThrowsAsync<DeliveryEtaOperationException>(() =>
-            fixture.Service.GetScheduleAsync(null, CancellationToken.None));
+        var schedule = await fixture.Service.GetScheduleAsync(null, CancellationToken.None);
 
-        Assert.Equal("validation_error", exception.Code);
+        Assert.Equal(2, schedule.Milestones.Count);
     }
 
     [Fact]
-    public async Task The_run_day_timetable_comes_back_in_order_with_the_advice_marked_advisory()
+    public async Task Dispatch_timetable_comes_back_in_order()
     {
         var fixture = await Fixture.CreateAsync();
 
         var schedule = await fixture.Service.GetScheduleAsync(new DateOnly(2026, 10, 21), CancellationToken.None);
 
         Assert.Equal(
-            ["sales_submission_advice", "order_review_reminder", "allocation_run", "plan_approval_reminder", "plan_approval_deadline"],
+            ["dispatch_slot_1", "dispatch_slot_2"],
             schedule.Milestones.Select(item => item.Key));
         Assert.Equal(
-            [new TimeOnly(11, 0), new TimeOnly(11, 30), new TimeOnly(12, 0), new TimeOnly(13, 30), new TimeOnly(14, 0)],
+            [new TimeOnly(6, 0), new TimeOnly(14, 0)],
             schedule.Milestones.Select(item => item.LocalTime));
-        // Only the sales advice is advisory: an order accepted after it and before noon still runs.
-        Assert.Equal(
-            [true, false, false, false, false],
-            schedule.Milestones.Select(item => item.IsAdvisory));
+        Assert.All(schedule.Milestones, item => Assert.False(item.IsAdvisory));
     }
 
     [Fact]
@@ -221,52 +205,47 @@ public sealed class DeliveryEtaServiceTests
 
         var schedule = await fixture.Service.GetScheduleAsync(new DateOnly(2026, 10, 21), CancellationToken.None);
 
-        var cutoff = schedule.Milestones.Single(item => item.Key == "allocation_run");
-        // Noon in Vietnam, not noon UTC: a portal must not have to re-derive the zone.
-        Assert.Equal(new DateTimeOffset(2026, 10, 21, 12, 0, 0, TimeSpan.FromHours(7)), cutoff.At);
+        var firstDispatch = schedule.Milestones.Single(item => item.Key == "dispatch_slot_1");
+        Assert.Equal(new DateTimeOffset(2026, 10, 21, 6, 0, 0, TimeSpan.FromHours(7)), firstDispatch.At);
         Assert.Equal("Asia/Ho_Chi_Minh", schedule.TimeZone);
     }
 
     [Fact]
-    public async Task A_schedule_published_before_the_reminders_existed_still_loads()
+    public async Task A_schedule_with_legacy_fields_still_loads()
     {
         var fixture = await Fixture.CreateAsync();
 
         var schedule = await fixture.Service.GetScheduleAsync(new DateOnly(2026, 10, 21), CancellationToken.None);
 
-        // The stored document carries no reminder times at all, so the recommended ones stand in
-        // rather than the whole schedule failing to load.
-        Assert.Equal(new TimeOnly(11, 0), schedule.Milestones[0].LocalTime);
-        Assert.Equal(new TimeOnly(13, 30), schedule.Milestones[3].LocalTime);
+        Assert.Equal(new TimeOnly(6, 0), schedule.Milestones[0].LocalTime);
+        Assert.Equal(new TimeOnly(14, 0), schedule.Milestones[1].LocalTime);
     }
 
     [Fact]
-    public async Task A_reminder_to_send_orders_after_the_cutoff_is_rejected()
+    public async Task A_legacy_order_reminder_does_not_change_dispatch_configuration()
     {
         var fixture = await Fixture.CreateAsync();
         fixture.Store.ScheduleConfiguration!.ConfigValue = Fixture.ScheduleJson(orderReviewReminderLocalTime: "12:30");
 
-        var exception = await Assert.ThrowsAsync<DeliveryEtaOperationException>(() =>
-            fixture.Service.GetScheduleAsync(null, CancellationToken.None));
+        var schedule = await fixture.Service.GetScheduleAsync(null, CancellationToken.None);
 
-        Assert.Equal("validation_error", exception.Code);
+        Assert.Equal([new TimeOnly(6, 0), new TimeOnly(14, 0)],
+            schedule.Milestones.Select(item => item.LocalTime));
     }
 
     [Fact]
-    public async Task A_plan_reminder_outside_the_window_it_reminds_about_is_rejected()
+    public async Task A_legacy_plan_reminder_does_not_change_dispatch_configuration()
     {
         var fixture = await Fixture.CreateAsync();
-        // After the deadline it reminds nobody of anything.
         fixture.Store.ScheduleConfiguration!.ConfigValue = Fixture.ScheduleJson(planApprovalReminderLocalTime: "15:00");
 
-        var exception = await Assert.ThrowsAsync<DeliveryEtaOperationException>(() =>
-            fixture.Service.GetScheduleAsync(null, CancellationToken.None));
+        var schedule = await fixture.Service.GetScheduleAsync(null, CancellationToken.None);
 
-        Assert.Equal("validation_error", exception.Code);
+        Assert.Equal(2, schedule.Milestones.Count);
     }
 
     [Fact]
-    public async Task Custom_milestones_are_kept_as_published()
+    public async Task Legacy_custom_milestones_do_not_replace_dispatch_slots()
     {
         var fixture = await Fixture.CreateAsync();
         fixture.Store.ScheduleConfiguration!.ConfigValue = Fixture.ScheduleJson(
@@ -279,7 +258,7 @@ public sealed class DeliveryEtaServiceTests
         var schedule = await fixture.Service.GetScheduleAsync(new DateOnly(2026, 10, 21), CancellationToken.None);
 
         Assert.Equal(
-            [new TimeOnly(8, 30), new TimeOnly(9, 30), new TimeOnly(10, 0), new TimeOnly(11, 0), new TimeOnly(12, 0)],
+            [new TimeOnly(6, 0), new TimeOnly(14, 0)],
             schedule.Milestones.Select(item => item.LocalTime));
     }
 

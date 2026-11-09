@@ -38,6 +38,18 @@ public sealed class FakeLoyaltyAccrualStore : ILoyaltyAccrualStore
         Rows.Add((retailerLoyaltyId, salesOrderId, transactionType, points, movesBalance, note));
         Balances.TryAdd(retailerLoyaltyId, 0);
         if (movesBalance) Balances[retailerLoyaltyId] += points;
+        if (salesOrderId.HasValue && Views.TryGetValue(salesOrderId.Value, out var view) &&
+            transactionType is LoyaltyTransactionTypes.Earned or LoyaltyTransactionTypes.EarnedAdjusted)
+        {
+            Views[salesOrderId.Value] = view with
+            {
+                AlreadyEarned = true,
+                EarnedPointsForOrder = view.EarnedPointsForOrder + points,
+                Balance = view.Balance is null
+                    ? null
+                    : view.Balance with { CurrentPoints = Balances[retailerLoyaltyId] }
+            };
+        }
         return Task.FromResult(Balances[retailerLoyaltyId]);
     }
 
