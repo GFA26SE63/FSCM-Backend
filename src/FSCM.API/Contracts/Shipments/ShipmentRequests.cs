@@ -20,3 +20,4 @@ public sealed record ConfirmShipmentReceiptRequest(
 
 /// <summary>F96: the warehouse confirms this delivery part physically left.</summary>
 public sealed record ConfirmShipmentIssueRequest(int ExpectedVersion);
+public sealed record ResolveShipmentExceptionRequest(string Reason, int ExpectedVersion);

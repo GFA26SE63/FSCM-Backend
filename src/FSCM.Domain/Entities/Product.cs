@@ -13,6 +13,9 @@ public sealed class Product
     public int ShelfLifeHours { get; set; }
     public int NearDateThresholdHours { get; set; }
     public string Status { get; set; } = string.Empty;
+
+    /// <summary>Azure Blob key for the catalog image (nullable). Only the key is stored, not bytes.</summary>
+    public string? ImageBlobKey { get; set; }
     public DateTimeOffset? PublishedAt { get; set; }
     public DateTimeOffset? InactivatedAt { get; set; }
     public DateTimeOffset CreatedAt { get; set; }

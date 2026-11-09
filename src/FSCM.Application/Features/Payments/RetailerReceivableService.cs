@@ -1,4 +1,4 @@
-namespace FSCM.Application.Features.Payments;
+﻿namespace FSCM.Application.Features.Payments;
 
 public sealed class RetailerReceivableService(
     IRetailerReceivableStore store,
@@ -57,11 +57,12 @@ public sealed class RetailerReceivableService(
     private static RetailerReceivableResult ToResult(RetailerReceivableView view, DateOnly today)
     {
         var payment = view.Payment.Payment;
-        var pendingDisputed = view.Disputes.Where(item => item.Status != "Resolved")
+        var pendingDisputed = view.Disputes.Where(item => item.ResolvedAt == null)
             .Sum(item => item.DisputedAmount);
         var outstanding = Math.Max(0, payment.AdjustedAmount - payment.ConfirmedAmount);
         var collectible = Math.Max(0, outstanding - pendingDisputed);
-        var overdue = outstanding > 0 && payment.DueDate.HasValue && today > payment.DueDate.Value;
+        var overdue = payment.Status != PaymentStatuses.Cancelled && outstanding > 0 &&
+                      payment.DueDate.HasValue && today > payment.DueDate.Value;
         var daysOverdue = overdue ? today.DayNumber - payment.DueDate!.Value.DayNumber : 0;
         var effectiveStatus = overdue ? PaymentStatuses.Overdue : payment.Status;
         var refundDue = Math.Max(0,
@@ -92,8 +93,12 @@ public sealed class RetailerReceivableService(
     private static string NormalizeStatus(string value) => value.Trim() switch
     {
         PaymentStatuses.Unpaid => PaymentStatuses.Unpaid,
+        PaymentStatuses.PartiallyPaid => PaymentStatuses.PartiallyPaid,
         PaymentStatuses.Paid => PaymentStatuses.Paid,
         PaymentStatuses.Overdue => PaymentStatuses.Overdue,
+        PaymentStatuses.Cancelled => PaymentStatuses.Cancelled,
         _ => throw PaymentOperationException.Validation("Receivable status filter is invalid.")
     };
 }
+
+

@@ -25,6 +25,13 @@ public sealed class ManualRefund
     public Guid? VerifiedByUserId { get; set; }
     public DateTimeOffset? VerifiedAt { get; set; }
     public string? VerificationNote { get; set; }
+
+    /// <summary>
+    /// S3-101-2: the claim this refund resolves, when it was raised by an approved
+    /// FinancialAdjustment. Null for a refund raised from a valid withdraw/cancel instead.
+    /// </summary>
+    public Guid? ReceiptDiscrepancyId { get; set; }
+
     public Guid CreatedByUserId { get; set; }
     public int Version { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
