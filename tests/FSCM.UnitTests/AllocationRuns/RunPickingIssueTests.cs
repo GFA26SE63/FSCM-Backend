@@ -156,6 +156,38 @@ public sealed class RunPickingIssueTests
         Assert.Equal(10m, split.Quantity);
     }
 
+    [Fact]
+    public async Task Audit_late_po_must_not_leave_order_without_picking_split()
+    {
+        var run = Guid.NewGuid();
+        var store = new FakeStore(run, AllocationRunStatuses.Approved);
+        var quotes = new FakeQuoteStore();
+        var warehouse = Guid.NewGuid();
+        var first = Guid.NewGuid();
+        var late = Guid.NewGuid();
+        store.AddCustom(first, "DH-000001", warehouse, "B-001", 10m);
+        store.AddCustom(late, "DH-000002", warehouse, "B-001", 5m);
+        quotes.Views.Add(new(new SalesOrderQuote { SalesOrderId = first, Status = "Accepted" }, new SalesOrder { Id = first }, new PurchaseOrder()));
+        var pending = new SalesOrderQuote { SalesOrderId = late, Status = "PendingRetailerAcceptance" };
+        quotes.Views.Add(new(pending, new SalesOrder { Id = late }, null));
+        var service = new RunPickingIssueService(store, new FixedClock(), quotes);
+        await service.IssueAsync(run, default);
+        store.Lists.Single().Status = RunPickingListStatuses.Ready;
+        store.Lists.Single().StartedAt = Now;
+        store.Lists.Single().CompletedAt = Now;
+        store.Gathers.Single().PickedQuantity = 10m;
+        store.Gathers.Single().Status = RunPickingGatherStatuses.Picked;
+        pending.Status = "Accepted";
+        quotes.Views[1] = new(pending, new SalesOrder { Id = late }, new PurchaseOrder());
+        var result = await service.IssueAsync(run, default);
+        Assert.Contains(result.SelectMany(x => x.Gathers).SelectMany(x => x.Splits), x => x.OrderCode == "DH-000002");
+        Assert.Equal(15m, store.Gathers.Single().RequiredQuantity);
+        Assert.Equal(10m, store.Gathers.Single().PickedQuantity);
+        Assert.Equal(RunPickingListStatuses.Picking, store.Lists.Single().Status);
+        var again = await service.IssueAsync(run, default);
+        Assert.Equal(2, again.Single().Gathers.Single().Splits.Count);
+    }
+
     private sealed class Fixture
     {
         public FakeStore Store { get; }

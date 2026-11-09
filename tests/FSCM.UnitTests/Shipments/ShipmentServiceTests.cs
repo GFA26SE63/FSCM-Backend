@@ -321,6 +321,7 @@ public sealed class ShipmentServiceTests
         var fixture = new Fixture();
         var (shipment, balance, hold) = fixture.AddReadyShipment(fixture.WarehouseA, 12m, onHand: 50m);
 
+        fixture.SupplyPickedLabels();
         await fixture.Service.ConfirmIssueAsync(
             shipment.Id, new ConfirmShipmentIssueData(shipment.Version),
             Guid.NewGuid(), SystemRoles.WarehouseKeeper, CancellationToken.None);
@@ -339,6 +340,7 @@ public sealed class ShipmentServiceTests
         var fixture = new Fixture();
         var (shipment, _, _) = fixture.AddReadyShipment(fixture.WarehouseA, 12m, onHand: 50m);
 
+        fixture.SupplyPickedLabels();
         await fixture.Service.ConfirmIssueAsync(
             shipment.Id, new ConfirmShipmentIssueData(shipment.Version),
             Guid.NewGuid(), SystemRoles.WarehouseKeeper, CancellationToken.None);
@@ -357,6 +359,7 @@ public sealed class ShipmentServiceTests
         var (shipment, balance, _) = fixture.AddReadyShipment(fixture.WarehouseA, 12m, onHand: 50m);
         var actor = Guid.NewGuid();
 
+        fixture.SupplyPickedLabels();
         await fixture.Service.ConfirmIssueAsync(
             shipment.Id, new ConfirmShipmentIssueData(shipment.Version), actor,
             SystemRoles.WarehouseKeeper, CancellationToken.None);
@@ -435,6 +438,7 @@ public sealed class ShipmentServiceTests
 
         // Guards the other direction: waiting for warehouses that were never part of the plan
         // would stop every order instead of only the half-picked ones.
+        fixture.SupplyPickedLabels();
         await fixture.Service.ConfirmIssueAsync(
             ready.Id, new ConfirmShipmentIssueData(ready.Version), Guid.NewGuid(),
             SystemRoles.WarehouseKeeper, CancellationToken.None);
@@ -506,7 +510,7 @@ public sealed class ShipmentServiceTests
         Assert.Equal(QrLabelStatuses.InTransit, label.Status);
 
         var results = await fixture.Service.ConfirmOrderShipmentsReceiptAsync(
-            fixture.Order.Id, ["PORTAL-DEMO"], "Test portal receipt",
+            fixture.Order.Id, [label.QrCode], "Test portal receipt",
             "order-receipt-op-1", fixture.RetailerUserId, SystemRoles.Retailer, default);
 
         var singleResult = Assert.Single(results);
@@ -561,6 +565,7 @@ public sealed class ShipmentServiceTests
         fixture.PaymentStore.Payment!.Status = PaymentStatuses.Unpaid;
         var (ready, balance, _) = fixture.AddReadyShipment(fixture.WarehouseA, 12m, onHand: 50m);
 
+        fixture.SupplyPickedLabels();
         await fixture.Service.ConfirmIssueAsync(
             ready.Id, new ConfirmShipmentIssueData(ready.Version), Guid.NewGuid(),
             SystemRoles.WarehouseKeeper, CancellationToken.None);
@@ -576,6 +581,7 @@ public sealed class ShipmentServiceTests
         var (second, _, _) = fixture.AddReadyShipment(fixture.WarehouseB, 5m, onHand: 20m);
         var actor = Guid.NewGuid();
 
+        fixture.SupplyPickedLabels();
         await fixture.Service.ConfirmIssueAsync(
             first.Id, new ConfirmShipmentIssueData(first.Version), actor,
             SystemRoles.WarehouseKeeper, CancellationToken.None);
@@ -609,6 +615,7 @@ public sealed class ShipmentServiceTests
         var fixture = new Fixture();
         var (first, _, _) = fixture.AddReadyShipment(fixture.WarehouseA, 12m, onHand: 50m);
         fixture.AddReadyShipment(fixture.WarehouseB, 5m, onHand: 20m);
+        fixture.SupplyPickedLabels();
 
         await fixture.Service.ConfirmIssueAsync(
             first.Id, new ConfirmShipmentIssueData(first.Version), Guid.NewGuid(),
@@ -618,6 +625,38 @@ public sealed class ShipmentServiceTests
             fixture.Order.Id, Guid.NewGuid(), SystemRoles.Operator, CancellationToken.None);
 
         Assert.True(readiness.IsReady);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("PORTAL-DEMO")]
+    public async Task Order_receipt_requires_real_scanned_codes(string code)
+    {
+        var fixture = new Fixture();
+        var (shipment, _, _) = fixture.AddReadyShipment(fixture.WarehouseA, 8m, onHand: 50m);
+        shipment.Status = ShipmentStatuses.Issued;
+        await Assert.ThrowsAsync<ShipmentOperationException>(() => fixture.Service.ConfirmOrderShipmentsReceiptAsync(
+            fixture.Order.Id, code.Length == 0 ? [] : [code], null, "invalid-qr", fixture.RetailerUserId, SystemRoles.Retailer, default));
+        Assert.Empty(fixture.Store.Receipts);
+        Assert.Equal(ShipmentStatuses.Issued, shipment.Status);
+    }
+
+    [Fact]
+    public async Task Order_receipt_checks_all_warehouses_before_confirming_any_part()
+    {
+        var fixture = new Fixture();
+        var (first, _, _) = fixture.AddReadyShipment(fixture.WarehouseA, 8m, onHand: 50m);
+        first.Status = ShipmentStatuses.Issued;
+        var batch = fixture.Store.Issuable[first.Id].First().BatchId;
+        var label = new BatchQrLabel { Id = Guid.NewGuid(), BatchId = batch, CurrentWarehouseId = fixture.WarehouseA,
+            QrCode = "TEM-008888", Quantity = 8m, Status = QrLabelStatuses.InTransit };
+        fixture.Store.Labels.Add(new(label, batch));
+        fixture.AddReadyShipment(fixture.WarehouseB, 5m, onHand: 20m);
+        await Assert.ThrowsAsync<ShipmentOperationException>(() => fixture.Service.ConfirmOrderShipmentsReceiptAsync(
+            fixture.Order.Id, [label.QrCode], null, "not-all-dispatched", fixture.RetailerUserId, SystemRoles.Retailer, default));
+        Assert.Empty(fixture.Store.Receipts);
+        Assert.Equal(ShipmentStatuses.Issued, first.Status);
+        Assert.Equal(QrLabelStatuses.InTransit, label.Status);
     }
 
     private sealed class Fixture
@@ -631,6 +670,19 @@ public sealed class ShipmentServiceTests
 
         public Driver DriverA { get; }
         public Vehicle VehicleA { get; }
+
+        public void SupplyPickedLabels()
+        {
+            foreach (var entry in Store.Issuable)
+                foreach (var row in entry.Value)
+                    Store.PickedLabels.Add(new BatchQrLabel
+                    {
+                        Id = Guid.NewGuid(), BatchId = row.BatchId,
+                        CurrentWarehouseId = row.Batch.WarehouseId,
+                        QrCode = $"TEM-{Store.PickedLabels.Count + 1:000000}",
+                        Quantity = row.Quantity, Status = QrLabelStatuses.Picked
+                    });
+        }
 
         public Fixture()
         {

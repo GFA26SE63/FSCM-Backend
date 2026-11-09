@@ -100,10 +100,6 @@ public sealed class RunPickingIssueService(
         }
 
         var existing = await store.ListRunPickingListsAsync(runId, cancellationToken);
-        if (existing.Count > 0)
-        {
-            return existing.Select(ToResult).ToArray();
-        }
 
         var approvedVersion = await store.FindApprovedPlanVersionAsync(runId, cancellationToken)
             ?? throw AllocationRunOperationException.Conflict(
@@ -112,28 +108,32 @@ public sealed class RunPickingIssueService(
         await store.ExecuteInTransactionAsync(async transactionCancellationToken =>
         {
             // Re-check inside the transaction: two callers can pass the check above together.
-            if ((await store.ListRunPickingListsAsync(runId, transactionCancellationToken)).Count > 0) return;
+            existing = await store.ListRunPickingListsAsync(runId, transactionCancellationToken);
+            var issuedAllocationIds = existing.SelectMany(x => x.Splits)
+                .Select(x => x.AllocationRunAllocationId).ToHashSet();
 
             var allocations = await store.ListPickableAsync(approvedVersion.Id, transactionCancellationToken);
             if (allocations.Count == 0)
             {
+                if (existing.Count > 0) return;
                 throw AllocationRunOperationException.Conflict(
                     $"Run {run.RunCode} allocated nothing, so there is nothing to pick.");
             }
             if (quotes is not null)
             {
                 var quoteViews = await quotes.ListForRunAsync(runId, transactionCancellationToken);
-                var quoteByOrder = quoteViews.ToDictionary(item => item.Quote.SalesOrderId);
+                var quoteByOrder = quoteViews.GroupBy(item => item.Quote.SalesOrderId)
+                    .ToDictionary(group => group.Key, group => group.OrderByDescending(x => x.Quote.RevisionNumber).First());
 
                 // Option A: Auto-release held stock for orders whose quote was rejected or expired
                 if (releaseService is not null)
                 {
-                    foreach (var qv in quoteViews)
+                    foreach (var qv in quoteByOrder.Values)
                     {
                         if (qv.Quote.Status is SalesOrderQuoteStatuses.Rejected or SalesOrderQuoteStatuses.Expired)
                         {
                             await releaseService.ReleaseAsync(
-                                qv.Order.Id, Guid.Empty, $"Quote {qv.Quote.Status} - auto released", transactionCancellationToken);
+                                qv.Order.Id, qv.Order.CreatedByUserId, $"Quote {qv.Quote.Status} - auto released", transactionCancellationToken);
                         }
                     }
                 }
@@ -147,6 +147,7 @@ public sealed class RunPickingIssueService(
 
                 if (readyOrderIds.Count == 0)
                 {
+                    if (existing.Count > 0) return;
                     throw AllocationRunOperationException.Conflict(
                         $"Run {run.RunCode} has no orders with a retailer-accepted quote and PO to pick.");
                 }
@@ -154,18 +155,23 @@ public sealed class RunPickingIssueService(
                 allocations = allocations.Where(item => readyOrderIds.Contains(item.SalesOrderId)).ToArray();
             }
 
+            allocations = allocations.Where(x => !issuedAllocationIds.Contains(x.Allocation.Id)).ToArray();
+            if (allocations.Count == 0) return;
             var now = timeProvider.GetUtcNow();
             var lists = new List<RunPickingList>();
             var gathers = new List<RunPickingGather>();
             var splits = new List<RunPickingSplit>();
-            var warehouseIndex = 0;
+            var warehouseIndex = existing.Select(x => int.TryParse(x.List.PickingCode.Split('-').Last(), out var index) ? index : 0).DefaultIfEmpty(0).Max();
 
             foreach (var perWarehouse in allocations
                          .GroupBy(item => item.Allocation.WarehouseId)
                          .OrderBy(group => group.Key))
             {
-                warehouseIndex++;
-                var list = new RunPickingList
+                var prior = existing.SingleOrDefault(x => x.List.WarehouseId == perWarehouse.Key);
+                if (prior is null) warehouseIndex++;
+                if (prior?.List.Status == RunPickingListStatuses.NeedsHandling)
+                    throw AllocationRunOperationException.Conflict("Resolve the warehouse picking exception before adding accepted orders.");
+                var list = prior?.List ?? new RunPickingList
                 {
                     Id = Guid.NewGuid(),
                     PickingCode = $"PS-{run.RunCode}-{warehouseIndex:00}",
@@ -178,14 +184,23 @@ public sealed class RunPickingIssueService(
                     CreatedAt = now,
                     UpdatedAt = now
                 };
-                lists.Add(list);
+                if (prior is null) lists.Add(list);
+                else
+                {
+                    list.Status = list.StartedAt.HasValue ? RunPickingListStatuses.Picking : RunPickingListStatuses.Issued;
+                    list.CompletedAt = null;
+                    list.CompletedByUserId = null;
+                    list.Version++;
+                    list.UpdatedAt = now;
+                }
 
                 foreach (var perBatch in perWarehouse
                              .GroupBy(item => item.Allocation.BatchId)
                              .OrderBy(group => group.First().BatchCode, StringComparer.Ordinal))
                 {
                     var sample = perBatch.First();
-                    var gather = new RunPickingGather
+                    var priorGather = prior?.Gathers.SingleOrDefault(x => x.BatchId == perBatch.Key);
+                    var gather = priorGather ?? new RunPickingGather
                     {
                         Id = Guid.NewGuid(),
                         RunPickingListId = list.Id,
@@ -198,7 +213,12 @@ public sealed class RunPickingIssueService(
                         Status = RunPickingGatherStatuses.Pending,
                         CreatedAt = now
                     };
-                    gathers.Add(gather);
+                    if (priorGather is null) gathers.Add(gather);
+                    else
+                    {
+                        gather.RequiredQuantity += perBatch.Sum(x => x.Allocation.Quantity);
+                        gather.Status = RunPickingGatherStatuses.Pending;
+                    }
 
                     splits.AddRange(perBatch
                         .OrderBy(item => item.OrderCode, StringComparer.Ordinal)
@@ -219,6 +239,7 @@ public sealed class RunPickingIssueService(
                             CreatedAt = now
                         }));
                 }
+                if (prior is not null) store.UpdateRunPickingView(prior);
             }
 
             store.AddRunPickingLists(lists);

@@ -12,6 +12,8 @@ public interface IQuoteStore
     Task<IReadOnlyCollection<QuoteView>> ListForRunAsync(Guid runId, CancellationToken cancellationToken);
     Task<bool> CanRetailerAccessAsync(Guid quoteId, Guid userId, CancellationToken cancellationToken);
     Task<IReadOnlyCollection<QuoteIssueOrder>> ListOrdersForPlanAsync(Guid allocationPlanVersionId, CancellationToken cancellationToken);
+    Task<IReadOnlyCollection<Guid>> ListExpiredPendingIdsAsync(DateTimeOffset now, CancellationToken ct) =>
+        Task.FromResult<IReadOnlyCollection<Guid>>([]);
     void Add(SalesOrderQuote quote);
     void AddPurchaseOrder(PurchaseOrder purchaseOrder);
     Task SaveChangesAsync(CancellationToken cancellationToken);

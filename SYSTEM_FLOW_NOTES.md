@@ -66,7 +66,7 @@ Tự động nhả giữ tồn        Ghi sự kiện Dispatched     Order -> De
 ### 5. Sinh phiếu nhặt hàng (Wave Picking List) - Triển khai theo Phương án A
 - `RunPickingIssueService.IssueAsync`:
   - **Phương án A:** Chỉ gom các allocation của những đơn **đã có PO hợp lệ** vào phiếu nhặt hàng `RunPickingList` (theo kho) và phiếu xuất `Shipment`.
-  - Đơn chưa có PO sẽ để lại đợt sau. Các đơn bị từ chối/hết hạn được auto-release giữ tồn.
+  - Đơn chưa có PO giữ trong đợt hiện tại; gọi Issue lại sau khi duyệt PO sẽ bổ sung các allocation chưa có split. Phiếu đã hoàn tất được mở lại để nhặt phần bổ sung, giữ nguyên lượng đã nhặt và không tạo split trùng. Các đơn bị từ chối/hết hạn được auto-release giữ tồn.
   - Thủ kho quét mã nhặt từng thùng hàng (F44) và đóng phiếu nhặt hàng (F43).
 
 ### 6. Xác nhận xuất kho (Outbound Confirmation - F96)
@@ -79,7 +79,7 @@ Tự động nhả giữ tồn        Ghi sự kiện Dispatched     Order -> De
 ### 7. Quét QR nhận hàng đại lý (Receipt Confirmation - F61)
 - Đại lý quét QR thùng hàng:
   - Mobile gọi `POST /api/v1/orders/{code}/confirm-receipt` với `{ qrToken, labelCodes }`.
-  - Portal gọi `POST /api/v1/orders/{code}/confirm-receipt` với `{ qrToken: 'portal-demo' }`.
+  - Portal gọi `POST /api/v1/orders/{code}/confirm-receipt` với `{ qrCodes: ['TEM-...'] }`.
   - Backend `OrdersController` có cầu nối thông minh:
     - Nếu đơn có `Shipment`: Gọi `ShipmentService.ConfirmOrderShipmentsReceiptAsync`. Nhãn QR chuyển sang `Delivered`, `Shipment` chuyển sang `Received`, `Order` chuyển sang `Delivered`.
     - Trả về payload tương thích 100% cho cả Mobile (`order`, `pointsEarned`, `pointsPending`) lẫn Portal.
@@ -115,3 +115,24 @@ Toàn bộ hệ thống đã được kiểm thử tự động và pass 100%:
 - **Mobile Flutter Tests:** `53/53 passed` (`flutter test`)
 - **Frontend Portal Build:** Build thành công 100% không lỗi (`npm run build`)
 
+
+## V. Sửa lỗi sau xác minh ngày 09/11/2026
+
+Mục này cập nhật hành vi của các bản vá phía trên:
+- Mobile nhận các trường DTO thật (`orderCode`, `finalAmount`, `quantity`, `paymentMethod`, `creditTermDays`) và vẫn đọc được cache định dạng cũ. Trạng thái `Issued` ánh xạ thành đã xuất kho.
+- Chi tiết đơn trả `labelCodes` từ các sự kiện Dispatched có nhãn đang InTransit, phục vụ màn quét QR.
+- Không chấp nhận `PORTAL-DEMO` hay danh sách QR rỗng. Xác nhận cấp đơn yêu cầu đúng bộ QR của toàn bộ shipment chưa nhận. Kiểm tra mọi kho trước khi ghi, và bao toàn bộ xác nhận trong cùng giao dịch; lỗi bất kỳ phần nào sẽ rollback.
+- PO duyệt muộn được bổ sung khi gọi Issue lại. Phiếu cùng kho được cập nhật có kiểm tra version, giữ lượng đã nhặt, mở lại khi cần; không tạo lại split cũ. Phiếu NeedsHandling phải xử lý ngoại lệ trước.
+- Tác vụ QuoteExpirationHostedService chạy mỗi phút, nhả tồn báo giá bỏ mặc quá hạn mà không cần đại lý gọi Accept.
+- Số tiền Payment khác giá đơn đã chốt phải được đối soát, không tự ghi đè Order.FinalAmount. Fallback khởi tạo Payment được lưu trước khi truy vấn lại, trong giao dịch nhận hàng.
+- Kiểm chứng: Backend unit 446 pass; integration 50 pass; Mobile 54 pass; Portal build pass. Chưa kiểm thử giao dịch PayOS thật hoặc thao tác xuyên suốt với PostgreSQL thật.
+
+## VI. Nối giao diện với API thực ngày 09/11/2026
+
+- Portal: đợt Approved có nút **Sinh / bổ sung phiếu nhặt**. Operator gọi sau khi các đại lý chấp thuận PO, và gọi lại cho PO duyệt muộn.
+- Portal: **Gán xe / người giao** chọn từng shipment theo kho; kiểm tra kho và tải trọng, gửi PATCH /shipments/{id}/assignment với version. Xác nhận xuất kho vẫn do WarehouseKeeper thực hiện; không gọi luồng Delivery cũ trong chế độ API thực.
+- Mobile API thực: tra GUID từ mã đại lý/SKU, gửi đúng CreateAssistedOrderRequest. Đồng bộ offline gửi từng SubmitOfflineOrderRequest và ánh xạ từng kết quả về hàng đợi.
+- Khi online mất phản hồi, hàng đợi lưu clientOrderKey và dấu onlineAttempt; retry đúng POST /orders, tránh đổi kiểu request/hash hoặc tạo đơn trùng.
+- Mobile thu tiền mặt: dùng /payments/orders/{orderId}/collect, gửi Cash, expectedVersion và Idempotency-Key; đã Paid thì không thu lại.
+- Mobile tải danh mục từ /mobile/snapshot, nối giá/tồn bằng ProductId thành SKU cache; tính giá online qua GET /pricing/snapshot cho từng SKU. Chế độ demo giữ API mock riêng.
+- Xác minh mới: 60 Mobile tests pass (6 ca API thực dùng transport kiểm thử theo DTO Backend); 4 Portal contract tests pass; Portal build pass. Các ca này chưa phải E2E với PostgreSQL/PayOS thật.

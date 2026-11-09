@@ -398,6 +398,8 @@ public sealed class ShipmentService(
                         remainingNeeded = 0;
                     }
                 }
+                if (remainingNeeded > 0)
+                    throw ShipmentOperationException.Conflict("Picked QR quantities do not cover the shipment; refresh the picking sheet before dispatch.");
             }
 
             view.Shipment.Status = view.Shipment.DriverId != null
@@ -800,68 +802,82 @@ public sealed class ShipmentService(
     {
         if (actorRole != SystemRoles.Retailer)
             throw ShipmentOperationException.Forbidden("Only the order Retailer can confirm a shipment receipt.");
-        var shipments = await store.ListByOrderAsync(orderId, cancellationToken);
-        if (shipments.Count == 0)
-            throw ShipmentOperationException.NotFound("Order has no shipments.");
-
-        var normalizedScanned = scannedCodes
-            .Where(c => !string.IsNullOrWhiteSpace(c))
-            .Select(c => c.Trim().ToUpperInvariant())
-            .ToHashSet(StringComparer.Ordinal);
-        var isDemo = normalizedScanned.Contains("PORTAL-DEMO") || normalizedScanned.Count == 0;
-
+        if (!await store.CanViewOrderAsync(orderId, retailerUserId, actorRole, cancellationToken))
+            throw ShipmentOperationException.Forbidden("You cannot confirm this order receipt.");
         var results = new List<ShipmentResult>();
-        foreach (var shipment in shipments)
+        await store.ExecuteInTransactionAsync(async cancellationToken =>
         {
-            if (shipment.Status is ShipmentStatuses.Received or ShipmentStatuses.Exception)
+            results.Clear();
+            var shipments = await store.ListByOrderAsync(orderId, cancellationToken);
+            if (shipments.Count == 0)
+                throw ShipmentOperationException.NotFound("Order has no shipments.");
+
+            var normalizedScanned = scannedCodes
+                .Where(c => !string.IsNullOrWhiteSpace(c))
+                .Select(c => c.Trim().ToUpperInvariant())
+                .ToHashSet(StringComparer.Ordinal);
+            if (normalizedScanned.Count == 0 || normalizedScanned.Contains("PORTAL-DEMO"))
+                throw ShipmentOperationException.Validation("Scan the actual dispatched QR labels before confirming receipt.");
+            var expectedCodes = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var part in shipments)
             {
-                var existing = await store.FindByIdAsync(shipment.Id, false, cancellationToken);
-                if (existing is not null) results.Add(ToResult(existing));
-                continue;
+                if (part.Status == ShipmentStatuses.Received) continue;
+                if (part.Status is not (ShipmentStatuses.Issued or ShipmentStatuses.Delivering))
+                    throw ShipmentOperationException.Conflict($"Shipment {part.ShipmentCode} is not ready to receive ({part.Status}).");
+                var labels = await store.ListLabelsAsync(part.Id, false, cancellationToken);
+                if (labels.Count == 0)
+                    throw ShipmentOperationException.Conflict($"Shipment {part.ShipmentCode} has no dispatched QR labels.");
+                expectedCodes.UnionWith(labels.Select(x => x.Label.QrCode.Trim().ToUpperInvariant()));
             }
-
-            if (shipment.Status is not (ShipmentStatuses.Issued or ShipmentStatuses.Delivering))
-                throw ShipmentOperationException.Conflict($"Shipment {shipment.ShipmentCode} is not in a deliverable status ({shipment.Status}).");
-
-            var view = await store.FindByIdAsync(shipment.Id, false, cancellationToken)
-                ?? throw ShipmentOperationException.NotFound($"Shipment {shipment.ShipmentCode} was not found.");
-
-            var shipmentLabels = await store.ListLabelsAsync(shipment.Id, false, cancellationToken);
-            var shipmentExpectedCodes = shipmentLabels
-                .Select(l => l.Label.QrCode.Trim().ToUpperInvariant())
-                .Order(StringComparer.Ordinal)
-                .ToArray();
-
-            string[] codesToConfirm;
-            if (isDemo)
+            if (expectedCodes.Count > 0 && !expectedCodes.SetEquals(normalizedScanned))
+                throw ShipmentOperationException.Validation("Scan exactly the QR labels of all outstanding shipments in this order.");
+            foreach (var shipment in shipments)
             {
-                codesToConfirm = shipmentExpectedCodes;
-            }
-            else
-            {
-                codesToConfirm = shipmentExpectedCodes.Where(c => normalizedScanned.Contains(c)).ToArray();
-                if (codesToConfirm.Length != shipmentExpectedCodes.Length)
+                if (shipment.Status == ShipmentStatuses.Received)
                 {
-                    throw ShipmentOperationException.Validation(
-                        $"Shipment {shipment.ShipmentCode} requires {shipmentExpectedCodes.Length} QR labels, but only {codesToConfirm.Length} were provided.");
+                    var existing = await store.FindByIdAsync(shipment.Id, false, cancellationToken);
+                    if (existing is not null) results.Add(ToResult(existing));
+                    continue;
                 }
+
+                if (shipment.Status is not (ShipmentStatuses.Issued or ShipmentStatuses.Delivering))
+                    throw ShipmentOperationException.Conflict($"Shipment {shipment.ShipmentCode} is not in a deliverable status ({shipment.Status}).");
+
+                var view = await store.FindByIdAsync(shipment.Id, false, cancellationToken)
+                    ?? throw ShipmentOperationException.NotFound($"Shipment {shipment.ShipmentCode} was not found.");
+
+                var shipmentLabels = await store.ListLabelsAsync(shipment.Id, false, cancellationToken);
+                var shipmentExpectedCodes = shipmentLabels
+                    .Select(l => l.Label.QrCode.Trim().ToUpperInvariant())
+                    .Order(StringComparer.Ordinal)
+                    .ToArray();
+
+                string[] codesToConfirm;
+                {
+                    codesToConfirm = shipmentExpectedCodes.Where(c => normalizedScanned.Contains(c)).ToArray();
+                    if (codesToConfirm.Length != shipmentExpectedCodes.Length)
+                    {
+                        throw ShipmentOperationException.Validation(
+                            $"Shipment {shipment.ShipmentCode} requires {shipmentExpectedCodes.Length} QR labels, but only {codesToConfirm.Length} were provided.");
+                    }
+                }
+
+                var lines = view.Lines
+                    .GroupBy(l => (l.OrderLineId, l.BatchId))
+                    .Select(g => new ConfirmShipmentReceiptLineData(g.Key.OrderLineId, g.Key.BatchId, g.Sum(x => x.Quantity), 0m))
+                    .ToArray();
+
+                var receiptResult = await ConfirmReceiptAsync(
+                    shipment.Id,
+                    new ConfirmShipmentReceiptData(codesToConfirm, lines, shipment.Version, note),
+                    $"{operationKey}:{shipment.Id:N}",
+                    retailerUserId,
+                    actorRole,
+                    cancellationToken);
+                results.Add(receiptResult);
             }
 
-            var lines = view.Lines
-                .GroupBy(l => (l.OrderLineId, l.BatchId))
-                .Select(g => new ConfirmShipmentReceiptLineData(g.Key.OrderLineId, g.Key.BatchId, g.Sum(x => x.Quantity), 0m))
-                .ToArray();
-
-            var receiptResult = await ConfirmReceiptAsync(
-                shipment.Id,
-                new ConfirmShipmentReceiptData(codesToConfirm, lines, shipment.Version, note),
-                $"{operationKey}:{shipment.Id:N}",
-                retailerUserId,
-                actorRole,
-                cancellationToken);
-            results.Add(receiptResult);
-        }
-
+        }, cancellationToken);
         return results;
     }
 

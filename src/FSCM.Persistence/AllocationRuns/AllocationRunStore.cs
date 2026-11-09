@@ -326,6 +326,13 @@ public sealed class AllocationRunStore(AppDbContext dbContext) : IAllocationRunS
                     item.batch.BatchCode))
             .ToArrayAsync(cancellationToken);
 
+    public void UpdateRunPickingView(RunPickingListView view)
+    {
+        dbContext.RunPickingListRecords.Update(view.List);
+        dbContext.Entry(view.List).Property(x => x.Version).OriginalValue = view.List.Version - 1;
+        dbContext.RunPickingGatherRecords.UpdateRange(view.Gathers);
+    }
+
     public async Task<IReadOnlyCollection<RunPickingListView>> ListRunPickingListsAsync(
         Guid runId, CancellationToken cancellationToken) =>
         await BuildPickingViewsAsync(

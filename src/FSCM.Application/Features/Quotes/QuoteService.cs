@@ -11,6 +11,22 @@ public sealed class QuoteService(
     OrderReleaseService? orderReleaseService = null,
     IPaymentPlanService? paymentPlanService = null)
 {
+    public async Task ExpirePendingAsync(CancellationToken ct)
+    {
+        var now = timeProvider.GetUtcNow();
+        foreach (var id in await store.ListExpiredPendingIdsAsync(now, ct))
+        {
+            var view = await store.FindAsync(id, true, ct);
+            if (view is null || view.Quote.Status != SalesOrderQuoteStatuses.PendingRetailerAcceptance || view.Quote.ExpiresAt >= now) continue;
+            if (orderReleaseService is null) throw new InvalidOperationException("Quote expiration requires the order release service.");
+            await orderReleaseService.ReleaseAsync(view.Order.Id, view.Order.CreatedByUserId, "Quote acceptance deadline has passed", ct);
+            view.Quote.Status = SalesOrderQuoteStatuses.Expired;
+            view.Quote.Version++;
+            view.Quote.UpdatedAt = now;
+            await store.SaveChangesAsync(ct);
+        }
+    }
+
     public async Task IssueForPlanAsync(Guid allocationPlanVersionId, CancellationToken ct)
     {
         var now = timeProvider.GetUtcNow();
