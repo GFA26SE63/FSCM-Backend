@@ -136,3 +136,15 @@ Mục này cập nhật hành vi của các bản vá phía trên:
 - Mobile thu tiền mặt: dùng /payments/orders/{orderId}/collect, gửi Cash, expectedVersion và Idempotency-Key; đã Paid thì không thu lại.
 - Mobile tải danh mục từ /mobile/snapshot, nối giá/tồn bằng ProductId thành SKU cache; tính giá online qua GET /pricing/snapshot cho từng SKU. Chế độ demo giữ API mock riêng.
 - Xác minh mới: 60 Mobile tests pass (6 ca API thực dùng transport kiểm thử theo DTO Backend); 4 Portal contract tests pass; Portal build pass. Các ca này chưa phải E2E với PostgreSQL/PayOS thật.
+
+## VII. PostgreSQL thật — xác minh 09/11/2026
+
+Đã chạy migration, seed và toàn luồng bằng các service/persistence thật trên PostgreSQL 18 riêng:
+- Phân bổ một đơn 60 thùng từ 2 kho; chấp thuận quote và tạo Payment.
+- Từ chối một quote và cho một quote quá hạn; cả hai nhả giữ tồn.
+- Sinh/nhặt/đóng phiếu, xuất kho, quét QR nhận hàng, lập hạn công nợ 14 ngày, thu tiền mặt.
+- Cố ý làm QR của kho sau không hợp lệ: toàn bộ receipt rollback trong PostgreSQL, kho trước không bị ghi nhận dở dang.
+- Sau khi đơn đầu đã giao và thu tiền, đại lý mới duyệt PO của đơn sau: bổ sung/mở lại phiếu, hoàn tất và thu tiền thành công; tồn giữ SKU thử nghiệm về 0.
+- Đã phát hiện và sửa QuoteStore.FindAsync: AsNoTracking ở bảng PO trong join làm mất tracking cả quote/order, khiến Accept/Reject/Expire không lưu được. Query cập nhật nay giữ tracking cho toàn bộ join.
+- Kết quả: 446 unit Backend pass; 51 integration pass, gồm 1 fact PostgreSQL chạy thật (không skip).
+- Xem tests/FSCM.IntegrationTests/Persistence/POSTGRES_WORKFLOW.md để tái chạy. Đây là kiểm thử service + database, không phải điều khiển giao diện. PayOS tiếp tục để sau.
