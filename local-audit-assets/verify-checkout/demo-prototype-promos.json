@@ -1,0 +1,61 @@
+{
+  "one": {
+    "id": "9a0677ed-2487-43ad-b3d5-4d5319db1625",
+    "code": "KM-006",
+    "name": "DEMO · Loại 1 từng SKU",
+    "promotionType": "Campaign",
+    "minimumQuantity": 10.0,
+    "discountPercent": 11.0,
+    "startAt": "2026-11-07T19:14:12.901608+07:00",
+    "endAt": "2026-11-21T19:15:12.901608+07:00",
+    "isActive": true,
+    "createdByUserId": "c808730f-b06e-4d9a-bd89-877837992600",
+    "createdAt": "2026-11-07T19:15:13.67327+07:00",
+    "updatedAt": "2026-11-07T19:15:13.67327+07:00",
+    "productIds": [
+      "4f268844-8371-45fb-a365-022ad14e7731",
+      "134d457b-a5ce-4e18-8982-9b6c34129909"
+    ],
+    "categoryIds": [],
+    "retailerIds": [
+      "eccb66f2-a4b5-44e5-998b-fa8b3be6bd19"
+    ],
+    "campaignMode": "PerSku",
+    "productRules": [
+      {
+        "productId": "4f268844-8371-45fb-a365-022ad14e7731",
+        "minimumQuantity": 10.0,
+        "discountPercent": 11.0
+      },
+      {
+        "productId": "134d457b-a5ce-4e18-8982-9b6c34129909",
+        "minimumQuantity": 30.0,
+        "discountPercent": 9.0
+      }
+    ]
+  },
+  "two": {
+    "id": "78b2e18e-a76a-4e7b-91ee-6deee162cc10",
+    "code": "KM-007",
+    "name": "DEMO · Loại 2 nhóm sữa",
+    "promotionType": "Campaign",
+    "minimumQuantity": 40.0,
+    "discountPercent": 12.0,
+    "startAt": "2026-11-07T19:14:12.901608+07:00",
+    "endAt": "2026-11-21T19:15:12.901608+07:00",
+    "isActive": true,
+    "createdByUserId": "c808730f-b06e-4d9a-bd89-877837992600",
+    "createdAt": "2026-11-07T19:15:16.303923+07:00",
+    "updatedAt": "2026-11-07T19:15:16.303923+07:00",
+    "productIds": [
+      "134d457b-a5ce-4e18-8982-9b6c34129909",
+      "4f268844-8371-45fb-a365-022ad14e7731"
+    ],
+    "categoryIds": [],
+    "retailerIds": [
+      "eccb66f2-a4b5-44e5-998b-fa8b3be6bd19"
+    ],
+    "campaignMode": "ProductGroup",
+    "productRules": []
+  }
+}

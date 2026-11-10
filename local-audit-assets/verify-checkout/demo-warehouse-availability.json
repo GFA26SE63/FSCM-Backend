@@ -1,0 +1,98 @@
+{
+  "checkedAt": "2026-11-08T15:22:15.0452903+07:00",
+  "items": [
+    {
+      "productId": "4f268844-8371-45fb-a365-022ad14e7731",
+      "sku": "SKU001",
+      "eligibleQuantity": 10.0,
+      "warehouses": [
+        {
+          "warehouseId": "f1429fe0-3544-4afe-9f0a-899a75104af4",
+          "warehouseCode": "WH-Q7",
+          "warehouseName": "Kho Quận 7",
+          "eligibleQuantity": 10.0,
+          "distanceMeters": 8352.59343559671,
+          "unavailableReason": null
+        },
+        {
+          "warehouseId": "56ae39ac-fcf5-46ba-a03a-78859c24cde5",
+          "warehouseCode": "WH-TD",
+          "warehouseName": "Kho Thủ Đức",
+          "eligibleQuantity": 0,
+          "distanceMeters": 6016.18578832553,
+          "unavailableReason": "BelowMlor"
+        },
+        {
+          "warehouseId": "4f5bcb0e-dc55-45f7-9286-69e16fc858df",
+          "warehouseCode": "WH-HCM-01",
+          "warehouseName": "Kho Củ Chi",
+          "eligibleQuantity": 0,
+          "distanceMeters": 33367.1739268887,
+          "unavailableReason": "OutsideServiceRadius"
+        }
+      ]
+    },
+    {
+      "productId": "134d457b-a5ce-4e18-8982-9b6c34129909",
+      "sku": "SKU002",
+      "eligibleQuantity": 290.0,
+      "warehouses": [
+        {
+          "warehouseId": "56ae39ac-fcf5-46ba-a03a-78859c24cde5",
+          "warehouseCode": "WH-TD",
+          "warehouseName": "Kho Thủ Đức",
+          "eligibleQuantity": 220.0,
+          "distanceMeters": 6016.18578832553,
+          "unavailableReason": null
+        },
+        {
+          "warehouseId": "f1429fe0-3544-4afe-9f0a-899a75104af4",
+          "warehouseCode": "WH-Q7",
+          "warehouseName": "Kho Quận 7",
+          "eligibleQuantity": 70.0,
+          "distanceMeters": 8352.59343559671,
+          "unavailableReason": null
+        },
+        {
+          "warehouseId": "4f5bcb0e-dc55-45f7-9286-69e16fc858df",
+          "warehouseCode": "WH-HCM-01",
+          "warehouseName": "Kho Củ Chi",
+          "eligibleQuantity": 0,
+          "distanceMeters": 33367.1739268887,
+          "unavailableReason": "OutsideServiceRadius"
+        }
+      ]
+    },
+    {
+      "productId": "8b1caee4-1264-4d15-b62e-d3d1364a43fc",
+      "sku": "SKU005",
+      "eligibleQuantity": 140.0,
+      "warehouses": [
+        {
+          "warehouseId": "56ae39ac-fcf5-46ba-a03a-78859c24cde5",
+          "warehouseCode": "WH-TD",
+          "warehouseName": "Kho Thủ Đức",
+          "eligibleQuantity": 60.0,
+          "distanceMeters": 6016.18578832553,
+          "unavailableReason": null
+        },
+        {
+          "warehouseId": "f1429fe0-3544-4afe-9f0a-899a75104af4",
+          "warehouseCode": "WH-Q7",
+          "warehouseName": "Kho Quận 7",
+          "eligibleQuantity": 80.0,
+          "distanceMeters": 8352.59343559671,
+          "unavailableReason": null
+        },
+        {
+          "warehouseId": "4f5bcb0e-dc55-45f7-9286-69e16fc858df",
+          "warehouseCode": "WH-HCM-01",
+          "warehouseName": "Kho Củ Chi",
+          "eligibleQuantity": 0,
+          "distanceMeters": 33367.1739268887,
+          "unavailableReason": "OutsideServiceRadius"
+        }
+      ]
+    }
+  ]
+}

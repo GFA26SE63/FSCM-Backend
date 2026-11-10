@@ -1,0 +1,154 @@
+{
+  "source_branch": "fix/review2-db-flow-alignment",
+  "source_commit": "5231622c5df555512ca116715a69336463bc8acd",
+  "purpose": "Archive of local review2 edits and local demo assets; not a develop integration.",
+  "validation": "This archive has not been build/test validated as a combined release.",
+  "excluded": [
+    "credentials",
+    "runtime secrets/configuration",
+    "logs",
+    "PostgreSQL data"
+  ],
+  "files": [
+    {
+      "path": "src/FSCM.Application/Features/DeliveryEta/DeliveryEtaService.cs",
+      "source": "review2 working tree",
+      "sha256": "4a5ab605029c47f66c318e8bdcc3dda3963fd09d7a640dff1b8084e49159f3c4"
+    },
+    {
+      "path": "src/FSCM.Application/Features/Picking/CurrentPickingService.cs",
+      "source": "review2 working tree",
+      "sha256": "17de83fb280c0a1bc302213dff379531b92f5606aa3f78bb8c5386e478b7c7ed"
+    },
+    {
+      "path": "src/FSCM.Application/Features/WarehouseConfiguration/WarehouseConfigurationService.cs",
+      "source": "review2 working tree",
+      "sha256": "ea26055f21f18f1e4849f9492a7ea669169a5d12650684fed2926777a885e48b"
+    },
+    {
+      "path": "src/FSCM.Persistence/Seeding/DevelopmentDataSeeder.cs",
+      "source": "review2 working tree",
+      "sha256": "2fd8f93619441200800a6e37fa364698e4fb20ff7e32b992eae85557581d9062"
+    },
+    {
+      "path": "tests/FSCM.IntegrationTests/Api/S1BMasterDataApiTests.cs",
+      "source": "review2 working tree",
+      "sha256": "e5aabba29591c960ee56515e456e50e83210f12d4ad4cec186c1c1f549111def"
+    },
+    {
+      "path": "tests/FSCM.UnitTests/DeliveryEta/DeliveryEtaServiceTests.cs",
+      "source": "review2 working tree",
+      "sha256": "5902046cfeda8454a431ee6a1664bd9e04d7e6ccdf169b42ee3e7deb8767e9fd"
+    },
+    {
+      "path": "local-audit-assets/notes/SYSTEM_FLOW_NOTES.md",
+      "source": "PackageCode/SYSTEM_FLOW_NOTES.md",
+      "sha256": "1ace07ab1b7ffcdfceafd2002f4a516ea1ee9faa2f55650395928eca966dbbbf"
+    },
+    {
+      "path": "local-audit-assets/notes/pr-so-po-quote-gate.md",
+      "source": "PackageCode/pr-so-po-quote-gate.md",
+      "sha256": "10875b24d6e0781f023125352d87a5f33d51e178fc1082ef57e12c2546d9e792"
+    },
+    {
+      "path": "local-audit-assets/orphan-source/orphan-application/Features/Quotes/IQuoteStore.cs",
+      "source": "PackageCode/FSCM.Application/Features/Quotes/IQuoteStore.cs",
+      "sha256": "b44bd599683df5758ba4f0b011453360380b45e64be8d93fb0d143fe3bbb15f0"
+    },
+    {
+      "path": "local-audit-assets/orphan-source/orphan-application/Features/Quotes/QuoteOperationException.cs",
+      "source": "PackageCode/FSCM.Application/Features/Quotes/QuoteOperationException.cs",
+      "sha256": "4b2b09e9009f9fc8c5e52d983252582de84cc14e15acadb1c72ed810f3a842d0"
+    },
+    {
+      "path": "local-audit-assets/orphan-source/orphan-application/Features/Quotes/QuoteService.cs",
+      "source": "PackageCode/FSCM.Application/Features/Quotes/QuoteService.cs",
+      "sha256": "72498500c0ef18326139caca7caffddb2e63695967aecfebc4779beed74dbbf1"
+    },
+    {
+      "path": "local-audit-assets/orphan-source/root-backend/src/FSCM.Application/Features/Quotes/QuoteOperationException.cs",
+      "source": "FSCM-Backend/src/FSCM.Application/Features/Quotes/QuoteOperationException.cs",
+      "sha256": "4b2b09e9009f9fc8c5e52d983252582de84cc14e15acadb1c72ed810f3a842d0"
+    },
+    {
+      "path": "local-audit-assets/verify-checkout/demo-allocation-inventory.json",
+      "source": "PackageCode/_verify_merged_Backend/demo-allocation-inventory.json",
+      "sha256": "9d4912a24fd9332f680e92bd73012d0076f412b307835a31f14cc2819b3a02a5"
+    },
+    {
+      "path": "local-audit-assets/verify-checkout/demo-allocation-order.json",
+      "source": "PackageCode/_verify_merged_Backend/demo-allocation-order.json",
+      "sha256": "e3c60e34e6e4d909eb9e9b00ffd27b04c5033f2e726fa3087b51dfd3cded2e2f"
+    },
+    {
+      "path": "local-audit-assets/verify-checkout/demo-flow-helpers.ps1",
+      "source": "PackageCode/_verify_merged_Backend/demo-flow-helpers.ps1",
+      "sha256": "e50260ef288c24d8fc6072db87cadd48147cd37a4b2947dc3a713295ffdce232"
+    },
+    {
+      "path": "local-audit-assets/verify-checkout/demo-flow-hsd-before.json",
+      "source": "PackageCode/_verify_merged_Backend/demo-flow-hsd-before.json",
+      "sha256": "c8127d6179ec765b4485b5b97eee0de812cf29ab1bacba13280bab81b0a33c43"
+    },
+    {
+      "path": "local-audit-assets/verify-checkout/demo-full-flow-cart.json",
+      "source": "PackageCode/_verify_merged_Backend/demo-full-flow-cart.json",
+      "sha256": "40e8a7ce9527050a6658f55617f8b77f3171b6bc6071453809cc074c8622689a"
+    },
+    {
+      "path": "local-audit-assets/verify-checkout/demo-full-flow-fulfill.ps1",
+      "source": "PackageCode/_verify_merged_Backend/demo-full-flow-fulfill.ps1",
+      "sha256": "09e2af2f23bbd33aac03152f0fbd269fda26c2af5fa70a88aef2747b9876fa53"
+    },
+    {
+      "path": "local-audit-assets/verify-checkout/demo-promo-before.json",
+      "source": "PackageCode/_verify_merged_Backend/demo-promo-before.json",
+      "sha256": "02c87e948382de9acf3e8907791dac0b3d7068b059bed18ff63e62879c7bf857"
+    },
+    {
+      "path": "local-audit-assets/verify-checkout/demo-prototype-order.json",
+      "source": "PackageCode/_verify_merged_Backend/demo-prototype-order.json",
+      "sha256": "27a97f1117201e66c3c4af54c66ebc80b8e21e67e9598a5d4b52a26d49e10a34"
+    },
+    {
+      "path": "local-audit-assets/verify-checkout/demo-prototype-promos.json",
+      "source": "PackageCode/_verify_merged_Backend/demo-prototype-promos.json",
+      "sha256": "69a9d14d2122aa936d1f58aba99383efc2949f3a9f9606e83cbd80826f53cd93"
+    },
+    {
+      "path": "local-audit-assets/verify-checkout/demo-warehouse-availability.json",
+      "source": "PackageCode/_verify_merged_Backend/demo-warehouse-availability.json",
+      "sha256": "e44240b94fba29b6a3739bd7dd1a7dfcb20abf075f9d6b3ab4919e46c3fbf72f"
+    },
+    {
+      "path": "local-audit-assets/verify-checkout/docs/New-DemoPickingFixture.ps1",
+      "source": "PackageCode/_verify_merged_Backend/docs/New-DemoPickingFixture.ps1",
+      "sha256": "ae4119360041b24ccc11dd633042ee7fa647a9b8e96b60fb38612e067977eddc"
+    },
+    {
+      "path": "local-audit-assets/verify-checkout/pr-allocation-demo.md",
+      "source": "PackageCode/_verify_merged_Backend/pr-allocation-demo.md",
+      "sha256": "bd5ebd61f6a804cc1dc7190f6d36c23eee3df808e5d1ce68f495825d17e8ed4b"
+    },
+    {
+      "path": "local-audit-assets/verify-checkout/pr-payment-fallback.md",
+      "source": "PackageCode/_verify_merged_Backend/pr-payment-fallback.md",
+      "sha256": "338938760cabc260f835130708be0882d523bac2ad0c2966925c7f909164a149"
+    },
+    {
+      "path": "local-audit-assets/verify-checkout/pr-prototype-promos.md",
+      "source": "PackageCode/_verify_merged_Backend/pr-prototype-promos.md",
+      "sha256": "ff507641f2885bc0b31c2988d4f49659c1e8bf1b3cf2ce9ecf212243ea239927"
+    },
+    {
+      "path": "local-audit-assets/verify-checkout/pr-warehouse-stock.md",
+      "source": "PackageCode/_verify_merged_Backend/pr-warehouse-stock.md",
+      "sha256": "938ad1a0c8288f14ac32f88bcd6c2f0ed40c526f97e85c008e08796bca9afb2d"
+    },
+    {
+      "path": "local-audit-assets/stash/pr-so-po-quote-gate.md",
+      "source": "preserved local stash",
+      "sha256": "10875b24d6e0781f023125352d87a5f33d51e178fc1082ef57e12c2546d9e792"
+    }
+  ]
+}

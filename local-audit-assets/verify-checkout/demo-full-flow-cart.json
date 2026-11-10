@@ -1,0 +1,114 @@
+[
+  {
+    "productId": "134d457b-a5ce-4e18-8982-9b6c34129909",
+    "sku": "SKU002",
+    "productName": "Sữa chua uống 180 ml",
+    "batchId": null,
+    "batchCode": null,
+    "retailerId": "eccb66f2-a4b5-44e5-998b-fa8b3be6bd19",
+    "quantity": 10,
+    "unitPrice": 320000.0,
+    "grossAmount": 3200000,
+    "discountPercent": 16.0,
+    "discountAmount": 512000,
+    "netUnitPrice": 268800,
+    "netAmount": 2688000,
+    "appliedPromotion": {
+      "promotionId": "0aa0fe4b-988b-4a21-8046-1da7d19d1576",
+      "code": "KM-008",
+      "name": "DEMO 08-11 · SKU sữa chua giảm 16%",
+      "promotionType": "Campaign",
+      "discountPercent": 16.0,
+      "minimumQuantity": 10.0,
+      "effectiveFrom": "2026-11-08T00:00:00+07:00",
+      "effectiveTo": "2026-12-08T23:59:59.999+07:00"
+    },
+    "eligiblePromotions": [
+      {
+        "promotionId": "9d9d0776-f779-4a5f-a6cb-817b2d24a1bf",
+        "code": "KM-005",
+        "name": "DEMO kiểm tra lưu và tạm dừng",
+        "promotionType": "Campaign",
+        "discountPercent": 5.0,
+        "minimumQuantity": 10.0,
+        "effectiveFrom": "2026-11-07T00:00:00+07:00",
+        "effectiveTo": "2026-12-07T23:59:59+07:00"
+      },
+      {
+        "promotionId": "0aa0fe4b-988b-4a21-8046-1da7d19d1576",
+        "code": "KM-008",
+        "name": "DEMO 08-11 · SKU sữa chua giảm 16%",
+        "promotionType": "Campaign",
+        "discountPercent": 16.0,
+        "minimumQuantity": 10.0,
+        "effectiveFrom": "2026-11-08T00:00:00+07:00",
+        "effectiveTo": "2026-12-08T23:59:59.999+07:00"
+      },
+      {
+        "promotionId": "da186616-7322-40e2-b32c-79e6ba49935c",
+        "code": "KM-009",
+        "name": "DEMO 08-11 · Nhóm sữa chua và nước cam giảm 14%",
+        "promotionType": "Campaign",
+        "discountPercent": 14.0,
+        "minimumQuantity": 20.0,
+        "effectiveFrom": "2026-11-08T00:00:00+07:00",
+        "effectiveTo": "2026-12-08T23:59:59.999+07:00"
+      }
+    ],
+    "pricedAt": "2026-11-08T18:40:42.069231+07:00",
+    "finalPricePendingAllocation": true,
+    "productPriceId": "6545ee9d-1904-43ce-8391-1b367d0269d9",
+    "productPriceEffectiveFrom": "2026-09-12T23:50:02.380922+07:00",
+    "productPriceEffectiveTo": null,
+    "baseUnitPrice": 320000.0,
+    "ordinaryPromotionDiscountAmount": 512000,
+    "indicativeNetUnitPrice": 268800,
+    "indicativeNetAmount": 2688000
+  },
+  {
+    "productId": "8b1caee4-1264-4d15-b62e-d3d1364a43fc",
+    "sku": "SKU005",
+    "productName": "Nước cam 250 ml - thùng 36 hộp",
+    "batchId": null,
+    "batchCode": null,
+    "retailerId": "eccb66f2-a4b5-44e5-998b-fa8b3be6bd19",
+    "quantity": 10,
+    "unitPrice": 325000.0,
+    "grossAmount": 3250000,
+    "discountPercent": 14.0,
+    "discountAmount": 455000,
+    "netUnitPrice": 279500,
+    "netAmount": 2795000,
+    "appliedPromotion": {
+      "promotionId": "da186616-7322-40e2-b32c-79e6ba49935c",
+      "code": "KM-009",
+      "name": "DEMO 08-11 · Nhóm sữa chua và nước cam giảm 14%",
+      "promotionType": "Campaign",
+      "discountPercent": 14.0,
+      "minimumQuantity": 20.0,
+      "effectiveFrom": "2026-11-08T00:00:00+07:00",
+      "effectiveTo": "2026-12-08T23:59:59.999+07:00"
+    },
+    "eligiblePromotions": [
+      {
+        "promotionId": "da186616-7322-40e2-b32c-79e6ba49935c",
+        "code": "KM-009",
+        "name": "DEMO 08-11 · Nhóm sữa chua và nước cam giảm 14%",
+        "promotionType": "Campaign",
+        "discountPercent": 14.0,
+        "minimumQuantity": 20.0,
+        "effectiveFrom": "2026-11-08T00:00:00+07:00",
+        "effectiveTo": "2026-12-08T23:59:59.999+07:00"
+      }
+    ],
+    "pricedAt": "2026-11-08T18:40:42.069231+07:00",
+    "finalPricePendingAllocation": true,
+    "productPriceId": "e340fe03-dabf-4a61-8f6f-22f75038f0bb",
+    "productPriceEffectiveFrom": "2026-09-12T23:50:02.380922+07:00",
+    "productPriceEffectiveTo": null,
+    "baseUnitPrice": 325000.0,
+    "ordinaryPromotionDiscountAmount": 455000,
+    "indicativeNetUnitPrice": 279500,
+    "indicativeNetAmount": 2795000
+  }
+]

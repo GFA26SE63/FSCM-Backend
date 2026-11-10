@@ -1,0 +1,350 @@
+[
+  {
+    "Warehouse": "WH-TD",
+    "ReceiptId": "202763b3-f2fc-4cb2-a784-ec4076e72bbf",
+    "ReceiptCode": null,
+    "Status": "Received",
+    "Lines": [
+      {
+        "id": "3ae82ef8-60fe-4865-8d7c-dea361f11dd0",
+        "productId": "4f268844-8371-45fb-a365-022ad14e7731",
+        "sku": "SKU001",
+        "productName": "Sữa tươi 1 lít",
+        "sourceLotCode": "DEMO-OPT-20261107-SKU001-0",
+        "receivedQuantity": 20.0,
+        "productionDate": "2026-11-01",
+        "expirationDate": "2026-11-08",
+        "batchId": "ac58380f-c47b-454d-84a3-b917b053b01b",
+        "batchCode": "WH-TD-SKU001-01112026-08112026"
+      },
+      {
+        "id": "34ea3695-080a-44e2-9363-dd6bdc3febae",
+        "productId": "4f268844-8371-45fb-a365-022ad14e7731",
+        "sku": "SKU001",
+        "productName": "Sữa tươi 1 lít",
+        "sourceLotCode": "DEMO-OPT-20261107-SKU001-2",
+        "receivedQuantity": 80.0,
+        "productionDate": "2026-11-06",
+        "expirationDate": "2026-11-13",
+        "batchId": "92ee88c0-4717-447e-a285-231b42822370",
+        "batchCode": "WH-TD-SKU001-06112026-13112026"
+      },
+      {
+        "id": "d8ae22f6-6fc7-4d9c-b9cc-c0c961c177ec",
+        "productId": "4f268844-8371-45fb-a365-022ad14e7731",
+        "sku": "SKU001",
+        "productName": "Sữa tươi 1 lít",
+        "sourceLotCode": "DEMO-OPT-20261107-SKU001-1",
+        "receivedQuantity": 40.0,
+        "productionDate": "2026-11-03",
+        "expirationDate": "2026-11-10",
+        "batchId": "19a88034-5f37-4f23-a621-d69f779aaa88",
+        "batchCode": "WH-TD-SKU001-03112026-10112026"
+      },
+      {
+        "id": "fb2e06b7-0deb-4ef6-a858-fe123cb3b70f",
+        "productId": "134d457b-a5ce-4e18-8982-9b6c34129909",
+        "sku": "SKU002",
+        "productName": "Sữa chua uống 180 ml",
+        "sourceLotCode": "DEMO-OPT-20261107-SKU002-1",
+        "receivedQuantity": 50.0,
+        "productionDate": "2026-10-31",
+        "expirationDate": "2026-11-14",
+        "batchId": "e31556aa-0481-4d36-9e7d-dd6b7234d5bd",
+        "batchCode": "WH-TD-SKU002-31102026-14112026"
+      },
+      {
+        "id": "607f4370-de0b-4f6a-8414-021c07d4586b",
+        "productId": "134d457b-a5ce-4e18-8982-9b6c34129909",
+        "sku": "SKU002",
+        "productName": "Sữa chua uống 180 ml",
+        "sourceLotCode": "DEMO-OPT-20261107-SKU002-0",
+        "receivedQuantity": 20.0,
+        "productionDate": "2026-10-26",
+        "expirationDate": "2026-11-09",
+        "batchId": "972ac7ca-9d0d-4de2-94c3-737eeaa672f4",
+        "batchCode": "WH-TD-SKU002-26102026-09112026"
+      },
+      {
+        "id": "8ff2ee4c-547c-4f35-8087-08a181bf532d",
+        "productId": "134d457b-a5ce-4e18-8982-9b6c34129909",
+        "sku": "SKU002",
+        "productName": "Sữa chua uống 180 ml",
+        "sourceLotCode": "DEMO-OPT-20261107-SKU002-2",
+        "receivedQuantity": 90.0,
+        "productionDate": "2026-11-05",
+        "expirationDate": "2026-11-19",
+        "batchId": "5b2c07de-dd36-466b-bd05-fa5a5c81624e",
+        "batchCode": "WH-TD-SKU002-05112026-19112026"
+      },
+      {
+        "id": "c2d633f3-6eae-4c22-8907-b30b47226452",
+        "productId": "8b1caee4-1264-4d15-b62e-d3d1364a43fc",
+        "sku": "SKU005",
+        "productName": "Nước cam 250 ml - thùng 36 hộp",
+        "sourceLotCode": "DEMO-OPT-20261107-SKU005-1",
+        "receivedQuantity": 60.0,
+        "productionDate": "2026-10-22",
+        "expirationDate": "2026-11-21",
+        "batchId": "2d44707d-f086-49fc-be15-29b90c9a9241",
+        "batchCode": "WH-TD-SKU005-22102026-21112026"
+      },
+      {
+        "id": "b6c3443f-47fc-48b7-a0bf-baab161e5ac8",
+        "productId": "8b1caee4-1264-4d15-b62e-d3d1364a43fc",
+        "sku": "SKU005",
+        "productName": "Nước cam 250 ml - thùng 36 hộp",
+        "sourceLotCode": "DEMO-OPT-20261107-SKU005-2",
+        "receivedQuantity": 100.0,
+        "productionDate": "2026-11-03",
+        "expirationDate": "2026-12-03",
+        "batchId": "130ae2d5-21bd-4d2f-ba55-c8f2fb00f2fa",
+        "batchCode": "WH-TD-SKU005-03112026-03122026"
+      },
+      {
+        "id": "b34a71fd-fc4f-4184-a952-5ea2b8c82ec1",
+        "productId": "8b1caee4-1264-4d15-b62e-d3d1364a43fc",
+        "sku": "SKU005",
+        "productName": "Nước cam 250 ml - thùng 36 hộp",
+        "sourceLotCode": "DEMO-OPT-20261107-SKU005-0",
+        "receivedQuantity": 30.0,
+        "productionDate": "2026-10-12",
+        "expirationDate": "2026-11-11",
+        "batchId": "6a34b7c7-dd08-4af2-8058-79f33f6c588c",
+        "batchCode": "WH-TD-SKU005-12102026-11112026"
+      }
+    ]
+  },
+  {
+    "Warehouse": "WH-Q7",
+    "ReceiptId": "4573ac42-0df7-439c-bfb4-9447b665b6a7",
+    "ReceiptCode": null,
+    "Status": "Received",
+    "Lines": [
+      {
+        "id": "00410484-e306-49bd-bc35-e34189c277ea",
+        "productId": "4f268844-8371-45fb-a365-022ad14e7731",
+        "sku": "SKU001",
+        "productName": "Sữa tươi 1 lít",
+        "sourceLotCode": "DEMO-OPT-20261107-SKU001-1",
+        "receivedQuantity": 40.0,
+        "productionDate": "2026-11-03",
+        "expirationDate": "2026-11-10",
+        "batchId": "9486cc32-fa4f-45a4-b014-93841056d91f",
+        "batchCode": "WH-Q7-SKU001-03112026-10112026"
+      },
+      {
+        "id": "626f516b-60cc-4fb2-859c-3b29db06435f",
+        "productId": "4f268844-8371-45fb-a365-022ad14e7731",
+        "sku": "SKU001",
+        "productName": "Sữa tươi 1 lít",
+        "sourceLotCode": "DEMO-OPT-20261107-SKU001-2",
+        "receivedQuantity": 80.0,
+        "productionDate": "2026-11-06",
+        "expirationDate": "2026-11-13",
+        "batchId": "c8a3eabd-b32a-4660-83d0-3f9b338e52d8",
+        "batchCode": "WH-Q7-SKU001-06112026-13112026"
+      },
+      {
+        "id": "8894b75b-a74a-4495-9b68-3dacea67b916",
+        "productId": "4f268844-8371-45fb-a365-022ad14e7731",
+        "sku": "SKU001",
+        "productName": "Sữa tươi 1 lít",
+        "sourceLotCode": "DEMO-OPT-20261107-SKU001-0",
+        "receivedQuantity": 20.0,
+        "productionDate": "2026-11-01",
+        "expirationDate": "2026-11-08",
+        "batchId": "d5aaabfd-e34d-453d-a6df-cc5a91a6aa56",
+        "batchCode": "WH-Q7-SKU001-01112026-08112026"
+      },
+      {
+        "id": "dca32671-00d6-4f25-b2f4-e46414ffe53c",
+        "productId": "134d457b-a5ce-4e18-8982-9b6c34129909",
+        "sku": "SKU002",
+        "productName": "Sữa chua uống 180 ml",
+        "sourceLotCode": "DEMO-OPT-20261107-SKU002-2",
+        "receivedQuantity": 90.0,
+        "productionDate": "2026-11-05",
+        "expirationDate": "2026-11-19",
+        "batchId": "cf2a116c-e165-403b-841f-40db6461e672",
+        "batchCode": "WH-Q7-SKU002-05112026-19112026"
+      },
+      {
+        "id": "67ec2155-a1e1-452b-87f7-302a92f4dc80",
+        "productId": "134d457b-a5ce-4e18-8982-9b6c34129909",
+        "sku": "SKU002",
+        "productName": "Sữa chua uống 180 ml",
+        "sourceLotCode": "DEMO-OPT-20261107-SKU002-1",
+        "receivedQuantity": 50.0,
+        "productionDate": "2026-10-31",
+        "expirationDate": "2026-11-14",
+        "batchId": "a4d74cbf-5d35-4905-9a9c-4b2008e04ea6",
+        "batchCode": "WH-Q7-SKU002-31102026-14112026"
+      },
+      {
+        "id": "6b71e9ff-b063-469e-af98-b91aa50f3189",
+        "productId": "134d457b-a5ce-4e18-8982-9b6c34129909",
+        "sku": "SKU002",
+        "productName": "Sữa chua uống 180 ml",
+        "sourceLotCode": "DEMO-OPT-20261107-SKU002-0",
+        "receivedQuantity": 20.0,
+        "productionDate": "2026-10-26",
+        "expirationDate": "2026-11-09",
+        "batchId": "e850f290-3189-41e6-9df8-2619d7ddd05e",
+        "batchCode": "WH-Q7-SKU002-26102026-09112026"
+      },
+      {
+        "id": "55b4e992-79da-4ba6-807d-6b2ff2557302",
+        "productId": "8b1caee4-1264-4d15-b62e-d3d1364a43fc",
+        "sku": "SKU005",
+        "productName": "Nước cam 250 ml - thùng 36 hộp",
+        "sourceLotCode": "DEMO-OPT-20261107-SKU005-1",
+        "receivedQuantity": 60.0,
+        "productionDate": "2026-10-22",
+        "expirationDate": "2026-11-21",
+        "batchId": "88c98230-023b-4800-82af-7e40fc0f493c",
+        "batchCode": "WH-Q7-SKU005-22102026-21112026"
+      },
+      {
+        "id": "0c752df8-519f-498b-9b6c-d3c7b7dc7bc4",
+        "productId": "8b1caee4-1264-4d15-b62e-d3d1364a43fc",
+        "sku": "SKU005",
+        "productName": "Nước cam 250 ml - thùng 36 hộp",
+        "sourceLotCode": "DEMO-OPT-20261107-SKU005-0",
+        "receivedQuantity": 30.0,
+        "productionDate": "2026-10-12",
+        "expirationDate": "2026-11-11",
+        "batchId": "c38b0cbe-4eae-40af-8f98-c706c6759ff2",
+        "batchCode": "WH-Q7-SKU005-12102026-11112026"
+      },
+      {
+        "id": "1b76ced4-74e0-48dd-b8d7-a3453d9fb1bd",
+        "productId": "8b1caee4-1264-4d15-b62e-d3d1364a43fc",
+        "sku": "SKU005",
+        "productName": "Nước cam 250 ml - thùng 36 hộp",
+        "sourceLotCode": "DEMO-OPT-20261107-SKU005-2",
+        "receivedQuantity": 100.0,
+        "productionDate": "2026-11-03",
+        "expirationDate": "2026-12-03",
+        "batchId": "3077e18f-c17d-4672-b68c-f764f1353cfe",
+        "batchCode": "WH-Q7-SKU005-03112026-03122026"
+      }
+    ]
+  },
+  {
+    "Warehouse": "WH-HCM-01",
+    "ReceiptId": "714bcc3c-63bb-4c74-89e0-d1073651b32c",
+    "ReceiptCode": null,
+    "Status": "Received",
+    "Lines": [
+      {
+        "id": "b38d4009-607b-4586-a027-3189958d047d",
+        "productId": "4f268844-8371-45fb-a365-022ad14e7731",
+        "sku": "SKU001",
+        "productName": "Sữa tươi 1 lít",
+        "sourceLotCode": "DEMO-OPT-20261107-SKU001-1",
+        "receivedQuantity": 40.0,
+        "productionDate": "2026-11-03",
+        "expirationDate": "2026-11-10",
+        "batchId": "df21cedf-3738-4f25-82c8-11152157c8cd",
+        "batchCode": "WH-HCM-01-SKU001-03112026-10112026"
+      },
+      {
+        "id": "36987d58-06ad-4c8a-bbb9-d42f8b0a917a",
+        "productId": "4f268844-8371-45fb-a365-022ad14e7731",
+        "sku": "SKU001",
+        "productName": "Sữa tươi 1 lít",
+        "sourceLotCode": "DEMO-OPT-20261107-SKU001-2",
+        "receivedQuantity": 80.0,
+        "productionDate": "2026-11-06",
+        "expirationDate": "2026-11-13",
+        "batchId": "9ef1bbb1-d200-45fb-b9a0-6edb6d78bd36",
+        "batchCode": "WH-HCM-01-SKU001-06112026-13112026"
+      },
+      {
+        "id": "3d912db8-af52-48a7-8720-5022ef10bd6f",
+        "productId": "4f268844-8371-45fb-a365-022ad14e7731",
+        "sku": "SKU001",
+        "productName": "Sữa tươi 1 lít",
+        "sourceLotCode": "DEMO-OPT-20261107-SKU001-0",
+        "receivedQuantity": 20.0,
+        "productionDate": "2026-11-01",
+        "expirationDate": "2026-11-08",
+        "batchId": "22955a14-6438-485c-8393-c851122af8db",
+        "batchCode": "WH-HCM-01-SKU001-01112026-08112026"
+      },
+      {
+        "id": "eeb40a75-577b-451a-bf14-f313c18e4e75",
+        "productId": "134d457b-a5ce-4e18-8982-9b6c34129909",
+        "sku": "SKU002",
+        "productName": "Sữa chua uống 180 ml",
+        "sourceLotCode": "DEMO-OPT-20261107-SKU002-1",
+        "receivedQuantity": 50.0,
+        "productionDate": "2026-10-31",
+        "expirationDate": "2026-11-14",
+        "batchId": "23a7a67d-d52e-4ed6-a4db-ecd61f8c661e",
+        "batchCode": "WH-HCM-01-SKU002-31102026-14112026"
+      },
+      {
+        "id": "314b8898-18a7-42e1-90af-c63c029aa6bd",
+        "productId": "134d457b-a5ce-4e18-8982-9b6c34129909",
+        "sku": "SKU002",
+        "productName": "Sữa chua uống 180 ml",
+        "sourceLotCode": "DEMO-OPT-20261107-SKU002-0",
+        "receivedQuantity": 20.0,
+        "productionDate": "2026-10-26",
+        "expirationDate": "2026-11-09",
+        "batchId": "9a157870-984c-4141-bc26-eb7961300bf5",
+        "batchCode": "WH-HCM-01-SKU002-26102026-09112026"
+      },
+      {
+        "id": "6e460cfa-9867-49c5-9cf2-f67160f76e16",
+        "productId": "134d457b-a5ce-4e18-8982-9b6c34129909",
+        "sku": "SKU002",
+        "productName": "Sữa chua uống 180 ml",
+        "sourceLotCode": "DEMO-OPT-20261107-SKU002-2",
+        "receivedQuantity": 90.0,
+        "productionDate": "2026-11-05",
+        "expirationDate": "2026-11-19",
+        "batchId": "170378ba-50fe-47ba-8e21-b0ea715245c4",
+        "batchCode": "WH-HCM-01-SKU002-05112026-19112026"
+      },
+      {
+        "id": "4d24766d-72fa-4013-ba0a-841b17859cfd",
+        "productId": "8b1caee4-1264-4d15-b62e-d3d1364a43fc",
+        "sku": "SKU005",
+        "productName": "Nước cam 250 ml - thùng 36 hộp",
+        "sourceLotCode": "DEMO-OPT-20261107-SKU005-1",
+        "receivedQuantity": 60.0,
+        "productionDate": "2026-10-22",
+        "expirationDate": "2026-11-21",
+        "batchId": "770cd140-737e-4c00-ac96-d1f28205b804",
+        "batchCode": "WH-HCM-01-SKU005-22102026-21112026"
+      },
+      {
+        "id": "30ad834d-ec28-4815-92dd-41ec1c60a780",
+        "productId": "8b1caee4-1264-4d15-b62e-d3d1364a43fc",
+        "sku": "SKU005",
+        "productName": "Nước cam 250 ml - thùng 36 hộp",
+        "sourceLotCode": "DEMO-OPT-20261107-SKU005-0",
+        "receivedQuantity": 30.0,
+        "productionDate": "2026-10-12",
+        "expirationDate": "2026-11-11",
+        "batchId": "c0163840-c29f-4b44-a40d-ebfe7d1e51c9",
+        "batchCode": "WH-HCM-01-SKU005-12102026-11112026"
+      },
+      {
+        "id": "e6674375-d84c-495e-a156-a58bef670d86",
+        "productId": "8b1caee4-1264-4d15-b62e-d3d1364a43fc",
+        "sku": "SKU005",
+        "productName": "Nước cam 250 ml - thùng 36 hộp",
+        "sourceLotCode": "DEMO-OPT-20261107-SKU005-2",
+        "receivedQuantity": 100.0,
+        "productionDate": "2026-11-03",
+        "expirationDate": "2026-12-03",
+        "batchId": "197d5494-03de-4799-bf34-3cf85b304916",
+        "batchCode": "WH-HCM-01-SKU005-03112026-03122026"
+      }
+    ]
+  }
+]

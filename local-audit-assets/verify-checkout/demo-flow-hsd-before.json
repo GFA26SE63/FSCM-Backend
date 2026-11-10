@@ -1,0 +1,133 @@
+{
+  "id": "19634072-fa8f-4c63-a9ae-a430de94534a",
+  "version": 1,
+  "effectiveFrom": "2026-10-26T16:08:45.189482+07:00",
+  "effectiveTo": null,
+  "isActive": true,
+  "note": "Bậc giảm theo % HSD còn lại — bộ dùng từ bản prototype Portal.",
+  "createdByUserId": "c808730f-b06e-4d9a-bd89-877837992600",
+  "createdAt": "2026-10-26T16:08:45.46121+07:00",
+  "updatedAt": "2026-10-26T16:08:45.46121+07:00",
+  "tiers": [
+    {
+      "id": "00ab2c35-f275-45cb-aa63-1961b12c7132",
+      "scope": "Category",
+      "productId": null,
+      "productCategoryId": "ab62f0c9-ba29-49d6-af7d-051316cec28f",
+      "minRemainingPercent": 0.0,
+      "maxRemainingPercent": 30.0,
+      "discountType": "Percent",
+      "discountValue": 15.0
+    },
+    {
+      "id": "82c07a93-ab65-4103-a4cf-50f75959f8c8",
+      "scope": "Category",
+      "productId": null,
+      "productCategoryId": "c853f058-a90f-42de-9e73-5c3c13cf6964",
+      "minRemainingPercent": 0.0,
+      "maxRemainingPercent": 30.0,
+      "discountType": "Percent",
+      "discountValue": 15.0
+    },
+    {
+      "id": "8ed05a32-f1b5-4810-8465-cb62a9b3c622",
+      "scope": "Category",
+      "productId": null,
+      "productCategoryId": "a62abebc-4c09-4e50-ac8c-6ba6dcf669f9",
+      "minRemainingPercent": 0.0,
+      "maxRemainingPercent": 30.0,
+      "discountType": "Percent",
+      "discountValue": 15.0
+    },
+    {
+      "id": "ca210a7d-aab1-457b-afa5-23f9430c068f",
+      "scope": "Category",
+      "productId": null,
+      "productCategoryId": "3a0e2b56-e1f2-4ab5-bb95-3fad8baf4c79",
+      "minRemainingPercent": 0.0,
+      "maxRemainingPercent": 30.0,
+      "discountType": "Percent",
+      "discountValue": 15.0
+    },
+    {
+      "id": "54b04d68-7cb4-4c7e-9458-f1e8eb67a01d",
+      "scope": "Category",
+      "productId": null,
+      "productCategoryId": "ab62f0c9-ba29-49d6-af7d-051316cec28f",
+      "minRemainingPercent": 30.0,
+      "maxRemainingPercent": 40.0,
+      "discountType": "Percent",
+      "discountValue": 10.0
+    },
+    {
+      "id": "9577500d-13c5-4d56-a43d-75b323fa2496",
+      "scope": "Category",
+      "productId": null,
+      "productCategoryId": "a62abebc-4c09-4e50-ac8c-6ba6dcf669f9",
+      "minRemainingPercent": 30.0,
+      "maxRemainingPercent": 40.0,
+      "discountType": "Percent",
+      "discountValue": 10.0
+    },
+    {
+      "id": "ec28e702-ea5b-4ad8-b4ab-1c7df2a8af46",
+      "scope": "Category",
+      "productId": null,
+      "productCategoryId": "c853f058-a90f-42de-9e73-5c3c13cf6964",
+      "minRemainingPercent": 30.0,
+      "maxRemainingPercent": 40.0,
+      "discountType": "Percent",
+      "discountValue": 10.0
+    },
+    {
+      "id": "f5cc1bde-669d-4b58-a50f-91a3cef9057a",
+      "scope": "Category",
+      "productId": null,
+      "productCategoryId": "3a0e2b56-e1f2-4ab5-bb95-3fad8baf4c79",
+      "minRemainingPercent": 30.0,
+      "maxRemainingPercent": 40.0,
+      "discountType": "Percent",
+      "discountValue": 10.0
+    },
+    {
+      "id": "5cdc512a-2677-4dea-a0c5-a990f21f1787",
+      "scope": "Category",
+      "productId": null,
+      "productCategoryId": "ab62f0c9-ba29-49d6-af7d-051316cec28f",
+      "minRemainingPercent": 40.0,
+      "maxRemainingPercent": 60.0,
+      "discountType": "Percent",
+      "discountValue": 5.0
+    },
+    {
+      "id": "61ea49dc-6c1f-405f-b124-75dc2db510f0",
+      "scope": "Category",
+      "productId": null,
+      "productCategoryId": "a62abebc-4c09-4e50-ac8c-6ba6dcf669f9",
+      "minRemainingPercent": 40.0,
+      "maxRemainingPercent": 60.0,
+      "discountType": "Percent",
+      "discountValue": 5.0
+    },
+    {
+      "id": "6a9ac5bf-6a73-4f13-b5b7-02b3e922b382",
+      "scope": "Category",
+      "productId": null,
+      "productCategoryId": "c853f058-a90f-42de-9e73-5c3c13cf6964",
+      "minRemainingPercent": 40.0,
+      "maxRemainingPercent": 60.0,
+      "discountType": "Percent",
+      "discountValue": 5.0
+    },
+    {
+      "id": "959910eb-555a-4a45-9455-cec07299fc8e",
+      "scope": "Category",
+      "productId": null,
+      "productCategoryId": "3a0e2b56-e1f2-4ab5-bb95-3fad8baf4c79",
+      "minRemainingPercent": 40.0,
+      "maxRemainingPercent": 60.0,
+      "discountType": "Percent",
+      "discountValue": 5.0
+    }
+  ]
+}

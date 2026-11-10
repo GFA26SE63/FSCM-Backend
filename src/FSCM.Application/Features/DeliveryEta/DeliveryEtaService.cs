@@ -4,11 +4,9 @@ using FSCM.Application.Features.TransitTables;
 namespace FSCM.Application.Features.DeliveryEta;
 
 /// <summary>
-/// The shared estimate of when the customer receives the goods. An order placed today is not
-/// driven to the retailer immediately: it waits for the day's allocation run, waits for the plan
-/// to be approved, is picked, waits for the next dispatch slot, and only then travels. Adding
-/// driving time to "now" would understate the arrival by a day or more, so every stage is
-/// modelled and reported.
+/// The shared estimate of when the customer receives the goods. Allocation is real-time, so the
+/// estimate starts at the supplied reference instant. It then includes preparation, warehouse
+/// handling, the next dispatch slot, transit and the configured safety buffer.
 /// </summary>
 public sealed class DeliveryEtaService(
     IDeliveryEtaStore store,
@@ -25,14 +23,9 @@ public sealed class DeliveryEtaService(
         "ETA chỉ là thời gian ước tính, không phải cam kết thời điểm giao hàng.";
 
     /// <summary>
-    /// The run-day timetable for one business date.
-    ///
-    /// The cutoff and the approval deadline already lived here because the ETA is built from them;
-    /// the reminders join them rather than going into a configuration of their own, so the portal,
-    /// the ETA and the job cannot end up disagreeing about when the day runs.
-    ///
-    /// The sales advice is marked advisory on purpose. An order accepted after it and before the
-    /// cutoff is still in the run, and a caller that reads it as a deadline would drop valid orders.
+    /// The currently published operational ETA schedule. Allocation itself has no scheduled
+    /// milestone; the returned milestones are only the warehouse dispatch slots for the selected
+    /// business date.
     /// </summary>
     public async Task<AllocationScheduleResult> GetScheduleAsync(
         DateOnly? businessDate, CancellationToken cancellationToken)
@@ -43,26 +36,13 @@ public sealed class DeliveryEtaService(
         var date = businessDate ?? DateOnly.FromDateTime(
             TimeZoneInfo.ConvertTime(timeProvider.GetUtcNow(), zone).DateTime);
 
-        var cutoff = schedule.AllocationRunLocalTime;
-        ScheduleMilestone Milestone(string key, string label, TimeOnly at, bool advisory, bool beforeCutoff) =>
-            new(key, label, at, ResolveMilestone(date, cutoff, at, beforeCutoff, zone), advisory);
-
         return new AllocationScheduleResult(
             date,
             schedule.TimeZone,
             view.Version,
-            [
-                Milestone("sales_submission_advice", "Khuyến nghị Sales gửi đơn trước",
-                    schedule.SalesSubmissionAdviceLocalTime, true, true),
-                Milestone("order_review_reminder", "Nhắc duyệt đơn còn chờ",
-                    schedule.OrderReviewReminderLocalTime, false, true),
-                Milestone("allocation_run", "Giờ chốt đợt",
-                    schedule.AllocationRunLocalTime, false, false),
-                Milestone("plan_approval_reminder", "Nhắc duyệt phương án",
-                    schedule.PlanApprovalReminderLocalTime, false, false),
-                Milestone("plan_approval_deadline", "Hạn duyệt phương án",
-                    schedule.PlanApprovalDeadlineLocalTime, false, false)
-            ],
+            schedule.DispatchSlotsLocalTime.Select((slot, index) => new ScheduleMilestone(
+                $"dispatch_slot_{index + 1}", $"Chuyến xuất kho {index + 1}", slot,
+                ToOffset(date, slot, zone), false)).ToArray(),
             schedule.PreparationMinutes,
             schedule.BufferMinutes,
             schedule.DispatchSlotsLocalTime);
@@ -89,9 +69,12 @@ public sealed class DeliveryEtaService(
         // reads the table version that run actually used.
         var transit = await transitTables.LookupAsync(distance.DistanceMeters, referenceAt, cancellationToken);
 
-        var allocationRunAt = NextLocalTime(referenceAt, schedule.AllocationRunLocalTime, zone);
-        var approvalMinutes = (int)(schedule.PlanApprovalDeadlineLocalTime - schedule.AllocationRunLocalTime).TotalMinutes;
-        var planApprovedAt = allocationRunAt.AddMinutes(approvalMinutes);
+        // The order is allocated and priced in the request transaction. These legacy breakdown
+        // fields remain in the response for API compatibility, but both now point at the real-time
+        // reference and contribute zero waiting minutes.
+        var allocationRunAt = referenceAt;
+        const int approvalMinutes = 0;
+        var planApprovedAt = referenceAt;
         var pickingDoneAt = planApprovedAt.AddMinutes(schedule.PreparationMinutes);
         var readyToLoadAt = pickingDoneAt.AddMinutes(transit.HandlingMinutes);
         var departureAt = NextDispatchSlot(readyToLoadAt, schedule.DispatchSlotsLocalTime, zone);
@@ -107,7 +90,7 @@ public sealed class DeliveryEtaService(
             readyToLoadAt,
             departureAt,
             estimatedArrivalAt,
-            (int)(allocationRunAt - referenceAt).TotalMinutes,
+            0,
             approvalMinutes,
             schedule.PreparationMinutes,
             transit.HandlingMinutes,
@@ -234,11 +217,9 @@ public sealed class DeliveryEtaService(
         int BufferMinutes,
         IReadOnlyList<string>? DispatchSlotsLocalTime)
     {
-        // The reminders were added after the schedule was first published, so a document without
-        // them is still valid and falls back to the recommended times rather than failing to load.
-        private static readonly TimeOnly DefaultSalesAdvice = new(11, 0);
-        private static readonly TimeOnly DefaultOrderReviewReminder = new(11, 30);
-        private static readonly TimeOnly DefaultPlanApprovalReminder = new(13, 30);
+        // Legacy run/approval fields remain readable so existing configuration rows can be loaded
+        // during rollout. They no longer gate allocation or contribute to ETA.
+        private static readonly TimeOnly LegacyMidnight = new(0, 0);
 
         public EtaSchedule ToSchedule()
         {
@@ -247,55 +228,12 @@ public sealed class DeliveryEtaService(
                 throw DeliveryEtaOperationException.Validation("The ETA schedule needs a time zone.");
             }
 
-            var run = ParseTime(AllocationRunLocalTime, nameof(AllocationRunLocalTime));
-            var deadline = ParseTime(PlanApprovalDeadlineLocalTime, nameof(PlanApprovalDeadlineLocalTime));
-            var salesAdvice = OptionalTime(
-                SalesSubmissionAdviceLocalTime, nameof(SalesSubmissionAdviceLocalTime), DefaultSalesAdvice);
-            var orderReminder = OptionalTime(
-                OrderReviewReminderLocalTime, nameof(OrderReviewReminderLocalTime), DefaultOrderReviewReminder);
-            var planReminder = OptionalTime(
-                PlanApprovalReminderLocalTime, nameof(PlanApprovalReminderLocalTime), DefaultPlanApprovalReminder);
-
-            // Ordered as instants, not as times of day.
-            //
-            // Comparing the raw times only works while the cutoff sits in the middle of the working
-            // day. A cutoff at midnight has nothing before it on its own date, so a rule written as
-            // "the advice must be earlier in the day than the cutoff" rejects every schedule that
-            // closes the day at 00:00 - including one whose advice sits perfectly sensibly at 11:00
-            // the morning before. Resolving each milestone around the cutoff first states the rule
-            // that was always meant: the reminders come before the thing they remind about.
-            var zone = ResolveTimeZone(TimeZone);
-            // Any date: the check is about order, and these milestones carry no date of their own.
-            var reference = new DateOnly(2000, 1, 3);
-            var runAt = ToOffset(reference, run, zone);
-            var adviceAt = ResolveMilestone(reference, run, salesAdvice, true, zone);
-            var orderReminderAt = ResolveMilestone(reference, run, orderReminder, true, zone);
-            var planReminderAt = ResolveMilestone(reference, run, planReminder, false, zone);
-            var deadlineAt = ResolveMilestone(reference, run, deadline, false, zone);
-
-            if (adviceAt >= orderReminderAt)
-            {
-                throw DeliveryEtaOperationException.Validation(
-                    "The sales advice must come before the order review reminder.");
-            }
-
-            if (adviceAt >= runAt || orderReminderAt >= runAt)
-            {
-                throw DeliveryEtaOperationException.Validation(
-                    "The sales advice and the order review reminder must both fall before the cutoff.");
-            }
-
-            if (planReminderAt <= runAt || planReminderAt >= deadlineAt)
-            {
-                throw DeliveryEtaOperationException.Validation(
-                    "The plan approval reminder must fall between the cutoff and the approval deadline.");
-            }
-
-            if (deadlineAt <= runAt)
-            {
-                throw DeliveryEtaOperationException.Validation(
-                    "The plan approval deadline must come after the allocation run.");
-            }
+            _ = ResolveTimeZone(TimeZone);
+            var run = OptionalTime(AllocationRunLocalTime, nameof(AllocationRunLocalTime), LegacyMidnight);
+            var deadline = OptionalTime(PlanApprovalDeadlineLocalTime, nameof(PlanApprovalDeadlineLocalTime), LegacyMidnight);
+            var salesAdvice = OptionalTime(SalesSubmissionAdviceLocalTime, nameof(SalesSubmissionAdviceLocalTime), LegacyMidnight);
+            var orderReminder = OptionalTime(OrderReviewReminderLocalTime, nameof(OrderReviewReminderLocalTime), LegacyMidnight);
+            var planReminder = OptionalTime(PlanApprovalReminderLocalTime, nameof(PlanApprovalReminderLocalTime), LegacyMidnight);
 
             if (PreparationMinutes < 0 || BufferMinutes < 0)
             {
