@@ -9,7 +9,8 @@ public sealed record OrderInventoryCandidate(
     InventoryBalance Balance,
     Warehouse Warehouse,
     decimal? WarehouseLatitude,
-    decimal? WarehouseLongitude);
+    decimal? WarehouseLongitude,
+    decimal ActiveLockedQuantity = 0m);
 
 public sealed record OrderMlorSnapshot(
     string SourceScope,

@@ -780,6 +780,7 @@ public sealed class OrderService(
         ToShipments(view.Shipments))
     {
         AllocationRunCode = view.AllocationContext?.RunCode,
+        OfficialPricedAt = view.AllocationContext?.PricedAt,
         Payment = ToPaymentSummary(view.Payment),
         // Locked price breakdown (F60): sum of the per-batch snapshot, never recomputed.
         QuantityPromotionTotal = decimal.Round(view.AllocationContext?.Fragments

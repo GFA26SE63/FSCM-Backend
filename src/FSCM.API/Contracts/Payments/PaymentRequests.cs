@@ -36,3 +36,5 @@ public sealed record PayOsWebhookDataRequest(
     string? CounterAccountNumber,
     string? VirtualAccountName,
     string? VirtualAccountNumber);
+
+public sealed record SwitchToCreditRequest(int ExpectedVersion);

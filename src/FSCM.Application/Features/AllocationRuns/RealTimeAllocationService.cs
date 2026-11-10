@@ -119,14 +119,7 @@ public sealed class RealTimeAllocationService(
             }
 
             var candidates = productCandidates.Select(item =>
-            {
-                var distance = DistanceMeters(context.RetailerLocation, item);
-                var eta = distance.HasValue ? now.Add(DefaultTransit) : (DateTimeOffset?)null;
-                return new BatchCandidate(item.Batch.Id, item.Batch.BatchCode, item.Warehouse.Id, item.Warehouse.Code,
-                    new DateTimeOffset(item.Batch.ExpirationDate.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero),
-                    remainingByBatch[item.Batch.Id], distance ?? 0, eta,
-                    eta.HasValue ? DateOnly.FromDateTime(eta.Value.UtcDateTime) : null);
-            }).ToArray();
+                ToBatchCandidate(item, context.RetailerLocation, remainingByBatch[item.Batch.Id], now)).ToArray();
             var result = engine.Allocate(new AllocationRequest(line.SkuSnapshot, line.OrderedQuantity,
                 productCandidates[0].Product.ShelfLifeHours,
                 line.MlorMinimumLifeRatio, context.Order.RequestedDeliveryDate), candidates);
@@ -266,6 +259,18 @@ public sealed class RealTimeAllocationService(
     }
 
     private static OrderStatusHistory History(Guid orderId, string from, string to, Guid actor, string? reason, DateTimeOffset now) => new() { Id = Guid.NewGuid(), SalesOrderId = orderId, FromStatus = from, ToStatus = to, ChangedByUserId = actor, Reason = reason, ChangedAt = now };
+    public static BatchCandidate ToBatchCandidate(
+        RealTimeInventoryCandidate item, MapLocation? retailerLocation,
+        decimal availableQuantity, DateTimeOffset now)
+    {
+        var distance = DistanceMeters(retailerLocation, item);
+        var arrival = distance.HasValue ? now.Add(DefaultTransit) : (DateTimeOffset?)null;
+        return new BatchCandidate(item.Batch.Id, item.Batch.BatchCode, item.Warehouse.Id, item.Warehouse.Code,
+            new DateTimeOffset(item.Batch.ExpirationDate.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero),
+            availableQuantity, distance ?? 0, arrival,
+            arrival.HasValue ? DateOnly.FromDateTime(arrival.Value.UtcDateTime) : null);
+    }
+
     private static decimal? DistanceMeters(MapLocation? retailer, RealTimeInventoryCandidate candidate)
     {
         if (retailer is null || !candidate.WarehouseLatitude.HasValue || !candidate.WarehouseLongitude.HasValue) return null;

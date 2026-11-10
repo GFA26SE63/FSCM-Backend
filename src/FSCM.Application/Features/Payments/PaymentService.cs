@@ -286,6 +286,65 @@ public sealed class PaymentService(
         return ToResult(committed, Today());
     }
 
+    public async Task<PaymentResult> SwitchToCreditAsync(
+        Guid orderId, int expectedVersion, Guid actorUserId, string actorRole,
+        CancellationToken cancellationToken)
+    {
+        if (actorRole != SystemRoles.Retailer)
+            throw PaymentOperationException.Forbidden("Chỉ chủ cửa hàng được đổi phương thức thanh toán.");
+        await store.ExecuteInTransactionAsync(async token =>
+        {
+            var view = await store.FindByOrderAsync(orderId, true, token)
+                ?? throw PaymentOperationException.NotFound("Không tìm thấy thanh toán.");
+            if (!await store.CanViewAsync(view, actorUserId, actorRole, token))
+                throw PaymentOperationException.Forbidden("Bạn không có quyền với đơn hàng này.");
+            if (view.Payment.Method == OrderPaymentMethods.Credit &&
+                view.Order.PaymentMethod == OrderPaymentMethods.Credit)
+            {
+                if ((view.Order.Status is OrderStatuses.Quoted or OrderStatuses.PaymentPending) && purchaseOrderGateService is not null)
+                    await purchaseOrderGateService.TryCreateAsync(orderId, token);
+                return;
+            }
+            if (view.Order.Status != OrderStatuses.PaymentPending ||
+                view.Payment.Method != OrderPaymentMethods.Prepaid ||
+                view.Payment.Status != PaymentStatuses.Unpaid ||
+                view.Payment.ConfirmedAmount != 0)
+                throw PaymentOperationException.Conflict("Chỉ đơn trả trước đang chờ và chưa thu tiền mới được đổi.");
+            if (view.Payment.Version != expectedVersion)
+                throw PaymentOperationException.Conflict("Thanh toán đã thay đổi. Hãy tải lại đơn.");
+            if (view.Retailer.CreditTermDays is not (7 or 14 or 30))
+                throw PaymentOperationException.Conflict("Cửa hàng chưa được duyệt kỳ hạn công nợ.");
+            if (view.Payment.PayOsPaymentLinkId is not null || view.Payment.PayOsOrderCode is not null)
+                throw PaymentOperationException.Conflict(
+                    "Đơn đã có giao dịch PayOS. Cần xác nhận hủy giao dịch đó trước khi đổi phương thức.");
+            var now = timeProvider.GetUtcNow();
+            view.Payment.Method = OrderPaymentMethods.Credit;
+            view.Payment.Version++;
+            view.Payment.UpdatedAt = now;
+            view.Order.PaymentMethod = OrderPaymentMethods.Credit;
+            view.Order.CreditTermDays = view.Retailer.CreditTermDays;
+            view.Order.Version++;
+            view.Order.UpdatedAt = now;
+            store.AddAuditLog(new AuditLog
+            {
+                Id = Guid.NewGuid(), UserAccountId = actorUserId,
+                EntityName = nameof(Payment), EntityId = view.Payment.Id,
+                Action = "PaymentMethodChangedToCredit",
+                OldValues = JsonSerializer.Serialize(new { Method = OrderPaymentMethods.Prepaid }),
+                NewValues = JsonSerializer.Serialize(new {
+                    view.Payment.Method, view.Order.CreditTermDays, view.Payment.Version
+                }),
+                Reason = "Retailer chuyển từ trả trước chưa thu tiền sang công nợ được duyệt.",
+                CreatedAt = now
+            });
+            await store.SaveChangesAsync(token);
+            if (purchaseOrderGateService is not null)
+                await purchaseOrderGateService.TryCreateAsync(orderId, token);
+        }, cancellationToken);
+        store.ClearTracking();
+        return await GetByOrderAsync(orderId, actorUserId, actorRole, cancellationToken);
+    }
+
     public async Task<PayOsCheckoutResult> CreatePayOsCheckoutAsync(
         Guid orderId,
         CreatePayOsCheckoutData data,

@@ -14,8 +14,15 @@ namespace FSCM.API.Controllers;
 [Route("api/v1/orders")]
 public sealed class OrdersController(
     OrderService service,
-    DeliveryService deliveryService) : ControllerBase
+    DeliveryService deliveryService,
+    OrderAvailabilityService availability) : ControllerBase
 {
+    [HttpPost("availability")]
+    public Task<OrderAvailabilityResult> Availability(
+        OrderAvailabilityRequest request, CancellationToken cancellationToken) =>
+        availability.CheckAsync(request.RetailerId, request.ProductIds,
+            GetActorUserId(), GetActorRole(), cancellationToken);
+
     [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator},{SystemRoles.SalesManager},{SystemRoles.Sales},{SystemRoles.WarehouseKeeper},{SystemRoles.Retailer}")]
     [HttpGet]
     public Task<PagedOrderResult> List(
@@ -122,3 +129,5 @@ public sealed class OrdersController(
         ?? throw OrderOperationException.Validation("Authenticated user role is invalid.");
 }
 
+
+public sealed record OrderAvailabilityRequest(Guid RetailerId, IReadOnlyCollection<Guid> ProductIds);
