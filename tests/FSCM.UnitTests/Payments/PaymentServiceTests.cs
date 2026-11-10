@@ -13,6 +13,53 @@ public sealed class PaymentServiceTests
     private static readonly DateTimeOffset Now = new(2026, 10, 15, 3, 0, 0, TimeSpan.Zero);
 
     [Fact]
+    public async Task Retailer_switches_unpaid_prepaid_to_approved_credit_idempotently()
+    {
+        var fixture = new Fixture(OrderPaymentMethods.Prepaid);
+        fixture.Order.Status = OrderStatuses.PaymentPending;
+        fixture.Retailer.CreditTermDays = 14;
+        var first = await fixture.Service.SwitchToCreditAsync(
+            fixture.Order.Id, 0, fixture.RetailerUserId, SystemRoles.Retailer, default);
+        var replay = await fixture.Service.SwitchToCreditAsync(
+            fixture.Order.Id, 0, fixture.RetailerUserId, SystemRoles.Retailer, default);
+        Assert.Equal(OrderPaymentMethods.Credit, fixture.Payment!.Method);
+        Assert.Equal(14, fixture.Order.CreditTermDays);
+        Assert.Equal(0m, fixture.Payment.ConfirmedAmount);
+        Assert.Equal(first.Version, replay.Version);
+        Assert.Single(fixture.Store.Audits);
+    }
+
+    [Theory]
+    [InlineData(false, 0, 0)]
+    [InlineData(true, 0, 14)]
+    [InlineData(false, 1, 14)]
+    public async Task Credit_switch_rejects_ineligible_or_exposed_payments(
+        bool linkedCheckout, int confirmedAmount, int creditDays)
+    {
+        var fixture = new Fixture(OrderPaymentMethods.Prepaid);
+        fixture.Order.Status = OrderStatuses.PaymentPending;
+        fixture.Retailer.CreditTermDays = creditDays;
+        fixture.Payment!.ConfirmedAmount = confirmedAmount;
+        fixture.Payment.PayOsPaymentLinkId = linkedCheckout ? "active-link" : null;
+        await Assert.ThrowsAsync<PaymentOperationException>(() =>
+            fixture.Service.SwitchToCreditAsync(fixture.Order.Id, 0,
+                fixture.RetailerUserId, SystemRoles.Retailer, default));
+        Assert.Equal(OrderPaymentMethods.Prepaid, fixture.Payment.Method);
+    }
+
+    [Fact]
+    public async Task Credit_switch_rejects_another_retailer()
+    {
+        var fixture = new Fixture(OrderPaymentMethods.Prepaid);
+        fixture.Order.Status = OrderStatuses.PaymentPending;
+        fixture.Retailer.CreditTermDays = 14;
+        await Assert.ThrowsAsync<PaymentOperationException>(() =>
+            fixture.Service.SwitchToCreditAsync(fixture.Order.Id, 0,
+                Guid.NewGuid(), SystemRoles.Retailer, default));
+        Assert.Equal(OrderPaymentMethods.Prepaid, fixture.Payment!.Method);
+    }
+
+    [Fact]
     public async Task Final_approval_creates_ledger_and_delivery_sets_credit_due_date()
     {
         var fixture = new Fixture(OrderPaymentMethods.Credit, creditTermDays: 14, withPayment: false);

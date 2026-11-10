@@ -5,6 +5,7 @@ using FSCM.Application.Features.Picking;
 using FSCM.Application.Features.WarehouseConfiguration;
 using FSCM.Domain.Authorization;
 using FSCM.Domain.Entities;
+using FSCM.Domain.Allocation;
 using DomainAllocation = FSCM.Domain.Entities.Allocation;
 
 namespace FSCM.UnitTests.Orders;
@@ -12,6 +13,60 @@ namespace FSCM.UnitTests.Orders;
 public sealed class OrderServiceTests
 {
     private static readonly DateTimeOffset Now = new(2026, 10, 14, 3, 0, 0, TimeSpan.Zero);
+
+    [Fact]
+    public async Task Price_contract_separates_quantity_promotion_from_final_shelf_life_discount()
+    {
+        var captured = await new Fixture().CreateAsync(quantity: 10);
+        Assert.Null(captured.OfficialAmount);
+        Assert.Null(Assert.Single(captured.Lines).OfficialNetAmount);
+        var pricedLine = Assert.Single(captured.Lines) with
+        {
+            DiscountAmount = 145m, NetAmount = 855m, FinalPricePendingAllocation = false
+        };
+        var priced = captured with
+        {
+            FinalAmount = 855m, DiscountAmount = 145m,
+            FinalPricePendingAllocation = false, Lines = [pricedLine]
+        };
+        Assert.Equal(100m, pricedLine.OrdinaryPromotionDiscountAmount);
+        Assert.Equal(900m, pricedLine.IndicativeNetAmount);
+        Assert.Equal(855m, pricedLine.OfficialNetAmount);
+        Assert.Equal(900m, priced.IndicativeAmount);
+        Assert.Equal(855m, priced.OfficialAmount);
+        Assert.Equal(0m, (pricedLine with { OrdinaryPromotion = null }).OrdinaryPromotionDiscountAmount);
+    }
+
+    [Theory]
+    [InlineData(2, 0, 0)]
+    [InlineData(30, 0, 50)]
+    [InlineData(30, 20, 30)]
+    public async Task Availability_uses_delivery_mlor_and_locked_stock_without_reserving(
+        int daysUntilExpiry, int lockedQuantity, int expected)
+    {
+        var fixture = new Fixture();
+        fixture.Store.Batch.ExpirationDate = DateOnly.FromDateTime(Now.AddDays(daysUntilExpiry).UtcDateTime);
+        fixture.Store.ActiveLockedQuantity = lockedQuantity;
+        var service = new OrderAvailabilityService(fixture.Store, fixture.Service,
+            new AllocationEngine(), new FixedTimeProvider(Now));
+        var result = await service.CheckAsync(fixture.Store.Retailer.Id,
+            [fixture.Store.Product.Id], fixture.SalesUserId, SystemRoles.Sales, default);
+        Assert.Equal(expected, Assert.Single(result.Items).EligibleQuantity);
+        Assert.Equal(0m, fixture.Store.Balance.ReservedQuantity);
+        Assert.Empty(fixture.Store.Orders);
+    }
+
+    [Fact]
+    public async Task Availability_excludes_stock_outside_the_store_service_radius()
+    {
+        var fixture = new Fixture();
+        fixture.Store.RetailerLocation.Latitude = 0;
+        var service = new OrderAvailabilityService(fixture.Store, fixture.Service,
+            new AllocationEngine(), new FixedTimeProvider(Now));
+        var result = await service.CheckAsync(fixture.Store.Retailer.Id,
+            [fixture.Store.Product.Id], fixture.SalesUserId, SystemRoles.Sales, default);
+        Assert.Equal(0, Assert.Single(result.Items).EligibleQuantity);
+    }
 
     [Fact]
     public async Task Retailer_creates_own_order_with_promotions_and_replays_without_duplicates()
@@ -420,6 +475,7 @@ public sealed class OrderServiceTests
         public InventoryBalance Balance { get; }
         public MapLocation RetailerLocation { get; }
         public bool TerritoryAllowed { get; set; } = true;
+        public decimal ActiveLockedQuantity { get; set; }
         public Dictionary<string, string> Configurations { get; } = new(StringComparer.Ordinal)
         {
             [BusinessConfigurationKeys.AllocationWeights] = "{\"expiry\":0.5,\"distance\":0.3,\"coverage\":0.2}",
@@ -494,7 +550,7 @@ public sealed class OrderServiceTests
             Task.FromResult<Product?>(productId == Product.Id ? Product : null);
         public Task<IReadOnlyCollection<OrderInventoryCandidate>> ListCandidatesAsync(Guid productId, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyCollection<OrderInventoryCandidate>>(
-                [new(Batch, Balance, Warehouse, 10.802m, 106.743m)]);
+                [new(Batch, Balance, Warehouse, 10.802m, 106.743m, ActiveLockedQuantity)]);
         public Task<MapLocation?> FindRetailerLocationAsync(Guid retailerId, CancellationToken cancellationToken) =>
             Task.FromResult<MapLocation?>(retailerId == Retailer.Id ? RetailerLocation : null);
         public Task<OrderMlorSnapshot?> ResolveMlorAsync(
