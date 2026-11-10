@@ -45,6 +45,13 @@ public sealed class PaymentsController(PaymentService service) : ControllerBase
             new(request.Amount, request.Reason, request.ExpectedVersion),
             operationKey, GetActorUserId(), GetActorRole(), cancellationToken);
 
+    [Authorize(Roles = SystemRoles.Retailer)]
+    [HttpPost("orders/{orderId:guid}/switch-to-credit")]
+    public Task<PaymentResult> SwitchToCredit(
+        Guid orderId, SwitchToCreditRequest request, CancellationToken cancellationToken) =>
+        service.SwitchToCreditAsync(orderId, request.ExpectedVersion,
+            GetActorUserId(), GetActorRole(), cancellationToken);
+
     [HttpPost("orders/{orderId:guid}/payos-checkout")]
     public Task<PayOsCheckoutResult> CreatePayOsCheckout(
         Guid orderId,
