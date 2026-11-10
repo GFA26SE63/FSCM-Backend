@@ -37,6 +37,26 @@ public sealed class OrderServiceTests
         Assert.Equal(0m, (pricedLine with { OrdinaryPromotion = null }).OrdinaryPromotionDiscountAmount);
     }
 
+    [Fact]
+    public async Task Availability_preserves_each_warehouse_and_does_not_subtract_a_safety_buffer()
+    {
+        var f = new Fixture();
+        f.Store.Balance.AvailableQuantity = 10;
+        var second = new Warehouse { Id = Guid.NewGuid(), Code = "WH-Q7", Name = "Kho Quận 7", IsActive = true };
+        var batch = new Batch { Id = Guid.NewGuid(), WarehouseId = second.Id, ProductId = f.Store.Product.Id,
+            BatchCode = "WH-Q7-DEMO", ExpirationDate = f.Store.Batch.ExpirationDate };
+        f.Store.AdditionalCandidates.Add(new(batch, new InventoryBalance { AvailableQuantity = 80 }, second, 10.802m,106.743m,5));
+        var service = new OrderAvailabilityService(f.Store,f.Service,new AllocationEngine(),new FixedTimeProvider(Now));
+        var result = await service.CheckAsync(f.Store.Retailer.Id,[f.Store.Product.Id],f.SalesUserId,SystemRoles.Sales,default);
+        var product = Assert.Single(result.Items);
+        Assert.Equal(85m,product.EligibleQuantity);
+        Assert.Equal(10m,product.Warehouses.Single(w=>w.WarehouseCode=="WH-TD").EligibleQuantity);
+        Assert.Equal(75m,product.Warehouses.Single(w=>w.WarehouseCode=="WH-Q7").EligibleQuantity);
+        Assert.Equal(2,product.Warehouses.Count);
+        Assert.Empty(f.Store.Orders);
+        Assert.Equal(0m,f.Store.Balance.ReservedQuantity);
+    }
+
     [Theory]
     [InlineData(2, 0, 0)]
     [InlineData(30, 0, 50)]
@@ -52,20 +72,25 @@ public sealed class OrderServiceTests
         var result = await service.CheckAsync(fixture.Store.Retailer.Id,
             [fixture.Store.Product.Id], fixture.SalesUserId, SystemRoles.Sales, default);
         Assert.Equal(expected, Assert.Single(result.Items).EligibleQuantity);
+        Assert.Equal(expected, Assert.Single(Assert.Single(result.Items).Warehouses).EligibleQuantity);
         Assert.Equal(0m, fixture.Store.Balance.ReservedQuantity);
         Assert.Empty(fixture.Store.Orders);
     }
 
-    [Fact]
-    public async Task Availability_excludes_stock_outside_the_store_service_radius()
+    [Theory]
+    [InlineData(0)]
+    [InlineData(50)]
+    public async Task Availability_excludes_stock_outside_the_store_service_radius(int available)
     {
         var fixture = new Fixture();
         fixture.Store.RetailerLocation.Latitude = 0;
+        fixture.Store.Balance.AvailableQuantity = available;
         var service = new OrderAvailabilityService(fixture.Store, fixture.Service,
             new AllocationEngine(), new FixedTimeProvider(Now));
         var result = await service.CheckAsync(fixture.Store.Retailer.Id,
             [fixture.Store.Product.Id], fixture.SalesUserId, SystemRoles.Sales, default);
         Assert.Equal(0, Assert.Single(result.Items).EligibleQuantity);
+        Assert.Equal("OutsideServiceRadius", Assert.Single(Assert.Single(result.Items).Warehouses).UnavailableReason);
     }
 
     [Fact]
@@ -475,6 +500,7 @@ public sealed class OrderServiceTests
         public InventoryBalance Balance { get; }
         public MapLocation RetailerLocation { get; }
         public bool TerritoryAllowed { get; set; } = true;
+        public List<OrderInventoryCandidate> AdditionalCandidates { get; } = [];
         public decimal ActiveLockedQuantity { get; set; }
         public Dictionary<string, string> Configurations { get; } = new(StringComparer.Ordinal)
         {
@@ -550,7 +576,7 @@ public sealed class OrderServiceTests
             Task.FromResult<Product?>(productId == Product.Id ? Product : null);
         public Task<IReadOnlyCollection<OrderInventoryCandidate>> ListCandidatesAsync(Guid productId, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyCollection<OrderInventoryCandidate>>(
-                [new(Batch, Balance, Warehouse, 10.802m, 106.743m, ActiveLockedQuantity)]);
+                [new(Batch, Balance, Warehouse, 10.802m, 106.743m, ActiveLockedQuantity), .. AdditionalCandidates]);
         public Task<MapLocation?> FindRetailerLocationAsync(Guid retailerId, CancellationToken cancellationToken) =>
             Task.FromResult<MapLocation?>(retailerId == Retailer.Id ? RetailerLocation : null);
         public Task<OrderMlorSnapshot?> ResolveMlorAsync(
