@@ -90,6 +90,17 @@ public sealed class RealTimePostgresWorkflowTests
             foreach (var label in await db.BatchQrLabelRecords.Where(l => selected.Contains(l.BatchId)).ToArrayAsync()) label.Status = QrLabelStatuses.Invalidated;
             await db.SaveChangesAsync();
         });
+        var availability = await Call<OrderAvailabilityService, OrderAvailabilityResult>(s =>
+            s.CheckAsync(retailer, [product], sales, SystemRoles.Sales, default));
+        var availableProduct = Assert.Single(availability.Items);
+        Assert.Equal(96m, availableProduct.EligibleQuantity);
+        Assert.Equal(2, availableProduct.Warehouses.Count(w => w.EligibleQuantity > 0));
+        Assert.Equal(availableProduct.EligibleQuantity, availableProduct.Warehouses.Sum(w => w.EligibleQuantity));
+        var retailerAvailability = await Call<OrderAvailabilityService, OrderAvailabilityResult>(s =>
+            s.CheckAsync(retailer, [product], retailerUser, SystemRoles.Retailer, default));
+        Assert.Equal(96m, Assert.Single(retailerAvailability.Items).EligibleQuantity);
+        Assert.Empty(Assert.Single(retailerAvailability.Items).Warehouses);
+
         async Task<OrderDetailResult> Create(int quantity, string expectedStatus = OrderStatuses.Quoted)
         {
             var order = await Call<OrderService, OrderDetailResult>(s => s.CreateAsync(new(Guid.NewGuid(), retailer, OrderPaymentMethods.Credit, null, null, "PostgreSQL E2E", [new(product, quantity)]), sales, default));
