@@ -36,6 +36,11 @@ public sealed class PurchaseOrderGateStore(AppDbContext db) : IPurchaseOrderGate
     public Task SaveChangesAsync(CancellationToken ct) => db.SaveChangesAsync(ct);
     public async Task ExecuteInTransactionAsync(Func<CancellationToken, Task> operation, CancellationToken ct)
     {
+        if (db.Database.CurrentTransaction is not null)
+        {
+            await operation(ct);
+            return;
+        }
         var strategy = db.Database.CreateExecutionStrategy();
         await strategy.ExecuteAsync(async () =>
         {

@@ -65,7 +65,9 @@ public sealed class OrderStore(AppDbContext dbContext) : IOrderStore
                 balance,
                 warehouse,
                 location == null ? null : location.Latitude,
-                location == null ? null : location.Longitude))
+                location == null ? null : location.Longitude,
+                dbContext.InventoryLockRecords.Where(item => item.BatchId == batch.Id && item.Status == "Active")
+                    .Sum(item => (decimal?)item.LockedQuantity) ?? 0m))
             .ToArrayAsync(cancellationToken);
 
     public Task<MapLocation?> FindRetailerLocationAsync(Guid retailerId, CancellationToken cancellationToken) =>

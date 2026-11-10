@@ -70,6 +70,7 @@ public static class DependencyInjection
         services.AddScoped<NotificationService>();
         services.AddScoped<OrderNotificationService>();
         services.AddScoped<OrderService>();
+        services.AddScoped<OrderAvailabilityService>();
         services.AddScoped<OrderReleaseService>();
         services.AddScoped<OrderDeadlineService>();
         services.AddScoped<PurchaseOrderGateService>();
