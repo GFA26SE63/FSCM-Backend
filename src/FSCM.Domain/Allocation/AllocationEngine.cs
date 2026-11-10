@@ -128,6 +128,9 @@ public sealed class AllocationEngine
         ValidateWeights(_weights);
     }
 
+    public bool IsOutsideServiceRadius(BatchCandidate candidate) =>
+        candidate.EstimatedArrivalAt.HasValue && candidate.DistanceMeters > _weights.MaximumDistanceMeters;
+
     public AllocationResult Allocate(AllocationRequest request, IReadOnlyCollection<BatchCandidate> candidates)
     {
         ArgumentNullException.ThrowIfNull(request);
@@ -166,7 +169,7 @@ public sealed class AllocationEngine
         {
             var reason = candidate.EstimatedArrivalAt is null
                 ? AllocationFilterReason.RouteUnavailable
-                : candidate.DistanceMeters > _weights.MaximumDistanceMeters
+                : IsOutsideServiceRadius(candidate)
                     ? AllocationFilterReason.OutsideServiceRadius
                     : AllocationFilterReason.Eligible;
             var passed = reason == AllocationFilterReason.Eligible;

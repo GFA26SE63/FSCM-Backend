@@ -22,6 +22,7 @@ public sealed class PromotionConfiguration : IEntityTypeConfiguration<Promotion>
         builder.Property(entity => entity.CreatedByUserId).HasColumnType("uuid").IsRequired();
         builder.Property(entity => entity.CreatedAt).HasColumnType("timestamp with time zone").IsRequired();
         builder.Property(entity => entity.UpdatedAt).HasColumnType("timestamp with time zone").IsRequired();
+        builder.Property(entity => entity.CampaignMode).HasMaxLength(30).HasDefaultValue("ProductGroup").IsRequired();
         builder.HasIndex(entity => entity.Code).IsUnique();
         builder.HasOne<UserAccount>()
             .WithMany()

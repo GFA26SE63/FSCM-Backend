@@ -30,6 +30,9 @@ public sealed class PromotionStore(AppDbContext dbContext) : IPromotionStore
     public Task<Promotion?> FindPromotionAsync(Guid id, CancellationToken cancellationToken) =>
         dbContext.PromotionRecords.SingleOrDefaultAsync(item => item.Id == id, cancellationToken);
 
+    public Task<bool> HasAppliedOrdersAsync(Guid promotionId, CancellationToken cancellationToken) =>
+        dbContext.OrderPromotionRecords.AsNoTracking().AnyAsync(x => x.PromotionId == promotionId, cancellationToken);
+
     public async Task<string> NextPromotionCodeAsync(CancellationToken cancellationToken)
     {
         var connection = dbContext.Database.GetDbConnection();
@@ -169,7 +172,7 @@ public sealed class PromotionStore(AppDbContext dbContext) : IPromotionStore
     {
         var query = dbContext.PromotionRecords.AsNoTracking().Where(promotion =>
             promotion.PromotionType == PromotionTypes.Campaign && promotion.IsActive &&
-            promotion.StartAt <= at && promotion.EndAt >= at && promotion.MinimumQuantity <= quantity &&
+            promotion.StartAt <= at && promotion.EndAt >= at && (promotion.CampaignMode == "PerSku" || promotion.MinimumQuantity <= quantity) &&
             (dbContext.PromotionProductRecords.Any(link => link.PromotionId == promotion.Id && link.ProductId == productId) ||
              dbContext.PromotionCategoryRecords.Any(link => link.PromotionId == promotion.Id && link.ProductCategoryId == categoryId)) &&
             (!dbContext.PromotionRetailerRecords.Any(link => link.PromotionId == promotion.Id) ||
@@ -232,6 +235,10 @@ public sealed class PromotionStore(AppDbContext dbContext) : IPromotionStore
         return promotions.Select(promotion => new PromotionView(promotion,
             products.Where(item => item.PromotionId == promotion.Id).Select(item => item.ProductId).ToArray(),
             categories.Where(item => item.PromotionId == promotion.Id).Select(item => item.ProductCategoryId).ToArray(),
-            retailers.Where(item => item.PromotionId == promotion.Id).Select(item => item.RetailerId).ToArray())).ToArray();
+            retailers.Where(item => item.PromotionId == promotion.Id).Select(item => item.RetailerId).ToArray())
+        {
+            ProductRules = products.Where(item => item.PromotionId == promotion.Id && item.MinimumQuantity.HasValue && item.DiscountPercent.HasValue)
+                .Select(item => new PromotionProductRule(item.ProductId, item.MinimumQuantity!.Value, item.DiscountPercent!.Value)).ToArray()
+        }).ToArray();
     }
 }
