@@ -153,8 +153,9 @@ public sealed record OrderLineResult(
     IReadOnlyCollection<OrderAllocationResult> Allocations)
 {
     public decimal BaseUnitPrice => UnitPrice;
-    public decimal OrdinaryPromotionDiscountAmount => DiscountAmount;
-    public decimal IndicativeNetAmount => NetAmount;
+    public decimal OrdinaryPromotionDiscountAmount => OrdinaryPromotion?.DiscountAmount ?? 0m;
+    public decimal IndicativeNetAmount => GrossAmount - OrdinaryPromotionDiscountAmount;
+    public decimal? OfficialNetAmount => FinalPricePendingAllocation ? null : NetAmount;
     public IReadOnlyCollection<OrderAllocationFragmentResult> AllocationFragments { get; init; } = [];
 }
 
@@ -188,6 +189,7 @@ public sealed record OrderSummaryResult(
     DateTimeOffset CreatedAt)
 {
     public decimal IndicativeAmount => FinalAmount;
+    public decimal? OfficialAmount => FinalPricePendingAllocation ? null : FinalAmount;
 }
 
 public sealed record OrderListQuery(
@@ -259,8 +261,10 @@ public sealed record OrderDetailResult(
     IReadOnlyCollection<OrderStatusHistoryResult> History,
     IReadOnlyCollection<OrderShipmentLinkResult> Shipments)
 {
-    public decimal IndicativeAmount => FinalAmount;
+    public decimal IndicativeAmount => Lines.Sum(line => line.IndicativeNetAmount);
+    public decimal? OfficialAmount => FinalPricePendingAllocation ? null : FinalAmount;
     public string? AllocationRunCode { get; init; }
+    public DateTimeOffset? OfficialPricedAt { get; init; }
     public IReadOnlyCollection<OrderWarehouseProgressResult> WarehouseProgress { get; init; } = [];
     public OrderPaymentSummaryResult? Payment { get; init; }
     public decimal QuantityPromotionTotal { get; init; }

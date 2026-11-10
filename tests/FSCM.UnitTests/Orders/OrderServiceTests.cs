@@ -5,6 +5,7 @@ using FSCM.Application.Features.Picking;
 using FSCM.Application.Features.WarehouseConfiguration;
 using FSCM.Domain.Authorization;
 using FSCM.Domain.Entities;
+using FSCM.Domain.Allocation;
 using DomainAllocation = FSCM.Domain.Entities.Allocation;
 
 namespace FSCM.UnitTests.Orders;
@@ -12,6 +13,123 @@ namespace FSCM.UnitTests.Orders;
 public sealed class OrderServiceTests
 {
     private static readonly DateTimeOffset Now = new(2026, 10, 14, 3, 0, 0, TimeSpan.Zero);
+
+    [Fact]
+    public async Task Price_contract_separates_quantity_promotion_from_final_shelf_life_discount()
+    {
+        var captured = await new Fixture().CreateAsync(quantity: 10);
+        Assert.Null(captured.OfficialAmount);
+        Assert.Null(Assert.Single(captured.Lines).OfficialNetAmount);
+        var pricedLine = Assert.Single(captured.Lines) with
+        {
+            DiscountAmount = 145m, NetAmount = 855m, FinalPricePendingAllocation = false
+        };
+        var priced = captured with
+        {
+            FinalAmount = 855m, DiscountAmount = 145m,
+            FinalPricePendingAllocation = false, Lines = [pricedLine]
+        };
+        Assert.Equal(100m, pricedLine.OrdinaryPromotionDiscountAmount);
+        Assert.Equal(900m, pricedLine.IndicativeNetAmount);
+        Assert.Equal(855m, pricedLine.OfficialNetAmount);
+        Assert.Equal(900m, priced.IndicativeAmount);
+        Assert.Equal(855m, priced.OfficialAmount);
+        Assert.Equal(0m, (pricedLine with { OrdinaryPromotion = null }).OrdinaryPromotionDiscountAmount);
+    }
+
+    [Fact]
+    public async Task Availability_preserves_each_warehouse_and_does_not_subtract_a_safety_buffer()
+    {
+        var f = new Fixture();
+        f.Store.Balance.AvailableQuantity = 10;
+        var second = new Warehouse { Id = Guid.NewGuid(), Code = "WH-Q7", Name = "Kho Quận 7", IsActive = true };
+        var batch = new Batch { Id = Guid.NewGuid(), WarehouseId = second.Id, ProductId = f.Store.Product.Id,
+            BatchCode = "WH-Q7-DEMO", ExpirationDate = f.Store.Batch.ExpirationDate };
+        f.Store.AdditionalCandidates.Add(new(batch, new InventoryBalance { AvailableQuantity = 80 }, second, 10.802m,106.743m,5));
+        var service = new OrderAvailabilityService(f.Store,f.Service,new AllocationEngine(),new FixedTimeProvider(Now));
+        var result = await service.CheckAsync(f.Store.Retailer.Id,[f.Store.Product.Id],f.SalesUserId,SystemRoles.Sales,default);
+        var product = Assert.Single(result.Items);
+        Assert.Equal(85m,product.EligibleQuantity);
+        Assert.Equal(10m,product.Warehouses.Single(w=>w.WarehouseCode=="WH-TD").EligibleQuantity);
+        Assert.Equal(75m,product.Warehouses.Single(w=>w.WarehouseCode=="WH-Q7").EligibleQuantity);
+        Assert.Equal(2,product.Warehouses.Count);
+        Assert.Empty(f.Store.Orders);
+        Assert.Equal(0m,f.Store.Balance.ReservedQuantity);
+    }
+
+    [Fact]
+    public async Task Retailer_availability_returns_only_the_eligible_total()
+    {
+        var fixture = new Fixture();
+        fixture.Store.Retailer.UserAccountId = fixture.SalesUserId;
+        var service = new OrderAvailabilityService(fixture.Store, fixture.Service,
+            new AllocationEngine(), new FixedTimeProvider(Now));
+        var result = await service.CheckAsync(fixture.Store.Retailer.Id,
+            [fixture.Store.Product.Id], fixture.SalesUserId, SystemRoles.Retailer, default);
+        var item = Assert.Single(result.Items);
+        Assert.Equal(50m, item.EligibleQuantity);
+        Assert.Empty(item.Warehouses);
+        Assert.Equal(0m, fixture.Store.Balance.ReservedQuantity);
+    }
+
+    [Theory]
+    [InlineData(2, 0, 0)]
+    [InlineData(30, 0, 50)]
+    [InlineData(30, 20, 30)]
+    [InlineData(30, 60, 0)]
+    public async Task Availability_uses_delivery_mlor_and_locked_stock_without_reserving(
+        int daysUntilExpiry, int lockedQuantity, int expected)
+    {
+        var fixture = new Fixture();
+        fixture.Store.Batch.ExpirationDate = DateOnly.FromDateTime(Now.AddDays(daysUntilExpiry).UtcDateTime);
+        fixture.Store.ActiveLockedQuantity = lockedQuantity;
+        var service = new OrderAvailabilityService(fixture.Store, fixture.Service,
+            new AllocationEngine(), new FixedTimeProvider(Now));
+        var result = await service.CheckAsync(fixture.Store.Retailer.Id,
+            [fixture.Store.Product.Id], fixture.SalesUserId, SystemRoles.Sales, default);
+        Assert.Equal(expected, Assert.Single(result.Items).EligibleQuantity);
+        Assert.Equal(expected, Assert.Single(Assert.Single(result.Items).Warehouses).EligibleQuantity);
+        Assert.Equal(0m, fixture.Store.Balance.ReservedQuantity);
+        Assert.Empty(fixture.Store.Orders);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(50)]
+    public async Task Availability_excludes_stock_outside_the_store_service_radius(int available)
+    {
+        var fixture = new Fixture();
+        fixture.Store.RetailerLocation.Latitude = 0;
+        fixture.Store.Balance.AvailableQuantity = available;
+        var service = new OrderAvailabilityService(fixture.Store, fixture.Service,
+            new AllocationEngine(), new FixedTimeProvider(Now));
+        var result = await service.CheckAsync(fixture.Store.Retailer.Id,
+            [fixture.Store.Product.Id], fixture.SalesUserId, SystemRoles.Sales, default);
+        Assert.Equal(0, Assert.Single(result.Items).EligibleQuantity);
+        Assert.Equal("OutsideServiceRadius", Assert.Single(Assert.Single(result.Items).Warehouses).UnavailableReason);
+    }
+
+    [Theory]
+    [InlineData(false, "MissingMlor")]
+    [InlineData(true, "OutsideServiceRadius")]
+    public async Task Availability_keeps_warehouse_details_when_mlor_is_missing(bool outside, string reason)
+    {
+        var fixture = new Fixture();
+        fixture.Store.MlorConfigured = false;
+        if (outside) fixture.Store.RetailerLocation.Latitude = 0;
+        var service = new OrderAvailabilityService(fixture.Store, fixture.Service,
+            new AllocationEngine(), new FixedTimeProvider(Now));
+        var result = await service.CheckAsync(fixture.Store.Retailer.Id,
+            [fixture.Store.Product.Id], fixture.SalesUserId, SystemRoles.Sales, default);
+        var item = Assert.Single(result.Items);
+        var warehouse = Assert.Single(item.Warehouses);
+        Assert.Equal(0m, item.EligibleQuantity);
+        Assert.Equal(fixture.Store.Warehouse.Id, warehouse.WarehouseId);
+        Assert.Equal(fixture.Store.Warehouse.Name, warehouse.WarehouseName);
+        Assert.Equal(reason, warehouse.UnavailableReason);
+        Assert.NotNull(warehouse.DistanceMeters);
+        Assert.Equal(0m, fixture.Store.Balance.ReservedQuantity);
+    }
 
     [Fact]
     public async Task Retailer_creates_own_order_with_promotions_and_replays_without_duplicates()
@@ -420,6 +538,9 @@ public sealed class OrderServiceTests
         public InventoryBalance Balance { get; }
         public MapLocation RetailerLocation { get; }
         public bool TerritoryAllowed { get; set; } = true;
+        public List<OrderInventoryCandidate> AdditionalCandidates { get; } = [];
+        public decimal ActiveLockedQuantity { get; set; }
+        public bool MlorConfigured { get; set; } = true;
         public Dictionary<string, string> Configurations { get; } = new(StringComparer.Ordinal)
         {
             [BusinessConfigurationKeys.AllocationWeights] = "{\"expiry\":0.5,\"distance\":0.3,\"coverage\":0.2}",
@@ -494,14 +615,14 @@ public sealed class OrderServiceTests
             Task.FromResult<Product?>(productId == Product.Id ? Product : null);
         public Task<IReadOnlyCollection<OrderInventoryCandidate>> ListCandidatesAsync(Guid productId, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyCollection<OrderInventoryCandidate>>(
-                [new(Batch, Balance, Warehouse, 10.802m, 106.743m)]);
+                [new(Batch, Balance, Warehouse, 10.802m, 106.743m, ActiveLockedQuantity), .. AdditionalCandidates]);
         public Task<MapLocation?> FindRetailerLocationAsync(Guid retailerId, CancellationToken cancellationToken) =>
             Task.FromResult<MapLocation?>(retailerId == Retailer.Id ? RetailerLocation : null);
         public Task<OrderMlorSnapshot?> ResolveMlorAsync(
             Guid retailerId, Guid productId, DateTimeOffset at, CancellationToken cancellationToken) =>
-            Task.FromResult<OrderMlorSnapshot?>(new(
+            Task.FromResult<OrderMlorSnapshot?>(MlorConfigured ? new(
                 "Sku", Guid.Parse("30000000-0000-0000-0000-000000000001"), 2,
-                null, 0.25m, null, at));
+                null, 0.25m, null, at) : null);
         public Task<string?> FindConfigurationAsync(string key, CancellationToken cancellationToken) =>
             Task.FromResult(Configurations.GetValueOrDefault(key));
         public Task<string> NextOrderCodeAsync(CancellationToken cancellationToken) => Task.FromResult("DH-001030");
