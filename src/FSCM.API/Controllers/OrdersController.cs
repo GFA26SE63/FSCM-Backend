@@ -23,6 +23,11 @@ public sealed class OrdersController(
         availability.CheckAsync(request.RetailerId, request.ProductIds,
             GetActorUserId(), GetActorRole(), cancellationToken);
 
+    [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator},{SystemRoles.Sales},{SystemRoles.Retailer}")]
+    [HttpPost("{id:guid}/allocation/retry")]
+    public Task<OrderDetailResult> RetryAllocation(Guid id, RetryAllocationRequest request, CancellationToken ct) =>
+        service.RetryAllocationAsync(id, request.ExpectedVersion, GetActorUserId(), GetActorRole(), ct);
+
     [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator},{SystemRoles.SalesManager},{SystemRoles.Sales},{SystemRoles.WarehouseKeeper},{SystemRoles.Retailer}")]
     [HttpGet]
     public Task<PagedOrderResult> List(

@@ -2,11 +2,39 @@ using FSCM.Application.Features.AllocationRuns;
 using FSCM.Domain.Entities;
 using FSCM.Persistence.DbContexts;
 using Microsoft.EntityFrameworkCore;
+using FSCM.Application.Features.Orders;
 
 namespace FSCM.Persistence.AllocationRuns;
 
 public sealed class RealTimeAllocationStore(AppDbContext db) : IRealTimeAllocationStore
 {
+    public async Task<IReadOnlyCollection<(Guid Id, Guid Actor)>> ListRecoverableAsync(DateTimeOffset before, CancellationToken ct) =>
+        (await db.SalesOrderRecords.AsNoTracking().Where(o => o.Status == OrderStatuses.Allocating && o.UpdatedAt < before)
+            .OrderBy(o => o.UpdatedAt).Take(50).Select(o => new { o.Id, o.CreatedByUserId }).ToArrayAsync(ct))
+            .Select(o => (o.Id, o.CreatedByUserId)).ToArray();
+
+    public async Task MarkFailedAsync(Guid orderId, Guid actorId, string status, string reason, DateTimeOffset now, CancellationToken ct)
+    {
+        await ExecuteInTransactionAsync(async token =>
+        {
+            db.ChangeTracker.Clear();
+            var order = await db.SalesOrderRecords.SingleAsync(o => o.Id == orderId, token);
+            if (order.Status is not (OrderStatuses.Allocating or OrderStatuses.AllocationFailed or OrderStatuses.AllocationConflict)) return;
+            var old = order.Status;
+            order.Status = status; order.RejectionReason = reason; order.UpdatedAt = now; order.Version++;
+            var attempt = (await db.AllocationRunRecords.Where(r => r.SalesOrderId == orderId)
+                .MaxAsync(r => (int?)r.AttemptNumber, token) ?? 0) + 1;
+            db.AllocationRunRecords.Add(new AllocationRun { Id = Guid.NewGuid(), SalesOrderId = orderId,
+                RunCode = $"ALT-{order.OrderCode}-{attempt:00}", AttemptNumber = attempt,
+                Status = status == OrderStatuses.AllocationConflict ? "Conflict" : "TechnicalFailed",
+                FailureReason = reason, TechnicalErrorCode = status, StartedAt = now, CompletedAt = now,
+                AlgorithmSettings = "{}", Version = 1, CreatedAt = now, UpdatedAt = now });
+            db.OrderStatusHistoryRecords.Add(new() { Id = Guid.NewGuid(), SalesOrderId = orderId,
+                FromStatus = old, ToStatus = status, ChangedByUserId = actorId, Reason = reason, ChangedAt = now });
+            await SaveChangesAsync(token);
+        }, ct);
+        ClearTracking();
+    }
     public async Task<RealTimeAllocationContext?> LoadForUpdateAsync(Guid orderId, CancellationToken ct)
     {
         var order = await db.SalesOrderRecords.SingleOrDefaultAsync(x => x.Id == orderId, ct);

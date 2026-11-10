@@ -28,8 +28,21 @@ public sealed class LoyaltyAccrualStore(AppDbContext dbContext) : ILoyaltyAccrua
             ? []
             : await dbContext.LoyaltyTransactionRecords.AsNoTracking()
                 .Where(item => item.RetailerLoyaltyId == balance.Id && item.SalesOrderId == salesOrderId)
-                .Select(item => new { item.TransactionType, item.Points })
+                .OrderBy(item => item.CreatedAt)
+                .Select(item => new { item.TransactionType, item.Points, item.LoyaltyProgramId,
+                    item.SpendAmountPerPointSnapshot, item.CreatedAt })
                 .ToArrayAsync(cancellationToken);
+
+        var earning = ledger.FirstOrDefault(item => item.TransactionType == LoyaltyTransactionTypes.Earned);
+        LoyaltyProgramSnapshot? frozenProgram = null;
+        if (earning is not null)
+        {
+            var original = await dbContext.LoyaltyProgramRecords.AsNoTracking()
+                .SingleAsync(p => p.Id == earning.LoyaltyProgramId, cancellationToken);
+            var rate = earning.SpendAmountPerPointSnapshot ??
+                (original.UpdatedAt <= earning.CreatedAt ? original.SpendAmountPerPoint : (decimal?)null);
+            if (rate is > 0) frozenProgram = new(original.Id, rate.Value);
+        }
 
         // A hold is live until its own cancellation lands, so both rows are counted rather than
         // just looking for the hold.
@@ -49,7 +62,7 @@ public sealed class LoyaltyAccrualStore(AppDbContext dbContext) : ILoyaltyAccrua
             payment is not null && payment.Status == PaymentStatuses.Paid,
             await dbContext.ReceiptDiscrepancyRecords.AsNoTracking().AnyAsync(
                 item => item.SalesOrderId == salesOrderId && item.ResolvedAt == null, cancellationToken),
-            program is null ? null : new LoyaltyProgramSnapshot(program.Id, program.SpendAmountPerPoint),
+            earning is not null ? frozenProgram : program is null ? null : new LoyaltyProgramSnapshot(program.Id, program.SpendAmountPerPoint),
             balance is null
                 ? null
                 : new RetailerBalanceSnapshot(balance.Id, balance.CurrentPoints, balance.LifetimeEarnedPoints),
@@ -88,7 +101,7 @@ public sealed class LoyaltyAccrualStore(AppDbContext dbContext) : ILoyaltyAccrua
     public async Task<int> AppendAsync(
         Guid retailerLoyaltyId, Guid loyaltyProgramId, Guid? salesOrderId, Guid? actorUserId,
         string transactionType, int points, bool movesBalance, string note,
-        DateTimeOffset now, CancellationToken cancellationToken)
+        DateTimeOffset now, CancellationToken cancellationToken, decimal? spendAmountPerPointSnapshot = null)
     {
         var balance = await dbContext.RetailerLoyaltyRecords
             .SingleAsync(item => item.Id == retailerLoyaltyId, cancellationToken);
@@ -111,6 +124,7 @@ public sealed class LoyaltyAccrualStore(AppDbContext dbContext) : ILoyaltyAccrua
             CreatedByUserId = actorUserId,
             TransactionType = transactionType,
             Points = points,
+            SpendAmountPerPointSnapshot = spendAmountPerPointSnapshot,
             BalanceAfter = balance.CurrentPoints,
             Note = note.Length > 500 ? note[..500] : note,
             CreatedAt = now

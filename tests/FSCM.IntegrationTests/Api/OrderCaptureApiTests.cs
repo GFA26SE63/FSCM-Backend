@@ -6,6 +6,7 @@ using FSCM.Application.Features.Orders;
 using FSCM.Application.Features.AllocationRuns;
 using FSCM.Application.Features.MobileSnapshots;
 using FSCM.Application.Features.Promotions;
+using FSCM.Domain.Allocation;
 using FSCM.Domain.Authorization;
 using FSCM.Domain.Entities;
 using Microsoft.AspNetCore.TestHost;
@@ -16,6 +17,14 @@ namespace FSCM.IntegrationTests.Api;
 
 public sealed class OrderCaptureApiTests
 {
+    private sealed class CapturePolicy() : AllocationPolicyService(null!, null!)
+    {
+        public override Task<AllocationWeights> WeightsAsync(CancellationToken ct) => Task.FromResult(new AllocationWeights());
+        public override Task<BatchCandidate[]> CandidatesAsync(Guid retailer, IReadOnlyCollection<RealTimeInventoryCandidate> positions, DateTimeOffset at, CancellationToken ct) =>
+            Task.FromResult(positions.Select(p => new BatchCandidate(p.Batch.Id, p.Batch.BatchCode, p.Warehouse.Id, p.Warehouse.Code,
+                new DateTimeOffset(p.Batch.ExpirationDate.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero), p.IssuableQuantity,
+                1000, at.AddHours(12), DateOnly.FromDateTime(at.AddHours(12).UtcDateTime))).ToArray());
+    }
     [Fact]
     public async Task Mobile_snapshot_is_sales_only_and_sync_conflict_does_not_create_order()
     {
@@ -29,6 +38,10 @@ public sealed class OrderCaptureApiTests
                 services.AddSingleton<IOrderStore>(orderStore);
                 services.RemoveAll<IRealTimeAllocationService>();
                 services.AddSingleton<IRealTimeAllocationService, NoOpRealTimeAllocationService>();
+                // This fixture isolates capture contracts; real route/ETA integration is covered by the PostgreSQL workflow.
+                services.RemoveAll<AllocationPolicyService>();
+                services.AddSingleton<AllocationPolicyService>(new CapturePolicy());
+                services.RemoveAll<AllocationDeliveryGuard>();
                 services.RemoveAll<IOrderPricingService>();
                 services.AddSingleton<IOrderPricingService, TestPricingService>();
                 services.RemoveAll<IMobileSnapshotStore>();
@@ -92,6 +105,10 @@ public sealed class OrderCaptureApiTests
                 services.AddSingleton<IOrderStore>(orderStore);
                 services.RemoveAll<IRealTimeAllocationService>();
                 services.AddSingleton<IRealTimeAllocationService, NoOpRealTimeAllocationService>();
+                // This fixture isolates capture contracts; real route/ETA integration is covered by the PostgreSQL workflow.
+                services.RemoveAll<AllocationPolicyService>();
+                services.AddSingleton<AllocationPolicyService>(new CapturePolicy());
+                services.RemoveAll<AllocationDeliveryGuard>();
             }));
         using var client = factory.CreateClient();
         client.DefaultRequestHeaders.Authorization = Bearer(identityFactory.Sales, identityFactory);
@@ -158,6 +175,10 @@ public sealed class OrderCaptureApiTests
                 services.AddSingleton<IOrderStore>(store);
                 services.RemoveAll<IRealTimeAllocationService>();
                 services.AddSingleton<IRealTimeAllocationService, NoOpRealTimeAllocationService>();
+                // This fixture isolates capture contracts; real route/ETA integration is covered by the PostgreSQL workflow.
+                services.RemoveAll<AllocationPolicyService>();
+                services.AddSingleton<AllocationPolicyService>(new CapturePolicy());
+                services.RemoveAll<AllocationDeliveryGuard>();
                 services.RemoveAll<IOrderPricingService>();
                 services.AddSingleton<IOrderPricingService, TestPricingService>();
             }));
@@ -262,6 +283,10 @@ public sealed class OrderCaptureApiTests
                 services.AddSingleton<IOrderStore>(store);
                 services.RemoveAll<IRealTimeAllocationService>();
                 services.AddSingleton<IRealTimeAllocationService, NoOpRealTimeAllocationService>();
+                // This fixture isolates capture contracts; real route/ETA integration is covered by the PostgreSQL workflow.
+                services.RemoveAll<AllocationPolicyService>();
+                services.AddSingleton<AllocationPolicyService>(new CapturePolicy());
+                services.RemoveAll<AllocationDeliveryGuard>();
                 services.RemoveAll<IOrderPricingService>();
                 services.AddSingleton<IOrderPricingService, TestPricingService>();
             }));
@@ -296,6 +321,10 @@ public sealed class OrderCaptureApiTests
                 services.AddSingleton<IOrderStore>(store);
                 services.RemoveAll<IRealTimeAllocationService>();
                 services.AddSingleton<IRealTimeAllocationService, NoOpRealTimeAllocationService>();
+                // This fixture isolates capture contracts; real route/ETA integration is covered by the PostgreSQL workflow.
+                services.RemoveAll<AllocationPolicyService>();
+                services.AddSingleton<AllocationPolicyService>(new CapturePolicy());
+                services.RemoveAll<AllocationDeliveryGuard>();
                 services.RemoveAll<IOrderPricingService>();
                 services.AddSingleton<IOrderPricingService, TestPricingService>();
             }));
