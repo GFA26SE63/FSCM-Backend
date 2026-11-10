@@ -48,6 +48,7 @@ internal abstract class StubAllocationRunStore : IAllocationRunStore
     public virtual void AddTraceCandidates(IEnumerable<AllocationTraceCandidate> candidates) => throw NotSetUp();
     public virtual void AddTraceScores(IEnumerable<AllocationTraceScore> scores) => throw NotSetUp();
     public virtual Task<Guid?> FindOrderIdForLineAsync(Guid salesOrderLineId, CancellationToken cancellationToken) => throw NotSetUp();
+    public virtual void UpdateRunPickingView(RunPickingListView view) { }
     public virtual void AddRunPickingLists(IEnumerable<RunPickingList> lists) => throw NotSetUp();
     public virtual void AddRunPickingGathers(IEnumerable<RunPickingGather> gathers) => throw NotSetUp();
     public virtual void AddRunPickingSplits(IEnumerable<RunPickingSplit> splits) => throw NotSetUp();

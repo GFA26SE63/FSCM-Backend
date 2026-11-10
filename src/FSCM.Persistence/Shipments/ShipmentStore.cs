@@ -360,6 +360,11 @@ public sealed class ShipmentStore(AppDbContext dbContext) : IShipmentStore
     public async Task ExecuteInTransactionAsync(
         Func<CancellationToken, Task> operation, CancellationToken cancellationToken)
     {
+        if (dbContext.Database.CurrentTransaction is not null)
+        {
+            await operation(cancellationToken);
+            return;
+        }
         var strategy = dbContext.Database.CreateExecutionStrategy();
         await strategy.ExecuteAsync(async () =>
         {

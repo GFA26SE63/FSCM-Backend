@@ -192,6 +192,7 @@ public interface IAllocationRunStore
     void AddTraceCandidates(IEnumerable<AllocationTraceCandidate> candidates);
     void AddTraceScores(IEnumerable<AllocationTraceScore> scores);
 
+    void UpdateRunPickingView(RunPickingListView view);
     void AddRunPickingLists(IEnumerable<RunPickingList> lists);
     void AddRunPickingGathers(IEnumerable<RunPickingGather> gathers);
     void AddRunPickingSplits(IEnumerable<RunPickingSplit> splits);

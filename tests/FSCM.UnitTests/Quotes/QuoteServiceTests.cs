@@ -1,3 +1,4 @@
+using FSCM.Application.Features.Inventory;
 using FSCM.Application.Features.Orders;
 using FSCM.Application.Features.Payments;
 using FSCM.Application.Features.Quotes;
@@ -64,6 +65,28 @@ public sealed class QuoteServiceTests
         Assert.Equal(result.PurchaseOrderCode, createdPayment.FinalApprovalReference);
     }
 
+    [Fact]
+    public async Task Expiration_releases_abandoned_quote_stock_without_retailer_action()
+    {
+        var quotes = new FakeQuoteStore();
+        var order = new SalesOrder { Id = Guid.NewGuid(), CreatedByUserId = Guid.NewGuid() };
+        var quote = new SalesOrderQuote { Id = Guid.NewGuid(), SalesOrderId = order.Id,
+            Status = SalesOrderQuoteStatuses.PendingRetailerAcceptance, ExpiresAt = Now.AddMinutes(-1) };
+        quotes.Views.Add(new(quote, order, null));
+        var releases = new FSCM.UnitTests.Orders.FakeOrderReleaseStore();
+        var balance = new InventoryBalance { PhysicalQuantity = 20m, ReservedQuantity = 5m, AvailableQuantity = 15m };
+        var reservation = new Reservation { Quantity = 5m, Status = ReservationStatuses.Active };
+        releases.Held.Add(new(Guid.NewGuid(), reservation, balance, new Batch { Id = Guid.NewGuid() }));
+        var service = new QuoteService(quotes, new FixedClock(), new OrderReleaseService(releases, new FixedClock()));
+        await service.ExpirePendingAsync(default);
+        Assert.Equal(SalesOrderQuoteStatuses.Expired, quote.Status);
+        Assert.Equal(0m, balance.ReservedQuantity);
+        Assert.Equal(20m, balance.AvailableQuantity);
+        Assert.Equal(ReservationStatuses.Released, reservation.Status);
+        await service.ExpirePendingAsync(default);
+        Assert.Equal(0m, balance.ReservedQuantity);
+    }
+
     private sealed class FixedClock : TimeProvider
     {
         public override DateTimeOffset GetUtcNow() => Now;
@@ -88,6 +111,8 @@ public sealed class QuoteServiceTests
         public Task<IReadOnlyCollection<QuoteIssueOrder>> ListOrdersForPlanAsync(Guid allocationPlanVersionId, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyCollection<QuoteIssueOrder>>([]);
 
+        public Task<IReadOnlyCollection<Guid>> ListExpiredPendingIdsAsync(DateTimeOffset now, CancellationToken ct) =>
+            Task.FromResult<IReadOnlyCollection<Guid>>(Views.Where(x => x.Quote.Status == SalesOrderQuoteStatuses.PendingRetailerAcceptance && x.Quote.ExpiresAt < now).Select(x => x.Quote.Id).ToArray());
         public void Add(SalesOrderQuote quote) { }
         public void AddPurchaseOrder(PurchaseOrder purchaseOrder)
         {

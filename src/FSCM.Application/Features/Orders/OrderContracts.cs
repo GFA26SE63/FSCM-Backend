@@ -265,6 +265,7 @@ public sealed record OrderDetailResult(
 {
     public decimal IndicativeAmount => FinalAmount;
     public decimal? OfficialAmount { get; init; }
+    public IReadOnlyCollection<string> LabelCodes { get; init; } = [];
     public string? AllocationRunCode { get; init; }
     public int? AllocationPlanVersion { get; init; }
     public DateTimeOffset? OfficialPricedAt { get; init; }

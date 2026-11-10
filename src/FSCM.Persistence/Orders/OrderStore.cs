@@ -1,3 +1,4 @@
+using FSCM.Application.Features.QrLabels;
 using System.Data;
 using System.Text.Json;
 using FSCM.Application.Features.Orders;
@@ -318,6 +319,11 @@ public sealed class OrderStore(AppDbContext dbContext) : IOrderStore
             .SingleOrDefaultAsync(cancellationToken) ?? order.CreatedByUserId.ToString();
         return new OrderView(order, lineViews, history, deliveries, batchCodes, warehouseCodes, inventoryVersions)
         {
+            LabelCodes = await (from evt in dbContext.QrLabelEventRecords.AsNoTracking()
+                join label in dbContext.BatchQrLabelRecords.AsNoTracking() on evt.BatchQrLabelId equals label.Id
+                where evt.EventType == QrLabelEventTypes.Dispatched && evt.ReferenceCode == order.OrderCode
+                    && label.Status == QrLabelStatuses.InTransit
+                select label.QrCode).Distinct().OrderBy(code => code).ToArrayAsync(cancellationToken),
             AllocationContext = allocationContext,
             CreatedByUserName = createdByUserName
         };

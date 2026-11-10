@@ -770,6 +770,7 @@ public sealed class OrderService(
         ToShipments(view.Deliveries))
     {
         OfficialAmount = OfficialAmount(view),
+        LabelCodes = view.LabelCodes,
         AllocationRunCode = view.AllocationContext?.RunCode,
         AllocationPlanVersion = view.AllocationContext?.PlanVersionNumber,
         OfficialPricedAt = view.AllocationContext?.PlanStatus == AllocationPlanVersionStatuses.Approved

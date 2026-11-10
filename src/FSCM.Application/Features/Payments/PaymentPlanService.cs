@@ -86,6 +86,7 @@ public sealed class PaymentPlanService(IPaymentStore store) : IPaymentPlanServic
         {
             await CreateForFinalApprovedOrderAsync(
                 order, receiptActorUserId, deliveredAt, $"DELIVERY-{order.OrderCode}", cancellationToken);
+            await store.SaveChangesAsync(cancellationToken);
             existing = await store.FindByOrderAsync(order.Id, true, cancellationToken)
                 ?? throw PaymentOperationException.Conflict(
                     "Payment ledger could not be initialized before delivery.");
@@ -94,13 +95,7 @@ public sealed class PaymentPlanService(IPaymentStore store) : IPaymentPlanServic
             throw PaymentOperationException.Conflict(
                 "Existing payment does not match the delivered order snapshot.");
         if (existing.Payment.Amount != order.FinalAmount)
-        {
-            if (order.FinalPricePendingAllocation || order.FinalAmount != existing.Payment.Amount)
-            {
-                order.FinalAmount = existing.Payment.Amount;
-                order.FinalPricePendingAllocation = false;
-            }
-        }
+            throw PaymentOperationException.Conflict("Payment ledger amount differs from the accepted order; reconcile it before confirming receipt.");
 
         var deliveredDate = DateOnly.FromDateTime(deliveredAt.ToOffset(VietnamOffset).DateTime);
         var isCredit = order.PaymentMethod == OrderPaymentMethods.Credit;

@@ -11,9 +11,10 @@ public sealed class QuoteStore(AppDbContext db) : IQuoteStore
     {
         var quotes = forUpdate ? db.SalesOrderQuoteRecords : db.SalesOrderQuoteRecords.AsNoTracking();
         var orders = forUpdate ? db.SalesOrderRecords : db.SalesOrderRecords.AsNoTracking();
+        var purchaseOrders = forUpdate ? db.PurchaseOrderRecords : db.PurchaseOrderRecords.AsNoTracking();
         return (from quote in quotes
                 join order in orders on quote.SalesOrderId equals order.Id
-                join po0 in db.PurchaseOrderRecords.AsNoTracking() on quote.PurchaseOrderId equals po0.Id into pos
+                join po0 in purchaseOrders on quote.PurchaseOrderId equals po0.Id into pos
                 from po in pos.DefaultIfEmpty()
                 where quote.Id == id
                 select new QuoteView(quote, order, po)).SingleOrDefaultAsync(ct);
@@ -45,6 +46,11 @@ public sealed class QuoteStore(AppDbContext db) : IQuoteStore
 
     public void Add(SalesOrderQuote quote) => db.SalesOrderQuoteRecords.Add(quote);
     public void AddPurchaseOrder(PurchaseOrder purchaseOrder) => db.PurchaseOrderRecords.Add(purchaseOrder);
+    public async Task<IReadOnlyCollection<Guid>> ListExpiredPendingIdsAsync(DateTimeOffset now, CancellationToken ct) =>
+        await db.SalesOrderQuoteRecords.AsNoTracking()
+            .Where(q => q.Status == SalesOrderQuoteStatuses.PendingRetailerAcceptance && q.ExpiresAt < now)
+            .Select(q => q.Id).ToArrayAsync(ct);
+
     public Task SaveChangesAsync(CancellationToken ct) => db.SaveChangesAsync(ct);
 
     private IQueryable<QuoteView> Build(IQueryable<SalesOrderQuote> quotes) =>
