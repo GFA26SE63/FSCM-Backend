@@ -87,7 +87,7 @@ public sealed class RefundStore(AppDbContext db) : IRefundStore
             .Select(x => new { x.PaymentId, x.Amount, x.Status }).ToArrayAsync(ct);
         var orderIds = rows.Select(x => x.payment.SalesOrderId).ToArray();
         var claims = await db.ReceiptDiscrepancyRecords.AsNoTracking()
-            .Where(x => orderIds.Contains(x.SalesOrderId) && x.ResolutionType == "PaymentAdjusted")
+            .Where(x => orderIds.Contains(x.SalesOrderId) && x.ResolutionType == "FinancialAdjustment")
             .Select(x => new { x.Id, x.SalesOrderId }).ToArrayAsync(ct);
         var result = new List<RefundObligationResult>();
         foreach (var row in rows)

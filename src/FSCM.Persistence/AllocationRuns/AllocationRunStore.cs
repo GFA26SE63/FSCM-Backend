@@ -4,6 +4,7 @@ using FSCM.Application.Features.Inventory;
 using FSCM.Application.Features.Orders;
 using FSCM.Application.Features.WarehouseConfiguration;
 using FSCM.Domain.Entities;
+using FSCM.Domain.Allocation;
 using FSCM.Persistence.DbContexts;
 using Microsoft.EntityFrameworkCore;
 
@@ -151,7 +152,7 @@ public sealed class AllocationRunStore(AppDbContext dbContext) : IAllocationRunS
                     warehouse.Code,
                     item.pool.ProductId,
                     // A batch is usable up to the end of its expiration day.
-                    new DateTimeOffset(item.pool.ExpirationDate.ToDateTime(TimeOnly.MaxValue), TimeSpan.Zero),
+                    BatchExpiration.ExclusiveEnd(item.pool.ExpirationDate),
                     item.pool.RemainingQuantity))
             .ToArrayAsync(cancellationToken);
 
@@ -198,7 +199,7 @@ public sealed class AllocationRunStore(AppDbContext dbContext) : IAllocationRunS
             .ToArrayAsync(cancellationToken);
         return rows.ToDictionary(
             item => item.Id,
-            item => new DateTimeOffset(item.ExpirationDate.ToDateTime(TimeOnly.MaxValue), TimeSpan.Zero));
+            item => BatchExpiration.ExclusiveEnd(item.ExpirationDate));
     }
 
     public void AddAllocations(IEnumerable<AllocationRunAllocation> allocations) =>

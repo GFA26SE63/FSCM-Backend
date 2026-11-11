@@ -59,7 +59,10 @@ public sealed record OrderAllocationReadContext(
     string PlanStatus,
     DateTimeOffset PricedAt,
     IReadOnlyCollection<OrderAllocationFragmentView> Fragments,
-    IReadOnlyCollection<OrderWarehouseProgressView> WarehouseProgress);
+    IReadOnlyCollection<OrderWarehouseProgressView> WarehouseProgress)
+{
+    public FSCM.Application.Features.AllocationRuns.AllocationAudit? Audit { get; init; }
+}
 
 public sealed record OrderAllocationFragmentView(
     Guid AllocationId,

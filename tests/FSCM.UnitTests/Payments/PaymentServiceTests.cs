@@ -500,6 +500,11 @@ public sealed class PaymentServiceTests
             CancellationToken cancellationToken) => Task.FromResult(
                 new PayOsVerifiedWebhook(webhook.Code, webhook.Success, webhook.Data));
 
+        public Task<PayOsPaymentLinkStatus> GetPaymentLinkStatusAsync(
+            long orderCode,
+            CancellationToken cancellationToken) => Task.FromResult(
+                new PayOsPaymentLinkStatus(orderCode, "test-link", "PENDING", null));
+
         public PayOsWebhookEnvelope CreateWebhook(PayOsCheckoutResult checkout) => new(
             "00", "success", true,
             new(checkout.OrderCode, decimal.ToInt64(checkout.Amount), "FSCM DH-001041",

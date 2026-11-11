@@ -104,7 +104,10 @@ public sealed class AllocationPricingService(ShelfLifeDiscountService discounts)
                     part.ProductId, part.ProductCategoryId, remainingPercent,
                     part.BaseNetUnitPrice, pricedAt, cancellationToken);
 
-                var finalUnitPrice = part.BaseNetUnitPrice - match.DiscountAmountPerUnit;
+                // VND is indivisible. Round each pricing step, rather than only the final
+                // checkout, so every persisted snapshot reconciles with the PayOS amount.
+                var shelfLifeDiscountPerUnit = RoundVnd(match.DiscountAmountPerUnit);
+                var finalUnitPrice = RoundVnd(part.BaseNetUnitPrice - shelfLifeDiscountPerUnit);
                 parts.Add(new PricedPart(
                     part.RunLineId,
                     part.BatchId,
@@ -119,9 +122,9 @@ public sealed class AllocationPricingService(ShelfLifeDiscountService discounts)
                     match.Tier?.Id,
                     match.Tier?.DiscountType,
                     match.Tier?.DiscountValue,
-                    match.DiscountAmountPerUnit,
+                    shelfLifeDiscountPerUnit,
                     finalUnitPrice,
-                    Math.Round(finalUnitPrice * part.Quantity, 2, MidpointRounding.AwayFromZero),
+                    RoundVnd(finalUnitPrice * part.Quantity),
                     match.Version,
                     match.Explanation));
             }
@@ -130,11 +133,13 @@ public sealed class AllocationPricingService(ShelfLifeDiscountService discounts)
                 order.RunOrderId,
                 order.OrderCode,
                 parts,
-                Math.Round(parts.Sum(item => item.BaseNetUnitPrice * item.Quantity), 2, MidpointRounding.AwayFromZero),
-                Math.Round(parts.Sum(item => item.ShelfLifeDiscountPerUnit * item.Quantity), 2, MidpointRounding.AwayFromZero),
+                RoundVnd(parts.Sum(item => item.BaseNetUnitPrice * item.Quantity)),
+                RoundVnd(parts.Sum(item => item.BaseNetUnitPrice * item.Quantity)) - parts.Sum(item => item.Amount),
                 parts.Sum(item => item.Amount)));
         }
 
         return new AllocationPricing(pricedAt, priced);
     }
+
+    private static decimal RoundVnd(decimal value) => Math.Round(value, 0, MidpointRounding.AwayFromZero);
 }

@@ -116,6 +116,11 @@ public sealed class PaymentStore(AppDbContext dbContext) : IPaymentStore
         Func<CancellationToken, Task> operation,
         CancellationToken cancellationToken)
     {
+        if (dbContext.Database.CurrentTransaction is not null)
+        {
+            await operation(cancellationToken);
+            return;
+        }
         var strategy = dbContext.Database.CreateExecutionStrategy();
         await strategy.ExecuteAsync(async () =>
         {

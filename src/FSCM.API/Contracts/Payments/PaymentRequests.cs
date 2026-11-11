@@ -38,3 +38,7 @@ public sealed record PayOsWebhookDataRequest(
     string? VirtualAccountNumber);
 
 public sealed record SwitchToCreditRequest(int ExpectedVersion);
+
+public sealed record CreateRetailerDebtPayOsCheckoutRequest(
+    string Mode,
+    IReadOnlyCollection<Guid> PaymentIds);

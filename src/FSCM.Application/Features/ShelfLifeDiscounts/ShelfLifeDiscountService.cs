@@ -1,4 +1,5 @@
 using System.Text.Json;
+using FSCM.Application.Common;
 using FSCM.Domain.Entities;
 
 namespace FSCM.Application.Features.ShelfLifeDiscounts;
@@ -57,9 +58,7 @@ public sealed class ShelfLifeDiscountService(IShelfLifeDiscountStore store, Time
             throw ShelfLifeDiscountOperationException.Validation("Base price cannot be negative.");
         }
 
-        var view = at is { } moment
-            ? await store.FindEffectiveAtAsync(moment, cancellationToken)
-            : await store.FindCurrentAsync(cancellationToken);
+        var view = await store.FindEffectiveAtAsync(at ?? timeProvider.GetUtcNow(), cancellationToken);
 
         // No table at all is the same answer as a table with no band for this remaining percentage:
         // no reduction. Refusing instead stopped the whole allocation of a deployment that simply
@@ -111,6 +110,17 @@ public sealed class ShelfLifeDiscountService(IShelfLifeDiscountStore store, Time
         ArgumentNullException.ThrowIfNull(data);
         var tiers = Validate(data);
         var now = timeProvider.GetUtcNow();
+        if (data.EffectiveFrom < EffectiveDates.Tomorrow(now))
+            throw ShelfLifeDiscountOperationException.Validation(
+                "A new discount table can take effect no earlier than tomorrow (Vietnam time).");
+
+        foreach (var tier in tiers.DistinctBy(tier => (tier.Scope, tier.ProductId, tier.ProductCategoryId)))
+        {
+            if (!await store.ScopeIsUsableAsync(tier.Scope,
+                    (tier.ProductId ?? tier.ProductCategoryId)!.Value, cancellationToken))
+                throw ShelfLifeDiscountOperationException.Validation(
+                    "Discount tiers must reference a published SKU or an active category.");
+        }
 
         var current = await store.FindCurrentForUpdateAsync(cancellationToken);
         if (current is not null)
@@ -122,7 +132,7 @@ public sealed class ShelfLifeDiscountService(IShelfLifeDiscountStore store, Time
             }
 
             current.IsActive = false;
-            current.EffectiveTo = data.EffectiveFrom;
+            current.EffectiveTo = data.EffectiveFrom.ToUniversalTime();
             current.UpdatedAt = now;
         }
 
@@ -130,10 +140,10 @@ public sealed class ShelfLifeDiscountService(IShelfLifeDiscountStore store, Time
         {
             Id = Guid.NewGuid(),
             Version = await store.MaxVersionAsync(cancellationToken) + 1,
-            EffectiveFrom = data.EffectiveFrom,
+            EffectiveFrom = data.EffectiveFrom.ToUniversalTime(),
             EffectiveTo = null,
             IsActive = true,
-            Note = data.Note,
+            Note = data.Note?.Trim(),
             CreatedByUserId = actorUserId,
             CreatedAt = now,
             UpdatedAt = now
@@ -162,7 +172,7 @@ public sealed class ShelfLifeDiscountService(IShelfLifeDiscountStore store, Time
             Action = ShelfLifeDiscountAuditActions.Published,
             OldValues = current is null ? null : JsonSerializer.Serialize(new { current.Version, current.EffectiveFrom }),
             NewValues = JsonSerializer.Serialize(new { table.Version, table.EffectiveFrom, TierCount = tiers.Count }),
-            Reason = data.Note,
+            Reason = table.Note,
             CreatedAt = now
         });
 
@@ -177,6 +187,9 @@ public sealed class ShelfLifeDiscountService(IShelfLifeDiscountStore store, Time
     /// </summary>
     private static IReadOnlyList<ShelfLifeDiscountTierData> Validate(PublishShelfLifeDiscountTableData data)
     {
+        if (data.Note?.Trim().Length > 500)
+            throw ShelfLifeDiscountOperationException.Validation("Note cannot exceed 500 characters.");
+
         if (data.Tiers.Count == 0)
         {
             throw ShelfLifeDiscountOperationException.Validation("A discount table needs at least one tier.");
@@ -189,12 +202,14 @@ public sealed class ShelfLifeDiscountService(IShelfLifeDiscountStore store, Time
                 throw ShelfLifeDiscountOperationException.Validation($"Scope '{tier.Scope}' is not supported.");
             }
 
-            if (tier.Scope == ShelfLifeDiscountScopes.Sku && tier.ProductId is null)
+            if (tier.Scope == ShelfLifeDiscountScopes.Sku &&
+                (tier.ProductId is null || tier.ProductId == Guid.Empty || tier.ProductCategoryId is not null))
             {
                 throw ShelfLifeDiscountOperationException.Validation("A SKU tier needs a product.");
             }
 
-            if (tier.Scope == ShelfLifeDiscountScopes.Category && tier.ProductCategoryId is null)
+            if (tier.Scope == ShelfLifeDiscountScopes.Category &&
+                (tier.ProductCategoryId is null || tier.ProductCategoryId == Guid.Empty || tier.ProductId is not null))
             {
                 throw ShelfLifeDiscountOperationException.Validation("A Category tier needs a category.");
             }
@@ -204,6 +219,11 @@ public sealed class ShelfLifeDiscountService(IShelfLifeDiscountStore store, Time
                 throw ShelfLifeDiscountOperationException.Validation(
                     $"Discount type '{tier.DiscountType}' is not supported.");
             }
+
+            if (decimal.Round(tier.MinRemainingPercent, 2) != tier.MinRemainingPercent ||
+                decimal.Round(tier.MaxRemainingPercent, 2) != tier.MaxRemainingPercent ||
+                decimal.Round(tier.DiscountValue, 2) != tier.DiscountValue || tier.DiscountValue > 9999999999999999.99m)
+                throw ShelfLifeDiscountOperationException.Validation("Tier values support at most two decimal places and must fit the supported monetary range.");
 
             if (tier.DiscountValue < 0)
             {

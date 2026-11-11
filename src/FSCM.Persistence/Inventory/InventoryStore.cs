@@ -13,8 +13,7 @@ public sealed class InventoryStore(AppDbContext dbContext) : IInventoryStore, II
     public Task<bool> CanAccessWarehouseAsync(Guid userId, string role, Guid warehouseId, CancellationToken cancellationToken) =>
         role is SystemRoles.Admin or SystemRoles.Operator
             ? Task.FromResult(true)
-            : dbContext.UserWarehouseAssignmentRecords.AsNoTracking().AnyAsync(item =>
-                item.UserAccountId == userId && item.WarehouseId == warehouseId && item.IsActive, cancellationToken);
+            : ReportingScopeQueries.ManagedWarehouses(dbContext, userId).AnyAsync(item => item.Id == warehouseId, cancellationToken);
 
     public Task<Warehouse?> FindWarehouseAsync(Guid warehouseId, CancellationToken cancellationToken) =>
         dbContext.WarehouseRecords.AsNoTracking().SingleOrDefaultAsync(item => item.Id == warehouseId, cancellationToken);
@@ -67,8 +66,7 @@ public sealed class InventoryStore(AppDbContext dbContext) : IInventoryStore, II
         var receipts = dbContext.GoodsReceiptRecords.AsNoTracking().AsQueryable();
         if (warehouseId.HasValue) receipts = receipts.Where(item => item.WarehouseId == warehouseId.Value);
         if (actorRole == SystemRoles.WarehouseKeeper)
-            receipts = receipts.Where(item => dbContext.UserWarehouseAssignmentRecords.Any(assignment =>
-                assignment.UserAccountId == actorUserId && assignment.WarehouseId == item.WarehouseId && assignment.IsActive));
+            receipts = receipts.Where(item => ReportingScopeQueries.ManagedWarehouses(dbContext, actorUserId).Select(w => w.Id).Contains(item.WarehouseId));
         var ids = await receipts.OrderByDescending(item => item.CreatedAt).Select(item => item.Id).ToArrayAsync(cancellationToken);
         var results = new List<GoodsReceiptView>(ids.Length);
         foreach (var id in ids)
@@ -113,8 +111,7 @@ public sealed class InventoryStore(AppDbContext dbContext) : IInventoryStore, II
         if (warehouseId.HasValue) batches = batches.Where(item => item.WarehouseId == warehouseId.Value);
         if (productId.HasValue) batches = batches.Where(item => item.ProductId == productId.Value);
         if (actorRole == SystemRoles.WarehouseKeeper)
-            batches = batches.Where(item => dbContext.UserWarehouseAssignmentRecords.Any(assignment =>
-                assignment.UserAccountId == actorUserId && assignment.WarehouseId == item.WarehouseId && assignment.IsActive));
+            batches = batches.Where(item => ReportingScopeQueries.ManagedWarehouses(dbContext, actorUserId).Select(w => w.Id).Contains(item.WarehouseId));
         return await CreateInventoryQuery(batches).ToArrayAsync(cancellationToken);
     }
 
@@ -129,8 +126,7 @@ public sealed class InventoryStore(AppDbContext dbContext) : IInventoryStore, II
         if (warehouseId.HasValue) history = history.Where(item => item.WarehouseId == warehouseId.Value);
         if (batchId.HasValue) history = history.Where(item => item.BatchId == batchId.Value);
         if (actorRole == SystemRoles.WarehouseKeeper)
-            history = history.Where(item => dbContext.UserWarehouseAssignmentRecords.Any(assignment =>
-                assignment.UserAccountId == actorUserId && assignment.WarehouseId == item.WarehouseId && assignment.IsActive));
+            history = history.Where(item => ReportingScopeQueries.ManagedWarehouses(dbContext, actorUserId).Select(w => w.Id).Contains(item.WarehouseId));
         return await (
             from transaction in history
             join batch in dbContext.BatchRecords.AsNoTracking() on transaction.BatchId equals batch.Id

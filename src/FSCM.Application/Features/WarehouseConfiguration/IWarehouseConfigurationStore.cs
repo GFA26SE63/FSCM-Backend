@@ -15,6 +15,7 @@ public sealed record MlorView(
 
 public interface IWarehouseConfigurationStore
 {
+    Task<Region?> FindRegionAsync(Guid regionId, CancellationToken cancellationToken);
     Task<IReadOnlyCollection<WarehouseView>> ListWarehousesAsync(bool includeInactive, CancellationToken cancellationToken);
     Task<WarehouseView?> FindWarehouseViewAsync(Guid warehouseId, CancellationToken cancellationToken);
     Task<Warehouse?> FindWarehouseAsync(Guid warehouseId, CancellationToken cancellationToken);

@@ -9,6 +9,46 @@ public sealed class AllocationEngineTests
     private static readonly DateOnly ArrivalDate = new(2026, 10, 24);
 
     [Fact]
+    public void Explicit_minimum_hours_and_ratio_are_both_hard_constraints()
+    {
+        var engine = new AllocationEngine();
+        var request = Request(5m, mlorRatio: 0.25m) with { MinimumLifeHours = 240 };
+        var blocked = engine.Allocate(request, [Candidate("B-BELOW-HOURS", remainingLifeHours: 239)]);
+        Assert.False(blocked.IsFullyAllocated);Assert.Equal(240,blocked.RequiredShelfLifeHours);
+        Assert.True(engine.Allocate(request,[Candidate("B-AT-HOURS",remainingLifeHours:240)]).IsFullyAllocated);
+        var strongerRatio=engine.Allocate(request with { MlorRatio=0.5m },[Candidate("B-BELOW-RATIO",remainingLifeHours:300)]);
+        Assert.False(strongerRatio.IsFullyAllocated);Assert.Equal(360,strongerRatio.RequiredShelfLifeHours);
+    }
+
+    [Fact]
+    public void A_score_tie_uses_earlier_expiration_before_batch_code()
+    {
+        var engine=new AllocationEngine(new(0,0,1));
+        var result=engine.Allocate(Request(5),[Candidate("A-FRESH",remainingLifeHours:400),Candidate("Z-OLDER",remainingLifeHours:200)]);
+        Assert.Equal("Z-OLDER",Assert.Single(result.Allocations).BatchCode);
+    }
+
+    [Fact]
+    public void Candidate_ids_and_arrival_dates_cannot_bypass_hard_constraints()
+    {
+        var engine=new AllocationEngine();var batch=Candidate("B-1");
+        Assert.Throws<ArgumentException>(()=>engine.Allocate(Request(5),[batch,batch with { BatchCode="B-2" }]));
+        Assert.Throws<ArgumentException>(()=>engine.Allocate(Request(5,deadline:ArrivalDate),[batch with { EstimatedArrivalDate=null }]));
+        Assert.Throws<ArgumentOutOfRangeException>(()=>engine.Allocate(Request(5) with { MinimumLifeHours=721 },[batch]));
+    }
+
+    [Fact]
+    public void Date_only_expiry_uses_the_end_of_the_Vietnam_business_day()
+    {
+        var expiry=BatchExpiration.ExclusiveEnd(new(2026,11,12));
+        Assert.Equal(DateTimeOffset.Parse("2026-11-12T17:00:00Z"),expiry);
+        var batch=Candidate("B-DATE") with { ExpiresAt=expiry,EstimatedArrivalAt=DateTimeOffset.Parse("2026-11-11T15:00:00Z"),EstimatedArrivalDate=new(2026,11,11) };
+        var request=new AllocationRequest("SKU-DATE",1,168,0.1m,null,24);
+        Assert.True(new AllocationEngine().Allocate(request,[batch]).IsFullyAllocated);
+        Assert.False(new AllocationEngine().Allocate(request,[batch with { EstimatedArrivalAt=expiry,EstimatedArrivalDate=new(2026,11,13) }]).IsFullyAllocated);
+    }
+
+    [Fact]
     public void Every_hard_filter_records_why_a_batch_was_dropped()
     {
         var engine = new AllocationEngine();

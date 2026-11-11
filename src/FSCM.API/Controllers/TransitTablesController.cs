@@ -39,6 +39,8 @@ public sealed class TransitTablesController(TransitTableService service) : Contr
     public async Task<IActionResult> Publish(
         PublishTransitTableRequest request, CancellationToken cancellationToken)
     {
+        if (request.Bands is null || request.Bands.Any(item => item is null))
+            throw TransitTableOperationException.Validation("Distance bands are required and cannot contain null entries.");
         var result = await service.PublishAsync(
             new PublishTransitTableData(
                 request.MaxServingDistanceMeters,

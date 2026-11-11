@@ -40,7 +40,7 @@ public sealed class RefundService(IRefundStore store, IPaymentStore paymentStore
                     ?? throw RefundOperationException.NotFound("Claim was not found.");
                 if (claim.SalesOrderId != data.SalesOrderId)
                     throw RefundOperationException.Validation("The claim does not belong to this order.");
-                if (!claim.IsDecided || claim.ResolutionType != "PaymentAdjusted")
+                if (!claim.IsDecided || claim.ResolutionType != "FinancialAdjustment")
                     throw RefundOperationException.Conflict("Only an approved financial adjustment can be refunded.");
                 if (data.Amount + claim.AlreadyLinkedAmount > claim.AdjustmentAmount)
                     throw RefundOperationException.Conflict(

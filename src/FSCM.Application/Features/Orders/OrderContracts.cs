@@ -267,6 +267,7 @@ public sealed record OrderDetailResult(
     public DateTimeOffset? OfficialPricedAt { get; init; }
     public IReadOnlyCollection<OrderWarehouseProgressResult> WarehouseProgress { get; init; } = [];
     public OrderPaymentSummaryResult? Payment { get; init; }
+    public FSCM.Application.Features.AllocationRuns.AllocationAudit? AllocationAudit { get; init; }
     public decimal QuantityPromotionTotal { get; init; }
     public decimal ShelfLifeDiscountTotal { get; init; }
 }

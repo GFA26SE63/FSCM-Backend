@@ -189,6 +189,41 @@ public sealed class ShelfLifeDiscountServiceTests
         Assert.Equal(Now.AddDays(3), first.EffectiveTo);
     }
 
+    [Fact]
+    public async Task Scheduled_discount_does_not_change_current_price_before_effective_time()
+    {
+        var f = new Fixture();
+        await f.PublishAsync(Tier(ShelfLifeDiscountScopes.Sku, 0, 50, ShelfLifeDiscountTypes.Percent, 10));
+        await f.PublishAsync(Now.AddDays(7), Tier(ShelfLifeDiscountScopes.Sku, 0, 50, ShelfLifeDiscountTypes.Percent, 30));
+        f.Clock.UtcNow = Now;
+        Assert.Equal(10000m, (await f.Service.MatchAsync(Product, Category, 20, 100000, null, CancellationToken.None)).DiscountAmountPerUnit);
+        f.Clock.UtcNow = Now.AddDays(7);
+        Assert.Equal(30000m, (await f.Service.MatchAsync(Product, Category, 20, 100000, null, CancellationToken.None)).DiscountAmountPerUnit);
+    }
+
+    [Fact]
+    public async Task Invalid_scope_and_date_do_not_close_previous_version()
+    {
+        var f = new Fixture();
+        var tier = Tier(ShelfLifeDiscountScopes.Sku, 0, 50, ShelfLifeDiscountTypes.Percent, 10);
+        await f.PublishAsync(tier);
+        await Assert.ThrowsAsync<ShelfLifeDiscountOperationException>(() => f.Service.PublishAsync(new(Now, null, [tier]), Actor, CancellationToken.None));
+        await Assert.ThrowsAsync<ShelfLifeDiscountOperationException>(() => f.Service.PublishAsync(new(Now.AddDays(1), null, [tier with { ProductCategoryId = Category }]), Actor, CancellationToken.None));
+        f.Store.ScopeUsable = false;
+        await Assert.ThrowsAsync<ShelfLifeDiscountOperationException>(() => f.Service.PublishAsync(new(Now.AddDays(1), null, [tier]), Actor, CancellationToken.None));
+        Assert.True(f.Store.Tables.Single().IsActive);
+        Assert.Null(f.Store.Tables.Single().EffectiveTo);
+    }
+
+    [Fact]
+    public async Task Excess_precision_cannot_round_into_overlapping_bands_in_PostgreSQL()
+    {
+        var f = new Fixture();
+        await Assert.ThrowsAsync<ShelfLifeDiscountOperationException>(() => f.PublishAsync(
+            Tier(ShelfLifeDiscountScopes.Sku, 0, 20.001m, ShelfLifeDiscountTypes.Percent, 10)));
+        Assert.Empty(f.Store.Tables);
+    }
+
     private static ShelfLifeDiscountTierData Tier(
         string scope, decimal min, decimal max, string type, decimal value) =>
         new(scope,
@@ -201,25 +236,33 @@ public sealed class ShelfLifeDiscountServiceTests
         public FakeStore Store { get; } = new();
         public ShelfLifeDiscountService Service { get; }
 
-        public Fixture() => Service = new ShelfLifeDiscountService(Store, new FixedClock());
+        public FixedClock Clock { get; } = new();
+        public Fixture() => Service = new ShelfLifeDiscountService(Store, Clock);
 
         public Task<ShelfLifeDiscountTableResult> PublishAsync(params ShelfLifeDiscountTierData[] tiers) =>
             PublishAsync(Now, tiers);
 
-        public Task<ShelfLifeDiscountTableResult> PublishAsync(
-            DateTimeOffset effectiveFrom, params ShelfLifeDiscountTierData[] tiers) =>
-            Service.PublishAsync(
+        public async Task<ShelfLifeDiscountTableResult> PublishAsync(
+            DateTimeOffset effectiveFrom, params ShelfLifeDiscountTierData[] tiers)
+        {
+            var result = await Service.PublishAsync(
                 new PublishShelfLifeDiscountTableData(effectiveFrom, "Bậc giảm theo HSD", tiers),
                 Actor, CancellationToken.None);
+            Clock.UtcNow = effectiveFrom;
+            return result;
+        }
     }
 
     private sealed class FixedClock : TimeProvider
     {
-        public override DateTimeOffset GetUtcNow() => Now;
+        public DateTimeOffset UtcNow { get; set; } = Now.AddDays(-1);
+        public override DateTimeOffset GetUtcNow() => UtcNow;
     }
 
     private sealed class FakeStore : IShelfLifeDiscountStore
     {
+        public bool ScopeUsable { get; set; } = true;
+        public Task<bool> ScopeIsUsableAsync(string scope, Guid id, CancellationToken cancellationToken) => Task.FromResult(ScopeUsable);
         public List<ShelfLifeDiscountTable> Tables { get; } = [];
         public List<ShelfLifeDiscountTier> Tiers { get; } = [];
 

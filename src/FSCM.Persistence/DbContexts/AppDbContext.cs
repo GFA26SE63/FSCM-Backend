@@ -77,6 +77,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<Payment> PaymentRecords => Set<Payment>();
     public DbSet<PaymentReceipt> PaymentReceiptRecords => Set<PaymentReceipt>();
     public DbSet<PaymentReceiptAllocation> PaymentReceiptAllocationRecords => Set<PaymentReceiptAllocation>();
+    public DbSet<RetailerDebtPayOsCheckout> RetailerDebtPayOsCheckoutRecords => Set<RetailerDebtPayOsCheckout>();
+    public DbSet<RetailerDebtPayOsAllocation> RetailerDebtPayOsAllocationRecords => Set<RetailerDebtPayOsAllocation>();
     public DbSet<ManualRefund> ManualRefundRecords => Set<ManualRefund>();
     public DbSet<OrderStatusHistory> OrderStatusHistoryRecords => Set<OrderStatusHistory>();
     public DbSet<Notification> NotificationRecords => Set<Notification>();

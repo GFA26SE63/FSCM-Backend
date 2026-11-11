@@ -13,7 +13,7 @@ public sealed class LoyaltyServiceTests
         var fixture = new Fixture();
         var result = await fixture.Service.CreateAsync(
             new("  Tích điểm mùa lễ  ", "  Mô tả  ", 100_000m, 50,
-                Now.AddDays(-1), Now.AddDays(30), Now.AddDays(365), [fixture.RetailerId]), fixture.ActorId, CancellationToken.None);
+                Now, Now.AddDays(30), Now.AddDays(365), [fixture.RetailerId]), fixture.ActorId, CancellationToken.None);
 
         Assert.Equal("LP-001", result.Code);
         Assert.Equal("Tích điểm mùa lễ", result.Name);
@@ -44,6 +44,30 @@ public sealed class LoyaltyServiceTests
                 Now, Now.AddDays(1), null, [fixture.RetailerId]), fixture.ActorId, CancellationToken.None));
 
         Assert.Equal("validation_error", error.Code);
+    }
+
+    [Fact]
+    public async Task New_program_rejects_yesterday_and_today_starts_now()
+    {
+        var f = new Fixture();
+        var data = new CreateLoyaltyProgramData("Loyalty", null, 100000, 0, Now, Now.AddDays(30), null, [f.RetailerId]);
+        await Assert.ThrowsAsync<LoyaltyOperationException>(() => f.Service.CreateAsync(data with { StartAt = Now.AddDays(-1) }, f.ActorId, CancellationToken.None));
+        var result = await f.Service.CreateAsync(data with { StartAt = Now.AddHours(-1) }, f.ActorId, CancellationToken.None);
+        Assert.Equal(Now, result.StartAt);
+    }
+
+    [Fact]
+    public async Task Rate_update_preserves_historical_start_and_cannot_rewrite_it()
+    {
+        var f = new Fixture();
+        var p = f.Store.AddProgram(Now.AddDays(-5), Now.AddDays(30));
+        p.IsActive = true;
+        var data = new UpdateLoyaltyProgramData("Loyalty", null, 50000, 0, p.StartAt, p.EndAt, null, [f.RetailerId]);
+        await f.Service.UpdateAsync(p.Id, data, CancellationToken.None);
+        Assert.Equal(Now.AddDays(-5), p.StartAt);
+        Assert.Equal(50000, p.SpendAmountPerPoint);
+        await Assert.ThrowsAsync<LoyaltyOperationException>(() => f.Service.UpdateAsync(p.Id, data with { StartAt = Now }, CancellationToken.None));
+        Assert.Equal(Now.AddDays(-5), p.StartAt);
     }
 
     private sealed class Fixture

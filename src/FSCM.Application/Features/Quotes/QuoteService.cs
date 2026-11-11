@@ -3,6 +3,7 @@ using FSCM.Domain.Entities;
 using FSCM.Application.Features.Orders;
 using FSCM.Application.Features.Payments;
 using FSCM.Application.Features.Notifications;
+using FSCM.Application.Features.AllocationRuns;
 
 namespace FSCM.Application.Features.Quotes;
 
@@ -12,7 +13,8 @@ public sealed class QuoteService(
     PurchaseOrderGateService purchaseOrderGateService,
     OrderReleaseService releaseService,
     TimeProvider timeProvider,
-    OrderNotificationService? notifications = null)
+    OrderNotificationService? notifications = null,
+    AllocationDeliveryGuard? deliveryGuard = null)
 {
     public async Task<IReadOnlyCollection<SalesOrderQuoteResult>> ListForOrderAsync(Guid orderId, Guid actor, string role, CancellationToken ct)
     {
@@ -59,6 +61,7 @@ public sealed class QuoteService(
             await store.SaveChangesAsync(ct);
             throw QuoteOperationException.Conflict("Quote acceptance deadline has passed.");
         }
+        if (deliveryGuard is not null) await deliveryGuard.ValidateAsync(view.Order.Id, ct);
         view.Quote.Status = SalesOrderQuoteStatuses.Accepted;
         view.Quote.AcceptedByUserId = actor; view.Quote.AcceptedAt = now; view.Quote.Version++; view.Quote.UpdatedAt = now;
         view.Order.PaymentMethod = paymentMethod;

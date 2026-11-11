@@ -1,4 +1,4 @@
-﻿using System.Data;
+using System.Data;
 using FSCM.Application.Features.Picking;
 using FSCM.Application.Features.QrLabels;
 using FSCM.Domain.Authorization;
@@ -16,8 +16,7 @@ public sealed class PickingStore(AppDbContext dbContext) : IPickingStore
         Guid userId, string role, Guid warehouseId, CancellationToken cancellationToken) =>
         role is SystemRoles.Admin or SystemRoles.Operator
             ? Task.FromResult(true)
-            : dbContext.UserWarehouseAssignmentRecords.AsNoTracking().AnyAsync(item =>
-                item.UserAccountId == userId && item.WarehouseId == warehouseId && item.IsActive,
+            : ReportingScopeQueries.ManagedWarehouses(dbContext, userId).AnyAsync(item => item.Id == warehouseId,
                 cancellationToken);
 
     public async Task<IReadOnlyCollection<PickingView>> ListAsync(
@@ -32,8 +31,7 @@ public sealed class PickingStore(AppDbContext dbContext) : IPickingStore
         if (!string.IsNullOrWhiteSpace(status)) query = query.Where(item => item.Status == status);
         if (role == SystemRoles.WarehouseKeeper)
         {
-            query = query.Where(item => dbContext.UserWarehouseAssignmentRecords.Any(assignment =>
-                assignment.UserAccountId == userId && assignment.WarehouseId == item.WarehouseId && assignment.IsActive));
+            query = query.Where(item => ReportingScopeQueries.ManagedWarehouses(dbContext, userId).Select(w => w.Id).Contains(item.WarehouseId));
         }
         else if (role is not (SystemRoles.Admin or SystemRoles.Operator))
         {

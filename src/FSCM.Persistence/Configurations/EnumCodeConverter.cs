@@ -15,7 +15,7 @@ internal sealed class EnumCodeConverter(string family) : ValueConverter<string, 
             ["AllocationAttemptStatus"] = ["Processing", "Succeeded", "OutOfStock", "Conflict", "TechnicalFailed"],
             ["ReservationStatus"] = ["Active", "Released", "Consumed", "Expired"],
             ["InventoryTransactionType"] = ["PurchaseReceipt", "CustomerReturnReceipt", "AdjustmentIncrease", "SalesIssue", "ReplacementIssue", "WriteOff", "AdjustmentDecrease", "OrderReserve", "OrderRelease"],
-            ["ClaimStatus"] = ["Submitted", "UnderReview", "Rejected", "Approved", "Resolved"],
+            ["ClaimStatus"] = ["Submitted", "UnderReview", "Rejected", "Approved", "Resolved", "Cancelled"],
             ["ClaimResolutionType"] = ["Replacement", "FinancialAdjustment"],
             ["ReplacementStatus"] = ["Approved", "Preparing", "Shipped", "Received"],
             ["PickingStatus"] = ["Pending", "InProgress", "Completed", "Exception"]

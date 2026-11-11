@@ -29,7 +29,7 @@ public interface ILoyaltyAccrualStore
         bool movesBalance,
         string note,
         DateTimeOffset now,
-        CancellationToken cancellationToken);
+        CancellationToken cancellationToken, decimal? spendAmountPerPointSnapshot = null);
 
     Task SaveChangesAsync(CancellationToken cancellationToken);
 }

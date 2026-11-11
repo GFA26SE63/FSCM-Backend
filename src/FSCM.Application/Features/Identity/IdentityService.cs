@@ -328,6 +328,8 @@ public sealed class IdentityService(
         {
             throw IdentityOperationException.Conflict("A user with this email address already exists.");
         }
+        if (await store.FindUserByPhoneAsync(phone, cancellationToken) is not null)
+            throw IdentityOperationException.Conflict("Số điện thoại đã được một tài khoản khác sử dụng.");
 
         var now = timeProvider.GetUtcNow();
         var userId = Guid.NewGuid();
@@ -394,9 +396,11 @@ public sealed class IdentityService(
     public async Task SetActiveStatusAsync(
         Guid userId,
         bool isActive,
+        string? reason,
         Guid actorUserId,
         CancellationToken cancellationToken)
     {
+        var normalizedReason = NormalizeStatusReason(reason, isActive);
         var user = await GetManageableUserAsync(userId, cancellationToken);
         var now = timeProvider.GetUtcNow();
         var oldIsActive = user.IsActive;
@@ -408,7 +412,7 @@ public sealed class IdentityService(
         }
 
         AddAudit(user.Id, actorUserId, isActive ? "Activated" : "Deactivated",
-            new { IsActive = oldIsActive }, new { user.IsActive });
+            new { IsActive = oldIsActive }, new { user.IsActive }, normalizedReason);
         await store.SaveChangesAsync(cancellationToken);
     }
 
@@ -528,8 +532,8 @@ public sealed class IdentityService(
         CancellationToken cancellationToken)
     {
         var user = await GetManageableUserAsync(userId, cancellationToken);
-        if (user.Role != SystemRoles.SalesManager)
-            throw IdentityOperationException.Validation("Only Sales Manager users can be assigned directly to a region.");
+        if (user.Role is not (SystemRoles.SalesManager or SystemRoles.WarehouseKeeper))
+            throw IdentityOperationException.Validation("Only Sales Manager and Warehouse Keeper users can be assigned directly to a region.");
         if (!await store.RegionExistsAsync(regionId, cancellationToken))
             throw IdentityOperationException.NotFound("Region was not found.");
 
@@ -714,7 +718,13 @@ public sealed class IdentityService(
         new(user.Id, user.Email, user.Phone, user.FullName, user.Role, user.IsActive,
             user.IdentityProvider, user.CreatedAt, user.UpdatedAt);
 
-    private void AddAudit(Guid entityId, Guid actorUserId, string action, object? oldValues, object? newValues) =>
+    private void AddAudit(
+        Guid entityId,
+        Guid actorUserId,
+        string action,
+        object? oldValues,
+        object? newValues,
+        string? reason = null) =>
         store.AddAuditLog(new AuditLog
         {
             Id = Guid.NewGuid(),
@@ -724,8 +734,25 @@ public sealed class IdentityService(
             Action = action,
             OldValues = oldValues is null ? null : JsonSerializer.Serialize(oldValues),
             NewValues = newValues is null ? null : JsonSerializer.Serialize(newValues),
+            Reason = reason,
             CreatedAt = timeProvider.GetUtcNow()
         });
+
+    private static string? NormalizeStatusReason(string? reason, bool isActive)
+    {
+        var normalized = string.IsNullOrWhiteSpace(reason) ? null : reason.Trim();
+        if (!isActive && normalized is null)
+        {
+            throw IdentityOperationException.Validation("A reason is required when locking an account.");
+        }
+
+        if (normalized?.Length > 2000)
+        {
+            throw IdentityOperationException.Validation("The account status reason must not exceed 2000 characters.");
+        }
+
+        return normalized;
+    }
 
     private static string NormalizeEmail(string email)
     {
@@ -764,7 +791,7 @@ public sealed class IdentityService(
     private static string ValidatePhone(string phone)
     {
         var normalized = phone?.Trim() ?? string.Empty;
-        if (normalized.Length != 10 || normalized[0] != '0' || normalized.Any(character => !char.IsDigit(character)))
+        if (normalized.Length != 10 || normalized[0] != '0' || normalized.Any(character => character is < '0' or > '9'))
         {
             throw IdentityOperationException.Validation(
                 "Phone number must contain 10 digits and start with 0.");

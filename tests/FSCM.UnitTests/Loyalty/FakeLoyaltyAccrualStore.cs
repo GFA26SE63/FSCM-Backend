@@ -33,7 +33,7 @@ public sealed class FakeLoyaltyAccrualStore : ILoyaltyAccrualStore
     public Task<int> AppendAsync(
         Guid retailerLoyaltyId, Guid loyaltyProgramId, Guid? salesOrderId, Guid? actorUserId,
         string transactionType, int points, bool movesBalance, string note,
-        DateTimeOffset now, CancellationToken cancellationToken)
+        DateTimeOffset now, CancellationToken cancellationToken, decimal? spendAmountPerPointSnapshot = null)
     {
         Rows.Add((retailerLoyaltyId, salesOrderId, transactionType, points, movesBalance, note));
         Balances.TryAdd(retailerLoyaltyId, 0);
