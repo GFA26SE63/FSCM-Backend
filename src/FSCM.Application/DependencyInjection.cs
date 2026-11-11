@@ -41,6 +41,8 @@ public static class DependencyInjection
         services.AddValidatorsFromAssembly(typeof(DependencyInjection).Assembly);
         services.AddSingleton(TimeProvider.System);
         services.AddSingleton<AllocationEngine>();
+        services.AddScoped<AllocationPolicyService>();
+        services.AddScoped<AllocationDeliveryGuard>();
         services.AddScoped<AllocationPlanner>();
         services.AddScoped<AllocationPricingService>();
         services.AddScoped<IRealTimeAllocationService, RealTimeAllocationService>();

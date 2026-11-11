@@ -14,7 +14,6 @@ public sealed class ComplaintService(
     TimeProvider timeProvider,
     ImageUploadService images,
     PaymentService? payments = null,
-    LoyaltyAccrualService? loyalty = null,
     OrderNotificationService? notifications = null)
 {
     private const ImageCategory Category = ImageCategory.ClaimEvidence;
@@ -25,17 +24,26 @@ public sealed class ComplaintService(
         store.CreateAsync(actor, data, timeProvider.GetUtcNow(), ct);
     public Task<IReadOnlyCollection<ComplaintResult>> ListAsync(Guid actor, string role, CancellationToken ct) =>
         store.ListAsync(actor, role, ct);
-    public async Task<ComplaintResult> ResolveAsync(
+    public Task<IReadOnlyCollection<ComplaintTarget>> ListTargetsAsync(Guid actor, Guid orderId, CancellationToken ct) =>
+        store.ListTargetsAsync(actor, orderId, ct);
+    public async Task<ComplaintResult> ResolveAsync(Guid id, Guid actor, ResolveComplaintData data, CancellationToken ct)
+    {
+        ComplaintResult? result = null;
+        await store.ExecuteInTransactionAsync(async token => result = await ResolveCoreAsync(id, actor, data, token), ct);
+        return result!;
+    }
+
+    private async Task<ComplaintResult> ResolveCoreAsync(
         Guid id, Guid actor, ResolveComplaintData data, CancellationToken ct)
     {
         var resolved = await store.ResolveAsync(id, actor, data, timeProvider.GetUtcNow(), ct);
-        if (data.Approved && !resolved.FinancialAdjustmentApplied &&
+        if (resolved.Status == "Approved" && !resolved.FinancialAdjustmentApplied &&
             resolved.AdjustmentAmount > 0 && payments is not null)
         {
             var payment = await payments.GetByOrderAsync(
                 resolved.SalesOrderId, actor, SystemRoles.Operator, ct);
-            var reason = $"Khiếu nại {resolved.Code} được chấp nhận: {data.Result.Trim()}";
-            var adjusted = await payments.AdjustReceivableAsync(
+            var reason = $"Khiếu nại {resolved.Code} được chấp nhận: {resolved.Response?.Trim()}";
+            await payments.AdjustReceivableAsync(
                 resolved.SalesOrderId,
                 new AdjustReceivableData(
                     resolved.AdjustmentAmount,
@@ -45,12 +53,8 @@ public sealed class ComplaintService(
                 actor,
                 SystemRoles.Operator,
                 ct);
-            if (loyalty is not null && adjusted.AdjustedAmount != payment.AdjustedAmount)
-            {
-                await loyalty.AdjustAsync(
-                    resolved.SalesOrderId, adjusted.AdjustedAmount, reason, actor, ct);
-            }
             await store.MarkFinancialAdjustmentAppliedAsync(resolved.Id, ct);
+            resolved = resolved with { FinancialAdjustmentApplied = true };
         }
         // An order held back only by this complaint can now earn its points, and nothing else is
         // going to ask again on its behalf.
@@ -58,9 +62,9 @@ public sealed class ComplaintService(
         if (notifications is not null)
         {
             await notifications.PublishRetailerAsync(resolved.SalesOrderId,
-                data.Approved ? "ComplaintApproved" : "ComplaintRejected",
-                data.Approved ? "Khiếu nại đã được chấp nhận" : "Khiếu nại đã bị từ chối",
-                data.Approved
+                resolved.Status == "Approved" ? "ComplaintApproved" : "ComplaintRejected",
+                resolved.Status == "Approved" ? "Khiếu nại đã được chấp nhận" : "Khiếu nại đã bị từ chối",
+                resolved.Status == "Approved"
                     ? $"Khiếu nại {resolved.Code} đã được duyệt và nghĩa vụ thanh toán được điều chỉnh theo phần hàng ảnh hưởng."
                     : $"Khiếu nại {resolved.Code} đã bị từ chối. Xem kết quả xử lý để biết lý do.",
                 resolved.Id, "/retailer/complaints", ct);

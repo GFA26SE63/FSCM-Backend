@@ -1,5 +1,7 @@
 using FSCM.Application;
 using FSCM.Application.Features.AllocationRuns;
+using FSCM.Application.Features.Complaints;
+using FSCM.Application.Features.Loyalty;
 using FSCM.Application.Features.Orders;
 using FSCM.Application.Features.Payments;
 using FSCM.Application.Features.Picking;
@@ -29,6 +31,10 @@ public sealed class PostgresWorkflowFactAttribute : FactAttribute
 
 public sealed class RealTimePostgresWorkflowTests
 {
+    private sealed class CrashAllocator : IRealTimeAllocationService
+    {
+        public Task AllocateAsync(Guid order, Guid actor, CancellationToken ct) => throw new InvalidOperationException("Simulated process interruption after SO commit.");
+    }
     [PostgresWorkflowFact]
     public async Task Real_time_order_quote_po_picking_receipt_and_collection_use_real_Postgres()
     {
@@ -90,6 +96,17 @@ public sealed class RealTimePostgresWorkflowTests
             foreach (var label in await db.BatchQrLabelRecords.Where(l => selected.Contains(l.BatchId)).ToArrayAsync()) label.Status = QrLabelStatuses.Invalidated;
             await db.SaveChangesAsync();
         });
+        await Db(async db =>
+        {
+            (await db.SystemConfigurationRecords.SingleAsync(c => c.ConfigKey == "allocation.service_radius_meters" && c.IsActive)).ConfigValue = "30000";
+            (await db.SystemConfigurationRecords.SingleAsync(c => c.ConfigKey == "allocation.weights" && c.IsActive)).ConfigValue = "{\"expiry\":0.7,\"distance\":0.2,\"coverage\":0.1}";
+            var table = await db.TransitTableRecords.SingleAsync(t => t.IsActive);
+            table.MaxServingDistanceMeters = 30000;
+            (await db.TransitTableBandRecords.Where(b => b.TransitTableId == table.Id).OrderByDescending(b => b.MaxDistanceMeters).FirstAsync()).MaxDistanceMeters = 30001;
+            var route = await db.MapDistanceCacheRecords.FirstAsync(r => r.RetailerId == retailer && r.IsActive);
+            route.DistanceMeters = 25000; // Must use cached road distance and the configured radius, not 20 km/default coordinates.
+            await db.SaveChangesAsync();
+        });
         var availability = await Call<OrderAvailabilityService, OrderAvailabilityResult>(s =>
             s.CheckAsync(retailer, [product], sales, SystemRoles.Sales, default));
         var availableProduct = Assert.Single(availability.Items);
@@ -108,6 +125,13 @@ public sealed class RealTimePostgresWorkflowTests
             return order;
         }
         var main = await Create(60); var late = await Create(12); var rejected = await Create(12); var expired = await Create(12);
+        Assert.NotNull(main.AllocationAudit);
+        Assert.Equal(30000m, main.AllocationAudit.Weights.MaximumDistanceMeters);
+        Assert.Equal(.7m, main.AllocationAudit.Weights.ShelfLife);
+        Assert.Equal(System.Text.Json.JsonValueKind.String, System.Text.Json.JsonSerializer.SerializeToElement(main.AllocationAudit)
+            .GetProperty("Lines")[0].GetProperty("Filters")[0].GetProperty("Reason").ValueKind);
+        Assert.NotEmpty(main.AllocationAudit.Lines.Single().Filters);
+        Assert.Contains(main.AllocationAudit.Lines.Single().Scores, s => s.Selected);
         var shortage = await Create(1, OrderStatuses.OutOfStock);
         await Db(async db =>
         {
@@ -146,6 +170,17 @@ public sealed class RealTimePostgresWorkflowTests
             if (orderId == main.Id) Assert.Equal(2, parts.Count);
             foreach (var part in parts)
             {
+                if (orderId == main.Id && part.Id == parts.First().Id)
+                {
+                    await Db(async db => { foreach (var batch in await db.BatchRecords.Where(b =>
+                        db.AllocationRecords.Any(a => a.BatchId == b.Id && main.Lines.Select(l => l.Id).Contains(a.SalesOrderLineId))).ToArrayAsync())
+                        batch.ExpirationDate = DateOnly.FromDateTime(DateTime.UtcNow).AddDays(1); await db.SaveChangesAsync(); });
+                    await Assert.ThrowsAsync<OrderOperationException>(() => Call<ShipmentService, ShipmentResult>(s =>
+                        s.ConfirmIssueAsync(part.Id, new(part.Version), keeper, SystemRoles.WarehouseKeeper, default)));
+                    await Db(async db => { foreach (var batch in await db.BatchRecords.Where(b =>
+                        db.AllocationRecords.Any(a => a.BatchId == b.Id && main.Lines.Select(l => l.Id).Contains(a.SalesOrderLineId))).ToArrayAsync())
+                        batch.ExpirationDate = DateOnly.FromDateTime(DateTime.UtcNow).AddDays(7); await db.SaveChangesAsync(); });
+                }
                 var issued = await Call<ShipmentService, ShipmentResult>(s => s.ConfirmIssueAsync(part.Id, new(part.Version), keeper, SystemRoles.WarehouseKeeper, default));
                 Guid driver = default, vehicle = default;
                 await Db(async db =>
@@ -164,7 +199,15 @@ public sealed class RealTimePostgresWorkflowTests
                                    select label.QrCode).Distinct().ToArrayAsync();
                 });
                 var lines = dispatched.Lines.Select(x => new ConfirmShipmentReceiptLineData(x.OrderLineId, x.BatchId, x.Quantity, 0)).ToArray();
-                await Call<ShipmentService, ShipmentResult>(s => s.ConfirmReceiptAsync(part.Id, new(codes, lines, dispatched.Version, "E2E receipt"), Guid.NewGuid().ToString(), retailerUser, SystemRoles.Retailer, default));
+                if (orderId == main.Id && part.Id == parts.Last().Id)
+                    lines[0] = lines[0] with { ReceivedQuantity = lines[0].ReceivedQuantity - 1 };
+                var receipt = await Call<ShipmentService, ShipmentResult>(s => s.ConfirmReceiptAsync(part.Id, new(codes, lines, dispatched.Version, "E2E receipt"), Guid.NewGuid().ToString(), retailerUser, SystemRoles.Retailer, default));
+                if (receipt.Status == ShipmentStatuses.Exception)
+                {
+                    var resolved = await Call<ShipmentService, ShipmentResult>(s => s.ResolveExceptionAsync(part.Id,
+                        new("Shortage recorded for complaint handling", receipt.Version), op, SystemRoles.Operator, default));
+                    Assert.Equal(ShipmentStatuses.Received, resolved.Status);
+                }
             }
             OrderDetailResult detail;
             detail = await Call<OrderService, OrderDetailResult>(s => s.GetAsync(orderId, retailerUser, SystemRoles.Retailer, default));
@@ -181,10 +224,72 @@ public sealed class RealTimePostgresWorkflowTests
                 Assert.Single(await db.PaymentReceiptAllocationRecords.Where(x => db.PaymentRecords.Any(p => p.Id == x.PaymentId && p.SalesOrderId == orderId)).ToArrayAsync());
             });
         }
+        await Db(async db =>
+        {
+            db.LoyaltyProgramRecords.Add(new LoyaltyProgram { Id = Guid.NewGuid(), Code = "LP-E2E", Name = "E2E earning snapshot",
+                SpendAmountPerPoint = 10000, MinimumRedeemPoints = 1, StartAt = DateTimeOffset.UtcNow.AddDays(-1),
+                EndAt = DateTimeOffset.UtcNow.AddDays(10), IsActive = true, CreatedByUserId = op,
+                CreatedAt = DateTimeOffset.UtcNow, UpdatedAt = DateTimeOffset.UtcNow });
+            await db.SaveChangesAsync();
+        });
         await Fulfill(main.Id);
+        var targets = await Call<ComplaintService, IReadOnlyCollection<ComplaintTarget>>(s => s.ListTargetsAsync(retailerUser, main.Id, default));
+        Assert.Equal(2, targets.Count);
+        var complaintTarget = targets.First();
+        var rejectedClaim = await Call<ComplaintService, ReceiptDiscrepancy>(s => s.CreateAsync(retailerUser,
+            new(main.OrderCode, complaintTarget.Sku, complaintTarget.LabelCode, complaintTarget.ExpectedQuantity - 1, "reject test", null, complaintTarget.ShipmentId, AllocationId: complaintTarget.AllocationId), default));
+        await Call<ComplaintService, ComplaintResult>(s => s.ResolveAsync(rejectedClaim.Id, op, new("Rejected", false), default));
+        await Assert.ThrowsAsync<ComplaintOperationException>(() => Call<ComplaintService, ComplaintResult>(s =>
+            s.ResolveAsync(rejectedClaim.Id, op, new("Changed decision", true), default)));
+        var claim = await Call<ComplaintService, ReceiptDiscrepancy>(s => s.CreateAsync(retailerUser,
+            new(main.OrderCode, complaintTarget.Sku, complaintTarget.LabelCode, complaintTarget.ExpectedQuantity - 1, "missing one", null, complaintTarget.ShipmentId, AllocationId: complaintTarget.AllocationId), default));
+        await Assert.ThrowsAsync<ComplaintOperationException>(() => Call<ComplaintService, ReceiptDiscrepancy>(s => s.CreateAsync(retailerUser,
+            new(main.OrderCode, complaintTarget.Sku, complaintTarget.LabelCode, complaintTarget.ExpectedQuantity - 1, "different note", null, complaintTarget.ShipmentId, AllocationId: complaintTarget.AllocationId), default)));
+        await Db(async db => { var program = await db.LoyaltyProgramRecords.SingleAsync(p => p.Code == "LP-E2E");
+            program.SpendAmountPerPoint = 1; program.IsActive = false; program.EndAt = DateTimeOffset.UtcNow.AddMinutes(-1);
+            program.UpdatedAt = DateTimeOffset.UtcNow; await db.SaveChangesAsync(); });
+        var approvedClaim = await Call<ComplaintService, ComplaintResult>(s => s.ResolveAsync(claim.Id, op, new("Approved", true), default));
+        Assert.True(approvedClaim.FinancialAdjustmentApplied);
+        var afterClaim = await Call<PaymentService, PaymentResult>(s => s.GetByOrderAsync(main.Id, op, SystemRoles.Operator, default));
+        await Call<ComplaintService, ComplaintResult>(s => s.ResolveAsync(claim.Id, op, new("Replay with different note", true), default));
+        Assert.Equal(afterClaim.Version, (await Call<PaymentService, PaymentResult>(s => s.GetByOrderAsync(main.Id, op, SystemRoles.Operator, default))).Version);
+        var adjusted = await Call<PaymentService, PaymentResult>(s => s.AdjustReceivableAsync(main.Id,
+            new(10000, "direct adjustment", afterClaim.Version), "e2e-direct-adjust", op, SystemRoles.Operator, default));
+        await Db(async db =>
+        {
+            var ledger = await db.LoyaltyTransactionRecords.Where(l => l.SalesOrderId == main.Id &&
+                (l.TransactionType == LoyaltyTransactionTypes.Earned || l.TransactionType == LoyaltyTransactionTypes.EarnedAdjusted)).ToArrayAsync();
+            Assert.Equal((int)decimal.Floor(adjusted.AdjustedAmount / 10000m), ledger.Sum(l => l.Points));
+            Assert.All(ledger, l => Assert.Equal(10000m, l.SpendAmountPerPointSnapshot));
+        });
         var ql = await Quote(late.Id);
         await Call<QuoteService, SalesOrderQuoteResult>(s => s.AcceptAsync(ql.Id, ql.Version, OrderPaymentMethods.Credit, retailerUser, SystemRoles.Retailer, default));
         await Fulfill(late.Id);
+        var interruptedRequest = new CreateAssistedOrderData(Guid.NewGuid(), retailer, OrderPaymentMethods.Credit,
+            null, null, "Recovery E2E", [new(product, 1)]);
+        await using (var scope = provider.CreateAsyncScope())
+        {
+            var interrupted = ActivatorUtilities.CreateInstance<OrderService>(scope.ServiceProvider, new CrashAllocator());
+            await Assert.ThrowsAsync<InvalidOperationException>(() => interrupted.CreateAsync(interruptedRequest, sales, default));
+        }
+        Guid interruptedId = default;
+        await Db(async db => { var row = await db.SalesOrderRecords.SingleAsync(o => o.ClientOrderKey == interruptedRequest.ClientOrderKey);
+            interruptedId = row.Id; Assert.Equal(OrderStatuses.Allocating, row.Status); });
+        await using (var scope = provider.CreateAsyncScope())
+        {
+            var recoveryStore = scope.ServiceProvider.GetRequiredService<IRealTimeAllocationStore>();
+            Assert.Contains(await recoveryStore.ListRecoverableAsync(DateTimeOffset.UtcNow.AddMinutes(1), default), r => r.Id == interruptedId);
+            await recoveryStore.MarkFailedAsync(interruptedId, sales, OrderStatuses.AllocationFailed, "Interrupted", DateTimeOffset.UtcNow, default);
+        }
+        var failedOrder = await Call<OrderService, OrderDetailResult>(s => s.GetAsync(interruptedId, sales, SystemRoles.Sales, default));
+        var recovered = await Call<OrderService, OrderDetailResult>(s => s.RetryAllocationAsync(interruptedId, failedOrder.Version, sales, SystemRoles.Sales, default));
+        Assert.Equal(OrderStatuses.Quoted, recovered.Status);
+        var replayedOrder = await Call<OrderService, OrderDetailResult>(s => s.CreateAsync(interruptedRequest, sales, default));
+        Assert.Equal(recovered.Version, replayedOrder.Version);
+        await Db(async db => { Assert.Equal(2, await db.AllocationRunRecords.CountAsync(r => r.SalesOrderId == interruptedId));
+            Assert.Single(await db.SalesOrderRecords.Where(o => o.ClientOrderKey == interruptedRequest.ClientOrderKey).ToArrayAsync()); });
+        var recoveredQuote = await Quote(interruptedId);
+        await Call<QuoteService, SalesOrderQuoteResult>(s => s.RejectAsync(recoveredQuote.Id, recoveredQuote.Version, "Release recovery test stock", retailerUser, SystemRoles.Retailer, default));
         await Db(async db => { Assert.All(await db.InventoryBalanceRecords.Where(b => db.BatchRecords.Any(x => x.Id == b.BatchId && x.ProductId == product)).ToArrayAsync(), b => Assert.Equal(0m, b.ReservedQuantity)); });
     }
 }

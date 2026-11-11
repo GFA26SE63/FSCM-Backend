@@ -4,6 +4,8 @@ using System.Text;
 using System.Text.Json;
 using FSCM.Application.Features.Orders;
 using FSCM.Application.Features.Notifications;
+using FSCM.Application.Features.Loyalty;
+using FSCM.Application.Features.AllocationRuns;
 using FSCM.Domain.Authorization;
 using FSCM.Domain.Entities;
 
@@ -16,6 +18,8 @@ public sealed class PaymentService(
     PurchaseOrderGateService? purchaseOrderGateService = null,
     OrderCompletionService? completionService = null,
     OrderNotificationService? notifications = null,
+    LoyaltyAccrualService? loyalty = null,
+    AllocationDeliveryGuard? deliveryGuard = null,
     RetailerDebtPayOsService? debtPayOsService = null)
 {
     private static readonly TimeSpan VietnamOffset = TimeSpan.FromHours(7);
@@ -96,6 +100,8 @@ public sealed class PaymentService(
             if (view.HasOpenDispute)
                 throw PaymentOperationException.Conflict(
                     "Payment cannot be collected while the order has an unresolved dispute.");
+            if (view.Payment.Method == OrderPaymentMethods.Prepaid && deliveryGuard is not null)
+                await deliveryGuard.ValidateAsync(orderId, transactionCancellationToken);
             if (view.Payment.Version != data.ExpectedVersion)
                 throw PaymentOperationException.Conflict(
                     $"Payment version is {view.Payment.Version}; refresh and retry.");
@@ -237,6 +243,8 @@ public sealed class PaymentService(
 
             // Positive amount reduces the collectable base (approved claim); negative restores it.
             var adjusted = view.Payment.AdjustedAmount - data.Amount;
+            if (adjusted < 0)
+                throw PaymentOperationException.Conflict("Điều chỉnh không được vượt tổng nghĩa vụ thanh toán.");
             if (adjusted > view.Payment.Amount)
                 throw PaymentOperationException.Conflict(
                     "Adjustment cannot restore the payment obligation above the approved final total.");
@@ -252,6 +260,11 @@ public sealed class PaymentService(
             {
                 view.Payment.Status = PaymentStatuses.Paid;
                 view.Payment.PaidDate ??= DateOnly.FromDateTime(now.ToOffset(VietnamOffset).DateTime);
+            }
+            if (view.Payment.ConfirmedAmount < adjusted)
+            {
+                view.Payment.Status = view.Payment.ConfirmedAmount > 0 ? PaymentStatuses.PartiallyPaid : PaymentStatuses.Unpaid;
+                view.Payment.PaidDate = null;
             }
             view.Payment.OperationKey = operationKey;
             view.Payment.RequestHash = requestHash;
@@ -276,6 +289,8 @@ public sealed class PaymentService(
                 CreatedAt = now
             });
             await store.SaveChangesAsync(transactionCancellationToken);
+            if (loyalty is not null)
+                await loyalty.AdjustAsync(orderId, adjusted, reason, actorUserId, transactionCancellationToken);
         }, cancellationToken);
 
         store.ClearTracking();

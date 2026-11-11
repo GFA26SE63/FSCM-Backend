@@ -11,6 +11,7 @@ using FSCM.Application.Features.Picking;
 using FSCM.Application.Features.QrLabels;
 using FSCM.Domain.Authorization;
 using FSCM.Domain.Entities;
+using FSCM.Application.Features.AllocationRuns;
 
 namespace FSCM.Application.Features.Shipments;
 
@@ -27,7 +28,8 @@ public sealed class ShipmentService(
     IPaymentPlanService paymentPlanService,
     OrderCompletionService completion,
     TimeProvider timeProvider,
-    OrderNotificationService? notifications = null)
+    OrderNotificationService? notifications = null,
+    AllocationDeliveryGuard? deliveryGuard = null)
 {
     private static readonly TimeSpan VietnamOffset = TimeSpan.FromHours(7);
 
@@ -362,6 +364,7 @@ public sealed class ShipmentService(
 
             var now = timeProvider.GetUtcNow();
             var rows = await store.ListIssuableAsync(id, transactionCancellationToken);
+            if (deliveryGuard is not null) await deliveryGuard.ValidateAsync(view.Order.Id, transactionCancellationToken);
             if (rows.Count == 0)
             {
                 throw ShipmentOperationException.Conflict(
@@ -544,6 +547,7 @@ public sealed class ShipmentService(
                 throw ShipmentOperationException.Conflict(
                     "Assign a driver and vehicle before dispatching the shipment.");
 
+            if (deliveryGuard is not null) await deliveryGuard.ValidateAsync(view.Order.Id, token);
             var labels = await store.ListLabelsAsync(id, true, token);
             if (labels.Count == 0 || labels.Any(item => item.Label.Status != QrLabelStatuses.Picked))
                 throw ShipmentOperationException.Conflict(

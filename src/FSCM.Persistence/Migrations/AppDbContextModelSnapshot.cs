@@ -1752,6 +1752,10 @@ namespace FSCM.Persistence.Migrations
                     b.Property<Guid?>("SalesOrderId")
                         .HasColumnType("uuid");
 
+                    b.Property<decimal?>("SpendAmountPerPointSnapshot")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
                     b.Property<string>("TransactionType")
                         .IsRequired()
                         .HasMaxLength(30)

@@ -17,6 +17,11 @@ public sealed class ComplaintsController(ComplaintService service) : ControllerB
     public Task<IReadOnlyCollection<ComplaintResult>> List(CancellationToken ct) => service.ListAsync(ActorId(), Role(), ct);
 
     [Authorize(Roles = SystemRoles.Retailer)]
+    [HttpGet("orders/{orderId:guid}/targets")]
+    public Task<IReadOnlyCollection<ComplaintTarget>> Targets(Guid orderId, CancellationToken ct) =>
+        service.ListTargetsAsync(ActorId(), orderId, ct);
+
+    [Authorize(Roles = SystemRoles.Retailer)]
     [HttpPost]
     public async Task<IActionResult> Create(CreateComplaintRequest request, CancellationToken ct)
     {
