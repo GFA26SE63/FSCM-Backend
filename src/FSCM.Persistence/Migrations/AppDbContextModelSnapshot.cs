@@ -3622,6 +3622,119 @@ namespace FSCM.Persistence.Migrations
                     b.ToTable("RETAILER_ACTIVATION_CHALLENGE", (string)null);
                 });
 
+            modelBuilder.Entity("FSCM.Domain.Entities.RetailerDebtPayOsAllocation", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<decimal>("Amount")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<Guid>("CheckoutId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("PaymentId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("PaymentId");
+
+                    b.HasIndex("CheckoutId", "PaymentId")
+                        .IsUnique();
+
+                    b.ToTable("RETAILER_DEBT_PAYOS_ALLOCATION", (string)null);
+                });
+
+            modelBuilder.Entity("FSCM.Domain.Entities.RetailerDebtPayOsCheckout", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<decimal>("Amount")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<string>("CheckoutUrl")
+                        .IsRequired()
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<DateTimeOffset?>("ConfirmedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("OperationKey")
+                        .IsRequired()
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)");
+
+                    b.Property<long?>("PayOsExpiredAt")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("PayOsOrderCode")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("PayOsReference")
+                        .HasMaxLength(74)
+                        .HasColumnType("character varying(74)");
+
+                    b.Property<string>("PaymentLinkId")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)");
+
+                    b.Property<Guid?>("PaymentReceiptId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("QrCode")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("RequestHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<Guid>("RetailerId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("integer");
+
+                    b.Property<string>("WebhookHash")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OperationKey")
+                        .IsUnique();
+
+                    b.HasIndex("PayOsOrderCode")
+                        .IsUnique();
+
+                    b.HasIndex("PaymentReceiptId");
+
+                    b.HasIndex("RetailerId");
+
+                    b.ToTable("RETAILER_DEBT_PAYOS_CHECKOUT", (string)null);
+                });
+
             modelBuilder.Entity("FSCM.Domain.Entities.RetailerDeclarationContact", b =>
                 {
                     b.Property<Guid>("RetailerId")
@@ -6020,6 +6133,35 @@ namespace FSCM.Persistence.Migrations
                         .WithMany()
                         .HasForeignKey("UserAccountId")
                         .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("FSCM.Domain.Entities.RetailerDebtPayOsAllocation", b =>
+                {
+                    b.HasOne("FSCM.Domain.Entities.RetailerDebtPayOsCheckout", null)
+                        .WithMany()
+                        .HasForeignKey("CheckoutId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("FSCM.Domain.Entities.Payment", null)
+                        .WithMany()
+                        .HasForeignKey("PaymentId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("FSCM.Domain.Entities.RetailerDebtPayOsCheckout", b =>
+                {
+                    b.HasOne("FSCM.Domain.Entities.PaymentReceipt", null)
+                        .WithMany()
+                        .HasForeignKey("PaymentReceiptId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("FSCM.Domain.Entities.Retailer", null)
+                        .WithMany()
+                        .HasForeignKey("RetailerId")
+                        .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
                 });
 

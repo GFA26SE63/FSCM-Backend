@@ -42,6 +42,14 @@ public sealed class SystemQuery
         service.GetByOrderAsync(CurrentUser.Id(accessor), orderId, cancellationToken);
 
     [Authorize(Roles = [SystemRoles.Admin, SystemRoles.Operator, SystemRoles.SalesManager, SystemRoles.Sales])]
+    public Task<IReadOnlyCollection<PaymentResult>> Receivables(
+        string? status,
+        [Service] PaymentService service,
+        [Service] IHttpContextAccessor accessor,
+        CancellationToken cancellationToken) =>
+        service.ListAsync(CurrentUser.Id(accessor), CurrentUser.Role(accessor), status, cancellationToken);
+
+    [Authorize(Roles = [SystemRoles.Admin, SystemRoles.Operator, SystemRoles.SalesManager, SystemRoles.Sales])]
     public Task<SalesKpiResult> SalesKpis(
         SalesKpiQuery query,
         [Service] ReportService service,

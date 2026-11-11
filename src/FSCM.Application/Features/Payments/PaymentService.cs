@@ -19,7 +19,8 @@ public sealed class PaymentService(
     OrderCompletionService? completionService = null,
     OrderNotificationService? notifications = null,
     LoyaltyAccrualService? loyalty = null,
-    AllocationDeliveryGuard? deliveryGuard = null)
+    AllocationDeliveryGuard? deliveryGuard = null,
+    RetailerDebtPayOsService? debtPayOsService = null)
 {
     private static readonly TimeSpan VietnamOffset = TimeSpan.FromHours(7);
 
@@ -439,6 +440,9 @@ public sealed class PaymentService(
         CancellationToken cancellationToken)
     {
         var verified = await payOsGateway.VerifyWebhookAsync(webhook, cancellationToken);
+        if (debtPayOsService is not null &&
+            await debtPayOsService.FindByPayOsOrderCodeAsync(verified.Data.OrderCode, cancellationToken) is not null)
+            return await debtPayOsService.HandleVerifiedWebhookAsync(verified, cancellationToken);
         if (!verified.Success || verified.Code != "00" || verified.Data.Code != "00")
             return new(false, "Webhook was verified but does not represent a successful payment.", null);
 

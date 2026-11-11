@@ -114,6 +114,7 @@ public static class DependencyInjection
         services.AddScoped<IPaymentStore, PaymentStore>();
         services.AddScoped<IPaymentReceiptStore, PaymentReceiptStore>();
         services.AddScoped<IRetailerReceivableStore, RetailerReceivableStore>();
+        services.AddScoped<IRetailerDebtPayOsStore, RetailerDebtPayOsStore>();
         services.AddScoped<IPickingStore, PickingStore>();
         services.AddScoped<IQrLabelStore, QrLabelStore>();
         services.AddScoped<IPromotionStore, PromotionStore>();
