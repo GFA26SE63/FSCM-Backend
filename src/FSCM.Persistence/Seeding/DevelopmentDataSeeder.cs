@@ -464,11 +464,12 @@ public sealed class DevelopmentDataSeeder(
 
         await dbContext.SaveChangesAsync(cancellationToken);
 
-        await SeedPriceHistoryAsync(products["SKU001"], [235_000m, 245_000m, 252_000m], now, cancellationToken);
-        await SeedPriceHistoryAsync(products["SKU002"], [310_000m, 320_000m], now, cancellationToken);
-        await SeedPriceHistoryAsync(products["SKU003"], [180_000m], now, cancellationToken);
-        await SeedPriceHistoryAsync(products["SKU004"], [400_000m, 415_000m], now, cancellationToken);
-        await SeedPriceHistoryAsync(products["SKU005"], [325_000m], now, cancellationToken);
+        // Development/demo prices stay deliberately low so payment flows can be exercised safely.
+        await SeedPriceHistoryAsync(products["SKU001"], [235m, 245m, 252m], now, cancellationToken);
+        await SeedPriceHistoryAsync(products["SKU002"], [310m, 320m], now, cancellationToken);
+        await SeedPriceHistoryAsync(products["SKU003"], [180m], now, cancellationToken);
+        await SeedPriceHistoryAsync(products["SKU004"], [400m, 415m], now, cancellationToken);
+        await SeedPriceHistoryAsync(products["SKU005"], [325m], now, cancellationToken);
         await dbContext.SaveChangesAsync(cancellationToken);
         return products;
     }
@@ -515,10 +516,20 @@ public sealed class DevelopmentDataSeeder(
         DateTimeOffset now,
         CancellationToken cancellationToken)
     {
-        if (await dbContext.ProductPriceRecords.AnyAsync(
-                candidate => candidate.ProductId == product.Id,
-                cancellationToken))
+        var existingPrices = await dbContext.ProductPriceRecords
+            .Where(candidate => candidate.ProductId == product.Id)
+            .OrderBy(candidate => candidate.EffectiveFrom)
+            .ToArrayAsync(cancellationToken);
+        if (existingPrices.Length > 0)
         {
+            // Upgrade only the deterministic development price history. This makes an
+            // already-seeded local database adopt the low test prices without changing
+            // a product whose price history was intentionally edited during a demo.
+            if (existingPrices.Length == prices.Count && existingPrices.All(candidate => candidate.UnitPrice >= 1_000m))
+            {
+                for (var index = 0; index < prices.Count; index++)
+                    existingPrices[index].UnitPrice = prices[index];
+            }
             return;
         }
 
@@ -727,13 +738,13 @@ public sealed class DevelopmentDataSeeder(
             if (activeTransitRules.Length == 0)
             {
                 dbContext.TransitTimeRuleRecords.AddRange(
-                    CreateTransitRule(warehouse.Id, 0, 10_000, 60, 1_440, 120_000m, now),
-                    CreateTransitRule(warehouse.Id, 10_001, 20_000, 60, 2_880, 220_000m, now));
+                    CreateTransitRule(warehouse.Id, 0, 10_000, 60, 1_440, 120m, now),
+                    CreateTransitRule(warehouse.Id, 10_001, 20_000, 60, 2_880, 220m, now));
             }
             else
             {
                 foreach (var rule in activeTransitRules)
-                    rule.EstimatedTransportCost = rule.MaxDistanceMeters <= 10_000 ? 120_000m : 220_000m;
+                    rule.EstimatedTransportCost = rule.MaxDistanceMeters <= 10_000 ? 120m : 220m;
             }
         }
 
@@ -755,8 +766,20 @@ public sealed class DevelopmentDataSeeder(
             };
             dbContext.TransitTableRecords.Add(transitTable);
             dbContext.TransitTableBandRecords.AddRange(
-                CreateTransitBand(transitTable.Id, 0, 10_000, 60, 1_440, 80_000m, now),
-                CreateTransitBand(transitTable.Id, 10_000, 20_000, 60, 2_880, 120_000m, now));
+                CreateTransitBand(transitTable.Id, 0, 10_000, 60, 1_440, 80m, now),
+                CreateTransitBand(transitTable.Id, 10_000, 20_000, 60, 2_880, 120m, now));
+        }
+        else
+        {
+            var activeTransitTableIds = await dbContext.TransitTableRecords
+                .Where(item => item.IsActive)
+                .Select(item => item.Id)
+                .ToArrayAsync(cancellationToken);
+            var activeBands = await dbContext.TransitTableBandRecords
+                .Where(item => activeTransitTableIds.Contains(item.TransitTableId))
+                .ToArrayAsync(cancellationToken);
+            foreach (var band in activeBands)
+                band.EstimatedCostAmount = band.MaxDistanceMeters <= 10_000 ? 80m : 120m;
         }
 
         var categoryId = products["SKU001"].ProductCategoryId;

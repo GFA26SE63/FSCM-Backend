@@ -8,4 +8,5 @@
   <Project Path="tests/FSCM.IntegrationTests/FSCM.IntegrationTests.csproj" />
   <Project Path="tests/FSCM.LoadTests/FSCM.LoadTests.csproj" />
   <Project Path="tests/FSCM.UnitTests/FSCM.UnitTests.csproj" />
+  <Project Path="tools/FSCM.AllocationBenchmarks/FSCM.AllocationBenchmarks.csproj" />
 </Solution>

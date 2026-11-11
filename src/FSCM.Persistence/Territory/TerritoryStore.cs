@@ -24,6 +24,9 @@ public sealed class TerritoryStore(AppDbContext dbContext) : ITerritoryStore
     public Task<bool> RegionHasActiveGroupsAsync(Guid regionId, CancellationToken cancellationToken) =>
         dbContext.SalesGroupRecords.AnyAsync(item => item.RegionId == regionId && item.IsActive, cancellationToken);
 
+    public Task<bool> RegionHasActiveWarehousesAsync(Guid regionId, CancellationToken cancellationToken) =>
+        dbContext.WarehouseRecords.AnyAsync(item => item.RegionId == regionId && item.IsActive, cancellationToken);
+
     public void AddRegion(Region region) => dbContext.RegionRecords.Add(region);
 
     public async Task<IReadOnlyCollection<SalesGroupView>> ListSalesGroupsAsync(

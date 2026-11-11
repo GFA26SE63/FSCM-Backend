@@ -3,6 +3,7 @@ using FSCM.Domain.Authorization;
 using FSCM.Domain.Entities;
 using FSCM.Persistence.DbContexts;
 using Microsoft.EntityFrameworkCore;
+using Npgsql;
 
 namespace FSCM.Persistence.WarehouseConfiguration;
 
@@ -39,6 +40,9 @@ public sealed class WarehouseConfigurationStore(AppDbContext dbContext) : IWareh
                select new WarehouseKeeperView(
                    assignment.WarehouseId, user.Id, user.FullName, user.Email))
             .ToArrayAsync(cancellationToken);
+
+    public Task<Region?> FindRegionAsync(Guid regionId, CancellationToken cancellationToken) =>
+        dbContext.RegionRecords.AsNoTracking().SingleOrDefaultAsync(item => item.Id == regionId, cancellationToken);
 
     public void AddWarehouse(Warehouse warehouse) => dbContext.WarehouseRecords.Add(warehouse);
     public void AddLocation(MapLocation location) => dbContext.MapLocationRecords.Add(location);
@@ -137,7 +141,17 @@ public sealed class WarehouseConfigurationStore(AppDbContext dbContext) : IWareh
 
     public void AddConfiguration(SystemConfiguration configuration) => dbContext.SystemConfigurationRecords.Add(configuration);
 
-    public Task SaveChangesAsync(CancellationToken cancellationToken) => dbContext.SaveChangesAsync(cancellationToken);
+    public async Task SaveChangesAsync(CancellationToken cancellationToken)
+    {
+        try { await dbContext.SaveChangesAsync(cancellationToken); }
+        catch (DbUpdateException exception) when (exception.InnerException is PostgresException
+            { SqlState: PostgresErrorCodes.UniqueViolation, ConstraintName: var constraint } &&
+            constraint is not null && constraint.StartsWith("IX_SYSTEM_CONFIGURATION", StringComparison.Ordinal))
+        {
+            dbContext.ChangeTracker.Clear();
+            throw WarehouseConfigurationOperationException.Conflict("Configuration changed concurrently. Reload before saving the group again.");
+        }
+    }
 
     private IQueryable<WarehouseView> CreateWarehouseViewQuery(IQueryable<Warehouse> warehouses) =>
         from warehouse in warehouses

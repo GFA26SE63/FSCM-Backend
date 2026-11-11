@@ -3202,7 +3202,7 @@ namespace FSCM.Persistence.Migrations
                         {
                             t.HasCheckConstraint("CK_RECEIPT_DISCREPANCY_ResolutionType", "\"ResolutionType\" IS NULL OR \"ResolutionType\" BETWEEN 0 AND 1");
 
-                            t.HasCheckConstraint("CK_RECEIPT_DISCREPANCY_Status", "\"Status\" BETWEEN 0 AND 4");
+                            t.HasCheckConstraint("CK_RECEIPT_DISCREPANCY_Status", "\"Status\" BETWEEN 0 AND 5");
                         });
                 });
 
@@ -4856,7 +4856,14 @@ namespace FSCM.Persistence.Migrations
                         .IsUnique()
                         .HasFilter("\"GoogleSubject\" IS NOT NULL");
 
-                    b.ToTable("USER_ACCOUNT", (string)null);
+                    b.HasIndex("Phone")
+                        .IsUnique()
+                        .HasFilter("\"Phone\" IS NOT NULL");
+
+                    b.ToTable("USER_ACCOUNT", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_USER_ACCOUNT_PhoneCanonical", "\"Phone\" IS NULL OR (\"Phone\" = btrim(\"Phone\") AND \"Phone\" <> '')");
+                        });
                 });
 
             modelBuilder.Entity("FSCM.Domain.Entities.UserCredential", b =>

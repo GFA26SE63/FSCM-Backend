@@ -100,6 +100,41 @@ public sealed class S1BMasterDataApiTests
     }
 
     [Fact]
+    public async Task Admin_settings_reject_invalid_payloads_and_Sales_cannot_publish()
+    {
+        using var identity = new IdentityAuthorizationTests.IdentityApiFactory();
+        var warehouseStore = new TestWarehouseStore(identity.Admin.Id, identity.WarehouseKeeper);
+        using var factory = identity.WithWebHostBuilder(builder => builder.ConfigureTestServices(services =>
+        {
+            services.RemoveAll<IWarehouseConfigurationStore>();
+            services.AddSingleton<IWarehouseConfigurationStore>(warehouseStore);
+            services.RemoveAll<ITransitTableStore>();
+            services.AddSingleton<ITransitTableStore>(new TestTransitTableStore());
+            services.RemoveAll<TimeProvider>();
+            services.AddSingleton<TimeProvider>(new FixedTimeProvider(TestMapStore.Now));
+        }));
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization = Bearer(identity.Admin, identity);
+        foreach (var body in new object[] { new { value = "bad" }, new { value = 0 }, new { value = 1.5 }, new { } })
+            Assert.Equal(System.Net.HttpStatusCode.BadRequest, (await client.PutAsJsonAsync("/api/v1/configurations/order.order_step_cartons", body)).StatusCode);
+        Assert.Equal(System.Net.HttpStatusCode.BadRequest, (await client.PutAsJsonAsync("/api/v1/configurations/batch", new
+        {
+            entries = new[] { new { key = "allocation.service_radius_meters", value = 33000 }, new { key = "order.order_step_cartons", value = 0 } }
+        })).StatusCode);
+        Assert.Equal(System.Net.HttpStatusCode.BadRequest, (await client.PutAsJsonAsync("/api/v1/configurations/batch", new { entries = new object?[] { null } })).StatusCode);
+        var invalidDate = new { maxServingDistanceMeters = 20000, effectiveFrom = TestMapStore.Now,
+            bands = new[] { new { minDistanceMeters = 0, maxDistanceMeters = 20000, handlingMinutes = 60, transitMinutes = 120, estimatedCostAmount = 0 } } };
+        Assert.Equal(System.Net.HttpStatusCode.BadRequest, (await client.PostAsJsonAsync("/api/v1/transit-tables", invalidDate)).StatusCode);
+        Assert.Equal(System.Net.HttpStatusCode.BadRequest, (await client.PostAsJsonAsync("/api/v1/transit-tables", new { maxServingDistanceMeters = 20000, effectiveFrom = TestMapStore.Now.AddDays(1), bands = new object?[] { null } })).StatusCode);
+        Assert.Equal(System.Net.HttpStatusCode.BadRequest, (await client.PostAsJsonAsync("/api/v1/shelf-life-discounts", new { effectiveFrom = TestMapStore.Now.AddDays(1), tiers = new object?[] { null } })).StatusCode);
+        client.DefaultRequestHeaders.Authorization = Bearer(identity.Sales, identity);
+        Assert.Equal(System.Net.HttpStatusCode.Forbidden, (await client.PostAsJsonAsync("/api/v1/transit-tables", invalidDate)).StatusCode);
+        Assert.Equal(System.Net.HttpStatusCode.Forbidden, (await client.PutAsJsonAsync("/api/v1/configurations/order.order_step_cartons", new { value = 2 })).StatusCode);
+        Assert.Equal(System.Net.HttpStatusCode.Forbidden, (await client.PutAsJsonAsync("/api/v1/configurations/batch", new { entries = new[] { new { key = "order.order_step_cartons", value = 2 } } })).StatusCode);
+        Assert.Equal(System.Net.HttpStatusCode.Forbidden, (await client.PostAsJsonAsync("/api/v1/promotions/campaigns", new { })).StatusCode);
+    }
+
+    [Fact]
     public async Task Retailer_rest_and_graphql_return_general_information_mlor_and_sku_precedence()
     {
         using var identityFactory = new IdentityAuthorizationTests.IdentityApiFactory();
@@ -239,6 +274,8 @@ public sealed class S1BMasterDataApiTests
         public List<AuditLog> AuditLogs { get; } = [];
         public Task<IReadOnlyCollection<WarehouseView>> ListWarehousesAsync(bool includeInactive, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyCollection<WarehouseView>>([new(Warehouse, Location)]);
         public Task<WarehouseView?> FindWarehouseViewAsync(Guid warehouseId, CancellationToken cancellationToken) => Task.FromResult<WarehouseView?>(warehouseId == Warehouse.Id ? new(Warehouse, Location) : null);
+        public Task<Region?> FindRegionAsync(Guid regionId, CancellationToken cancellationToken) =>
+            Task.FromResult<Region?>(new Region { Id = regionId, IsActive = true });
         public Task<Warehouse?> FindWarehouseAsync(Guid warehouseId, CancellationToken cancellationToken) => Task.FromResult<Warehouse?>(warehouseId == Warehouse.Id ? Warehouse : null);
         public Task<Warehouse?> FindWarehouseByCodeAsync(string code, CancellationToken cancellationToken) => Task.FromResult<Warehouse?>(code == Warehouse.Code ? Warehouse : null);
         public Task<MapLocation?> FindWarehouseLocationAsync(Guid warehouseId, CancellationToken cancellationToken) => Task.FromResult<MapLocation?>(warehouseId == Warehouse.Id ? Location : null);

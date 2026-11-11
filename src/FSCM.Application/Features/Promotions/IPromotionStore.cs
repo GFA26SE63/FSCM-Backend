@@ -18,6 +18,8 @@ public sealed record PriceProductView(Product Product, ProductPrice Price);
 
 public interface IPromotionStore
 {
+    Task<CampaignSubmission?> FindCampaignSubmissionAsync(Guid requestId, CancellationToken cancellationToken);
+    void AddCampaignSubmission(Guid requestId, CampaignSubmission submission, DateTimeOffset now);
     Task<IReadOnlyCollection<PromotionView>> ListPromotionsAsync(bool includeInactive, CancellationToken cancellationToken);
     Task<PromotionView?> FindPromotionViewAsync(Guid id, CancellationToken cancellationToken);
     Task<Promotion?> FindPromotionAsync(Guid id, CancellationToken cancellationToken);

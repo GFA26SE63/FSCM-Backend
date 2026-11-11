@@ -142,7 +142,7 @@ public sealed class RealTimeAllocationService(
                     .Select(c => c with { AvailableQuantity = remainingByBatch[c.BatchId] }).ToArray();
             var result = activeEngine.Allocate(new AllocationRequest(line.SkuSnapshot, line.OrderedQuantity,
                 productCandidates[0].Product.ShelfLifeHours,
-                line.MlorMinimumLifeRatio, context.Order.RequestedDeliveryDate), candidates);
+                line.MlorMinimumLifeRatio, context.Order.RequestedDeliveryDate, line.MlorMinimumLifeHours), candidates);
             trace.Add(new(line.Id, line.SkuSnapshot, result.FilterTrace, result.ScoreTrace));
             run.AlgorithmSettings = JsonSerializer.Serialize(new AllocationAudit(weights, trace), AllocationAudit.JsonOptions);
             if (!result.IsFullyAllocated)
@@ -180,7 +180,7 @@ public sealed class RealTimeAllocationService(
                 candidate.Product.ProductCategoryId,
                 row.Line.SkuSnapshot,
                 row.Decision.Quantity,
-                new DateTimeOffset(candidate.Batch.ExpirationDate.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero),
+                BatchExpiration.ExclusiveEnd(candidate.Batch.ExpirationDate),
                 candidate.Product.ShelfLifeHours,
                 row.Line.UnitPrice,
                 baseNetUnitPrice);
@@ -195,7 +195,7 @@ public sealed class RealTimeAllocationService(
         {
             var candidate = context.Candidates.Single(item => item.Batch.Id == row.Decision.BatchId);
             var priced = pricedByPart[(row.Line.Id, row.Decision.BatchId, row.Decision.WarehouseId)];
-            var grossAmount = decimal.Round(row.Decision.Quantity * row.Line.UnitPrice, 2,
+            var grossAmount = decimal.Round(row.Decision.Quantity * row.Line.UnitPrice, 0,
                 MidpointRounding.AwayFromZero);
             var discountAmount = grossAmount - priced.Amount;
             var allocation = new Allocation
@@ -234,7 +234,7 @@ public sealed class RealTimeAllocationService(
         foreach (var line in context.Lines)
         {
             var parts = pricedOrder.Parts.Where(item => item.RunLineId == line.Id).ToArray();
-            line.GrossAmount = decimal.Round(parts.Sum(item => item.ListUnitPrice * item.Quantity), 2,
+            line.GrossAmount = decimal.Round(parts.Sum(item => item.ListUnitPrice * item.Quantity), 0,
                 MidpointRounding.AwayFromZero);
             line.NetAmount = parts.Sum(item => item.Amount);
             line.DiscountAmount = line.GrossAmount - line.NetAmount;

@@ -283,7 +283,7 @@ public sealed class DeliveryEtaServiceTests
         {
             var fixture = new Fixture();
             var transitStore = new FakeTransitTableStore();
-            var transitTables = new TransitTableService(transitStore, new FixedClock());
+            var transitTables = new TransitTableService(transitStore, new FixedClock(Now.AddDays(-31)));
             // Bands reach further than the serving distance, so a distance past 15 km still
             // resolves to a band and is reported as out of range instead of failing.
             await transitTables.PublishAsync(
@@ -323,9 +323,9 @@ public sealed class DeliveryEtaServiceTests
             });
     }
 
-    private sealed class FixedClock : TimeProvider
+    private sealed class FixedClock(DateTimeOffset? utcNow = null) : TimeProvider
     {
-        public override DateTimeOffset GetUtcNow() => Now;
+        public override DateTimeOffset GetUtcNow() => utcNow ?? Now;
     }
 
     private sealed class FakeStore : IDeliveryEtaStore

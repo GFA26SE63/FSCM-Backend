@@ -2,6 +2,7 @@ using FSCM.Application.Features.ShelfLifeDiscounts;
 using FSCM.Domain.Entities;
 using FSCM.Persistence.DbContexts;
 using Microsoft.EntityFrameworkCore;
+using Npgsql;
 
 namespace FSCM.Persistence.ShelfLifeDiscounts;
 
@@ -34,6 +35,11 @@ public sealed class ShelfLifeDiscountStore(AppDbContext dbContext) : IShelfLifeD
             ? await dbContext.ShelfLifeDiscountTableRecords.MaxAsync(item => item.Version, cancellationToken)
             : 0;
 
+    public Task<bool> ScopeIsUsableAsync(string scope, Guid id, CancellationToken cancellationToken) =>
+        scope == ShelfLifeDiscountScopes.Sku
+            ? dbContext.ProductRecords.AnyAsync(item => item.Id == id && item.Status == ProductStatuses.Published, cancellationToken)
+            : dbContext.ProductCategoryRecords.AnyAsync(item => item.Id == id && item.IsActive, cancellationToken);
+
     public void AddTable(ShelfLifeDiscountTable table) => dbContext.ShelfLifeDiscountTableRecords.Add(table);
 
     public void AddTiers(IEnumerable<ShelfLifeDiscountTier> tiers) =>
@@ -41,7 +47,14 @@ public sealed class ShelfLifeDiscountStore(AppDbContext dbContext) : IShelfLifeD
 
     public void AddAuditLog(AuditLog auditLog) => dbContext.AuditLogRecords.Add(auditLog);
 
-    public Task SaveChangesAsync(CancellationToken cancellationToken) => dbContext.SaveChangesAsync(cancellationToken);
+    public async Task SaveChangesAsync(CancellationToken cancellationToken)
+    {
+        try { await dbContext.SaveChangesAsync(cancellationToken); }
+        catch (DbUpdateException exception) when (exception.InnerException is PostgresException { SqlState: PostgresErrorCodes.UniqueViolation })
+        {
+            throw ShelfLifeDiscountOperationException.Conflict("Another version was published concurrently. Reload the latest version before publishing again.");
+        }
+    }
 
     private IQueryable<ShelfLifeDiscountTableView> CreateViewQuery(IQueryable<ShelfLifeDiscountTable> tables) =>
         tables.Select(table => new ShelfLifeDiscountTableView(

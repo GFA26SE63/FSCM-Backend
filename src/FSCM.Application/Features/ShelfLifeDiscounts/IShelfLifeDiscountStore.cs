@@ -8,6 +8,7 @@ public sealed record ShelfLifeDiscountTableView(
 
 public interface IShelfLifeDiscountStore
 {
+    Task<bool> ScopeIsUsableAsync(string scope, Guid id, CancellationToken cancellationToken);
     Task<ShelfLifeDiscountTableView?> FindCurrentAsync(CancellationToken cancellationToken);
     Task<ShelfLifeDiscountTableView?> FindByVersionAsync(int version, CancellationToken cancellationToken);
     Task<ShelfLifeDiscountTableView?> FindEffectiveAtAsync(DateTimeOffset at, CancellationToken cancellationToken);

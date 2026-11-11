@@ -1,5 +1,13 @@
 namespace FSCM.Application.Features.Promotions;
 
+public sealed record CampaignProductRuleData(Guid ProductId, decimal MinimumQuantity, decimal DiscountPercent);
+public sealed record CreateCampaignGroupData(
+    Guid RequestId, string CampaignMode, string Name, decimal MinimumQuantity, decimal DiscountPercent,
+    DateTimeOffset StartAt, DateTimeOffset EndAt, IReadOnlyCollection<Guid> ProductIds,
+    IReadOnlyCollection<Guid> CategoryIds, IReadOnlyCollection<Guid> RetailerIds,
+    IReadOnlyCollection<CampaignProductRuleData> ProductRules, bool ActivateOnSave);
+public sealed record CampaignSubmission(Guid ActorUserId, string RequestHash, IReadOnlyCollection<PromotionResult> Promotions);
+
 public sealed record CreatePromotionData(
     string Name, decimal MinimumQuantity, decimal DiscountPercent,
     DateTimeOffset StartAt, DateTimeOffset EndAt,
