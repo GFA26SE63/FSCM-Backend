@@ -48,6 +48,7 @@ public sealed class TransitTableServiceTests
         await fixture.Service.PublishAsync(
             Table(effectiveFrom: Now.AddDays(7), transitMinutes: 2_880), Actor, CancellationToken.None);
 
+        fixture.Clock.UtcNow = Now.AddDays(7);
         var duringFirst = await fixture.Service.LookupAsync(5_000, Now.AddDays(1), CancellationToken.None);
         var current = await fixture.Service.LookupAsync(5_000, null, CancellationToken.None);
 
@@ -63,6 +64,7 @@ public sealed class TransitTableServiceTests
         var fixture = new Fixture();
         await fixture.Service.PublishAsync(Table(), Actor, CancellationToken.None);
 
+        fixture.Clock.UtcNow = Now;
         var inFirstBand = await fixture.Service.LookupAsync(9_999, null, CancellationToken.None);
         var onBoundary = await fixture.Service.LookupAsync(10_000, null, CancellationToken.None);
 
@@ -78,6 +80,7 @@ public sealed class TransitTableServiceTests
         await fixture.Service.PublishAsync(
             Table(maxServingDistanceMeters: 15_000), Actor, CancellationToken.None);
 
+        fixture.Clock.UtcNow = Now;
         var result = await fixture.Service.LookupAsync(18_000, null, CancellationToken.None);
 
         Assert.False(result.IsWithinServingDistance);
@@ -149,6 +152,45 @@ public sealed class TransitTableServiceTests
         Assert.Equal("not_found", exception.Code);
     }
 
+    [Fact]
+    public async Task Publish_uses_Vietnam_midnight_and_does_not_close_current_on_invalid_date()
+    {
+        var f = new Fixture();
+        f.Clock.UtcNow = DateTimeOffset.Parse("2026-10-21T17:01:00Z"); // Already October 22 in Vietnam.
+        var rejected = await Assert.ThrowsAsync<TransitTableOperationException>(() => f.Service.PublishAsync(
+            Table(DateTimeOffset.Parse("2026-10-22T16:59:59Z")), Actor, CancellationToken.None));
+        Assert.Equal("validation_error", rejected.Code);
+        Assert.Empty(f.Store.Tables);
+        var accepted = await f.Service.PublishAsync(Table(DateTimeOffset.Parse("2026-10-22T17:00:00Z")), Actor, CancellationToken.None);
+        Assert.Equal(1, accepted.Version);
+        await Assert.ThrowsAsync<TransitTableOperationException>(() => f.Service.PublishAsync(Table(f.Clock.UtcNow), Actor, CancellationToken.None));
+        Assert.True(f.Store.Tables.Single().IsActive);
+        Assert.Null(f.Store.Tables.Single().EffectiveTo);
+    }
+
+    [Fact]
+    public async Task Lookup_without_date_keeps_using_effective_version_while_new_version_is_scheduled()
+    {
+        var f = new Fixture();
+        await f.Service.PublishAsync(Table(), Actor, CancellationToken.None);
+        f.Clock.UtcNow = Now;
+        await f.Service.PublishAsync(Table(Now.AddDays(7), transitMinutes: 2880), Actor, CancellationToken.None);
+        Assert.Equal(1, (await f.Service.LookupAsync(1000, null, CancellationToken.None)).Version);
+        f.Clock.UtcNow = Now.AddDays(7);
+        Assert.Equal(2, (await f.Service.LookupAsync(1000, null, CancellationToken.None)).Version);
+    }
+
+    [Fact]
+    public async Task Exact_serving_radius_is_covered_by_final_band()
+    {
+        var f = new Fixture();
+        await f.Service.PublishAsync(Table(), Actor, default);
+        f.Clock.UtcNow = Now;
+        var edge = await f.Service.LookupAsync(20000, null, default);
+        Assert.True(edge.IsWithinServingDistance);
+        Assert.Equal(10000, edge.MinDistanceMeters);
+    }
+
     private static PublishTransitTableData Table(
         DateTimeOffset? effectiveFrom = null,
         int maxServingDistanceMeters = 20_000,
@@ -162,14 +204,16 @@ public sealed class TransitTableServiceTests
     private sealed class Fixture
     {
         public FakeStore Store { get; } = new();
+        public FakeClock Clock { get; } = new();
         public TransitTableService Service { get; }
 
-        public Fixture() => Service = new TransitTableService(Store, new FakeClock());
+        public Fixture() => Service = new TransitTableService(Store, Clock);
     }
 
     private sealed class FakeClock : TimeProvider
     {
-        public override DateTimeOffset GetUtcNow() => Now;
+        public DateTimeOffset UtcNow { get; set; } = Now.AddDays(-1);
+        public override DateTimeOffset GetUtcNow() => UtcNow;
     }
 
     private sealed class FakeStore : ITransitTableStore

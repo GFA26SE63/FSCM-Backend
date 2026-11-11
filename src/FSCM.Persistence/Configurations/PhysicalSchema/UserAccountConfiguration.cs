@@ -8,7 +8,8 @@ public sealed class UserAccountConfiguration : IEntityTypeConfiguration<UserAcco
 {
     public void Configure(EntityTypeBuilder<UserAccount> builder)
     {
-        builder.ToTable("USER_ACCOUNT");
+        builder.ToTable("USER_ACCOUNT", table => table.HasCheckConstraint(
+            "CK_USER_ACCOUNT_PhoneCanonical", "\"Phone\" IS NULL OR (\"Phone\" = btrim(\"Phone\") AND \"Phone\" <> '')"));
         builder.HasKey(entity => entity.Id);
         builder.Property(entity => entity.Id).HasColumnType("uuid").IsRequired();
         builder.Property(entity => entity.GoogleSubject).HasMaxLength(255).IsRequired(false);
@@ -24,5 +25,6 @@ public sealed class UserAccountConfiguration : IEntityTypeConfiguration<UserAcco
             .IsUnique()
             .HasFilter("\"GoogleSubject\" IS NOT NULL");
         builder.HasIndex(entity => entity.Email).IsUnique();
+        builder.HasIndex(entity => entity.Phone).IsUnique().HasFilter("\"Phone\" IS NOT NULL");
     }
 }

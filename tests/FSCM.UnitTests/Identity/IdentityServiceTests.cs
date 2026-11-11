@@ -344,6 +344,23 @@ public sealed class IdentityServiceTests
         Assert.Null(Assert.Single(fixture.Store.AuditLogs).Reason);
     }
 
+    [Fact]
+    public async Task Creating_an_account_with_an_existing_phone_is_rejected_before_staging_any_writes()
+    {
+        var f = new IdentityFixture();
+        var existing = f.AddActiveUser(SystemRoles.Sales, "existing@fscm.local", "Correct#Pass1"); existing.Phone = "0901234567";
+        var error = await Assert.ThrowsAsync<IdentityOperationException>(() => f.Service.CreateUserAsync("other@fscm.local", "Other Sales", SystemRoles.Sales, " 0901234567 ", "Correct#Pass1", Guid.NewGuid(), default));
+        Assert.Equal("conflict", error.Code); Assert.Single(f.Store.Users); Assert.Single(f.Store.Credentials);
+    }
+
+    [Fact]
+    public async Task Phone_validation_rejects_non_ASCII_digits()
+    {
+        var f = new IdentityFixture();
+        await Assert.ThrowsAsync<IdentityOperationException>(() => f.Service.CreateUserAsync("other@fscm.local", "Other Sales", SystemRoles.Sales, "090123456٧", "Correct#Pass1", Guid.NewGuid(), default));
+        Assert.Empty(f.Store.Users);
+    }
+
     private sealed class IdentityFixture
     {
         public IdentityFixture()

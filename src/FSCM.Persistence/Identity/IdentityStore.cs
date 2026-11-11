@@ -2,6 +2,7 @@ using FSCM.Application.Features.Identity;
 using FSCM.Domain.Entities;
 using FSCM.Persistence.DbContexts;
 using Microsoft.EntityFrameworkCore;
+using Npgsql;
 
 namespace FSCM.Persistence.Identity;
 
@@ -250,7 +251,18 @@ public sealed class IdentityStore(AppDbContext dbContext) : IIdentityStore
 
     public void AddAuditLog(AuditLog auditLog) => dbContext.AuditLogRecords.Add(auditLog);
 
-    public Task SaveChangesAsync(CancellationToken cancellationToken) =>
-        dbContext.SaveChangesAsync(cancellationToken);
+    public async Task SaveChangesAsync(CancellationToken cancellationToken)
+    {
+        try { await dbContext.SaveChangesAsync(cancellationToken); }
+        catch (DbUpdateException exception) when (exception.InnerException is PostgresException
+            { SqlState: PostgresErrorCodes.UniqueViolation, ConstraintName: var constraint } &&
+            constraint is "IX_USER_ACCOUNT_Phone" or "IX_USER_ACCOUNT_Email")
+        {
+            dbContext.ChangeTracker.Clear();
+            throw IdentityOperationException.Conflict(constraint == "IX_USER_ACCOUNT_Phone"
+                ? "Số điện thoại đã được một tài khoản khác sử dụng."
+                : "Email đã được một tài khoản khác sử dụng.");
+        }
+    }
 }
 

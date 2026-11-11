@@ -88,6 +88,8 @@ public sealed record ConfigurationResult(
 
 public sealed record BusinessConfigurationDefinition(string ValueType, string Description);
 
+public sealed record ConfigurationValueData(string Key, string RawJsonValue);
+
 public static class BusinessConfigurationKeys
 {
     public const string AllocationWeights = "allocation.weights";
