@@ -86,21 +86,19 @@ public sealed class IdentityStore(AppDbContext dbContext) : IIdentityStore
             .Select(user => user.Role)
             .SingleOrDefaultAsync(cancellationToken);
         var warehouseIds = role == FSCM.Domain.Authorization.SystemRoles.WarehouseKeeper
-            ? await dbContext.UserWarehouseAssignmentRecords
-            .Where(assignment => assignment.UserAccountId == userId && assignment.IsActive)
-            .Select(assignment => assignment.WarehouseId)
+            ? await ReportingScopeQueries.ManagedWarehouses(dbContext, userId)
+            .Select(warehouse => warehouse.Id)
             .Distinct()
             .ToArrayAsync(cancellationToken)
             : [];
         var salesGroupIds = role is FSCM.Domain.Authorization.SystemRoles.Sales or
             FSCM.Domain.Authorization.SystemRoles.SalesManager
-            ? await dbContext.SalesGroupMemberRecords
-            .Where(membership => membership.UserAccountId == userId && membership.IsActive)
-            .Select(membership => membership.SalesGroupId)
+            ? await ReportingScopeQueries.ManagedGroups(dbContext, userId)
+            .Select(group => group.Id)
             .Distinct()
             .ToArrayAsync(cancellationToken)
             : [];
-        var assignedRegionIds = role == FSCM.Domain.Authorization.SystemRoles.SalesManager
+        var assignedRegionIds = role is FSCM.Domain.Authorization.SystemRoles.SalesManager or FSCM.Domain.Authorization.SystemRoles.WarehouseKeeper
             ? await dbContext.UserRegionAssignmentRecords
             .Where(assignment => assignment.UserAccountId == userId && assignment.IsActive)
             .Select(assignment => assignment.RegionId)
@@ -136,9 +134,11 @@ public sealed class IdentityStore(AppDbContext dbContext) : IIdentityStore
             .ToArrayAsync(cancellationToken)
             : [];
 
+        var warehouseRegionIds = await dbContext.WarehouseRecords.Where(w => warehouseIds.Contains(w.Id))
+            .Select(w => w.RegionId).Distinct().ToArrayAsync(cancellationToken);
         return new IdentityScope(
             warehouseIds,
-            assignedRegionIds.Concat(salesGroupRegionIds).Concat(ownedRetailerRegionIds).Distinct().ToArray(),
+            assignedRegionIds.Concat(salesGroupRegionIds).Concat(ownedRetailerRegionIds).Concat(warehouseRegionIds).Distinct().ToArray(),
             salesGroupIds,
             retailerIds.Concat(ownedRetailerIds).Distinct().ToArray());
     }
