@@ -28,3 +28,42 @@ public enum PaymentReceiptStatus : short
     Confirmed = 1,
     Reversed = 2
 }
+
+/// <summary>Persisted PayOS checkout for a retailer's selected credit receivables.</summary>
+public sealed class RetailerDebtPayOsCheckout
+{
+    public Guid Id { get; set; }
+    public Guid RetailerId { get; set; }
+    public decimal Amount { get; set; }
+    public string Status { get; set; } = "Pending";
+    public long PayOsOrderCode { get; set; }
+    public string PaymentLinkId { get; set; } = string.Empty;
+    public string CheckoutUrl { get; set; } = string.Empty;
+    public string QrCode { get; set; } = string.Empty;
+    public string? PayOsReference { get; set; }
+    public string? WebhookHash { get; set; }
+    public string RequestHash { get; set; } = string.Empty;
+    public string OperationKey { get; set; } = string.Empty;
+    public long? PayOsExpiredAt { get; set; }
+    public Guid? PaymentReceiptId { get; set; }
+    public int Version { get; set; }
+    public DateTimeOffset CreatedAt { get; set; }
+    public DateTimeOffset? ConfirmedAt { get; set; }
+    public DateTimeOffset UpdatedAt { get; set; }
+}
+
+public sealed class RetailerDebtPayOsAllocation
+{
+    public Guid Id { get; set; }
+    public Guid CheckoutId { get; set; }
+    public Guid PaymentId { get; set; }
+    public decimal Amount { get; set; }
+}
+
+public static class RetailerDebtPayOsStatuses
+{
+    public const string Pending = "Pending";
+    public const string Paid = "Paid";
+    public const string Failed = "Failed";
+    public const string Expired = "Expired";
+}

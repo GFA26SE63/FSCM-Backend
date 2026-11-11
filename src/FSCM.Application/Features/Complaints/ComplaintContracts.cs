@@ -8,6 +8,9 @@ public sealed record CreateComplaintData(string OrderCode, string Sku, string La
     string? IssueType = null);
 public sealed record ResolveComplaintData(string Result, bool Approved = true);
 
+public sealed record ComplaintTarget(Guid ShipmentId, string ShipmentCode, Guid AllocationId,
+    string Sku, string ProductName, string BatchCode, string LabelCode, decimal ExpectedQuantity);
+
 /// <summary>One evidence image of a complaint. <see cref="Url"/> is a short-lived read SAS URL.</summary>
 public sealed record ComplaintEvidenceResult(
     Guid Id, string FileName, string ContentType, string Url, DateTimeOffset UploadedAt);

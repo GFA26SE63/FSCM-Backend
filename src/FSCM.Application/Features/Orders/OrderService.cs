@@ -21,7 +21,8 @@ public sealed class OrderService(
     TimeProvider timeProvider,
     IRealTimeAllocationService? realTimeAllocationService = null,
     PaymentPlanService? paymentPlanService = null,
-    OrderNotificationService? notifications = null)
+    OrderNotificationService? notifications = null,
+    AllocationPolicyService? allocationPolicy = null)
 {
     private const string OrderStepKey = "order.order_step_cartons";
     private static readonly TimeZoneInfo VietnamTimeZone = TimeZoneInfo.FindSystemTimeZoneById("Asia/Ho_Chi_Minh");
@@ -45,6 +46,7 @@ public sealed class OrderService(
                 throw OrderOperationException.Conflict("Client order key was already used for a different request.");
             }
 
+            await ResumeAllocationAsync(existing, salesUserId, cancellationToken);
             return await GetAsync(existing.Id, salesUserId, actorRole, cancellationToken);
         }
 
@@ -84,6 +86,7 @@ public sealed class OrderService(
             var concurrent = await store.FindByClientOrderKeyAsync(normalized.ClientOrderKey, cancellationToken);
             if (concurrent is null || concurrent.CreatedByUserId != salesUserId || concurrent.RequestHash != requestHash)
                 throw;
+            await ResumeAllocationAsync(concurrent, salesUserId, cancellationToken);
             return await GetAsync(concurrent.Id, salesUserId, actorRole, cancellationToken);
         }
 
@@ -120,6 +123,7 @@ public sealed class OrderService(
                 existing.RequestHash != requestHash &&
                 !(existing.Source == OrderSources.Offline && existing.RequestHash == legacyOfflineHash))
                 throw OrderOperationException.Conflict("Client order key was already used for a different request.");
+            await ResumeAllocationAsync(existing, salesUserId, cancellationToken);
             return await GetAsync(existing.Id, salesUserId, SystemRoles.Sales, cancellationToken);
         }
 
@@ -189,6 +193,7 @@ public sealed class OrderService(
             var concurrent = await store.FindByClientOrderKeyAsync(normalized.ClientOrderKey, cancellationToken);
             if (concurrent is null || concurrent.CreatedByUserId != salesUserId || concurrent.RequestHash != requestHash)
                 throw;
+            await ResumeAllocationAsync(concurrent, salesUserId, cancellationToken);
             return await GetAsync(concurrent.Id, salesUserId, SystemRoles.Sales, cancellationToken);
         }
 
@@ -196,6 +201,29 @@ public sealed class OrderService(
         if (realTimeAllocationService is not null)
             await realTimeAllocationService.AllocateAsync(plan.Order.Id, salesUserId, cancellationToken);
         return await GetAsync(plan.Order.Id, salesUserId, SystemRoles.Sales, cancellationToken);
+    }
+
+    private async Task ResumeAllocationAsync(SalesOrder order, Guid actor, CancellationToken ct)
+    {
+        if (realTimeAllocationService is not null && order.Status is
+            (OrderStatuses.Allocating or OrderStatuses.AllocationFailed or OrderStatuses.AllocationConflict))
+        {
+            store.ClearTracking();
+            await realTimeAllocationService.AllocateAsync(order.Id, actor, ct);
+        }
+    }
+
+    public async Task<OrderDetailResult> RetryAllocationAsync(Guid orderId, int version, Guid actor, string role, CancellationToken ct)
+    {
+        if (role is not (SystemRoles.Admin or SystemRoles.Operator or SystemRoles.Sales or SystemRoles.Retailer))
+            throw OrderOperationException.Forbidden("Role cannot retry allocation.");
+        var view = await GetViewableAsync(orderId, actor, role, ct);
+        if (view.Order.Status is not (OrderStatuses.Allocating or OrderStatuses.AllocationFailed or OrderStatuses.AllocationConflict))
+            return MaskForRole(ToDetail(view), role);
+        EnsureOrderVersion(view.Order, version);
+        if (realTimeAllocationService is null) throw OrderOperationException.Conflict("Allocation service is unavailable.");
+        await ResumeAllocationAsync(view.Order, actor, ct);
+        return await GetAsync(orderId, actor, role, ct);
     }
 
     public async Task<PagedOrderResult> ListAsync(
@@ -567,6 +595,23 @@ public sealed class OrderService(
     private async Task EnsureServiceRadiusAsync(Guid retailerId, IReadOnlyCollection<CreateOrderLineData> lines,
         CancellationToken cancellationToken)
     {
+        if (allocationPolicy is not null)
+        {
+            // Submission and allocation consult the same published radius and cached routes.
+            var engine = new FSCM.Domain.Allocation.AllocationEngine(await allocationPolicy.WeightsAsync(cancellationToken));
+            foreach (var line in lines)
+            {
+                var product = await store.FindPublishedProductAsync(line.ProductId, cancellationToken)
+                    ?? throw OrderOperationException.NotFound("Published product was not found.");
+                var positions = (await store.ListCandidatesAsync(line.ProductId, cancellationToken))
+                    .Select(p => new RealTimeInventoryCandidate(p.Batch, p.Balance, p.Warehouse, product,
+                        p.WarehouseLatitude, p.WarehouseLongitude, p.ActiveLockedQuantity)).ToArray();
+                var routes = await allocationPolicy.CandidatesAsync(retailerId, positions, timeProvider.GetUtcNow(), cancellationToken);
+                if (!routes.Any(c => c.EstimatedArrivalAt.HasValue && !engine.IsOutsideServiceRadius(c)))
+                    throw OrderOperationException.Conflict($"Không có tuyến giao còn hiệu lực trong bán kính phục vụ cho {product.Sku}.");
+            }
+            return;
+        }
         var retailer = await store.FindRetailerLocationAsync(retailerId, cancellationToken)
             ?? throw OrderOperationException.Conflict("Retailer location must be geocoded before order submission.");
         var radius = await GetPositiveConfigurationAsync("allocation.service_radius_meters", 20_000, false, cancellationToken);
@@ -731,6 +776,7 @@ public sealed class OrderService(
         return detail with
         {
             AllocationRunId = null,
+            AllocationAudit = null,
             Lines = detail.Lines.Select(line => line with
             {
                 Mlor = maskedMlor,
@@ -782,6 +828,7 @@ public sealed class OrderService(
         AllocationRunCode = view.AllocationContext?.RunCode,
         OfficialPricedAt = view.AllocationContext?.PricedAt,
         Payment = ToPaymentSummary(view.Payment),
+        AllocationAudit = view.AllocationContext?.Audit,
         // Locked price breakdown (F60): sum of the per-batch snapshot, never recomputed.
         QuantityPromotionTotal = decimal.Round(view.AllocationContext?.Fragments
             .Sum(fragment => (fragment.ListUnitPrice - fragment.BaseUnitPrice) * fragment.Quantity) ?? 0m, 2),
