@@ -150,7 +150,10 @@ public sealed class RetailerDebtPayOsService(
                 if (current.Checkout.Status != RetailerDebtPayOsStatuses.Pending) return;
                 current.Checkout.Status = IsExpired(current.Checkout) ||
                     verified.Data.Description2.Contains("expire", StringComparison.OrdinalIgnoreCase)
-                    ? RetailerDebtPayOsStatuses.Expired : RetailerDebtPayOsStatuses.Failed;
+                    ? RetailerDebtPayOsStatuses.Expired
+                    : verified.Data.Description2.Contains("cancel", StringComparison.OrdinalIgnoreCase)
+                        ? RetailerDebtPayOsStatuses.Cancelled
+                        : RetailerDebtPayOsStatuses.Failed;
                 current.Checkout.Version++;
                 current.Checkout.UpdatedAt = timeProvider.GetUtcNow();
                 await store.SaveChangesAsync(token);
@@ -260,6 +263,20 @@ public sealed class RetailerDebtPayOsService(
             if (link.OrderCode != checkout.PayOsOrderCode ||
                 !string.Equals(link.PaymentLinkId, checkout.PaymentLinkId, StringComparison.Ordinal))
                 throw PaymentOperationException.Gateway("payOS returned a different payment link.");
+
+            // Webhooks are the primary confirmation path. Polling the trusted PayOS link
+            // status is the recovery path when a device returns from PayOS before its webhook
+            // reaches this API (common with a local development tunnel).
+            if (string.Equals(link.Status, "PAID", StringComparison.OrdinalIgnoreCase))
+            {
+                var now = timeProvider.GetUtcNow();
+                await HandleVerifiedWebhookAsync(new PayOsVerifiedWebhook("00", true, new(
+                    checkout.PayOsOrderCode, ToPayOsAmount(checkout.Amount),
+                    "FSCM debt payment", string.Empty, $"PAYOS-STATUS-{checkout.PayOsOrderCode}",
+                    now.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture), "VND",
+                    checkout.PaymentLinkId, "00", "paid", null, null, null, null, null, null)), cancellationToken);
+                return;
+            }
 
             resolvedStatus = link.Status.ToUpperInvariant() switch
             {
