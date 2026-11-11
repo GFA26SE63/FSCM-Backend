@@ -78,6 +78,7 @@ public static class DependencyInjection
         services.AddScoped<PaymentService>();
         services.AddScoped<PaymentReceiptService>();
         services.AddScoped<RetailerReceivableService>();
+        services.AddScoped<RetailerDebtPayOsService>();
         services.AddScoped<PaymentPlanService>();
         services.AddScoped<QuoteService>();
         services.AddScoped<IPaymentPlanService>(provider => provider.GetRequiredService<PaymentPlanService>());
