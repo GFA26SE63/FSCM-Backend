@@ -117,6 +117,11 @@ public sealed class S1BMasterDataApiTests
         client.DefaultRequestHeaders.Authorization = Bearer(identity.Admin, identity);
         foreach (var body in new object[] { new { value = "bad" }, new { value = 0 }, new { value = 1.5 }, new { } })
             Assert.Equal(System.Net.HttpStatusCode.BadRequest, (await client.PutAsJsonAsync("/api/v1/configurations/order.order_step_cartons", body)).StatusCode);
+        Assert.Equal(System.Net.HttpStatusCode.BadRequest, (await client.PutAsJsonAsync("/api/v1/configurations/batch", new
+        {
+            entries = new[] { new { key = "allocation.service_radius_meters", value = 33000 }, new { key = "order.order_step_cartons", value = 0 } }
+        })).StatusCode);
+        Assert.Equal(System.Net.HttpStatusCode.BadRequest, (await client.PutAsJsonAsync("/api/v1/configurations/batch", new { entries = new object?[] { null } })).StatusCode);
         var invalidDate = new { maxServingDistanceMeters = 20000, effectiveFrom = TestMapStore.Now,
             bands = new[] { new { minDistanceMeters = 0, maxDistanceMeters = 20000, handlingMinutes = 60, transitMinutes = 120, estimatedCostAmount = 0 } } };
         Assert.Equal(System.Net.HttpStatusCode.BadRequest, (await client.PostAsJsonAsync("/api/v1/transit-tables", invalidDate)).StatusCode);
@@ -125,6 +130,8 @@ public sealed class S1BMasterDataApiTests
         client.DefaultRequestHeaders.Authorization = Bearer(identity.Sales, identity);
         Assert.Equal(System.Net.HttpStatusCode.Forbidden, (await client.PostAsJsonAsync("/api/v1/transit-tables", invalidDate)).StatusCode);
         Assert.Equal(System.Net.HttpStatusCode.Forbidden, (await client.PutAsJsonAsync("/api/v1/configurations/order.order_step_cartons", new { value = 2 })).StatusCode);
+        Assert.Equal(System.Net.HttpStatusCode.Forbidden, (await client.PutAsJsonAsync("/api/v1/configurations/batch", new { entries = new[] { new { key = "order.order_step_cartons", value = 2 } } })).StatusCode);
+        Assert.Equal(System.Net.HttpStatusCode.Forbidden, (await client.PostAsJsonAsync("/api/v1/promotions/campaigns", new { })).StatusCode);
     }
 
     [Fact]

@@ -21,6 +21,20 @@ public sealed class BusinessConfigurationsController(WarehouseConfigurationServi
         service.ListConfigurationHistoryAsync(key, cancellationToken);
 
     [Authorize(Roles = SystemRoles.Admin)]
+    [HttpPut("batch")]
+    public Task<IReadOnlyCollection<ConfigurationResult>> UpdateBatch(
+        UpdateConfigurationsRequest request, CancellationToken cancellationToken)
+    {
+        if (request.Entries is null || request.Entries.Any(entry => entry is null ||
+            entry.Value.ValueKind == System.Text.Json.JsonValueKind.Undefined))
+            throw WarehouseConfigurationOperationException.Validation("Configuration entries and values are required.");
+        if (!Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var userId))
+            throw WarehouseConfigurationOperationException.Validation("Authenticated user identifier is invalid.");
+        return service.UpdateConfigurationsAsync(request.Entries.Select(entry =>
+            new ConfigurationValueData(entry.Key, entry.Value.GetRawText())).ToArray(), userId, cancellationToken);
+    }
+
+    [Authorize(Roles = SystemRoles.Admin)]
     [HttpPut("{key}")]
     public Task<ConfigurationResult> Update(
         string key, UpdateBusinessConfigurationRequest request, CancellationToken cancellationToken)

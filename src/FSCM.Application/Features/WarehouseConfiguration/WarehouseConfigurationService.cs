@@ -297,42 +297,52 @@ public sealed partial class WarehouseConfigurationService(
     }
 
     public async Task<ConfigurationResult> UpdateConfigurationAsync(
-        string key, string rawJsonValue, Guid updatedByUserId, CancellationToken cancellationToken)
+        string key, string rawJsonValue, Guid updatedByUserId, CancellationToken cancellationToken) =>
+        (await UpdateConfigurationsAsync([new(key, rawJsonValue)], updatedByUserId, cancellationToken)).Single();
+
+    public async Task<IReadOnlyCollection<ConfigurationResult>> UpdateConfigurationsAsync(
+        IReadOnlyCollection<ConfigurationValueData> entries, Guid updatedByUserId, CancellationToken cancellationToken)
     {
-        key = NormalizeConfigurationKey(key);
-        var definition = BusinessConfigurationKeys.Supported[key];
-        var canonicalJson = ValidateConfigurationValue(key, rawJsonValue);
-        var history = await store.ListConfigurationHistoryAsync(key, cancellationToken);
-        var current = history.SingleOrDefault(item => item.IsActive);
-        if (current is not null && JsonEquivalent(current.ConfigValue, canonicalJson))
+        if (entries.Count == 0)
+            throw WarehouseConfigurationOperationException.Validation("At least one configuration is required.");
+        // Validate and read the whole group before mutating tracked entities.
+        var values = entries.Select(entry =>
         {
-            return ToConfigurationResult(current);
-        }
-
-        if (current is not null)
-        {
-            current.IsActive = false;
-            current.UpdatedAt = timeProvider.GetUtcNow();
-        }
-
+            var key = NormalizeConfigurationKey(entry.Key);
+            return (Key: key, Json: ValidateConfigurationValue(key, entry.RawJsonValue));
+        }).ToArray();
+        if (values.Select(value => value.Key).Distinct(StringComparer.Ordinal).Count() != values.Length)
+            throw WarehouseConfigurationOperationException.Validation("A configuration key cannot occur more than once.");
+        var histories = new Dictionary<string, IReadOnlyCollection<SystemConfiguration>>();
+        foreach (var value in values)
+            histories[value.Key] = await store.ListConfigurationHistoryAsync(value.Key, cancellationToken);
         var now = timeProvider.GetUtcNow();
-        var configuration = new SystemConfiguration
+        var results = new List<ConfigurationResult>();
+        foreach (var value in values)
         {
-            Id = Guid.NewGuid(),
-            ConfigKey = key,
-            ConfigValue = canonicalJson,
-            Description = definition.Description,
-            ValueType = definition.ValueType,
-            Version = history.Count == 0 ? 1 : history.Max(item => item.Version) + 1,
-            IsActive = true,
-            UpdatedByUserId = updatedByUserId,
-            EffectiveFrom = now,
-            CreatedAt = now,
-            UpdatedAt = now
-        };
-        store.AddConfiguration(configuration);
+            var history = histories[value.Key];
+            var current = history.SingleOrDefault(item => item.IsActive);
+            if (current is not null && JsonEquivalent(current.ConfigValue, value.Json))
+            {
+                results.Add(ToConfigurationResult(current));
+                continue;
+            }
+            if (current is not null) { current.IsActive = false; current.UpdatedAt = now; }
+            var definition = BusinessConfigurationKeys.Supported[value.Key];
+            var configuration = new SystemConfiguration
+            {
+                Id = Guid.NewGuid(), ConfigKey = value.Key, ConfigValue = value.Json,
+                Description = definition.Description, ValueType = definition.ValueType,
+                Version = history.Count == 0 ? 1 : history.Max(item => item.Version) + 1,
+                IsActive = true, UpdatedByUserId = updatedByUserId,
+                EffectiveFrom = now, CreatedAt = now, UpdatedAt = now
+            };
+            store.AddConfiguration(configuration);
+            results.Add(ToConfigurationResult(configuration));
+        }
+        // EF persists every changed version in one database transaction.
         await store.SaveChangesAsync(cancellationToken);
-        return ToConfigurationResult(configuration);
+        return results;
     }
 
     private async Task<WarehouseView> RequireWarehouseViewAsync(Guid id, CancellationToken cancellationToken) =>

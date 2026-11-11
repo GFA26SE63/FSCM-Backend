@@ -328,6 +328,8 @@ public sealed class IdentityService(
         {
             throw IdentityOperationException.Conflict("A user with this email address already exists.");
         }
+        if (await store.FindUserByPhoneAsync(phone, cancellationToken) is not null)
+            throw IdentityOperationException.Conflict("Số điện thoại đã được một tài khoản khác sử dụng.");
 
         var now = timeProvider.GetUtcNow();
         var userId = Guid.NewGuid();
@@ -789,7 +791,7 @@ public sealed class IdentityService(
     private static string ValidatePhone(string phone)
     {
         var normalized = phone?.Trim() ?? string.Empty;
-        if (normalized.Length != 10 || normalized[0] != '0' || normalized.Any(character => !char.IsDigit(character)))
+        if (normalized.Length != 10 || normalized[0] != '0' || normalized.Any(character => character is < '0' or > '9'))
         {
             throw IdentityOperationException.Validation(
                 "Phone number must contain 10 digits and start with 0.");

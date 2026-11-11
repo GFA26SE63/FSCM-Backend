@@ -422,6 +422,10 @@ public sealed class OrderCaptureApiTests
 
     private sealed class TestQuoteStore : IPromotionStore
     {
+        public Dictionary<Guid, CampaignSubmission> Submissions { get; } = [];
+        public Task<CampaignSubmission?> FindCampaignSubmissionAsync(Guid id, CancellationToken ct) => Task.FromResult(Submissions.GetValueOrDefault(id));
+        public void AddCampaignSubmission(Guid id, CampaignSubmission submission, DateTimeOffset now) => Submissions.Add(id, submission);
+
         private readonly Promotion campaign;
         public TestQuoteStore()
         {

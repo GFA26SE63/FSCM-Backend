@@ -213,6 +213,33 @@ public sealed class WarehouseConfigurationServiceTests
         Assert.False(warehouse.IsActive);
     }
 
+    [Fact]
+    public async Task Configuration_batch_validates_every_entry_before_mutating_current_versions()
+    {
+        var f = new Fixture();
+        await f.Service.UpdateConfigurationAsync(BusinessConfigurationKeys.ServiceRadiusMeters, "20000", Guid.NewGuid(), default);
+        var original = f.Store.Configurations.Single();
+        await Assert.ThrowsAsync<WarehouseConfigurationOperationException>(() => f.Service.UpdateConfigurationsAsync(
+            [new(BusinessConfigurationKeys.ServiceRadiusMeters, "35000"), new(BusinessConfigurationKeys.OrderStepCartons, "0")], Guid.NewGuid(), default));
+        Assert.True(original.IsActive);
+        Assert.Single(f.Store.Configurations);
+        Assert.Equal("20000", original.ConfigValue);
+    }
+
+    [Fact]
+    public async Task Configuration_batch_saves_once_and_retries_identical_values_without_new_versions()
+    {
+        var f = new Fixture();
+        ConfigurationValueData[] entries = [new(BusinessConfigurationKeys.ServiceRadiusMeters, "35000"), new(BusinessConfigurationKeys.OrderStepCartons, "2")];
+        var results = await f.Service.UpdateConfigurationsAsync(entries, Guid.NewGuid(), default);
+        Assert.Equal(1, f.Store.SaveCount);
+        Assert.Equal(2, results.Count);
+        Assert.Single(results.Select(result => result.EffectiveFrom).Distinct());
+        await f.Service.UpdateConfigurationsAsync(entries, Guid.NewGuid(), default);
+        Assert.Equal(2, f.Store.Configurations.Count);
+        await Assert.ThrowsAsync<WarehouseConfigurationOperationException>(() => f.Service.UpdateConfigurationsAsync([entries[0], entries[0]], Guid.NewGuid(), default));
+    }
+
     private sealed class Fixture
     {
         public Guid RegionId { get; } = Guid.NewGuid();
@@ -347,6 +374,7 @@ public sealed class WarehouseConfigurationServiceTests
         public Task<IReadOnlyCollection<SystemConfiguration>> ListConfigurationHistoryAsync(string key, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyCollection<SystemConfiguration>>(Configurations.Where(item => item.ConfigKey == key).ToArray());
         public Task<SystemConfiguration?> FindCurrentConfigurationAsync(string key, CancellationToken cancellationToken) => Task.FromResult(Configurations.SingleOrDefault(item => item.ConfigKey == key && item.IsActive));
         public void AddConfiguration(SystemConfiguration item) => Configurations.Add(item);
-        public Task SaveChangesAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+        public int SaveCount { get; private set; }
+        public Task SaveChangesAsync(CancellationToken cancellationToken) { SaveCount++; return Task.CompletedTask; }
     }
 }

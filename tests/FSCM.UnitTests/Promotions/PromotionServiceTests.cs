@@ -182,6 +182,49 @@ public sealed class PromotionServiceTests
         Assert.False(promotion.IsActive);
     }
 
+    [Fact]
+    public async Task Per_sku_campaigns_keep_each_rule_and_activate_atomically_with_one_save()
+    {
+        var f = new Fixture();
+        var input = Group(f);
+        var result = (await f.Service.CreateCampaignGroupAsync(input, f.ActorId, default)).ToArray();
+        Assert.Equal(2, result.Length);
+        Assert.Equal(2, result.Select(p => p.Code).Distinct().Count());
+        Assert.Equal(10, result[0].MinimumQuantity); Assert.Equal(5, result[0].DiscountPercent);
+        Assert.Equal(30, result[1].MinimumQuantity); Assert.Equal(7, result[1].DiscountPercent);
+        Assert.All(result, p => { Assert.True(p.IsActive); Assert.Equal(Now, p.StartAt); Assert.Single(p.ProductIds); });
+        Assert.Equal(1, f.Store.SaveCount);
+        var replay = await f.Service.CreateCampaignGroupAsync(input, f.ActorId, default);
+        Assert.Equal(result.Select(p => p.Id), replay.Select(p => p.Id));
+        Assert.Equal(1, f.Store.SaveCount);
+        await Assert.ThrowsAsync<PromotionOperationException>(() => f.Service.CreateCampaignGroupAsync(input with { ActivateOnSave = false }, f.ActorId, default));
+        await Assert.ThrowsAsync<PromotionOperationException>(() => f.Service.CreateCampaignGroupAsync(input, Guid.NewGuid(), default));
+    }
+
+    [Fact]
+    public async Task Invalid_last_campaign_rule_creates_no_first_campaign_or_audit()
+    {
+        var f = new Fixture();
+        var input = Group(f);
+        var rules = input.ProductRules.ToArray(); rules[1] = rules[1] with { MinimumQuantity = 0 };
+        await Assert.ThrowsAsync<PromotionOperationException>(() => f.Service.CreateCampaignGroupAsync(input with { ProductRules = rules }, f.ActorId, default));
+        Assert.Empty(f.Store.Promotions); Assert.Empty(f.Store.Audits); Assert.Empty(f.Store.Submissions); Assert.Equal(0, f.Store.SaveCount);
+    }
+
+    [Fact]
+    public async Task Duplicate_rules_are_rejected_and_product_group_remains_one_shared_threshold()
+    {
+        var f = new Fixture(); var input = Group(f);
+        await Assert.ThrowsAsync<PromotionOperationException>(() => f.Service.CreateCampaignGroupAsync(input with { ProductRules = [input.ProductRules.First(), input.ProductRules.First()] }, f.ActorId, default));
+        var result = await f.Service.CreateCampaignGroupAsync(input with { CampaignMode = "ProductGroup", ProductRules = [], MinimumQuantity = 25, DiscountPercent = 9, ActivateOnSave = false }, f.ActorId, default);
+        var promotion = Assert.Single(result);
+        Assert.Equal(2, promotion.ProductIds.Count); Assert.Equal(25, promotion.MinimumQuantity); Assert.False(promotion.IsActive);
+    }
+
+    private static CreateCampaignGroupData Group(Fixture f) => new(Guid.NewGuid(), "PerSku", "Ưu đãi theo sản phẩm", 10, 7, Now, Now.AddDays(5),
+        [f.Store.Product.Id, f.Store.Product2.Id], [], [f.Store.Retailer.Id],
+        [new(f.Store.Product.Id, 10, 5), new(f.Store.Product2.Id, 30, 7)], true);
+
     private sealed class Fixture
     {
         public Guid ActorId { get; } = Guid.NewGuid();
@@ -193,10 +236,14 @@ public sealed class PromotionServiceTests
 
     private sealed class FakeStore : IPromotionStore
     {
+        public Dictionary<Guid, CampaignSubmission> Submissions { get; } = [];
+        public Task<CampaignSubmission?> FindCampaignSubmissionAsync(Guid id, CancellationToken ct) => Task.FromResult(Submissions.GetValueOrDefault(id));
+        public void AddCampaignSubmission(Guid id, CampaignSubmission submission, DateTimeOffset now) => Submissions.Add(id, submission);
+
         public ProductCategory Category { get; } = new() { Id = Guid.NewGuid(), Code = "CAT-02", Name = "Sữa", IsActive = true };
         public Product Product { get; } = new() { Id = Guid.NewGuid(), Sku = "SKU001", Name = "Sữa tươi", Status = ProductStatuses.Published, ShelfLifeHours = 100 * 24 };
         public Product Product2 { get; } = new() { Id = Guid.NewGuid(), Sku = "SKU002", Name = "Sữa chua", Status = ProductStatuses.Published, ShelfLifeHours = 100 * 24 };
-        public Retailer Retailer { get; } = new() { Id = Guid.NewGuid(), Code = "10004127", Name = "Tạp hóa An Khang" };
+        public Retailer Retailer { get; } = new() { Id = Guid.NewGuid(), Code = "10004127", Name = "Tạp hóa An Khang", Status = "Active" };
         public Warehouse Warehouse { get; } = new() { Id = Guid.NewGuid(), Code = "WH-TD", Name = "Kho Thủ Đức", IsActive = true };
         public Batch Batch { get; } = new() { Id = Guid.NewGuid(), BatchCode = "WH-TD-SKU001-31122026", ExpirationDate = new DateOnly(2026, 12, 31) };
         public ProductPrice Price { get; } = new() { Id = Guid.NewGuid(), UnitPrice = 252_000m, IsActive = true, EffectiveFrom = Now.AddMonths(-1) };
@@ -245,9 +292,10 @@ public sealed class PromotionServiceTests
         public Task<PromotionView?> FindPromotionViewAsync(Guid id, CancellationToken cancellationToken) =>
             Task.FromResult(Promotions.SingleOrDefault(item => item.Id == id) is { } promotion ? View(promotion) : null);
         public Task<Promotion?> FindPromotionAsync(Guid id, CancellationToken cancellationToken) => Task.FromResult(Promotions.SingleOrDefault(item => item.Id == id));
-        public Task<string> NextPromotionCodeAsync(CancellationToken cancellationToken) => Task.FromResult($"KM-{Promotions.Count + 4:000}");
+        private int nextCode = 4;
+        public Task<string> NextPromotionCodeAsync(CancellationToken cancellationToken) => Task.FromResult($"KM-{nextCode++:000}");
         public Task<IReadOnlyCollection<Product>> FindProductsAsync(IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken) =>
-            Task.FromResult<IReadOnlyCollection<Product>>(ids.Contains(Product.Id) ? [Product] : []);
+            Task.FromResult<IReadOnlyCollection<Product>>(new[] { Product, Product2 }.Where(product => ids.Contains(product.Id)).ToArray());
         public Task<IReadOnlyCollection<ProductCategory>> FindCategoriesAsync(IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyCollection<ProductCategory>>(ids.Contains(Category.Id) ? [Category] : []);
         public Task<IReadOnlyCollection<Retailer>> FindRetailersAsync(IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken) =>
@@ -292,7 +340,8 @@ public sealed class PromotionServiceTests
         public void RemovePromotionProducts(IEnumerable<PromotionProduct> links) { foreach (var link in links.ToArray()) ProductLinks.Remove(link); }
         public void RemovePromotionCategories(IEnumerable<PromotionCategory> links) { foreach (var link in links.ToArray()) CategoryLinks.Remove(link); }
         public void RemovePromotionRetailers(IEnumerable<PromotionRetailer> links) { foreach (var link in links.ToArray()) RetailerLinks.Remove(link); }
-        public Task SaveChangesAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+        public int SaveCount { get; private set; }
+        public Task SaveChangesAsync(CancellationToken cancellationToken) { SaveCount++; return Task.CompletedTask; }
 
         private PromotionView View(Promotion promotion) => new(promotion,
             ProductLinks.Where(item => item.PromotionId == promotion.Id).Select(item => item.ProductId).ToArray(),
