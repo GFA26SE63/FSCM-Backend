@@ -528,8 +528,8 @@ public sealed class IdentityService(
         CancellationToken cancellationToken)
     {
         var user = await GetManageableUserAsync(userId, cancellationToken);
-        if (user.Role != SystemRoles.SalesManager)
-            throw IdentityOperationException.Validation("Only Sales Manager users can be assigned directly to a region.");
+        if (user.Role is not (SystemRoles.SalesManager or SystemRoles.WarehouseKeeper))
+            throw IdentityOperationException.Validation("Only Sales Manager and Warehouse Keeper users can be assigned directly to a region.");
         if (!await store.RegionExistsAsync(regionId, cancellationToken))
             throw IdentityOperationException.NotFound("Region was not found.");
 
