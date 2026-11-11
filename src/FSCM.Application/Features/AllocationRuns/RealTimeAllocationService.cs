@@ -195,7 +195,7 @@ public sealed class RealTimeAllocationService(
         {
             var candidate = context.Candidates.Single(item => item.Batch.Id == row.Decision.BatchId);
             var priced = pricedByPart[(row.Line.Id, row.Decision.BatchId, row.Decision.WarehouseId)];
-            var grossAmount = decimal.Round(row.Decision.Quantity * row.Line.UnitPrice, 2,
+            var grossAmount = decimal.Round(row.Decision.Quantity * row.Line.UnitPrice, 0,
                 MidpointRounding.AwayFromZero);
             var discountAmount = grossAmount - priced.Amount;
             var allocation = new Allocation
@@ -234,7 +234,7 @@ public sealed class RealTimeAllocationService(
         foreach (var line in context.Lines)
         {
             var parts = pricedOrder.Parts.Where(item => item.RunLineId == line.Id).ToArray();
-            line.GrossAmount = decimal.Round(parts.Sum(item => item.ListUnitPrice * item.Quantity), 2,
+            line.GrossAmount = decimal.Round(parts.Sum(item => item.ListUnitPrice * item.Quantity), 0,
                 MidpointRounding.AwayFromZero);
             line.NetAmount = parts.Sum(item => item.Amount);
             line.DiscountAmount = line.GrossAmount - line.NetAmount;
