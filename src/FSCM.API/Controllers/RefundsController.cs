@@ -1,6 +1,8 @@
 using System.Security.Claims;
 using FSCM.API.Contracts.Refunds;
+using FSCM.API.Infrastructure;
 using FSCM.Application.Features.Refunds;
+using FSCM.Application.Features.Storage;
 using FSCM.Domain.Authorization;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -10,7 +12,7 @@ namespace FSCM.API.Controllers;
 [ApiController]
 [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator},{SystemRoles.SalesManager},{SystemRoles.Sales},{SystemRoles.Retailer}")]
 [Route("api/v1/refunds")]
-public sealed class RefundsController(RefundService service) : ControllerBase
+public sealed class RefundsController(RefundService service, ImageUploadService images) : ControllerBase
 {
     [HttpGet]
     public Task<IReadOnlyCollection<RefundResult>> List([FromQuery] Guid? orderId, [FromQuery] string? status,
@@ -46,8 +48,37 @@ public sealed class RefundsController(RefundService service) : ControllerBase
         service.VerifyAsync(id, new(request.ExpectedVersion, request.Approved, request.Note),
             Request.Headers["Idempotency-Key"].ToString(), UserId(), Role(), ct);
 
+    /// <summary>F101: uploads one transfer-proof image; the returned reference goes into the evidence request.</summary>
+    [HttpPost("evidence-files")]
+    [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator}")]
+    [RequestSizeLimit(ImageUploadLimits.MaxRequestBytes)]
+    public async Task<RefundEvidenceFileResult> UploadEvidenceFile(IFormFile file, CancellationToken ct)
+    {
+        await using var upload = await file.ToImageUploadAsync(ct);
+        var stored = await images.ValidateAndUploadAsync(EvidenceCategory, upload, ct);
+        return new(EvidencePrefix + stored.BlobKey, stored.FileName, images.GetReadUrl(EvidenceCategory, stored.BlobKey));
+    }
+
+    /// <summary>F101: short-lived read URL for an uploaded proof image (Admin/Operator only).</summary>
+    [HttpGet("evidence-files/url")]
+    [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator}")]
+    public ActionResult<RefundEvidenceUrlResult> EvidenceUrl([FromQuery] string reference)
+    {
+        if (string.IsNullOrWhiteSpace(reference) || !reference.StartsWith(EvidencePrefix, StringComparison.Ordinal))
+            return new RefundEvidenceUrlResult(null);
+        var key = reference[EvidencePrefix.Length..];
+        if (key.Contains("..") || !key.StartsWith("claim/", StringComparison.Ordinal))
+            throw RefundOperationException.Validation("Evidence reference is invalid.");
+        return new RefundEvidenceUrlResult(images.GetReadUrl(EvidenceCategory, key));
+    }
+
+    private const string EvidencePrefix = "blob:";
+    private const ImageCategory EvidenceCategory = ImageCategory.ClaimEvidence;
     private Guid UserId() => Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var id)
         ? id : throw RefundOperationException.Validation("Authenticated user identifier is invalid.");
     private string Role() => User.FindFirstValue(ClaimTypes.Role)
         ?? throw RefundOperationException.Validation("Authenticated user role is invalid.");
 }
+
+public sealed record RefundEvidenceFileResult(string Reference, string FileName, string ReadUrl);
+public sealed record RefundEvidenceUrlResult(string? Url);

@@ -136,7 +136,7 @@ public sealed class ComplaintStore(AppDbContext db) : IComplaintStore
         var discrepancy = await db.ReceiptDiscrepancyRecords.SingleOrDefaultAsync(
             item => item.Id == id, ct)
             ?? throw ComplaintOperationException.NotFound("Complaint was not found.");
-        discrepancy.ResolutionType = "PaymentAdjusted";
+        discrepancy.ResolutionType = "FinancialAdjustment";
         await db.SaveChangesAsync(ct);
     }
 
@@ -169,6 +169,6 @@ public sealed class ComplaintStore(AppDbContext db) : IComplaintStore
             .SingleOrDefaultAsync(x => x.Id == evidenceId && x.ReceiptDiscrepancyId == complaintId, ct);
 
     private static ComplaintResult ToResult(ReceiptDiscrepancy d, string order, string retailerCode, string retailerName, string sku, string product, ReceiptDiscrepancyItem i, string? label, string? evidence) =>
-        new(d.Id, $"KN-{d.Id.ToString("N")[..8].ToUpperInvariant()}", order, retailerCode, retailerName, sku, product, i.ExpectedQuantity, i.ActualReceivedQuantity, i.IssueType, d.Status, label, i.Note ?? d.Note, evidence, d.ReportedAt, d.Status is "Approved" or "Rejected" or "Resolved" ? d.Note : null, i.ShipmentId, i.AllocationPlanPriceId, i.FinalUnitPrice, i.AdjustmentAmount, d.SalesOrderId, i.AllocationId, d.ResolutionType == "PaymentAdjusted");
+        new(d.Id, $"KN-{d.Id.ToString("N")[..8].ToUpperInvariant()}", order, retailerCode, retailerName, sku, product, i.ExpectedQuantity, i.ActualReceivedQuantity, i.IssueType, d.Status, label, i.Note ?? d.Note, evidence, d.ReportedAt, d.Status is "Approved" or "Rejected" or "Resolved" ? d.Note : null, i.ShipmentId, i.AllocationPlanPriceId, i.FinalUnitPrice, i.AdjustmentAmount, d.SalesOrderId, i.AllocationId, d.ResolutionType == "FinancialAdjustment");
 }
 
