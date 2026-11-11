@@ -84,6 +84,24 @@ public sealed class RetailerDebtPayOsServiceTests
         Assert.NotEqual(checkout.Id, replacement.Id);
     }
 
+    [Fact]
+    public async Task Polling_a_paid_payment_link_confirms_the_debt_checkout_when_webhook_is_delayed()
+    {
+        var fixture = new Fixture();
+        var service = fixture.CreateService();
+        var checkout = await service.CreateAsync(new(
+            RetailerDebtCheckoutModes.Selected, [fixture.Payment.Id]), "paid-polling",
+            fixture.UserId, SystemRoles.Retailer, CancellationToken.None);
+        fixture.Gateway.LinkStatus = "PAID";
+
+        var refreshed = await service.GetAsync(checkout.Id, fixture.UserId,
+            SystemRoles.Retailer, CancellationToken.None);
+
+        Assert.Equal(RetailerDebtPayOsStatuses.Paid, refreshed.Status);
+        Assert.Single(fixture.Store.Receipts);
+        Assert.Equal(PaymentStatuses.Paid, fixture.Payment.Status);
+    }
+
     private sealed class Fixture
     {
         public Guid UserId { get; } = Guid.NewGuid();
