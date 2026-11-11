@@ -150,7 +150,10 @@ public sealed class RetailerDebtPayOsService(
                 if (current.Checkout.Status != RetailerDebtPayOsStatuses.Pending) return;
                 current.Checkout.Status = IsExpired(current.Checkout) ||
                     verified.Data.Description2.Contains("expire", StringComparison.OrdinalIgnoreCase)
-                    ? RetailerDebtPayOsStatuses.Expired : RetailerDebtPayOsStatuses.Failed;
+                    ? RetailerDebtPayOsStatuses.Expired
+                    : verified.Data.Description2.Contains("cancel", StringComparison.OrdinalIgnoreCase)
+                        ? RetailerDebtPayOsStatuses.Cancelled
+                        : RetailerDebtPayOsStatuses.Failed;
                 current.Checkout.Version++;
                 current.Checkout.UpdatedAt = timeProvider.GetUtcNow();
                 await store.SaveChangesAsync(token);
