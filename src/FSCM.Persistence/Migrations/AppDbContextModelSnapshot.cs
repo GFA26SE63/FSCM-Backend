@@ -3202,7 +3202,7 @@ namespace FSCM.Persistence.Migrations
                         {
                             t.HasCheckConstraint("CK_RECEIPT_DISCREPANCY_ResolutionType", "\"ResolutionType\" IS NULL OR \"ResolutionType\" BETWEEN 0 AND 1");
 
-                            t.HasCheckConstraint("CK_RECEIPT_DISCREPANCY_Status", "\"Status\" BETWEEN 0 AND 4");
+                            t.HasCheckConstraint("CK_RECEIPT_DISCREPANCY_Status", "\"Status\" BETWEEN 0 AND 5");
                         });
                 });
 
