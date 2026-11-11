@@ -298,6 +298,52 @@ public sealed class IdentityServiceTests
         Assert.Equal(1, result.TotalCount);
     }
 
+    [Fact]
+    public async Task Locking_an_account_requires_a_reason()
+    {
+        var fixture = new IdentityFixture();
+        var user = fixture.AddActiveUser(SystemRoles.Sales, "sales@fscm.local", "Correct#Pass1");
+
+        var exception = await Assert.ThrowsAsync<IdentityOperationException>(() =>
+            fixture.Service.SetActiveStatusAsync(user.Id, false, "  ", Guid.NewGuid(), CancellationToken.None));
+
+        Assert.Equal("validation_error", exception.Code);
+        Assert.True(user.IsActive);
+        Assert.Empty(fixture.Store.AuditLogs);
+    }
+
+    [Fact]
+    public async Task Locking_an_account_records_trimmed_reason_actor_and_timestamp_in_audit_history()
+    {
+        var fixture = new IdentityFixture();
+        var user = fixture.AddActiveUser(SystemRoles.Sales, "sales@fscm.local", "Correct#Pass1");
+        var actorUserId = Guid.NewGuid();
+
+        await fixture.Service.SetActiveStatusAsync(
+            user.Id, false, "  Vi phạm chính sách sử dụng.  ", actorUserId, CancellationToken.None);
+
+        var audit = Assert.Single(fixture.Store.AuditLogs);
+        Assert.False(user.IsActive);
+        Assert.Equal("Deactivated", audit.Action);
+        Assert.Equal("Vi phạm chính sách sử dụng.", audit.Reason);
+        Assert.Equal(actorUserId, audit.UserAccountId);
+        Assert.Equal(Now, audit.CreatedAt);
+        Assert.Equal(user.Id, audit.EntityId);
+    }
+
+    [Fact]
+    public async Task Activating_an_account_does_not_require_a_lock_reason()
+    {
+        var fixture = new IdentityFixture();
+        var user = fixture.AddActiveUser(SystemRoles.Sales, "sales@fscm.local", "Correct#Pass1");
+        user.IsActive = false;
+
+        await fixture.Service.SetActiveStatusAsync(user.Id, true, null, Guid.NewGuid(), CancellationToken.None);
+
+        Assert.True(user.IsActive);
+        Assert.Null(Assert.Single(fixture.Store.AuditLogs).Reason);
+    }
+
     private sealed class IdentityFixture
     {
         public IdentityFixture()

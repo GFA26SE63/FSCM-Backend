@@ -394,9 +394,11 @@ public sealed class IdentityService(
     public async Task SetActiveStatusAsync(
         Guid userId,
         bool isActive,
+        string? reason,
         Guid actorUserId,
         CancellationToken cancellationToken)
     {
+        var normalizedReason = NormalizeStatusReason(reason, isActive);
         var user = await GetManageableUserAsync(userId, cancellationToken);
         var now = timeProvider.GetUtcNow();
         var oldIsActive = user.IsActive;
@@ -408,7 +410,7 @@ public sealed class IdentityService(
         }
 
         AddAudit(user.Id, actorUserId, isActive ? "Activated" : "Deactivated",
-            new { IsActive = oldIsActive }, new { user.IsActive });
+            new { IsActive = oldIsActive }, new { user.IsActive }, normalizedReason);
         await store.SaveChangesAsync(cancellationToken);
     }
 
@@ -714,7 +716,13 @@ public sealed class IdentityService(
         new(user.Id, user.Email, user.Phone, user.FullName, user.Role, user.IsActive,
             user.IdentityProvider, user.CreatedAt, user.UpdatedAt);
 
-    private void AddAudit(Guid entityId, Guid actorUserId, string action, object? oldValues, object? newValues) =>
+    private void AddAudit(
+        Guid entityId,
+        Guid actorUserId,
+        string action,
+        object? oldValues,
+        object? newValues,
+        string? reason = null) =>
         store.AddAuditLog(new AuditLog
         {
             Id = Guid.NewGuid(),
@@ -724,8 +732,25 @@ public sealed class IdentityService(
             Action = action,
             OldValues = oldValues is null ? null : JsonSerializer.Serialize(oldValues),
             NewValues = newValues is null ? null : JsonSerializer.Serialize(newValues),
+            Reason = reason,
             CreatedAt = timeProvider.GetUtcNow()
         });
+
+    private static string? NormalizeStatusReason(string? reason, bool isActive)
+    {
+        var normalized = string.IsNullOrWhiteSpace(reason) ? null : reason.Trim();
+        if (!isActive && normalized is null)
+        {
+            throw IdentityOperationException.Validation("A reason is required when locking an account.");
+        }
+
+        if (normalized?.Length > 2000)
+        {
+            throw IdentityOperationException.Validation("The account status reason must not exceed 2000 characters.");
+        }
+
+        return normalized;
+    }
 
     private static string NormalizeEmail(string email)
     {
