@@ -28,6 +28,20 @@ public sealed class RetailerDebtPayOsServiceTests
     }
 
     [Fact]
+    public async Task Retailer_can_settle_an_outstanding_credit_balance_before_delivery()
+    {
+        var fixture = new Fixture();
+        fixture.Payment.DeliveredDate = null;
+
+        var checkout = await fixture.CreateService().CreateAsync(new(
+            RetailerDebtCheckoutModes.Selected, [fixture.Payment.Id]), "early-settlement",
+            fixture.UserId, SystemRoles.Retailer, CancellationToken.None);
+
+        Assert.Equal(800_000m, checkout.Amount);
+        Assert.Single(checkout.Allocations);
+    }
+
+    [Fact]
     public async Task Duplicate_success_webhook_creates_one_receipt_and_applies_snapshot_once()
     {
         var fixture = new Fixture();

@@ -19,7 +19,7 @@ public sealed class RetailerDebtPayOsStore(AppDbContext db) : IRetailerDebtPayOs
         var query = from payment in db.PaymentRecords
                     join order in db.SalesOrderRecords on payment.SalesOrderId equals order.Id
                     where order.RetailerId == retailerId && payment.Method == OrderPaymentMethods.Credit
-                        && payment.DeliveredDate != null && payment.Status != PaymentStatuses.Paid
+                        && payment.Status != PaymentStatuses.Paid
                         && payment.Status != PaymentStatuses.Cancelled
                         && !db.RetailerDebtPayOsAllocationRecords.Any(a => a.PaymentId == payment.Id &&
                             db.RetailerDebtPayOsCheckoutRecords.Any(c => c.Id == a.CheckoutId &&
