@@ -29,6 +29,10 @@ public sealed class QrLabelsController(QrLabelService service) : ControllerBase
         return PrintFile(document);
     }
 
+    [HttpGet("batches/{batchId:guid}/generation-capacity")]
+    public Task<QrGenerationCapacityResult> GenerationCapacity(Guid batchId, CancellationToken cancellationToken) =>
+        service.GetGenerationCapacityAsync(batchId, GetActorUserId(), GetActorRole(), cancellationToken);
+
     [HttpGet("batches/{batchId:guid}/print")]
     public async Task<IActionResult> PrintBatch(Guid batchId, CancellationToken cancellationToken)
     {
