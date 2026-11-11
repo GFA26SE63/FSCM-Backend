@@ -395,7 +395,7 @@ public sealed partial class WarehouseConfigurationService(
                     !TryGetDecimal(value, "expiry", out var expiry) ||
                     !TryGetDecimal(value, "distance", out var distance) ||
                     !TryGetDecimal(value, "coverage", out var coverage) ||
-                    expiry < 0 || distance < 0 || coverage < 0 || Math.Abs(expiry + distance + coverage - 1m) > 0.0001m)
+                    expiry < 0 || distance < 0 || coverage < 0 || expiry + distance + coverage != 1m)
                     throw WarehouseConfigurationOperationException.Validation("Allocation weights expiry, distance, and coverage must be non-negative and sum to 1.");
                 break;
             case BusinessConfigurationKeys.ServiceRadiusMeters:

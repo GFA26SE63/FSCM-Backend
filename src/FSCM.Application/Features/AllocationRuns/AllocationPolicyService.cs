@@ -55,7 +55,7 @@ public class AllocationPolicyService(IOrderStore store, DeliveryEtaService eta, 
             var route = routes[p.Warehouse.Id];
             var arrival = route is { IsWithinServingDistance: true } ? route.Breakdown.EstimatedArrivalAt : (DateTimeOffset?)null;
             return new BatchCandidate(p.Batch.Id, p.Batch.BatchCode, p.Warehouse.Id, p.Warehouse.Code,
-                new DateTimeOffset(p.Batch.ExpirationDate.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero),
+                BatchExpiration.ExclusiveEnd(p.Batch.ExpirationDate),
                 p.IssuableQuantity, route?.DistanceMeters ?? 0, arrival,
                 arrival.HasValue ? DateOnly.FromDateTime(arrival.Value.ToOffset(TimeSpan.FromHours(7)).DateTime) : null);
         }).ToArray();
@@ -83,7 +83,7 @@ public sealed class AllocationDeliveryGuard(IOrderStore store, AllocationPolicyS
             {
                 var candidate = candidates.SingleOrDefault(c => c.BatchId == allocation.BatchId);
                 if (candidate is null || !engine.Allocate(new(line.Line.SkuSnapshot, allocation.AllocatedQuantity,
-                        product.ShelfLifeHours, line.Line.MlorMinimumLifeRatio, view.Order.RequestedDeliveryDate),
+                        product.ShelfLifeHours, line.Line.MlorMinimumLifeRatio, view.Order.RequestedDeliveryDate, line.Line.MlorMinimumLifeHours),
                         [candidate with { AvailableQuantity = allocation.AllocatedQuantity }]).IsFullyAllocated)
                     throw OrderOperationException.Conflict($"Batch của {line.Line.SkuSnapshot} không còn đạt ETA/MLOR; cần xử lý lại trước khi thanh toán hoặc xuất kho.");
             }
