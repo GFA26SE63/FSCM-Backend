@@ -71,7 +71,7 @@ public sealed class RefundStore(AppDbContext db) : IRefundStore
         var linked = await db.ManualRefundRecords.AsNoTracking()
             .Where(x => x.ReceiptDiscrepancyId == claimId)
             .SumAsync(x => (decimal?)x.Amount, ct) ?? 0m;
-        return new RefundClaimSource(claim.Id, claim.SalesOrderId, claim.ResolvedAt.HasValue,
+        return new RefundClaimSource(claim.Id, claim.SalesOrderId, claim.FinancialAdjustmentApplied && claim.Status is "Approved" or "Resolved",
             claim.ResolutionType, adjustment, linked);
     }
 
@@ -87,7 +87,7 @@ public sealed class RefundStore(AppDbContext db) : IRefundStore
             .Select(x => new { x.PaymentId, x.Amount, x.Status }).ToArrayAsync(ct);
         var orderIds = rows.Select(x => x.payment.SalesOrderId).ToArray();
         var claims = await db.ReceiptDiscrepancyRecords.AsNoTracking()
-            .Where(x => orderIds.Contains(x.SalesOrderId) && x.ResolutionType == "FinancialAdjustment")
+            .Where(x => orderIds.Contains(x.SalesOrderId) && x.ResolutionType == "FinancialAdjustment" && x.FinancialAdjustmentApplied)
             .Select(x => new { x.Id, x.SalesOrderId }).ToArrayAsync(ct);
         var result = new List<RefundObligationResult>();
         foreach (var row in rows)
