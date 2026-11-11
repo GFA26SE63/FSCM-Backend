@@ -39,3 +39,6 @@ logs/
 *.log
 *.tmp
 *.temp
+
+# Local allocation snapshots and benchmark results
+/artifacts/allocation-benchmark/

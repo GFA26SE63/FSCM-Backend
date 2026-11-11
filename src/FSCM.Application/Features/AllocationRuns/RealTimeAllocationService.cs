@@ -142,7 +142,7 @@ public sealed class RealTimeAllocationService(
                     .Select(c => c with { AvailableQuantity = remainingByBatch[c.BatchId] }).ToArray();
             var result = activeEngine.Allocate(new AllocationRequest(line.SkuSnapshot, line.OrderedQuantity,
                 productCandidates[0].Product.ShelfLifeHours,
-                line.MlorMinimumLifeRatio, context.Order.RequestedDeliveryDate), candidates);
+                line.MlorMinimumLifeRatio, context.Order.RequestedDeliveryDate, line.MlorMinimumLifeHours), candidates);
             trace.Add(new(line.Id, line.SkuSnapshot, result.FilterTrace, result.ScoreTrace));
             run.AlgorithmSettings = JsonSerializer.Serialize(new AllocationAudit(weights, trace), AllocationAudit.JsonOptions);
             if (!result.IsFullyAllocated)
@@ -180,7 +180,7 @@ public sealed class RealTimeAllocationService(
                 candidate.Product.ProductCategoryId,
                 row.Line.SkuSnapshot,
                 row.Decision.Quantity,
-                new DateTimeOffset(candidate.Batch.ExpirationDate.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero),
+                BatchExpiration.ExclusiveEnd(candidate.Batch.ExpirationDate),
                 candidate.Product.ShelfLifeHours,
                 row.Line.UnitPrice,
                 baseNetUnitPrice);

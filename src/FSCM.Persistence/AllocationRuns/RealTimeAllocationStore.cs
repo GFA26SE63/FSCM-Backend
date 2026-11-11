@@ -82,7 +82,15 @@ public sealed class RealTimeAllocationStore(AppDbContext db) : IRealTimeAllocati
     public async Task ExecuteInTransactionAsync(Func<CancellationToken, Task> operation, CancellationToken ct)
     {
         var strategy = db.Database.CreateExecutionStrategy();
-        await strategy.ExecuteAsync(async () => { await using var tx = await db.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable, ct); try { await operation(ct); await tx.CommitAsync(ct); } catch { await tx.RollbackAsync(ct); throw; } });
+        await strategy.ExecuteAsync(async () =>
+        {
+            // A rolled-back attempt may still be tracked as Quoted with pending inserts. Each
+            // execution-strategy replay must read the committed order and stock afresh.
+            db.ChangeTracker.Clear();
+            await using var tx = await db.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable, ct);
+            try { await operation(ct); await tx.CommitAsync(ct); }
+            catch { await tx.RollbackAsync(ct); throw; }
+        });
     }
     public void ClearTracking() => db.ChangeTracker.Clear();
 }
