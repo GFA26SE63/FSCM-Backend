@@ -51,6 +51,26 @@ public sealed class RetailerDebtPayOsServiceTests
         Assert.Equal(first.PaymentId, replay.PaymentId);
     }
 
+    [Fact]
+    public async Task Cancelled_payment_link_is_reconciled_and_releases_receivables()
+    {
+        var fixture = new Fixture();
+        var service = fixture.CreateService();
+        var checkout = await service.CreateAsync(new(
+            RetailerDebtCheckoutModes.Selected, [fixture.Payment.Id]), "cancelled-checkout",
+            fixture.UserId, SystemRoles.Retailer, CancellationToken.None);
+        fixture.Gateway.LinkStatus = "CANCELLED";
+
+        var reconciled = await service.GetAsync(checkout.Id, fixture.UserId,
+            SystemRoles.Retailer, CancellationToken.None);
+        var replacement = await service.CreateAsync(new(
+            RetailerDebtCheckoutModes.Selected, [fixture.Payment.Id]), "replacement-checkout",
+            fixture.UserId, SystemRoles.Retailer, CancellationToken.None);
+
+        Assert.Equal(RetailerDebtPayOsStatuses.Cancelled, reconciled.Status);
+        Assert.NotEqual(checkout.Id, replacement.Id);
+    }
+
     private sealed class Fixture
     {
         public Guid UserId { get; } = Guid.NewGuid();
@@ -83,6 +103,7 @@ public sealed class RetailerDebtPayOsServiceTests
     private sealed class FakeGateway : IPayOsGateway
     {
         public int CreateCount { get; private set; }
+        public string LinkStatus { get; set; } = "PENDING";
         public Task<PayOsLinkData> CreatePaymentLinkAsync(PayOsCreateLinkData data, CancellationToken cancellationToken)
         {
             CreateCount++;
@@ -91,6 +112,8 @@ public sealed class RetailerDebtPayOsServiceTests
         }
         public Task<PayOsVerifiedWebhook> VerifyWebhookAsync(PayOsWebhookEnvelope webhook, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
+        public Task<PayOsPaymentLinkStatus> GetPaymentLinkStatusAsync(long orderCode, CancellationToken cancellationToken) =>
+            Task.FromResult(new PayOsPaymentLinkStatus(orderCode, "link-1", LinkStatus, 2_000_000_000));
     }
 
     private sealed class FakeStore(Retailer retailer, ReceiptPaymentView payment) : IRetailerDebtPayOsStore

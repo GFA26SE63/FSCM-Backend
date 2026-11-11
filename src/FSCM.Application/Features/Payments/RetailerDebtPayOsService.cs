@@ -118,9 +118,9 @@ public sealed class RetailerDebtPayOsService(
             ?? throw PaymentOperationException.Forbidden("Retailer account was not found for the signed-in user.");
         var view = await store.FindByIdForRetailerAsync(checkoutId, retailer.Id, cancellationToken)
             ?? throw PaymentOperationException.NotFound("Debt checkout was not found.");
-        if (view.Checkout.Status == RetailerDebtPayOsStatuses.Pending && IsExpired(view.Checkout))
+        if (view.Checkout.Status == RetailerDebtPayOsStatuses.Pending)
         {
-            await MarkExpiredAsync(view.Checkout.PayOsOrderCode, cancellationToken);
+            await ReconcilePendingCheckoutAsync(view.Checkout, cancellationToken);
             view = await store.FindByIdForRetailerAsync(checkoutId, retailer.Id, cancellationToken) ?? view;
         }
         return ToResult(view);
@@ -239,6 +239,53 @@ public sealed class RetailerDebtPayOsService(
             current.Checkout.Status = RetailerDebtPayOsStatuses.Expired;
             current.Checkout.Version++;
             current.Checkout.UpdatedAt = timeProvider.GetUtcNow();
+            await store.SaveChangesAsync(token);
+        }, cancellationToken);
+        store.ClearTracking();
+    }
+
+    private async Task ReconcilePendingCheckoutAsync(
+        RetailerDebtPayOsCheckout checkout, CancellationToken cancellationToken)
+    {
+        string? resolvedStatus = null;
+        try
+        {
+            var link = await payOsGateway.GetPaymentLinkStatusAsync(
+                checkout.PayOsOrderCode, cancellationToken);
+            if (link.OrderCode != checkout.PayOsOrderCode ||
+                !string.Equals(link.PaymentLinkId, checkout.PaymentLinkId, StringComparison.Ordinal))
+                throw PaymentOperationException.Gateway("payOS returned a different payment link.");
+
+            resolvedStatus = link.Status.ToUpperInvariant() switch
+            {
+                "CANCELLED" => RetailerDebtPayOsStatuses.Cancelled,
+                "EXPIRED" => RetailerDebtPayOsStatuses.Expired,
+                _ when IsExpired(checkout) => RetailerDebtPayOsStatuses.Expired,
+                _ => null
+            };
+        }
+        catch (PaymentOperationException)
+        {
+            // A temporary PayOS outage must not make the retailer's existing
+            // checkout unreadable. The next mobile poll retries reconciliation.
+            return;
+        }
+
+        if (resolvedStatus is null) return;
+        await store.ExecuteInTransactionAsync(async token =>
+        {
+            var current = await store.FindByPayOsOrderCodeAsync(checkout.PayOsOrderCode, true, token);
+            if (current?.Checkout.Status != RetailerDebtPayOsStatuses.Pending) return;
+            current.Checkout.Status = resolvedStatus;
+            current.Checkout.Version++;
+            current.Checkout.UpdatedAt = timeProvider.GetUtcNow();
+            store.AddAuditLog(new AuditLog
+            {
+                Id = Guid.NewGuid(), EntityName = nameof(RetailerDebtPayOsCheckout),
+                EntityId = current.Checkout.Id, Action = resolvedStatus,
+                NewValues = JsonSerializer.Serialize(new { Source = "PayOS payment-link reconciliation" }),
+                Reason = "Đồng bộ trạng thái link thanh toán PayOS", CreatedAt = current.Checkout.UpdatedAt
+            });
             await store.SaveChangesAsync(token);
         }, cancellationToken);
         store.ClearTracking();
