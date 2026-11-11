@@ -11,6 +11,7 @@ public sealed class LoyaltyTransaction
     public Guid? CreatedByUserId { get; set; }
     public string TransactionType { get; set; } = string.Empty;
     public int Points { get; set; }
+    public decimal? SpendAmountPerPointSnapshot { get; set; }
     public int BalanceAfter { get; set; }
     public string? Note { get; set; }
     public DateTimeOffset CreatedAt { get; set; }

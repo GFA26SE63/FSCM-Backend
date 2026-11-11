@@ -4,6 +4,9 @@ using FSCM.Application.Features.Orders;
 using FSCM.Application.Features.Quotes;
 using FSCM.Domain.Allocation;
 using FSCM.Domain.Entities;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using Microsoft.Extensions.Logging;
 
 namespace FSCM.Application.Features.AllocationRuns;
 
@@ -23,6 +26,9 @@ public sealed record RealTimeAllocationContext(SalesOrder Order, IReadOnlyCollec
 
 public interface IRealTimeAllocationStore
 {
+    Task<IReadOnlyCollection<(Guid Id, Guid Actor)>> ListRecoverableAsync(DateTimeOffset before, CancellationToken ct) =>
+        Task.FromResult<IReadOnlyCollection<(Guid, Guid)>>([]);
+    Task MarkFailedAsync(Guid orderId, Guid actorId, string status, string reason, DateTimeOffset now, CancellationToken ct) => Task.CompletedTask;
     Task<RealTimeAllocationContext?> LoadForUpdateAsync(Guid orderId, CancellationToken cancellationToken);
     Task<(string OrderCode, string Status)> ReadOrderStateAsync(
         Guid orderId, CancellationToken cancellationToken);
@@ -44,14 +50,13 @@ public interface IRealTimeAllocationService
 
 public sealed class RealTimeAllocationService(
     IRealTimeAllocationStore store,
-    AllocationEngine engine,
     AllocationPricingService pricingService,
     TimeProvider timeProvider,
-    OrderNotificationService? notifications = null)
+    AllocationPolicyService policy,
+    OrderNotificationService? notifications = null,
+    ILogger<RealTimeAllocationService>? logger = null)
     : IRealTimeAllocationService
 {
-    private static readonly TimeSpan DefaultTransit = TimeSpan.FromHours(24);
-
     public async Task AllocateAsync(Guid orderId, Guid actorUserId, CancellationToken cancellationToken)
     {
         for (var attempt = 1; attempt <= 3; attempt++)
@@ -84,6 +89,16 @@ public sealed class RealTimeAllocationService(
             {
                 store.ClearTracking();
             }
+            catch (Exception e) when (e is not OperationCanceledException)
+            {
+                logger?.LogError(e, "Allocation failed for order {OrderId} after attempt {Attempt}.", orderId, attempt);
+                store.ClearTracking();
+                await store.MarkFailedAsync(orderId, actorUserId,
+                    e is AllocationConcurrencyException ? OrderStatuses.AllocationConflict : OrderStatuses.AllocationFailed,
+                    e is AllocationConcurrencyException ? "Tồn kho thay đổi sau 3 lần thử. Gửi lại yêu cầu để phân bổ lại."
+                        : "Không thể hoàn tất phân bổ. Gửi lại yêu cầu để thử lại.", timeProvider.GetUtcNow(), cancellationToken);
+                return;
+            }
         }
 
         throw new AllocationConcurrencyException("Allocation conflicted three times.");
@@ -93,9 +108,12 @@ public sealed class RealTimeAllocationService(
     {
         var context = await store.LoadForUpdateAsync(orderId, cancellationToken)
             ?? throw new InvalidOperationException("Sales order was not found for allocation.");
-        if (context.Order.Status is OrderStatuses.Quoted or OrderStatuses.ConvertedToPo) return;
+        if (context.Order.Status is not (OrderStatuses.Allocating or OrderStatuses.AllocationFailed or OrderStatuses.AllocationConflict)) return;
 
         var now = timeProvider.GetUtcNow();
+        var weights = await policy.WeightsAsync(cancellationToken);
+        var activeEngine = new AllocationEngine(weights);
+        var trace = new List<AllocationLineAudit>();
         var run = new AllocationRun
         {
             Id = Guid.NewGuid(), RunCode = $"ALT-{context.Order.OrderCode}-{context.NextAttemptNumber:00}",
@@ -113,16 +131,20 @@ public sealed class RealTimeAllocationService(
             var productCandidates = context.Candidates.Where(item => item.Product.Id == line.ProductId).ToArray();
             if (productCandidates.Length == 0)
             {
+                trace.Add(new(line.Id, line.SkuSnapshot, [], []));
+                run.AlgorithmSettings = JsonSerializer.Serialize(new AllocationAudit(weights, trace), AllocationAudit.JsonOptions);
                 await MarkOutOfStockAsync(context, run, actorUserId, now,
                     $"Không có tồn kho khả dụng cho {line.SkuSnapshot}", cancellationToken);
                 return;
             }
 
-            var candidates = productCandidates.Select(item =>
-                ToBatchCandidate(item, context.RetailerLocation, remainingByBatch[item.Batch.Id], now)).ToArray();
-            var result = engine.Allocate(new AllocationRequest(line.SkuSnapshot, line.OrderedQuantity,
+            var candidates = (await policy.CandidatesAsync(context.Order.RetailerId, productCandidates, now, cancellationToken))
+                    .Select(c => c with { AvailableQuantity = remainingByBatch[c.BatchId] }).ToArray();
+            var result = activeEngine.Allocate(new AllocationRequest(line.SkuSnapshot, line.OrderedQuantity,
                 productCandidates[0].Product.ShelfLifeHours,
                 line.MlorMinimumLifeRatio, context.Order.RequestedDeliveryDate), candidates);
+            trace.Add(new(line.Id, line.SkuSnapshot, result.FilterTrace, result.ScoreTrace));
+            run.AlgorithmSettings = JsonSerializer.Serialize(new AllocationAudit(weights, trace), AllocationAudit.JsonOptions);
             if (!result.IsFullyAllocated)
             {
                 await MarkOutOfStockAsync(context, run, actorUserId, now,
@@ -259,28 +281,24 @@ public sealed class RealTimeAllocationService(
     }
 
     private static OrderStatusHistory History(Guid orderId, string from, string to, Guid actor, string? reason, DateTimeOffset now) => new() { Id = Guid.NewGuid(), SalesOrderId = orderId, FromStatus = from, ToStatus = to, ChangedByUserId = actor, Reason = reason, ChangedAt = now };
-    public static BatchCandidate ToBatchCandidate(
-        RealTimeInventoryCandidate item, MapLocation? retailerLocation,
-        decimal availableQuantity, DateTimeOffset now)
-    {
-        var distance = DistanceMeters(retailerLocation, item);
-        var arrival = distance.HasValue ? now.Add(DefaultTransit) : (DateTimeOffset?)null;
-        return new BatchCandidate(item.Batch.Id, item.Batch.BatchCode, item.Warehouse.Id, item.Warehouse.Code,
-            new DateTimeOffset(item.Batch.ExpirationDate.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero),
-            availableQuantity, distance ?? 0, arrival,
-            arrival.HasValue ? DateOnly.FromDateTime(arrival.Value.UtcDateTime) : null);
-    }
-
-    private static decimal? DistanceMeters(MapLocation? retailer, RealTimeInventoryCandidate candidate)
-    {
-        if (retailer is null || !candidate.WarehouseLatitude.HasValue || !candidate.WarehouseLongitude.HasValue) return null;
-        const double radius = 6_371_000; static double Radians(decimal value) => (double)value * Math.PI / 180d;
-        var lat1 = Radians(retailer.Latitude); var lat2 = Radians(candidate.WarehouseLatitude.Value);
-        var dLat = lat2 - lat1; var dLon = Radians(candidate.WarehouseLongitude.Value - retailer.Longitude);
-        var a = Math.Sin(dLat / 2) * Math.Sin(dLat / 2) + Math.Cos(lat1) * Math.Cos(lat2) * Math.Sin(dLon / 2) * Math.Sin(dLon / 2);
-        return (decimal)(radius * 2 * Math.Atan2(Math.Sqrt(a), Math.Sqrt(1 - a)));
-    }
 }
 
 public sealed class AllocationConcurrencyException(string message) : Exception(message);
+
+public sealed record AllocationLineAudit(Guid LineId, string Sku,
+    IReadOnlyList<AllocationFilterTrace> Filters, IReadOnlyList<AllocationScoreTrace> Scores);
+public sealed record AllocationAudit(AllocationWeights Weights, IReadOnlyList<AllocationLineAudit> Lines)
+{
+    public static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
+    { Converters = { new JsonStringEnumConverter() } };
+    public static AllocationAudit? Read(string json)
+    {
+        try
+        {
+            var audit = JsonSerializer.Deserialize<AllocationAudit>(json, JsonOptions);
+            return audit?.Lines is null || audit.Weights is null ? null : audit;
+        }
+        catch (JsonException) { return null; }
+    }
+}
 

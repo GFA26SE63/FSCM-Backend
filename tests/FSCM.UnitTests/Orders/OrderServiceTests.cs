@@ -12,6 +12,53 @@ namespace FSCM.UnitTests.Orders;
 
 public sealed class OrderServiceTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Replaying_a_captured_order_resumes_allocation_without_duplicate_SO(bool offline)
+    {
+        var allocator = new InterruptOnceAllocator();
+        var fixture = new Fixture(allocator: allocator);
+        if (offline)
+        {
+            await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.SubmitOfflineAsync(10, 900m));
+            var result = await fixture.SubmitOfflineAsync(10, 900m);
+            Assert.Equal(fixture.Store.Orders.Single().Id, result.Id);
+        }
+        else
+        {
+            await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.CreateAsync(10));
+            var result = await fixture.CreateAsync(10);
+            Assert.Equal(fixture.Store.Orders.Single().Id, result.Id);
+        }
+        Assert.Equal(2, allocator.Calls);
+        Assert.Single(fixture.Store.Orders);
+    }
+
+    private sealed class InterruptOnceAllocator : IRealTimeAllocationService
+    {
+        public int Calls { get; private set; }
+        public Task AllocateAsync(Guid id, Guid actor, CancellationToken ct)
+        {
+            if (++Calls == 1) throw new InvalidOperationException("Simulated failure after SO commit");
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class StubAvailabilityPolicy(IOrderStore store) : AllocationPolicyService(null!, null!)
+    {
+        public override Task<AllocationWeights> WeightsAsync(CancellationToken ct) => Task.FromResult(new AllocationWeights());
+        public override async Task<BatchCandidate[]> CandidatesAsync(Guid retailerId,
+            IReadOnlyCollection<RealTimeInventoryCandidate> positions, DateTimeOffset at, CancellationToken ct)
+        {
+            var location = await store.FindRetailerLocationAsync(retailerId, ct);
+            return positions.Select(p => new BatchCandidate(p.Batch.Id, p.Batch.BatchCode, p.Warehouse.Id, p.Warehouse.Code,
+                new DateTimeOffset(p.Batch.ExpirationDate.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero), p.IssuableQuantity,
+                location is null || Math.Abs(location.Latitude - (p.WarehouseLatitude ?? 0)) > .1m ? 25000 : 5000,
+                at.AddDays(1), DateOnly.FromDateTime(at.AddDays(1).UtcDateTime))).ToArray();
+        }
+    }
+
     private static readonly DateTimeOffset Now = new(2026, 10, 14, 3, 0, 0, TimeSpan.Zero);
 
     [Fact]
@@ -46,7 +93,7 @@ public sealed class OrderServiceTests
         var batch = new Batch { Id = Guid.NewGuid(), WarehouseId = second.Id, ProductId = f.Store.Product.Id,
             BatchCode = "WH-Q7-DEMO", ExpirationDate = f.Store.Batch.ExpirationDate };
         f.Store.AdditionalCandidates.Add(new(batch, new InventoryBalance { AvailableQuantity = 80 }, second, 10.802m,106.743m,5));
-        var service = new OrderAvailabilityService(f.Store,f.Service,new AllocationEngine(),new FixedTimeProvider(Now));
+        var service = new OrderAvailabilityService(f.Store,f.Service,new StubAvailabilityPolicy(f.Store),new FixedTimeProvider(Now));
         var result = await service.CheckAsync(f.Store.Retailer.Id,[f.Store.Product.Id],f.SalesUserId,SystemRoles.Sales,default);
         var product = Assert.Single(result.Items);
         Assert.Equal(85m,product.EligibleQuantity);
@@ -63,7 +110,7 @@ public sealed class OrderServiceTests
         var fixture = new Fixture();
         fixture.Store.Retailer.UserAccountId = fixture.SalesUserId;
         var service = new OrderAvailabilityService(fixture.Store, fixture.Service,
-            new AllocationEngine(), new FixedTimeProvider(Now));
+            new StubAvailabilityPolicy(fixture.Store), new FixedTimeProvider(Now));
         var result = await service.CheckAsync(fixture.Store.Retailer.Id,
             [fixture.Store.Product.Id], fixture.SalesUserId, SystemRoles.Retailer, default);
         var item = Assert.Single(result.Items);
@@ -84,7 +131,7 @@ public sealed class OrderServiceTests
         fixture.Store.Batch.ExpirationDate = DateOnly.FromDateTime(Now.AddDays(daysUntilExpiry).UtcDateTime);
         fixture.Store.ActiveLockedQuantity = lockedQuantity;
         var service = new OrderAvailabilityService(fixture.Store, fixture.Service,
-            new AllocationEngine(), new FixedTimeProvider(Now));
+            new StubAvailabilityPolicy(fixture.Store), new FixedTimeProvider(Now));
         var result = await service.CheckAsync(fixture.Store.Retailer.Id,
             [fixture.Store.Product.Id], fixture.SalesUserId, SystemRoles.Sales, default);
         Assert.Equal(expected, Assert.Single(result.Items).EligibleQuantity);
@@ -102,7 +149,7 @@ public sealed class OrderServiceTests
         fixture.Store.RetailerLocation.Latitude = 0;
         fixture.Store.Balance.AvailableQuantity = available;
         var service = new OrderAvailabilityService(fixture.Store, fixture.Service,
-            new AllocationEngine(), new FixedTimeProvider(Now));
+            new StubAvailabilityPolicy(fixture.Store), new FixedTimeProvider(Now));
         var result = await service.CheckAsync(fixture.Store.Retailer.Id,
             [fixture.Store.Product.Id], fixture.SalesUserId, SystemRoles.Sales, default);
         Assert.Equal(0, Assert.Single(result.Items).EligibleQuantity);
@@ -118,7 +165,7 @@ public sealed class OrderServiceTests
         fixture.Store.MlorConfigured = false;
         if (outside) fixture.Store.RetailerLocation.Latitude = 0;
         var service = new OrderAvailabilityService(fixture.Store, fixture.Service,
-            new AllocationEngine(), new FixedTimeProvider(Now));
+            new StubAvailabilityPolicy(fixture.Store), new FixedTimeProvider(Now));
         var result = await service.CheckAsync(fixture.Store.Retailer.Id,
             [fixture.Store.Product.Id], fixture.SalesUserId, SystemRoles.Sales, default);
         var item = Assert.Single(result.Items);
@@ -466,7 +513,7 @@ public sealed class OrderServiceTests
 
         public FakeOrderReleaseStore Release { get; }
 
-        public Fixture(decimal physicalQuantity = 50)
+        public Fixture(decimal physicalQuantity = 50, IRealTimeAllocationService? allocator = null)
         {
             Store = new FakeStore(SalesUserId, physicalQuantity);
             Inventory = new FakeInventoryLifecycle(Store);
@@ -476,7 +523,7 @@ public sealed class OrderServiceTests
             // holds nothing, so cancelling reports zero released and these tests stay about the
             // order's own state machine.
             Service = new OrderService(Store, new FakePricing(), Inventory, PickingPlan,
-                new OrderReleaseService(Release, new FixedTimeProvider(Now)), new FixedTimeProvider(Now));
+                new OrderReleaseService(Release, new FixedTimeProvider(Now)), new FixedTimeProvider(Now), allocator);
         }
 
         public CreateAssistedOrderData Request(int quantity) => new(

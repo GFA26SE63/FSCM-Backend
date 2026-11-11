@@ -2,6 +2,7 @@ using FSCM.Application.Features.Payments;
 using FSCM.Application.Features.Picking;
 using FSCM.Application.Features.Quotes;
 using FSCM.Domain.Entities;
+using FSCM.Application.Features.AllocationRuns;
 
 namespace FSCM.Application.Features.Orders;
 
@@ -30,7 +31,8 @@ public interface IPurchaseOrderGateStore
 /// prepaid orders pass only after the payment provider confirms the full amount. Picking records
 /// are created from the exact reserved allocations, so warehouse work cannot start from a draft SO.
 /// </summary>
-public sealed class PurchaseOrderGateService(IPurchaseOrderGateStore store, TimeProvider timeProvider)
+public sealed class PurchaseOrderGateService(IPurchaseOrderGateStore store, TimeProvider timeProvider,
+    AllocationDeliveryGuard? deliveryGuard = null)
 {
     public async Task TryCreateAsync(Guid orderId, CancellationToken cancellationToken)
     {
@@ -47,6 +49,7 @@ public sealed class PurchaseOrderGateService(IPurchaseOrderGateStore store, Time
             var eligible = view.Order.PaymentMethod == OrderPaymentMethods.Credit ||
                            view.Payment?.Status == PaymentStatuses.Paid;
             if (!eligible) return;
+            if (deliveryGuard is not null) await deliveryGuard.ValidateAsync(orderId, token);
             if (view.Allocations.Count == 0)
                 throw new InvalidOperationException("Reserved allocations are required before PO conversion.");
 

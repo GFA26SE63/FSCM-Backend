@@ -425,7 +425,7 @@ public sealed class OrderStore(AppDbContext dbContext) : IOrderStore
                 currentRun.Id, currentRun.RunCode, currentRun.Status, currentRun.Status,
                 currentRun.FailureReason, Guid.Empty, currentRun.AttemptNumber,
                 AllocationPlanVersionStatuses.Approved,
-                pricedAt, currentFragments, currentProgress);
+                pricedAt, currentFragments, currentProgress) { Audit = AllocationAudit.Read(currentRun.AlgorithmSettings) };
         }
 
         return null;
