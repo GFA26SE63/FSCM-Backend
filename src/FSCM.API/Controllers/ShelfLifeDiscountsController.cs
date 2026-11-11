@@ -43,6 +43,8 @@ public sealed class ShelfLifeDiscountsController(ShelfLifeDiscountService servic
     public async Task<IActionResult> Publish(
         PublishShelfLifeDiscountTableRequest request, CancellationToken cancellationToken)
     {
+        if (request.Tiers is null || request.Tiers.Any(item => item is null))
+            throw ShelfLifeDiscountOperationException.Validation("Discount tiers are required and cannot contain null entries.");
         var result = await service.PublishAsync(
             new PublishShelfLifeDiscountTableData(
                 request.EffectiveFrom,

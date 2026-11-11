@@ -1,4 +1,8 @@
 using System.Text.Json;
+using System.Security.Cryptography;
+using System.Text;
+using FSCM.Application.Common;
+using FSCM.Application.Features.Retailers;
 using FSCM.Domain.Entities;
 
 namespace FSCM.Application.Features.Promotions;
@@ -20,7 +24,7 @@ public sealed class PromotionService(IPromotionStore store, TimeProvider timePro
             data.DiscountPercent, data.StartAt, data.EndAt, data.ProductIds,
             data.CategoryIds, data.RetailerIds, cancellationToken);
         var now = timeProvider.GetUtcNow();
-        var startAt = data.StartAt.ToUniversalTime();
+        var startAt = ValidateNewPeriod(data.StartAt, data.EndAt, now);
         var endAt = data.EndAt.ToUniversalTime();
         var promotion = new Promotion
         {
@@ -45,6 +49,81 @@ public sealed class PromotionService(IPromotionStore store, TimeProvider timePro
         return await GetAsync(promotion.Id, cancellationToken);
     }
 
+    public async Task<IReadOnlyCollection<PromotionResult>> CreateCampaignGroupAsync(
+        CreateCampaignGroupData data, Guid actorUserId, CancellationToken cancellationToken)
+    {
+        if (data.RequestId == Guid.Empty)
+            throw PromotionOperationException.Validation("A campaign request identifier is required.");
+        var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(data))));
+        var previous = await store.FindCampaignSubmissionAsync(data.RequestId, cancellationToken);
+        if (previous is not null) return Replay(previous);
+        var now = timeProvider.GetUtcNow();
+        var startAt = ValidateNewPeriod(data.StartAt, data.EndAt, now);
+        var inputs = new List<CreatePromotionData>();
+        if (data.CampaignMode == "PerSku")
+        {
+            if (data.ProductRules.Count == 0 || data.CategoryIds.Count != 0 ||
+                data.ProductRules.Select(rule => rule.ProductId).Distinct().Count() != data.ProductRules.Count ||
+                !data.ProductIds.ToHashSet().SetEquals(data.ProductRules.Select(rule => rule.ProductId)))
+                throw PromotionOperationException.Validation("Per-SKU campaigns need distinct product rules matching the selected products and no category scope.");
+            inputs.AddRange(data.ProductRules.Select(rule => new CreatePromotionData(data.Name,
+                rule.MinimumQuantity, rule.DiscountPercent, startAt, data.EndAt, [rule.ProductId], [], data.RetailerIds)));
+        }
+        else if (data.CampaignMode == "ProductGroup" && data.ProductRules.Count == 0)
+            inputs.Add(new(data.Name, data.MinimumQuantity, data.DiscountPercent, startAt, data.EndAt,
+                data.ProductIds, data.CategoryIds, data.RetailerIds));
+        else throw PromotionOperationException.Validation("Campaign mode or product rules are invalid.");
+
+        // No entity is staged until every line and its scope has passed validation.
+        var valid = new List<CreatePromotionData>();
+        foreach (var input in inputs)
+        {
+            var normalized = await ValidateCampaignAsync(input.Name, input.MinimumQuantity, input.DiscountPercent,
+                input.StartAt, input.EndAt, input.ProductIds, input.CategoryIds, input.RetailerIds, cancellationToken);
+            valid.Add(input with { Name = normalized.Name, ProductIds = normalized.ProductIds,
+                CategoryIds = normalized.CategoryIds, RetailerIds = normalized.RetailerIds });
+        }
+        if ((await store.FindProductsAsync(data.ProductIds.Distinct().ToArray(), cancellationToken)).Any(product => product.Status != ProductStatuses.Published) ||
+            (await store.FindCategoriesAsync(data.CategoryIds.Distinct().ToArray(), cancellationToken)).Any(category => !category.IsActive) ||
+            (await store.FindRetailersAsync(data.RetailerIds.Distinct().ToArray(), cancellationToken)).Any(retailer => retailer.Status != RetailerStatuses.Active))
+            throw PromotionOperationException.Validation("Campaign scopes must reference published products, active categories and active retailers.");
+        var codes = new List<string>();
+        foreach (var input in valid) codes.Add(await store.NextPromotionCodeAsync(cancellationToken));
+        var results = new List<PromotionResult>();
+        for (var index = 0; index < valid.Count; index++)
+        {
+            var input = valid[index];
+            var promotion = new Promotion { Id = Guid.NewGuid(), Code = codes[index], Name = input.Name,
+                PromotionType = PromotionTypes.Campaign, MinimumQuantity = input.MinimumQuantity,
+                DiscountPercent = input.DiscountPercent, StartAt = startAt, EndAt = data.EndAt.ToUniversalTime(),
+                IsActive = data.ActivateOnSave, CreatedByUserId = actorUserId, CreatedAt = now, UpdatedAt = now };
+            store.AddPromotion(promotion);
+            AddScopeLinks(promotion.Id, input.ProductIds, input.CategoryIds, input.RetailerIds);
+            AddAudit(promotion.Id, actorUserId, PromotionAuditActions.Created, null,
+                new { promotion.Code, promotion.Name, promotion.MinimumQuantity, promotion.DiscountPercent, promotion.StartAt, promotion.EndAt, promotion.IsActive }, now);
+            if (data.ActivateOnSave)
+                AddAudit(promotion.Id, actorUserId, PromotionAuditActions.Activated, new { IsActive = false }, new { IsActive = true, promotion.StartAt }, now);
+            results.Add(ToResult(new PromotionView(promotion, input.ProductIds, input.CategoryIds, input.RetailerIds)));
+        }
+        store.AddCampaignSubmission(data.RequestId, new(actorUserId, hash, results), now);
+        try { await store.SaveChangesAsync(cancellationToken); }
+        catch (PromotionOperationException exception) when (exception.Code == "conflict")
+        {
+            // A simultaneous retry may have won the unique request-key insert.
+            var committed = await store.FindCampaignSubmissionAsync(data.RequestId, cancellationToken);
+            if (committed is null) throw;
+            return Replay(committed);
+        }
+        return results;
+
+        IReadOnlyCollection<PromotionResult> Replay(CampaignSubmission submission)
+        {
+            if (submission.ActorUserId != actorUserId || submission.RequestHash != hash)
+                throw PromotionOperationException.Conflict("This request identifier was already used for a different campaign submission.");
+            return submission.Promotions;
+        }
+    }
+
     public async Task<PromotionResult> UpdateAsync(
         Guid id, UpdatePromotionData data, Guid actorUserId, CancellationToken cancellationToken)
     {
@@ -52,6 +131,10 @@ public sealed class PromotionService(IPromotionStore store, TimeProvider timePro
             ?? throw PromotionOperationException.NotFound("Promotion was not found.");
         if (promotion.PromotionType != PromotionTypes.Campaign)
             throw PromotionOperationException.Validation("Batch discounts must be managed through the batch discount API.");
+        if (promotion.IsActive)
+            throw PromotionOperationException.Conflict("Deactivate a campaign before editing it.");
+        var now = timeProvider.GetUtcNow();
+        var startAt = ValidateNewPeriod(data.StartAt, data.EndAt, now);
         var normalized = await ValidateCampaignAsync(data.Name, data.MinimumQuantity,
             data.DiscountPercent, data.StartAt, data.EndAt, data.ProductIds,
             data.CategoryIds, data.RetailerIds, cancellationToken);
@@ -72,7 +155,7 @@ public sealed class PromotionService(IPromotionStore store, TimeProvider timePro
         promotion.Name = normalized.Name;
         promotion.MinimumQuantity = data.MinimumQuantity;
         promotion.DiscountPercent = data.DiscountPercent;
-        promotion.StartAt = data.StartAt.ToUniversalTime();
+        promotion.StartAt = startAt;
         promotion.EndAt = data.EndAt.ToUniversalTime();
         promotion.UpdatedAt = timeProvider.GetUtcNow();
 
@@ -105,7 +188,7 @@ public sealed class PromotionService(IPromotionStore store, TimeProvider timePro
     public async Task<IReadOnlyCollection<BatchDiscountSuggestionResult>> ListBatchSuggestionsAsync(
         Guid? warehouseId, Guid? productId, CancellationToken cancellationToken)
     {
-        var today = DateOnly.FromDateTime(timeProvider.GetUtcNow().UtcDateTime);
+        var today = EffectiveDates.VietnamDate(timeProvider.GetUtcNow());
         return (await store.ListBatchDiscountCandidatesAsync(warehouseId, productId, cancellationToken))
             .Where(item => item.AvailableQuantity > 0 && item.Batch.ExpirationDate >= today)
             .Select(item =>
@@ -147,15 +230,15 @@ public sealed class PromotionService(IPromotionStore store, TimeProvider timePro
         ValidatePeriod(data.StartAt, data.EndAt);
         var batch = await store.FindBatchAsync(batchId, cancellationToken)
             ?? throw PromotionOperationException.NotFound("Batch was not found.");
-        var today = DateOnly.FromDateTime(timeProvider.GetUtcNow().UtcDateTime);
+        var now = timeProvider.GetUtcNow();
+        var today = EffectiveDates.VietnamDate(now);
         if (batch.ExpirationDate < today)
             throw PromotionOperationException.Conflict("Expired batches cannot receive a discount.");
-        var startAt = data.StartAt.ToUniversalTime();
+        var startAt = ValidateNewPeriod(data.StartAt, data.EndAt, now);
         var endAt = data.EndAt.ToUniversalTime();
         if (await store.HasOverlappingBatchDiscountAsync(batchId, startAt, endAt, null, cancellationToken))
             throw PromotionOperationException.Conflict("The batch already has a discount in the requested validity period.");
 
-        var now = timeProvider.GetUtcNow();
         var promotion = new Promotion
         {
             Id = Guid.NewGuid(),
@@ -230,7 +313,7 @@ public sealed class PromotionService(IPromotionStore store, TimeProvider timePro
                 ?? throw PromotionOperationException.NotFound("Batch was not found.");
             if (batch.ProductId != productId)
                 throw PromotionOperationException.Validation("Batch does not belong to the requested product.");
-            if (batch.ExpirationDate < DateOnly.FromDateTime(pricedAt.UtcDateTime))
+            if (batch.ExpirationDate < EffectiveDates.VietnamDate(pricedAt))
                 throw PromotionOperationException.Conflict("Expired batches cannot be priced for sale.");
         }
 
@@ -323,15 +406,19 @@ public sealed class PromotionService(IPromotionStore store, TimeProvider timePro
             ?? throw PromotionOperationException.NotFound("Promotion was not found.");
         if (promotion.PromotionType != PromotionTypes.Campaign)
             throw PromotionOperationException.Validation("Batch discounts must be managed through the batch discount API.");
-        if (isActive && promotion.EndAt < timeProvider.GetUtcNow())
+        var now = timeProvider.GetUtcNow();
+        if (isActive && promotion.EndAt <= now)
             throw PromotionOperationException.Conflict("An expired promotion cannot be activated.");
         if (promotion.IsActive == isActive)
             return await GetAsync(id, cancellationToken);
         var oldValue = promotion.IsActive;
+        var oldStart = promotion.StartAt;
+        if (isActive)
+            promotion.StartAt = EffectiveDates.StartFromNow(promotion.StartAt, now);
         promotion.IsActive = isActive;
         promotion.UpdatedAt = timeProvider.GetUtcNow();
         AddAudit(id, actorUserId, isActive ? PromotionAuditActions.Activated : PromotionAuditActions.Deactivated,
-            new { IsActive = oldValue }, new { promotion.IsActive }, promotion.UpdatedAt);
+            new { IsActive = oldValue, StartAt = oldStart }, new { promotion.IsActive, promotion.StartAt }, promotion.UpdatedAt);
         await store.SaveChangesAsync(cancellationToken);
         return await GetAsync(id, cancellationToken);
     }
@@ -345,7 +432,7 @@ public sealed class PromotionService(IPromotionStore store, TimeProvider timePro
         var normalizedName = name.Trim();
         if (normalizedName.Length is < 3 or > 200)
             throw PromotionOperationException.Validation("Promotion name must contain between 3 and 200 characters.");
-        if (minimumQuantity <= 0 || minimumQuantity != decimal.Truncate(minimumQuantity))
+        if (minimumQuantity <= 0 || minimumQuantity > 999999999999999m || minimumQuantity != decimal.Truncate(minimumQuantity))
             throw PromotionOperationException.Validation("Minimum quantity must be a positive whole number of cartons.");
         ValidateDiscount(discountPercent, 100m, "Campaign discount");
         ValidatePeriod(startAt, endAt);
@@ -365,7 +452,7 @@ public sealed class PromotionService(IPromotionStore store, TimeProvider timePro
 
     private static void ValidateDiscount(decimal discountPercent, decimal maximum, string label)
     {
-        if (discountPercent < 1m || discountPercent > maximum)
+        if (discountPercent < 1m || discountPercent > maximum || decimal.Round(discountPercent, 2) != discountPercent)
             throw PromotionOperationException.Validation($"{label} must be between 1% and {maximum}%.");
     }
 
@@ -373,6 +460,15 @@ public sealed class PromotionService(IPromotionStore store, TimeProvider timePro
     {
         if (endAt <= startAt)
             throw PromotionOperationException.Validation("Validity end must be later than validity start.");
+    }
+
+    private static DateTimeOffset ValidateNewPeriod(DateTimeOffset startAt, DateTimeOffset endAt, DateTimeOffset now)
+    {
+        if (EffectiveDates.IsBeforeToday(startAt, now))
+            throw PromotionOperationException.Validation("Validity start cannot be before today (Vietnam time).");
+        var effectiveStart = EffectiveDates.StartFromNow(startAt, now);
+        ValidatePeriod(effectiveStart, endAt);
+        return effectiveStart;
     }
 
     private void AddScopeLinks(Guid promotionId, IEnumerable<Guid> products,

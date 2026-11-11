@@ -13,6 +13,7 @@ public interface ITerritoryStore
     Task<Region?> FindRegionAsync(Guid regionId, CancellationToken cancellationToken);
     Task<Region?> FindRegionByCodeAsync(string code, CancellationToken cancellationToken);
     Task<bool> RegionHasActiveGroupsAsync(Guid regionId, CancellationToken cancellationToken);
+    Task<bool> RegionHasActiveWarehousesAsync(Guid regionId, CancellationToken cancellationToken);
     void AddRegion(Region region);
 
     Task<IReadOnlyCollection<SalesGroupView>> ListSalesGroupsAsync(Guid? regionId, bool includeInactive, CancellationToken cancellationToken);

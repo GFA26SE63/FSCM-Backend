@@ -13,15 +13,13 @@ public sealed class ReportStore(AppDbContext dbContext) : IReportStore
 
     public async Task<IReadOnlyCollection<Guid>> ListActiveGroupIdsAsync(
         Guid userId, CancellationToken cancellationToken) =>
-        await dbContext.SalesGroupMemberRecords.AsNoTracking()
-            .Where(item => item.UserAccountId == userId && item.IsActive)
-            .Select(item => item.SalesGroupId)
+        await ReportingScopeQueries.ManagedGroups(dbContext, userId)
+            .Select(item => item.Id)
             .Distinct()
             .ToArrayAsync(cancellationToken);
 
     public Task<bool> IsActiveGroupMemberAsync(Guid userId, Guid salesGroupId, CancellationToken cancellationToken) =>
-        dbContext.SalesGroupMemberRecords.AsNoTracking().AnyAsync(item =>
-            item.UserAccountId == userId && item.SalesGroupId == salesGroupId && item.IsActive, cancellationToken);
+        ReportingScopeQueries.ManagedGroups(dbContext, userId).AnyAsync(item => item.Id == salesGroupId, cancellationToken);
 
     /// <summary>
     /// Review 2 / D11: revenue belongs to the period in which the order was Completed (delivery,

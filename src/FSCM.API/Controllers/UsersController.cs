@@ -88,6 +88,7 @@ public sealed class UsersController(IdentityService identityService) : Controlle
         await identityService.SetActiveStatusAsync(
             userId,
             request.IsActive,
+            request.Reason,
             GetActorUserId(),
             cancellationToken);
         return NoContent();

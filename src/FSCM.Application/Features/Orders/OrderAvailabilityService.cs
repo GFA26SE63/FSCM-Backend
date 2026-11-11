@@ -49,7 +49,7 @@ public sealed class OrderAvailabilityService(
                 continue;
             }
             var result = engine.Allocate(new AllocationRequest(product.Sku, 1,
-                product.ShelfLifeHours, mlor.MinimumLifeRatio, null), candidates);
+                product.ShelfLifeHours, mlor.MinimumLifeRatio, null, mlor.MinimumLifeHours), candidates);
             var eligibleIds = result.FilterTrace
                 .Where(trace => trace.Stage == AllocationFilterStage.Delivery && trace.Passed)
                 .Select(trace => trace.BatchId).ToHashSet();

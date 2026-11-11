@@ -39,6 +39,10 @@ public sealed class RetailerDebtPayOsService(
 
         var retailer = await store.FindRetailerByUserAsync(retailerUserId, cancellationToken)
             ?? throw PaymentOperationException.Forbidden("Retailer account was not found for the signed-in user.");
+        var pending = await store.ListPendingForPaymentsAsync(
+            retailer.Id, mode == RetailerDebtCheckoutModes.All ? null : ids, cancellationToken);
+        foreach (var checkout in pending)
+            await ReconcilePendingCheckoutAsync(checkout, cancellationToken);
         var selected = await store.ListCollectibleForUpdateAsync(
             retailer.Id, mode == RetailerDebtCheckoutModes.All ? null : ids, cancellationToken);
         if (mode == RetailerDebtCheckoutModes.Selected && selected.Count != ids.Length)
@@ -55,7 +59,8 @@ public sealed class RetailerDebtPayOsService(
         var total = snapshots.Sum(x => x.Amount);
         var payOsOrderCode = CreatePayOsOrderCode(Guid.NewGuid());
         var link = await payOsGateway.CreatePaymentLinkAsync(new(
-            payOsOrderCode, ToPayOsAmount(total), $"FSCM CONG NO {snapshots.Length}", retailer.Name), cancellationToken);
+            payOsOrderCode, ToPayOsAmount(total),
+            CreatePayOsDescription(snapshots.Select(x => x.View.Order.OrderCode)), retailer.Name), cancellationToken);
         if (link.OrderCode != payOsOrderCode || link.Amount != ToPayOsAmount(total) ||
             string.IsNullOrWhiteSpace(link.PaymentLinkId) || string.IsNullOrWhiteSpace(link.CheckoutUrl))
             throw PaymentOperationException.Gateway("payOS returned an inconsistent debt payment link.");
@@ -118,9 +123,9 @@ public sealed class RetailerDebtPayOsService(
             ?? throw PaymentOperationException.Forbidden("Retailer account was not found for the signed-in user.");
         var view = await store.FindByIdForRetailerAsync(checkoutId, retailer.Id, cancellationToken)
             ?? throw PaymentOperationException.NotFound("Debt checkout was not found.");
-        if (view.Checkout.Status == RetailerDebtPayOsStatuses.Pending && IsExpired(view.Checkout))
+        if (view.Checkout.Status == RetailerDebtPayOsStatuses.Pending)
         {
-            await MarkExpiredAsync(view.Checkout.PayOsOrderCode, cancellationToken);
+            await ReconcilePendingCheckoutAsync(view.Checkout, cancellationToken);
             view = await store.FindByIdForRetailerAsync(checkoutId, retailer.Id, cancellationToken) ?? view;
         }
         return ToResult(view);
@@ -145,7 +150,10 @@ public sealed class RetailerDebtPayOsService(
                 if (current.Checkout.Status != RetailerDebtPayOsStatuses.Pending) return;
                 current.Checkout.Status = IsExpired(current.Checkout) ||
                     verified.Data.Description2.Contains("expire", StringComparison.OrdinalIgnoreCase)
-                    ? RetailerDebtPayOsStatuses.Expired : RetailerDebtPayOsStatuses.Failed;
+                    ? RetailerDebtPayOsStatuses.Expired
+                    : verified.Data.Description2.Contains("cancel", StringComparison.OrdinalIgnoreCase)
+                        ? RetailerDebtPayOsStatuses.Cancelled
+                        : RetailerDebtPayOsStatuses.Failed;
                 current.Checkout.Version++;
                 current.Checkout.UpdatedAt = timeProvider.GetUtcNow();
                 await store.SaveChangesAsync(token);
@@ -244,6 +252,67 @@ public sealed class RetailerDebtPayOsService(
         store.ClearTracking();
     }
 
+    private async Task ReconcilePendingCheckoutAsync(
+        RetailerDebtPayOsCheckout checkout, CancellationToken cancellationToken)
+    {
+        string? resolvedStatus = null;
+        try
+        {
+            var link = await payOsGateway.GetPaymentLinkStatusAsync(
+                checkout.PayOsOrderCode, cancellationToken);
+            if (link.OrderCode != checkout.PayOsOrderCode ||
+                !string.Equals(link.PaymentLinkId, checkout.PaymentLinkId, StringComparison.Ordinal))
+                throw PaymentOperationException.Gateway("payOS returned a different payment link.");
+
+            // Webhooks are the primary confirmation path. Polling the trusted PayOS link
+            // status is the recovery path when a device returns from PayOS before its webhook
+            // reaches this API (common with a local development tunnel).
+            if (string.Equals(link.Status, "PAID", StringComparison.OrdinalIgnoreCase))
+            {
+                var now = timeProvider.GetUtcNow();
+                await HandleVerifiedWebhookAsync(new PayOsVerifiedWebhook("00", true, new(
+                    checkout.PayOsOrderCode, ToPayOsAmount(checkout.Amount),
+                    "FSCM debt payment", string.Empty, $"PAYOS-STATUS-{checkout.PayOsOrderCode}",
+                    now.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture), "VND",
+                    checkout.PaymentLinkId, "00", "paid", null, null, null, null, null, null)), cancellationToken);
+                return;
+            }
+
+            resolvedStatus = link.Status.ToUpperInvariant() switch
+            {
+                "CANCELLED" => RetailerDebtPayOsStatuses.Cancelled,
+                "EXPIRED" => RetailerDebtPayOsStatuses.Expired,
+                _ when IsExpired(checkout) => RetailerDebtPayOsStatuses.Expired,
+                _ => null
+            };
+        }
+        catch (PaymentOperationException)
+        {
+            // A temporary PayOS outage must not make the retailer's existing
+            // checkout unreadable. The next mobile poll retries reconciliation.
+            return;
+        }
+
+        if (resolvedStatus is null) return;
+        await store.ExecuteInTransactionAsync(async token =>
+        {
+            var current = await store.FindByPayOsOrderCodeAsync(checkout.PayOsOrderCode, true, token);
+            if (current?.Checkout.Status != RetailerDebtPayOsStatuses.Pending) return;
+            current.Checkout.Status = resolvedStatus;
+            current.Checkout.Version++;
+            current.Checkout.UpdatedAt = timeProvider.GetUtcNow();
+            store.AddAuditLog(new AuditLog
+            {
+                Id = Guid.NewGuid(), EntityName = nameof(RetailerDebtPayOsCheckout),
+                EntityId = current.Checkout.Id, Action = resolvedStatus,
+                NewValues = JsonSerializer.Serialize(new { Source = "PayOS payment-link reconciliation" }),
+                Reason = "Đồng bộ trạng thái link thanh toán PayOS", CreatedAt = current.Checkout.UpdatedAt
+            });
+            await store.SaveChangesAsync(token);
+        }, cancellationToken);
+        store.ClearTracking();
+    }
+
     private static RetailerDebtPayOsCheckoutResult ToResult(RetailerDebtCheckoutView view) => new(
         view.Checkout.Id, view.Checkout.Status, view.Checkout.Amount, view.Checkout.PayOsOrderCode,
         view.Checkout.PaymentLinkId, view.Checkout.CheckoutUrl, view.Checkout.QrCode,
@@ -277,6 +346,31 @@ public sealed class RetailerDebtPayOsService(
     private static string HashRequest(string mode, IEnumerable<Guid> ids) => Hash($"{mode}|{string.Join(',', ids.Select(x => x.ToString("N")))}");
     private static string HashWebhook(PayOsWebhookPayload data) => Hash($"{data.OrderCode}|{data.Amount}|{data.PaymentLinkId}|{data.Reference}");
     private static string Hash(string value) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();
+    private static string CreatePayOsDescription(IEnumerable<string> orderCodes)
+    {
+        const int maxLength = 25;
+        var codes = orderCodes.Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x.Trim()).Distinct(StringComparer.Ordinal)
+            .OrderBy(x => x, StringComparer.Ordinal).ToArray();
+        if (codes.Length == 0) return "CN FSCM";
+
+        var description = $"CN {codes[0]}";
+        for (var index = 1; index < codes.Length; index++)
+        {
+            var candidate = $"{description},{codes[index]}";
+            if (candidate.Length <= maxLength)
+            {
+                description = candidate;
+                continue;
+            }
+
+            var remaining = $"+{codes.Length - index}";
+            return description.Length + remaining.Length <= maxLength
+                ? description + remaining
+                : description[..(maxLength - remaining.Length)] + remaining;
+        }
+        return description;
+    }
     private static long CreatePayOsOrderCode(Guid id) { var value = Convert.ToInt64(id.ToString("N")[..13], 16); return value == 0 ? 1 : value; }
     private static long ToPayOsAmount(decimal amount) => amount <= 0 || amount != decimal.Truncate(amount) || amount > long.MaxValue
         ? throw PaymentOperationException.Validation("payOS requires a positive whole-number VND amount.") : decimal.ToInt64(amount);

@@ -52,6 +52,7 @@ public static class DependencyInjection
         services.AddScoped<DeliveryService>();
         services.AddScoped<ShipmentService>();
         services.AddScoped<ReportService>();
+        services.AddScoped<FSCM.Application.Features.Dashboard.DashboardService>();
         services.AddScoped<IdentityService>();
         services.AddScoped<RetailerActivationService>();
         services.AddScoped<InventoryService>();

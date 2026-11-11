@@ -28,7 +28,7 @@ public sealed class ReceiptDiscrepancyConfiguration : IEntityTypeConfiguration<R
             .OnDelete(DeleteBehavior.Restrict);
         builder.ToTable(table =>
         {
-            table.HasCheckConstraint("CK_RECEIPT_DISCREPANCY_Status", "\"Status\" BETWEEN 0 AND 4");
+            table.HasCheckConstraint("CK_RECEIPT_DISCREPANCY_Status", "\"Status\" BETWEEN 0 AND 5");
             table.HasCheckConstraint("CK_RECEIPT_DISCREPANCY_ResolutionType", "\"ResolutionType\" IS NULL OR \"ResolutionType\" BETWEEN 0 AND 1");
         });
         builder.HasOne<ReceiptConfirmation>()

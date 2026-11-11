@@ -50,6 +50,12 @@ public sealed record PayOsLinkData(
     string Status,
     long? ExpiredAt);
 
+public sealed record PayOsPaymentLinkStatus(
+    long OrderCode,
+    string PaymentLinkId,
+    string Status,
+    long? ExpiredAt);
+
 public sealed record PayOsWebhookPayload(
     long OrderCode,
     long Amount,
@@ -86,6 +92,8 @@ public interface IPayOsGateway
         PayOsCreateLinkData data, CancellationToken cancellationToken);
     Task<PayOsVerifiedWebhook> VerifyWebhookAsync(
         PayOsWebhookEnvelope webhook, CancellationToken cancellationToken);
+    Task<PayOsPaymentLinkStatus> GetPaymentLinkStatusAsync(
+        long orderCode, CancellationToken cancellationToken);
 }
 
 public sealed record PayOsCheckoutResult(

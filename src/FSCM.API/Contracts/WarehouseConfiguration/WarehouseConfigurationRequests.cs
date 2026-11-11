@@ -19,3 +19,6 @@ public sealed record SetMlorRequest(
     decimal MinimumLifeRatio, int? MinimumLifeHours);
 
 public sealed record UpdateBusinessConfigurationRequest(JsonElement Value);
+
+public sealed record ConfigurationEntryRequest(string Key, JsonElement Value);
+public sealed record UpdateConfigurationsRequest(IReadOnlyCollection<ConfigurationEntryRequest> Entries);

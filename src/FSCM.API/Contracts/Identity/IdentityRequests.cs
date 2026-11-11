@@ -42,5 +42,6 @@ public sealed record UpdateUserProfileRequest(string Email, string FullName);
 
 public sealed record UpdateUserRoleRequest(string Role);
 
-public sealed record UpdateUserStatusRequest(bool IsActive);
+/// <param name="Reason">Required when locking an account; stored in its audit history.</param>
+public sealed record UpdateUserStatusRequest(bool IsActive, string? Reason = null);
 
