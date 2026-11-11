@@ -78,20 +78,36 @@ public sealed class QrLabelServiceTests
     }
 
     [Fact]
-    public async Task Split_reduces_parent_and_links_child_to_root()
+    public async Task Split_retires_immutable_parent_and_creates_taken_and_replacement_labels()
     {
         var fixture = new Fixture();
-        var parent = fixture.CreateLabel("TEM-000204", 80m);
+        var parent = fixture.CreateLabel("TEM-000204", 50m);
         fixture.Store.Labels.Add(parent);
 
-        var child = await fixture.Service.SplitAsync(parent.QrCode, new(30m, 1), "tach-tem-01",
+        var child = await fixture.Service.SplitAsync(parent.QrCode, new(25m, 1), "tach-tem-01",
             fixture.UserId, SystemRoles.WarehouseKeeper, default);
 
         Assert.Equal(50m, parent.Quantity);
-        Assert.Equal(30m, child.Quantity);
+        Assert.Equal(QrLabelStatuses.Split, parent.Status);
+        Assert.Equal(Now, parent.InvalidatedAt);
+        Assert.Equal(25m, child.Quantity);
         Assert.Equal(parent.Id, child.ParentLabelId);
         Assert.Equal(parent.Id, child.RootLabelId);
-        Assert.Equal(80m, fixture.Store.Labels.Sum(item => item.Quantity));
+        var replacement = Assert.Single(fixture.Store.Labels, item => item.Id != parent.Id && item.Id != child.Id);
+        Assert.Equal(25m, replacement.Quantity);
+        Assert.Equal(parent.Id, replacement.ParentLabelId);
+        Assert.Equal(parent.Id, replacement.RootLabelId);
+        Assert.Equal(50m, fixture.Store.Labels.Where(item => item.Status == QrLabelStatuses.Available).Sum(item => item.Quantity));
+        var replay = await fixture.Service.SplitAsync(parent.QrCode, new(25m, 1), "tach-tem-01",
+            fixture.UserId, SystemRoles.WarehouseKeeper, default);
+        Assert.Equal(child.Id, replay.Id);
+        Assert.Equal(3, fixture.Store.Labels.Count);
+        await Assert.ThrowsAsync<QrLabelOperationException>(() => fixture.Service.RenderPrintableAsync(
+            parent.QrCode, fixture.UserId, SystemRoles.WarehouseKeeper, default));
+        var printable = await fixture.Service.RenderBatchPrintableAsync(
+            parent.BatchId, fixture.UserId, SystemRoles.WarehouseKeeper, default);
+        Assert.Equal(2, printable.Labels.Count);
+        Assert.DoesNotContain(printable.Labels, item => item.QrCode == parent.QrCode);
     }
 
     [Fact]

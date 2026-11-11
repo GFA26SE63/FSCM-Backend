@@ -156,6 +156,7 @@ public sealed class RealTimePostgresWorkflowTests
         var qrGenerationAfterIssueVerified = false;
         ComplaintResult? earlyReturn = null;
         Guid earlyAllocation = default;
+        var twoChildSplitVerified = false;
         async Task Fulfill(Guid orderId)
         {
             var lists = await Call<CurrentPickingService, IReadOnlyCollection<CurrentPickingResult>>(s => s.ListAsync(keeper, SystemRoles.WarehouseKeeper, null, null, default));
@@ -164,9 +165,36 @@ public sealed class RealTimePostgresWorkflowTests
                 var picking = await Call<CurrentPickingService, CurrentPickingResult>(s => s.GetAsync(list.PickingCode, keeper, SystemRoles.WarehouseKeeper, default));
                 foreach (var item in picking.Items.Where(i => i.RemainingQuantity > 0))
                 {
-                    var label = await Call<QrLabelService, QrLabelResult>(s => s.GenerateAsync(new(item.BatchId, item.RemainingQuantity, null), Guid.NewGuid().ToString(), keeper, SystemRoles.WarehouseKeeper, default));
-                    picking = await Call<CurrentPickingService, CurrentPickingResult>(s => s.ScanAsync(list.PickingCode, new(label.QrCode, item.RemainingQuantity, picking.Version, label.Version,
-                        [new RunPickingSplitQuantityData(item.AllocationId, item.RemainingQuantity)]), Guid.NewGuid().ToString(), keeper, SystemRoles.WarehouseKeeper, default));
+                    var labelQuantity = item.RemainingQuantity;
+                    if (orderId == late.Id)
+                        labelQuantity = (await Call<QrLabelService, QrGenerationCapacityResult>(s =>
+                            s.GetGenerationCapacityAsync(item.BatchId, keeper, SystemRoles.WarehouseKeeper, default))).UnlabelledQuantity;
+                    var label = await Call<QrLabelService, QrLabelResult>(s => s.GenerateAsync(new(item.BatchId, labelQuantity, null), Guid.NewGuid().ToString(), keeper, SystemRoles.WarehouseKeeper, default));
+                    var scanKey = Guid.NewGuid().ToString();
+                    var scanRequest = new ScanPickingLabelData(label.QrCode, item.RemainingQuantity, picking.Version, label.Version,
+                        [new RunPickingSplitQuantityData(item.AllocationId, item.RemainingQuantity)]);
+                    picking = await Call<CurrentPickingService, CurrentPickingResult>(s => s.ScanAsync(list.PickingCode, scanRequest, scanKey, keeper, SystemRoles.WarehouseKeeper, default));
+                    var scan = Assert.Single(picking.Scans, s => s.OperationKey == scanKey);
+                    if (labelQuantity > item.RemainingQuantity)
+                    {
+                        Assert.Equal(label.QrCode, scan.SourceQrCode);
+                        Assert.NotEqual(label.QrCode, scan.QrCode);
+                        Assert.NotNull(scan.ReplacementQrCode);
+                        Assert.NotEqual(scan.QrCode, scan.ReplacementQrCode);
+                        var source = await Call<QrLabelService, QrLabelDetailResult>(s => s.GetAsync(label.QrCode, keeper, SystemRoles.WarehouseKeeper, default));
+                        Assert.Equal(labelQuantity, source.Label.Quantity);
+                        Assert.Equal(QrLabelStatuses.Split, source.Label.Status);
+                        var children = source.Lineage.Where(l => l.ParentLabelId == label.Id).ToArray();
+                        Assert.Equal(2, children.Length);
+                        Assert.Equal(labelQuantity, children.Sum(l => l.Quantity));
+                        Assert.Equal(QrLabelStatuses.Picked, children.Single(l => l.QrCode == scan.QrCode).Status);
+                        Assert.Equal(QrLabelStatuses.Available, children.Single(l => l.QrCode == scan.ReplacementQrCode).Status);
+                        var scanReplay = await Call<CurrentPickingService, CurrentPickingResult>(s => s.ScanAsync(list.PickingCode, scanRequest, scanKey, keeper, SystemRoles.WarehouseKeeper, default));
+                        Assert.Equal(scan, scanReplay.Scans.Single(s => s.OperationKey == scanKey));
+                        await Assert.ThrowsAsync<PickingOperationException>(() => Call<CurrentPickingService, CurrentPickingResult>(s =>
+                            s.ScanAsync(list.PickingCode, scanRequest with { ExpectedPickingVersion = picking.Version, ExpectedLabelVersion = source.Label.Version }, Guid.NewGuid().ToString(), keeper, SystemRoles.WarehouseKeeper, default)));
+                        twoChildSplitVerified = true;
+                    }
                 }
                 await Call<CurrentPickingService, CurrentPickingResult>(s => s.CompleteAsync(list.PickingCode, new(picking.Version, null, "E2E complete"), keeper, SystemRoles.WarehouseKeeper, default));
             }
@@ -190,7 +218,7 @@ public sealed class RealTimePostgresWorkflowTests
                 {
                     var beforeIssue = await Call<QrLabelService, QrGenerationCapacityResult>(s =>
                         s.GetGenerationCapacityAsync(group.Key, keeper, SystemRoles.WarehouseKeeper, default));
-                    Assert.Equal(group.Sum(l => l.Quantity), beforeIssue.LabelledQuantity);
+                    Assert.True(beforeIssue.LabelledQuantity >= group.Sum(l => l.Quantity));
                 }
                 var issued = await Call<ShipmentService, ShipmentResult>(s => s.ConfirmIssueAsync(part.Id, new(part.Version), keeper, SystemRoles.WarehouseKeeper, default));
                 // Regression: stock has left, but its labels stay Picked until dispatch.
@@ -198,8 +226,9 @@ public sealed class RealTimePostgresWorkflowTests
                 {
                     var capacity = await Call<QrLabelService, QrGenerationCapacityResult>(s =>
                         s.GetGenerationCapacityAsync(batchId, keeper, SystemRoles.WarehouseKeeper, default));
-                    Assert.Equal(0, capacity.LabelledQuantity);
-                    Assert.Equal(capacity.PhysicalQuantity, capacity.UnlabelledQuantity);
+                    Assert.Equal(capacity.PhysicalQuantity - capacity.LabelledQuantity, capacity.UnlabelledQuantity);
+                    if (orderId == main.Id) Assert.Equal(0, capacity.LabelledQuantity);
+                    if (orderId == late.Id) Assert.Equal(capacity.PhysicalQuantity, capacity.LabelledQuantity);
                     if (capacity.UnlabelledQuantity >= 11)
                     {
                         var generated = new List<Guid>();
@@ -378,6 +407,7 @@ public sealed class RealTimePostgresWorkflowTests
         var ql = await Quote(late.Id);
         await Call<QuoteService, SalesOrderQuoteResult>(s => s.AcceptAsync(ql.Id, ql.Version, OrderPaymentMethods.Credit, retailerUser, SystemRoles.Retailer, default));
         await Fulfill(late.Id);
+        Assert.True(twoChildSplitVerified, "Exercise immutable source A and distinct picked/replacement labels B/C.");
         var interruptedRequest = new CreateAssistedOrderData(Guid.NewGuid(), retailer, OrderPaymentMethods.Credit,
             null, null, "Recovery E2E", [new(product, 1)]);
         await using (var scope = provider.CreateAsyncScope())
