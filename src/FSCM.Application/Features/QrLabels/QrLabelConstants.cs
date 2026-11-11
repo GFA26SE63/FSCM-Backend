@@ -7,6 +7,7 @@ public static class QrLabelStatuses
     public const string InTransit = "InTransit";
     public const string Delivered = "Delivered";
     public const string Invalidated = "Invalidated";
+    public const string Split = "Split";
 }
 
 public static class QrLabelEventTypes
