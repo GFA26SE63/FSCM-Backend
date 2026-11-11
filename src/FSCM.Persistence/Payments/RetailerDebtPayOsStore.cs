@@ -19,7 +19,7 @@ public sealed class RetailerDebtPayOsStore(AppDbContext db) : IRetailerDebtPayOs
         var query = from payment in db.PaymentRecords
                     join order in db.SalesOrderRecords on payment.SalesOrderId equals order.Id
                     where order.RetailerId == retailerId && payment.Method == OrderPaymentMethods.Credit
-                        && payment.DeliveredDate != null && payment.Status != PaymentStatuses.Paid
+                        && payment.Status != PaymentStatuses.Paid
                         && payment.Status != PaymentStatuses.Cancelled
                         && !db.RetailerDebtPayOsAllocationRecords.Any(a => a.PaymentId == payment.Id &&
                             db.RetailerDebtPayOsCheckoutRecords.Any(c => c.Id == a.CheckoutId &&
@@ -40,6 +40,20 @@ public sealed class RetailerDebtPayOsStore(AppDbContext db) : IRetailerDebtPayOs
                 disputes.Where(d => d.SalesOrderId == x.order.Id).Sum(d => d.AdjustmentAmount)))
             .Where(x => x.Payment.AdjustedAmount - x.Payment.ConfirmedAmount - x.OpenDisputedAmount > 0)
             .ToArray();
+    }
+
+    public async Task<IReadOnlyCollection<RetailerDebtPayOsCheckout>> ListPendingForPaymentsAsync(
+        Guid retailerId, IReadOnlyCollection<Guid>? paymentIds, CancellationToken cancellationToken)
+    {
+        var query = from checkout in db.RetailerDebtPayOsCheckoutRecords.AsNoTracking()
+                    join allocation in db.RetailerDebtPayOsAllocationRecords.AsNoTracking()
+                        on checkout.Id equals allocation.CheckoutId
+                    where checkout.RetailerId == retailerId &&
+                        checkout.Status == RetailerDebtPayOsStatuses.Pending
+                    select new { checkout, allocation.PaymentId };
+        if (paymentIds is { Count: > 0 })
+            query = query.Where(x => paymentIds.Contains(x.PaymentId));
+        return (await query.Select(x => x.checkout).Distinct().ToArrayAsync(cancellationToken));
     }
 
     public Task<RetailerDebtCheckoutView?> FindByOperationKeyAsync(

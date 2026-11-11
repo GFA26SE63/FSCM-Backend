@@ -45,6 +45,8 @@ public interface IRetailerDebtPayOsStore
     Task<Retailer?> FindRetailerByUserAsync(Guid userId, CancellationToken cancellationToken);
     Task<IReadOnlyCollection<ReceiptPaymentView>> ListCollectibleForUpdateAsync(
         Guid retailerId, IReadOnlyCollection<Guid>? paymentIds, CancellationToken cancellationToken);
+    Task<IReadOnlyCollection<RetailerDebtPayOsCheckout>> ListPendingForPaymentsAsync(
+        Guid retailerId, IReadOnlyCollection<Guid>? paymentIds, CancellationToken cancellationToken);
     Task<RetailerDebtCheckoutView?> FindByOperationKeyAsync(
         string operationKey, bool forUpdate, CancellationToken cancellationToken);
     Task<RetailerDebtCheckoutView?> FindByPayOsOrderCodeAsync(
