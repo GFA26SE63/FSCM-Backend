@@ -42,6 +42,20 @@ public sealed class RetailerDebtPayOsStore(AppDbContext db) : IRetailerDebtPayOs
             .ToArray();
     }
 
+    public async Task<IReadOnlyCollection<RetailerDebtPayOsCheckout>> ListPendingForPaymentsAsync(
+        Guid retailerId, IReadOnlyCollection<Guid>? paymentIds, CancellationToken cancellationToken)
+    {
+        var query = from checkout in db.RetailerDebtPayOsCheckoutRecords.AsNoTracking()
+                    join allocation in db.RetailerDebtPayOsAllocationRecords.AsNoTracking()
+                        on checkout.Id equals allocation.CheckoutId
+                    where checkout.RetailerId == retailerId &&
+                        checkout.Status == RetailerDebtPayOsStatuses.Pending
+                    select new { checkout, allocation.PaymentId };
+        if (paymentIds is { Count: > 0 })
+            query = query.Where(x => paymentIds.Contains(x.PaymentId));
+        return (await query.Select(x => x.checkout).Distinct().ToArrayAsync(cancellationToken));
+    }
+
     public Task<RetailerDebtCheckoutView?> FindByOperationKeyAsync(
         string operationKey, bool forUpdate, CancellationToken cancellationToken) =>
         LoadAsync(db.RetailerDebtPayOsCheckoutRecords.Where(x => x.OperationKey == operationKey), forUpdate, cancellationToken);

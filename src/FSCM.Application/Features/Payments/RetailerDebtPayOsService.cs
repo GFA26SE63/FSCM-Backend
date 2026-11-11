@@ -39,6 +39,10 @@ public sealed class RetailerDebtPayOsService(
 
         var retailer = await store.FindRetailerByUserAsync(retailerUserId, cancellationToken)
             ?? throw PaymentOperationException.Forbidden("Retailer account was not found for the signed-in user.");
+        var pending = await store.ListPendingForPaymentsAsync(
+            retailer.Id, mode == RetailerDebtCheckoutModes.All ? null : ids, cancellationToken);
+        foreach (var checkout in pending)
+            await ReconcilePendingCheckoutAsync(checkout, cancellationToken);
         var selected = await store.ListCollectibleForUpdateAsync(
             retailer.Id, mode == RetailerDebtCheckoutModes.All ? null : ids, cancellationToken);
         if (mode == RetailerDebtCheckoutModes.Selected && selected.Count != ids.Length)

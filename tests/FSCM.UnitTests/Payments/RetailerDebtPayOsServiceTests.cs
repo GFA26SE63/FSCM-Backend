@@ -76,13 +76,11 @@ public sealed class RetailerDebtPayOsServiceTests
             fixture.UserId, SystemRoles.Retailer, CancellationToken.None);
         fixture.Gateway.LinkStatus = "CANCELLED";
 
-        var reconciled = await service.GetAsync(checkout.Id, fixture.UserId,
-            SystemRoles.Retailer, CancellationToken.None);
         var replacement = await service.CreateAsync(new(
             RetailerDebtCheckoutModes.Selected, [fixture.Payment.Id]), "replacement-checkout",
             fixture.UserId, SystemRoles.Retailer, CancellationToken.None);
 
-        Assert.Equal(RetailerDebtPayOsStatuses.Cancelled, reconciled.Status);
+        Assert.Equal(RetailerDebtPayOsStatuses.Cancelled, fixture.Store.Checkouts.Single(x => x.Id == checkout.Id).Status);
         Assert.NotEqual(checkout.Id, replacement.Id);
     }
 
@@ -149,6 +147,16 @@ public sealed class RetailerDebtPayOsServiceTests
             IReadOnlyCollection<ReceiptPaymentView> result = paymentIds is { Count: > 0 }
                 ? available.Where(x => paymentIds.Contains(x.Payment.Id)).ToArray() : available;
             return Task.FromResult(result);
+        }
+        public Task<IReadOnlyCollection<RetailerDebtPayOsCheckout>> ListPendingForPaymentsAsync(
+            Guid retailerId, IReadOnlyCollection<Guid>? paymentIds, CancellationToken cancellationToken)
+        {
+            var pending = Checkouts.Where(c => c.RetailerId == retailerId &&
+                    c.Status == RetailerDebtPayOsStatuses.Pending &&
+                    Allocations.Any(a => a.CheckoutId == c.Id &&
+                        (paymentIds is null || paymentIds.Contains(a.PaymentId))))
+                .ToArray();
+            return Task.FromResult<IReadOnlyCollection<RetailerDebtPayOsCheckout>>(pending);
         }
         public Task<RetailerDebtCheckoutView?> FindByOperationKeyAsync(string operationKey, bool forUpdate, CancellationToken cancellationToken) =>
             Task.FromResult(View(Checkouts.SingleOrDefault(x => x.OperationKey == operationKey)));
