@@ -76,6 +76,7 @@ public sealed class DevelopmentDataSeeder(
         await SeedPromotionDataAsync(products, categories, retailer, users[SystemRoles.Admin].Id,
             now, cancellationToken);
         await dbContext.SaveChangesAsync(cancellationToken);
+        await SeedDemoRouteFixturesAsync(configuredWarehouses, retailer, now, cancellationToken);
         var demoOrder = await orderService.CreateAsync(
             new CreateAssistedOrderData(
                 DemoOrderClientKey,
@@ -865,6 +866,24 @@ public sealed class DevelopmentDataSeeder(
             CreatedAt = now,
             UpdatedAt = now
         };
+
+    private async Task SeedDemoRouteFixturesAsync(IReadOnlyCollection<Warehouse> warehouses, Retailer retailer,
+        DateTimeOffset now, CancellationToken ct)
+    {
+        // Explicit development fixtures, not road measurements or an allocation fallback.
+        var destination = await dbContext.MapLocationRecords.SingleAsync(l => l.RetailerId == retailer.Id, ct);
+        foreach (var warehouse in warehouses)
+        {
+            if (await dbContext.MapDistanceCacheRecords.AnyAsync(d => d.WarehouseId == warehouse.Id && d.RetailerId == retailer.Id && d.IsActive, ct)) continue;
+            var origin = await dbContext.MapLocationRecords.SingleAsync(l => l.WarehouseId == warehouse.Id, ct);
+            dbContext.MapDistanceCacheRecords.Add(new MapDistanceCache { Id = Guid.NewGuid(), WarehouseId = warehouse.Id,
+                RetailerId = retailer.Id, OriginLocationId = origin.Id, DestinationLocationId = destination.Id,
+                OriginLocationVersion = origin.Version, DestinationLocationVersion = destination.Version,
+                DistanceMeters = 5000, DurationSeconds = 900, Provider = "DevelopmentFixture", ProviderStatus = "DEMO",
+                Version = 1, CalculatedAt = now, ExpiresAt = now.AddDays(1), IsActive = true });
+        }
+        await dbContext.SaveChangesAsync(ct);
+    }
 
     private static TransitTableBand CreateTransitBand(
         Guid transitTableId, int minimumDistance, int maximumDistance,

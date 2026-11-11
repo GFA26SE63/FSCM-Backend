@@ -59,8 +59,10 @@ public sealed class DeliveryEtaService(
         var zone = ResolveTimeZone(schedule.TimeZone);
 
         var distance = await store.FindDistanceAsync(request.WarehouseId, request.RetailerId, cancellationToken)
-            ?? throw DeliveryEtaOperationException.NotFound(
+            ?? throw DeliveryEtaOperationException.MissingDistance(
                 "No cached distance exists for this warehouse and Retailer.");
+        if (distance.ExpiresAt <= now)
+            throw DeliveryEtaOperationException.StaleDistance("The cached route has expired and must be refreshed.");
 
         await EnsureDistanceIsCurrentAsync(distance.OriginLocationVersion, "warehouse", request.WarehouseId, cancellationToken);
         await EnsureDistanceIsCurrentAsync(distance.DestinationLocationVersion, "retailer", request.RetailerId, cancellationToken);
@@ -162,7 +164,7 @@ public sealed class DeliveryEtaService(
             ?? throw DeliveryEtaOperationException.NotFound($"No {entityType} location is registered.");
         if (location.Version != cachedLocationVersion)
         {
-            throw DeliveryEtaOperationException.Conflict(
+            throw DeliveryEtaOperationException.StaleDistance(
                 $"The cached distance is stale because the {entityType} location has changed.");
         }
     }

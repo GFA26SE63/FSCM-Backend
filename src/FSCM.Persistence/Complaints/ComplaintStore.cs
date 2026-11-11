@@ -1,4 +1,4 @@
-﻿using FSCM.Application.Features.Complaints;
+using FSCM.Application.Features.Complaints;
 using FSCM.Domain.Authorization;
 using FSCM.Domain.Entities;
 using FSCM.Persistence.DbContexts;
@@ -9,7 +9,52 @@ namespace FSCM.Persistence.Complaints;
 
 public sealed class ComplaintStore(AppDbContext db) : IComplaintStore
 {
+    public async Task<IReadOnlyCollection<ComplaintTarget>> ListTargetsAsync(Guid actor, Guid orderId, CancellationToken ct)
+    {
+        var owned = await (from o in db.SalesOrderRecords join r in db.RetailerRecords on o.RetailerId equals r.Id
+            where o.Id == orderId && r.UserAccountId == actor select o.Id).AnyAsync(ct);
+        if (!owned) throw ComplaintOperationException.NotFound("Không tìm thấy đơn của cửa hàng.");
+        var rows = await (from receipt in db.ReceiptConfirmationRecords
+            join part in db.ShipmentRecords on receipt.ShipmentId equals part.Id
+            join item in db.ReceiptConfirmationItemRecords on receipt.Id equals item.ReceiptConfirmationId
+            join line in db.SalesOrderLineRecords on item.SalesOrderLineId equals line.Id
+            join product in db.ProductRecords on line.ProductId equals product.Id
+            join batch in db.BatchRecords on item.BatchId equals batch.Id
+            join pick in db.PickingItemRecords on part.PickingListId equals pick.PickingListId
+            join allocation in db.AllocationRecords on pick.AllocationId equals allocation.Id
+            join link in db.ReceiptConfirmationQrLabelRecords on receipt.Id equals link.ReceiptConfirmationId
+            join label in db.BatchQrLabelRecords on link.BatchQrLabelId equals label.Id
+            where receipt.SalesOrderId == orderId && receipt.ShipmentId != null
+                && (receipt.Status == ReceiptConfirmationStatuses.Confirmed || receipt.Status == ReceiptConfirmationStatuses.Exception)
+                && allocation.SalesOrderLineId == line.Id && pick.SourceBatchId == item.BatchId && label.BatchId == item.BatchId
+                && !db.ReceiptDiscrepancyItemRecords.Any(i => i.AllocationId == allocation.Id &&
+                    db.ReceiptDiscrepancyRecords.Any(d => d.Id == i.ReceiptDiscrepancyId && d.Status != "Rejected" && d.Status != "Cancelled"))
+            select new ComplaintTarget(part.Id, part.ShipmentCode, allocation.Id, product.Sku,
+                product.Name, batch.BatchCode, label.QrCode, item.ExpectedQuantity)).ToArrayAsync(ct);
+        return rows.GroupBy(t => t.AllocationId).Select(g => g.OrderBy(t => t.LabelCode).First()).ToArray();
+    }
+    public async Task ExecuteInTransactionAsync(Func<CancellationToken, Task> operation, CancellationToken ct)
+    {
+        if (db.Database.CurrentTransaction is not null) { await operation(ct); return; }
+        await db.Database.CreateExecutionStrategy().ExecuteAsync(async () =>
+        {
+            db.ChangeTracker.Clear();
+            await using var tx = await db.Database.BeginTransactionAsync(ct);
+            // Serializes complaint decisions and budgets, including the financial side effects.
+            await db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock(61811420261110)", ct);
+            await operation(ct);
+            await tx.CommitAsync(ct);
+        });
+    }
+
     public async Task<ReceiptDiscrepancy> CreateAsync(Guid actor, CreateComplaintData data, DateTimeOffset now, CancellationToken ct)
+    {
+        ReceiptDiscrepancy? result = null;
+        await ExecuteInTransactionAsync(async token => result = await CreateCoreAsync(actor, data, now, token), ct);
+        return result!;
+    }
+
+    private async Task<ReceiptDiscrepancy> CreateCoreAsync(Guid actor, CreateComplaintData data, DateTimeOffset now, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(data.OrderCode) || string.IsNullOrWhiteSpace(data.Sku) || string.IsNullOrWhiteSpace(data.LabelCode))
             throw ComplaintOperationException.Validation("Order, SKU and label are required.");
@@ -49,6 +94,8 @@ public sealed class ComplaintStore(AppDbContext db) : IComplaintStore
             throw ComplaintOperationException.Validation("Several shipment receipts match; specify the shipment part.");
         var receipt = receiptRows[0].Receipt;
         var receiptItem = receiptRows[0].Item;
+        if (!await db.ReceiptConfirmationQrLabelRecords.AnyAsync(l => l.ReceiptConfirmationId == receipt.Id && l.BatchQrLabelId == label.Label.Id, ct))
+            throw ComplaintOperationException.Validation("Tem không thuộc phiếu nhận của phần hàng này.");
         var shipment = await db.ShipmentRecords.SingleOrDefaultAsync(x => x.Id == receipt.ShipmentId && x.SalesOrderId == order.Id, ct)
             ?? throw ComplaintOperationException.Conflict("The receipt shipment part was not found.");        if (data.ActualQuantity > receiptItem.ExpectedQuantity)
             throw ComplaintOperationException.Validation("Actual quantity cannot exceed the received expectation.");
@@ -78,10 +125,20 @@ public sealed class ComplaintStore(AppDbContext db) : IComplaintStore
             throw ComplaintOperationException.Validation("Allocation does not belong to the shipment batch.");
         var adjustment = Math.Round((receiptItem.ExpectedQuantity - data.ActualQuantity) * priceRow.FinalNetUnitPrice, 0,
             MidpointRounding.AwayFromZero);
-        if (await db.ReceiptDiscrepancyRecords.AnyAsync(x => x.SalesOrderId == order.Id && x.ReceiptConfirmationId == receipt.Id && x.Status != "Resolved" && x.Note == data.Note, ct))
-            throw ComplaintOperationException.Conflict("A matching complaint is already open.");
+        var previous = await (from d in db.ReceiptDiscrepancyRecords
+            join i in db.ReceiptDiscrepancyItemRecords on d.Id equals i.ReceiptDiscrepancyId
+            where i.AllocationId == priceRow.Id && d.Status != "Rejected" && d.Status != "Cancelled"
+            select new { d.Status, i.ExpectedQuantity, i.ActualReceivedQuantity, i.AdjustmentAmount }).ToArrayAsync(ct);
+        if (previous.Any(p => p.Status is "Submitted" or "UnderReview"))
+            throw ComplaintOperationException.Conflict("Phần hàng này đang có khiếu nại chờ xử lý.");
+        var affected = receiptItem.ExpectedQuantity - data.ActualQuantity;
+        if (previous.Sum(p => p.ExpectedQuantity - p.ActualReceivedQuantity) + affected > receiptItem.ExpectedQuantity ||
+            previous.Sum(p => p.AdjustmentAmount) + adjustment > Math.Round(receiptItem.ExpectedQuantity * priceRow.FinalNetUnitPrice, 0, MidpointRounding.AwayFromZero))
+            throw ComplaintOperationException.Conflict("Tổng hàng/tiền khiếu nại vượt phần hàng đã giao.");
+        if (previous.Length > 0)
+            throw ComplaintOperationException.Conflict("Phần hàng này đã được khiếu nại; không thể gửi lại bằng ghi chú khác.");
         var discrepancy = new ReceiptDiscrepancy { Id = Guid.NewGuid(), SalesOrderId = order.Id, ReceiptConfirmationId = receipt.Id,
-            ReportedByRetailerUserId = actor, Status = "Open", Note = data.Note, ReportedAt = now };
+            ReportedByRetailerUserId = actor, Status = "Submitted", Note = data.Note, ReportedAt = now };
         db.ReceiptDiscrepancyRecords.Add(discrepancy);
         db.ReceiptDiscrepancyItemRecords.Add(new ReceiptDiscrepancyItem { Id = Guid.NewGuid(), ReceiptDiscrepancyId = discrepancy.Id,
             BatchId = label.Batch.Id, ShipmentId = shipmentId, AllocationId = priceRow.Id,
@@ -113,7 +170,13 @@ public sealed class ComplaintStore(AppDbContext db) : IComplaintStore
             q = q.Where(x => x.r.Id == retailerId);
         }
         var rows = await q.OrderByDescending(x => x.d.ReportedAt).ToArrayAsync(ct);
-        return rows.Select(x => ToResult(x.d, x.o.OrderCode, x.r.Code, x.r.Name, x.p?.Sku ?? "", x.p?.Name ?? "", x.i, x.l?.QrCode, x.i.EvidenceBlobUrl)).ToArray();
+        var ids = rows.Select(x => x.d.Id).ToArray();
+        var requests = (await db.AuditLogRecords.AsNoTracking()
+            .Where(a => a.EntityName == nameof(ReceiptDiscrepancy) && a.Action == "ComplaintEvidenceRequested" && ids.Contains(a.EntityId))
+            .OrderByDescending(a => a.CreatedAt).ToArrayAsync(ct))
+            .GroupBy(a => a.EntityId).ToDictionary(g => g.Key, g => g.First().Reason);
+        return rows.Select(x => ToResult(x.d, x.o.OrderCode, x.r.Code, x.r.Name, x.p?.Sku ?? "", x.p?.Name ?? "", x.i, x.l?.QrCode, x.i.EvidenceBlobUrl,
+            x.d.Status == "UnderReview" ? requests.GetValueOrDefault(x.d.Id) : null)).ToArray();
     }
 
     public async Task<ComplaintResult> ResolveAsync(Guid id, Guid actor, ResolveComplaintData data, DateTimeOffset now, CancellationToken ct)
@@ -124,9 +187,21 @@ public sealed class ComplaintStore(AppDbContext db) : IComplaintStore
                          join b in db.BatchRecords on i.BatchId equals b.Id join p in db.ProductRecords on b.ProductId equals p.Id
                          where d.Id == id select new { d, o, r, i, p }).SingleOrDefaultAsync(ct)
             ?? throw ComplaintOperationException.NotFound("Complaint was not found.");
-        if (row.d.Status is "Approved" or "Rejected" or "Resolved") return ToResult(row.d, row.o.OrderCode, row.r.Code, row.r.Name, row.p.Sku, row.p.Name, row.i, null, row.i.EvidenceBlobUrl);
+        if (row.d.Status == "Cancelled")
+            throw ComplaintOperationException.Conflict("Khiếu nại đã được Retailer hủy.");
+        if (row.d.Status is "Approved" or "Rejected" or "Resolved")
+        {
+            if ((row.d.Status != "Rejected") != data.Approved)
+                throw ComplaintOperationException.Conflict("Khiếu nại đã chốt kết quả, không thể đổi quyết định.");
+            return ToResult(row.d, row.o.OrderCode, row.r.Code, row.r.Name, row.p.Sku, row.p.Name, row.i, null, row.i.EvidenceBlobUrl);
+        }
+        var oldStatus = row.d.Status;
         row.d.Status = data.Approved ? "Approved" : "Rejected";
         row.d.ReviewedByUserId = actor; row.d.ReviewedAt = now; row.d.ResolvedAt = now; row.d.Note = data.Result;
+        // An approved claim is settled in money only: the receivable is adjusted and any amount the
+        // retailer already paid is refunded through a manual refund record (F101).
+        if (data.Approved) row.d.ResolutionType = "FinancialAdjustment";
+        Audit(actor, data.Approved ? "ApproveClaimFinancial" : "RejectClaim", row.d, oldStatus, data.Result, now);
         await db.SaveChangesAsync(ct);
         return ToResult(row.d, row.o.OrderCode, row.r.Code, row.r.Name, row.p.Sku, row.p.Name, row.i, null, row.i.EvidenceBlobUrl);
     }
@@ -137,6 +212,33 @@ public sealed class ComplaintStore(AppDbContext db) : IComplaintStore
             item => item.Id == id, ct)
             ?? throw ComplaintOperationException.NotFound("Complaint was not found.");
         discrepancy.ResolutionType = "FinancialAdjustment";
+        await db.SaveChangesAsync(ct);
+    }
+
+    public async Task CancelAsync(Guid id, Guid actor, DateTimeOffset now, CancellationToken ct)
+    {
+        var d = await FindOwnedComplaintAsync(id, actor, ct)
+            ?? throw ComplaintOperationException.NotFound("Không tìm thấy khiếu nại của bạn.");
+        if (d.Status == "Cancelled") return;
+        if (d.Status is not ("Submitted" or "UnderReview"))
+            throw ComplaintOperationException.Conflict("Khiếu nại đã có kết quả, không thể hủy.");
+        var old = d.Status;
+        // ResolvedAt closes the claim for the completion gate and frees the batch for a new claim.
+        d.Status = "Cancelled"; d.ResolvedAt = now;
+        Audit(actor, "CancelClaim", d, old, "Retailer hủy khiếu nại", now);
+        await db.SaveChangesAsync(ct);
+    }
+
+    public async Task RequestEvidenceAsync(Guid id, Guid actor, string reason, DateTimeOffset now, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(reason)) throw ComplaintOperationException.Validation("A reason is required to request more evidence.");
+        var d = await db.ReceiptDiscrepancyRecords.SingleOrDefaultAsync(x => x.Id == id, ct)
+            ?? throw ComplaintOperationException.NotFound("Complaint was not found.");
+        if (d.Status is not ("Submitted" or "UnderReview"))
+            throw ComplaintOperationException.Conflict("Khiếu nại đã có kết quả, không thể yêu cầu bổ sung.");
+        var old = d.Status;
+        d.Status = "UnderReview"; d.ReviewedByUserId = actor;
+        Audit(actor, "ComplaintEvidenceRequested", d, old, reason.Trim(), now);
         await db.SaveChangesAsync(ct);
     }
 
@@ -158,6 +260,19 @@ public sealed class ComplaintStore(AppDbContext db) : IComplaintStore
         await db.SaveChangesAsync(ct);
     }
 
+    public async Task<string?> RemoveEvidenceAsync(
+        Guid complaintId, Guid evidenceId, Guid actor, DateTimeOffset now, CancellationToken ct)
+    {
+        var evidence = await db.ComplaintEvidenceRecords.SingleOrDefaultAsync(
+            x => x.Id == evidenceId && x.ReceiptDiscrepancyId == complaintId, ct);
+        if (evidence is null) return null;
+        var claim = await db.ReceiptDiscrepancyRecords.SingleAsync(x => x.Id == complaintId, ct);
+        db.ComplaintEvidenceRecords.Remove(evidence);
+        Audit(actor, "ComplaintEvidenceRemoved", claim, claim.Status, evidence.FileName, now);
+        await db.SaveChangesAsync(ct);
+        return evidence.BlobKey;
+    }
+
     public async Task<IReadOnlyCollection<ComplaintEvidence>> ListEvidenceAsync(Guid complaintId, CancellationToken ct) =>
         await db.ComplaintEvidenceRecords.AsNoTracking()
             .Where(x => x.ReceiptDiscrepancyId == complaintId)
@@ -168,7 +283,17 @@ public sealed class ComplaintStore(AppDbContext db) : IComplaintStore
         db.ComplaintEvidenceRecords.AsNoTracking()
             .SingleOrDefaultAsync(x => x.Id == evidenceId && x.ReceiptDiscrepancyId == complaintId, ct);
 
-    private static ComplaintResult ToResult(ReceiptDiscrepancy d, string order, string retailerCode, string retailerName, string sku, string product, ReceiptDiscrepancyItem i, string? label, string? evidence) =>
-        new(d.Id, $"KN-{d.Id.ToString("N")[..8].ToUpperInvariant()}", order, retailerCode, retailerName, sku, product, i.ExpectedQuantity, i.ActualReceivedQuantity, i.IssueType, d.Status, label, i.Note ?? d.Note, evidence, d.ReportedAt, d.Status is "Approved" or "Rejected" or "Resolved" ? d.Note : null, i.ShipmentId, i.AllocationPlanPriceId, i.FinalUnitPrice, i.AdjustmentAmount, d.SalesOrderId, i.AllocationId, d.ResolutionType == "FinancialAdjustment");
-}
+    private static ComplaintResult ToResult(ReceiptDiscrepancy d, string order, string retailerCode, string retailerName, string sku, string product, ReceiptDiscrepancyItem i, string? label, string? evidence, string? evidenceRequest = null) =>
+        new(d.Id, $"KN-{d.Id.ToString("N")[..8].ToUpperInvariant()}", order, retailerCode, retailerName, sku, product, i.ExpectedQuantity, i.ActualReceivedQuantity, i.IssueType, d.Status is "Submitted" or "UnderReview" ? "Open" : d.Status, label, i.Note ?? d.Note, evidence, d.ReportedAt, d.Status is "Approved" or "Rejected" or "Resolved" ? d.Note : null, i.ShipmentId, i.AllocationPlanPriceId, i.FinalUnitPrice, i.AdjustmentAmount, d.SalesOrderId, i.AllocationId, d.ResolutionType == "FinancialAdjustment",
+            d.ResolutionType, d.Status, evidenceRequest);
 
+    private void Audit(Guid? actor, string action, ReceiptDiscrepancy d, string? oldStatus, string? reason, DateTimeOffset now) =>
+        db.AuditLogRecords.Add(new AuditLog
+        {
+            Id = Guid.NewGuid(), UserAccountId = actor, EntityName = nameof(ReceiptDiscrepancy), EntityId = d.Id,
+            Action = action,
+            OldValues = System.Text.Json.JsonSerializer.Serialize(new { Status = oldStatus }),
+            NewValues = System.Text.Json.JsonSerializer.Serialize(new { d.Status, d.ResolutionType }),
+            Reason = reason, CreatedAt = now
+        });
+}
