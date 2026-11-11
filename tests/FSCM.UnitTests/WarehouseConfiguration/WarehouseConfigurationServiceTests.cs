@@ -134,14 +134,17 @@ public sealed class WarehouseConfigurationServiceTests
         Assert.True(fixture.Store.Configurations.Single(item => item.Version == 2).IsActive);
     }
 
-    [Fact]
-    public async Task Allocation_weights_must_sum_to_one()
+    [Theory]
+    [InlineData("{\"expiry\":0.5,\"distance\":0.4,\"coverage\":0.2}")]
+    [InlineData("{\"expiry\":0.3333,\"distance\":0.3333,\"coverage\":0.3333}")]
+    [InlineData("{\"expiry\":0.3334,\"distance\":0.3334,\"coverage\":0.3333}")]
+    public async Task Allocation_weights_must_sum_to_one(string weights)
     {
         var fixture = new Fixture();
 
         var exception = await Assert.ThrowsAsync<WarehouseConfigurationOperationException>(() =>
             fixture.Service.UpdateConfigurationAsync(BusinessConfigurationKeys.AllocationWeights,
-                "{\"expiry\":0.5,\"distance\":0.4,\"coverage\":0.2}", Guid.NewGuid(), CancellationToken.None));
+                weights, Guid.NewGuid(), CancellationToken.None));
 
         Assert.Equal("validation_error", exception.Code);
         Assert.Empty(fixture.Store.Configurations);

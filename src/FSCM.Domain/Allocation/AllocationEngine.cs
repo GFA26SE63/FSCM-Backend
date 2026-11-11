@@ -16,7 +16,8 @@ public sealed record AllocationRequest(
     decimal RequiredQuantity,
     int TotalShelfLifeHours,
     decimal MlorRatio,
-    DateOnly? DeliveryDeadline);
+    DateOnly? DeliveryDeadline,
+    int? MinimumLifeHours = null);
 
 /// <summary>
 /// A batch the run may draw from. <paramref name="AvailableQuantity"/> is what is left in the run
@@ -146,13 +147,16 @@ public sealed class AllocationEngine
         {
             throw new ArgumentException($"Batch code '{duplicateBatchCode}' occurs more than once.", nameof(candidates));
         }
+        if (candidates.Select(item => item.BatchId).Distinct().Count() != candidates.Count)
+            throw new ArgumentException("A batch identifier occurs more than once.", nameof(candidates));
 
         foreach (var candidate in candidates)
         {
             ValidateCandidate(candidate);
         }
 
-        var requiredShelfLifeHours = request.MlorRatio * request.TotalShelfLifeHours;
+        var requiredShelfLifeHours = Math.Max(request.MlorRatio * request.TotalShelfLifeHours,
+            request.MinimumLifeHours ?? 0);
         var filterTrace = new List<AllocationFilterTrace>();
 
         var poolEligible = new List<BatchCandidate>();
@@ -208,6 +212,7 @@ public sealed class AllocationEngine
             var ranked = eligible
                 .Select(item => Score(item, request, requiredShelfLifeHours, remainingDemand))
                 .OrderByDescending(item => item.WeightedScore)
+                .ThenBy(item => item.Candidate.Candidate.ExpiresAt)
                 .ThenBy(item => item.Candidate.Candidate.BatchCode, StringComparer.Ordinal)
                 .ToArray();
 
@@ -345,10 +350,14 @@ public sealed class AllocationEngine
         {
             throw new ArgumentOutOfRangeException(nameof(request), "MLOR ratio must be between zero and one.");
         }
+        if (request.MinimumLifeHours is < 0 || request.MinimumLifeHours > request.TotalShelfLifeHours)
+            throw new ArgumentOutOfRangeException(nameof(request), "Minimum life hours must be within the product shelf life.");
     }
 
     private static void ValidateCandidate(BatchCandidate candidate)
     {
+        if (candidate.EstimatedArrivalAt.HasValue != candidate.EstimatedArrivalDate.HasValue)
+            throw new ArgumentException("Arrival instant and calendar date must be supplied together.", nameof(candidate));
         if (candidate.BatchId == Guid.Empty || candidate.WarehouseId == Guid.Empty)
         {
             throw new ArgumentException("Batch and warehouse identifiers are required.", nameof(candidate));

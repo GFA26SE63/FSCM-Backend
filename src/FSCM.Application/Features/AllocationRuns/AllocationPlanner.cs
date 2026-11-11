@@ -31,7 +31,8 @@ public sealed record PlannerLine(
     int LineNumber,
     decimal OrderedQuantity,
     int TotalShelfLifeHours,
-    decimal EffectiveMlorRatio);
+    decimal EffectiveMlorRatio,
+    int? MinimumLifeHours = null);
 
 public sealed record PlannerOrder(
     Guid RunOrderId,
@@ -117,7 +118,7 @@ public sealed class AllocationPlanner(AllocationEngine engine)
             {
                 var request = new AllocationRequest(
                     line.Sku, line.OrderedQuantity, line.TotalShelfLifeHours,
-                    line.EffectiveMlorRatio, order.DeliveryDeadline);
+                    line.EffectiveMlorRatio, order.DeliveryDeadline, line.MinimumLifeHours);
                 var batches = byProduct.TryGetValue(line.ProductId, out var found) ? found : [];
                 var result = engine.Allocate(request, Candidates(batches, remaining, order.RetailerId, route));
                 lineResults.Add(new PlannedLineResult(line.RunLineId, line.LineNumber, result));
