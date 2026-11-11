@@ -7,6 +7,14 @@ namespace FSCM.UnitTests.DeliveryEta;
 
 public sealed class DeliveryEtaServiceTests
 {
+    [Fact]
+    public async Task Expired_route_cache_is_rejected_instead_of_promising_a_stale_ETA()
+    {
+        var fixture = await Fixture.CreateAsync();
+        fixture.Store.Distance.ExpiresAt = Now.AddMinutes(-1);
+        var error = await Assert.ThrowsAsync<DeliveryEtaOperationException>(() => fixture.Service.EstimateAsync(fixture.Request(), default));
+        Assert.Equal("conflict", error.Code);
+    }
     // 2026-10-21 03:00 UTC is 10:00 in Vietnam.
     private static readonly DateTimeOffset Now = new(2026, 10, 21, 3, 0, 0, TimeSpan.Zero);
     private static readonly Guid Actor = Guid.Parse("11111111-1111-1111-1111-111111111111");

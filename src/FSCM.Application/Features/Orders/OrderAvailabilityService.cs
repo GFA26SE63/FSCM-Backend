@@ -14,7 +14,7 @@ public sealed record OrderAvailabilityItem(Guid ProductId, string Sku, decimal E
 public sealed record OrderAvailabilityResult(DateTimeOffset CheckedAt, IReadOnlyCollection<OrderAvailabilityItem> Items);
 
 public sealed class OrderAvailabilityService(
-    IOrderStore store, OrderService orders, AllocationEngine engine, TimeProvider timeProvider)
+    IOrderStore store, OrderService orders, AllocationPolicyService policy, TimeProvider timeProvider)
 {
     public async Task<OrderAvailabilityResult> CheckAsync(
         Guid retailerId, IReadOnlyCollection<Guid> productIds,
@@ -25,19 +25,18 @@ public sealed class OrderAvailabilityService(
             throw OrderOperationException.Validation("Availability requires a store and 1 to 100 product IDs.");
         await orders.EnsurePricingScopeAsync(retailerId, actorId, role, cancellationToken);
         var now = timeProvider.GetUtcNow();
-        var location = await store.FindRetailerLocationAsync(retailerId, cancellationToken);
+        var engine = new AllocationEngine(await policy.WeightsAsync(cancellationToken));
         var items = new List<OrderAvailabilityItem>();
         foreach (var productId in productIds.Distinct())
         {
             var product = await store.FindPublishedProductAsync(productId, cancellationToken)
                 ?? throw OrderOperationException.NotFound("Published product was not found.");
             var positions = await store.ListCandidatesAsync(productId, cancellationToken);
-            var candidates = positions.Select(position => {
-                var inventory = new RealTimeInventoryCandidate(position.Batch, position.Balance,
+            var inventoryPositions = positions.Select(position =>
+                new RealTimeInventoryCandidate(position.Batch, position.Balance,
                     position.Warehouse, product, position.WarehouseLatitude, position.WarehouseLongitude,
-                    position.ActiveLockedQuantity);
-                return RealTimeAllocationService.ToBatchCandidate(inventory, location, inventory.IssuableQuantity, now);
-            }).ToArray();
+                    position.ActiveLockedQuantity)).ToArray();
+            var candidates = await policy.CandidatesAsync(retailerId, inventoryPositions, now, cancellationToken);
             var mlor = await store.ResolveMlorAsync(retailerId, productId, now, cancellationToken);
             if (mlor is null)
             {

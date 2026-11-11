@@ -17,6 +17,7 @@ public sealed class LoyaltyTransactionConfiguration : IEntityTypeConfiguration<L
         builder.Property(entity => entity.CreatedByUserId).HasColumnType("uuid").IsRequired(false);
         builder.Property(entity => entity.TransactionType).HasMaxLength(30).IsRequired();
         builder.Property(entity => entity.Points).IsRequired();
+        builder.Property(entity => entity.SpendAmountPerPointSnapshot).HasPrecision(18, 2);
         builder.Property(entity => entity.BalanceAfter).IsRequired();
         builder.Property(entity => entity.Note).HasColumnType("text").IsRequired(false);
         builder.Property(entity => entity.CreatedAt).HasColumnType("timestamp with time zone").IsRequired();
