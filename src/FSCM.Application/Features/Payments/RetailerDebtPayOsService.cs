@@ -55,7 +55,8 @@ public sealed class RetailerDebtPayOsService(
         var total = snapshots.Sum(x => x.Amount);
         var payOsOrderCode = CreatePayOsOrderCode(Guid.NewGuid());
         var link = await payOsGateway.CreatePaymentLinkAsync(new(
-            payOsOrderCode, ToPayOsAmount(total), $"FSCM CONG NO {snapshots.Length}", retailer.Name), cancellationToken);
+            payOsOrderCode, ToPayOsAmount(total),
+            CreatePayOsDescription(snapshots.Select(x => x.View.Order.OrderCode)), retailer.Name), cancellationToken);
         if (link.OrderCode != payOsOrderCode || link.Amount != ToPayOsAmount(total) ||
             string.IsNullOrWhiteSpace(link.PaymentLinkId) || string.IsNullOrWhiteSpace(link.CheckoutUrl))
             throw PaymentOperationException.Gateway("payOS returned an inconsistent debt payment link.");
@@ -324,6 +325,31 @@ public sealed class RetailerDebtPayOsService(
     private static string HashRequest(string mode, IEnumerable<Guid> ids) => Hash($"{mode}|{string.Join(',', ids.Select(x => x.ToString("N")))}");
     private static string HashWebhook(PayOsWebhookPayload data) => Hash($"{data.OrderCode}|{data.Amount}|{data.PaymentLinkId}|{data.Reference}");
     private static string Hash(string value) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();
+    private static string CreatePayOsDescription(IEnumerable<string> orderCodes)
+    {
+        const int maxLength = 25;
+        var codes = orderCodes.Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x.Trim()).Distinct(StringComparer.Ordinal)
+            .OrderBy(x => x, StringComparer.Ordinal).ToArray();
+        if (codes.Length == 0) return "CN FSCM";
+
+        var description = $"CN {codes[0]}";
+        for (var index = 1; index < codes.Length; index++)
+        {
+            var candidate = $"{description},{codes[index]}";
+            if (candidate.Length <= maxLength)
+            {
+                description = candidate;
+                continue;
+            }
+
+            var remaining = $"+{codes.Length - index}";
+            return description.Length + remaining.Length <= maxLength
+                ? description + remaining
+                : description[..(maxLength - remaining.Length)] + remaining;
+        }
+        return description;
+    }
     private static long CreatePayOsOrderCode(Guid id) { var value = Convert.ToInt64(id.ToString("N")[..13], 16); return value == 0 ? 1 : value; }
     private static long ToPayOsAmount(decimal amount) => amount <= 0 || amount != decimal.Truncate(amount) || amount > long.MaxValue
         ? throw PaymentOperationException.Validation("payOS requires a positive whole-number VND amount.") : decimal.ToInt64(amount);

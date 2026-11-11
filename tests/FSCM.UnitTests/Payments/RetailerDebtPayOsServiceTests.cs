@@ -25,6 +25,7 @@ public sealed class RetailerDebtPayOsServiceTests
         Assert.Single(first.Allocations);
         Assert.Equal(800_000m, first.Allocations.Single().Amount);
         Assert.Equal(1, fixture.Gateway.CreateCount);
+        Assert.Equal("CN DH-000101", fixture.Gateway.LastCreateData!.Description);
     }
 
     [Fact]
@@ -117,10 +118,12 @@ public sealed class RetailerDebtPayOsServiceTests
     private sealed class FakeGateway : IPayOsGateway
     {
         public int CreateCount { get; private set; }
+        public PayOsCreateLinkData? LastCreateData { get; private set; }
         public string LinkStatus { get; set; } = "PENDING";
         public Task<PayOsLinkData> CreatePaymentLinkAsync(PayOsCreateLinkData data, CancellationToken cancellationToken)
         {
             CreateCount++;
+            LastCreateData = data;
             return Task.FromResult(new PayOsLinkData(data.OrderCode, data.Amount, "link-1",
                 "https://pay.payos.vn/web/link-1", "qr", "PENDING", 2_000_000_000));
         }
