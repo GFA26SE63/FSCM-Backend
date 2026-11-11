@@ -8,6 +8,33 @@ public sealed class IdentityServiceTests
 {
     private static readonly DateTimeOffset Now = new(2026, 10, 12, 10, 0, 0, TimeSpan.Zero);
 
+    [Theory]
+    [InlineData(SystemRoles.WarehouseKeeper)]
+    [InlineData(SystemRoles.SalesManager)]
+    public async Task Region_grants_can_be_added_and_revoked_for_scoped_management_roles(string role)
+    {
+        var fixture = new IdentityFixture();
+        var user = fixture.AddActiveUser(role, "region-scope@fscm.local", "Correct#Pass1");
+        var region = Guid.NewGuid(); fixture.Store.Regions.Add(region);
+        await fixture.Service.AssignRegionAsync(user.Id, region, Guid.NewGuid(), default);
+        Assert.True(Assert.Single(fixture.Store.RegionAssignments).IsActive);
+        await fixture.Service.UnassignRegionAsync(user.Id, region, Guid.NewGuid(), default);
+        Assert.False(Assert.Single(fixture.Store.RegionAssignments).IsActive);
+    }
+
+    [Theory]
+    [InlineData(SystemRoles.Sales)]
+    [InlineData(SystemRoles.Retailer)]
+    [InlineData(SystemRoles.Operator)]
+    public async Task Direct_region_grants_do_not_expand_other_roles(string role)
+    {
+        var fixture = new IdentityFixture();
+        var user = fixture.AddActiveUser(role, "region-scope@fscm.local", "Correct#Pass1");
+        var region = Guid.NewGuid(); fixture.Store.Regions.Add(region);
+        await Assert.ThrowsAsync<IdentityOperationException>(() => fixture.Service.AssignRegionAsync(user.Id, region, Guid.NewGuid(), default));
+        Assert.Empty(fixture.Store.RegionAssignments);
+    }
+
     [Fact]
     public async Task Login_issues_tokens_and_includes_current_scope()
     {

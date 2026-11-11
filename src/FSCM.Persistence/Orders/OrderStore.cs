@@ -176,15 +176,12 @@ public sealed class OrderStore(AppDbContext dbContext) : IOrderStore
             SystemRoles.Admin or SystemRoles.Operator => query,
             SystemRoles.Sales => query.Where(item => item.CreatedByUserId == actorUserId),
             SystemRoles.SalesManager => query.Where(item =>
-                dbContext.SalesGroupMemberRecords.Any(membership => membership.UserAccountId == actorUserId &&
-                    membership.SalesGroupId == item.SalesGroupId && membership.IsActive)),
+                ReportingScopeQueries.ManagedGroups(dbContext, actorUserId).Select(g => g.Id).Contains(item.SalesGroupId)),
             SystemRoles.WarehouseKeeper => query.Where(item =>
                 dbContext.AllocationRecords.Any(allocation =>
                     dbContext.SalesOrderLineRecords.Any(line => line.Id == allocation.SalesOrderLineId &&
                         line.SalesOrderId == item.Id) &&
-                    dbContext.UserWarehouseAssignmentRecords.Any(assignment =>
-                        assignment.UserAccountId == actorUserId && assignment.WarehouseId == allocation.WarehouseId &&
-                        assignment.IsActive))),
+                    ReportingScopeQueries.ManagedWarehouses(dbContext, actorUserId).Select(w => w.Id).Contains(allocation.WarehouseId))),
             SystemRoles.Retailer => query.Where(item =>
                 dbContext.RetailerRecords.Any(retailer => retailer.Id == item.RetailerId &&
                     retailer.UserAccountId == actorUserId)),
@@ -212,13 +209,10 @@ public sealed class OrderStore(AppDbContext dbContext) : IOrderStore
         {
             SystemRoles.Admin or SystemRoles.Operator => Task.FromResult(true),
             SystemRoles.Sales => Task.FromResult(order.Order.CreatedByUserId == actorUserId),
-            SystemRoles.SalesManager => dbContext.SalesGroupMemberRecords.AsNoTracking().AnyAsync(item =>
-                item.UserAccountId == actorUserId && item.SalesGroupId == order.Order.SalesGroupId && item.IsActive,
-                cancellationToken),
-            SystemRoles.WarehouseKeeper => dbContext.UserWarehouseAssignmentRecords.AsNoTracking().AnyAsync(item =>
-                item.UserAccountId == actorUserId && item.IsActive &&
+            SystemRoles.SalesManager => ReportingScopeQueries.ManagedGroups(dbContext, actorUserId).AnyAsync(item => item.Id == order.Order.SalesGroupId, cancellationToken),
+            SystemRoles.WarehouseKeeper => ReportingScopeQueries.ManagedWarehouses(dbContext, actorUserId).AnyAsync(item =>
                 order.Lines.SelectMany(line => line.Allocations).Select(allocation => allocation.WarehouseId)
-                    .Contains(item.WarehouseId), cancellationToken),
+                    .Contains(item.Id), cancellationToken),
             SystemRoles.Retailer => dbContext.RetailerRecords.AsNoTracking().AnyAsync(item =>
                 item.Id == order.Order.RetailerId && item.UserAccountId == actorUserId, cancellationToken),
             _ => Task.FromResult(false)

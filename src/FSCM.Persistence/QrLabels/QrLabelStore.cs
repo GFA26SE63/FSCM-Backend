@@ -13,8 +13,7 @@ public sealed class QrLabelStore(AppDbContext dbContext) : IQrLabelStore
     public Task<bool> CanAccessWarehouseAsync(Guid userId, string role, Guid warehouseId, CancellationToken cancellationToken) =>
         role is SystemRoles.Admin or SystemRoles.Operator
             ? Task.FromResult(true)
-            : dbContext.UserWarehouseAssignmentRecords.AsNoTracking().AnyAsync(item =>
-                item.UserAccountId == userId && item.WarehouseId == warehouseId && item.IsActive, cancellationToken);
+            : ReportingScopeQueries.ManagedWarehouses(dbContext, userId).AnyAsync(item => item.Id == warehouseId, cancellationToken);
 
     public Task<QrLabelView?> FindByCodeAsync(string qrCode, CancellationToken cancellationToken) =>
         CreateViewQuery(dbContext.BatchQrLabelRecords.AsNoTracking().Where(item => item.QrCode == qrCode))
@@ -34,8 +33,7 @@ public sealed class QrLabelStore(AppDbContext dbContext) : IQrLabelStore
         if (warehouseId.HasValue) labels = labels.Where(item => item.CurrentWarehouseId == warehouseId.Value);
         if (batchId.HasValue) labels = labels.Where(item => item.BatchId == batchId.Value);
         if (role == SystemRoles.WarehouseKeeper)
-            labels = labels.Where(item => dbContext.UserWarehouseAssignmentRecords.Any(assignment =>
-                assignment.UserAccountId == userId && assignment.WarehouseId == item.CurrentWarehouseId && assignment.IsActive));
+            labels = labels.Where(item => ReportingScopeQueries.ManagedWarehouses(dbContext, userId).Select(w => w.Id).Contains(item.CurrentWarehouseId));
         return await CreateViewQuery(labels.OrderBy(item => item.QrCode)).ToArrayAsync(cancellationToken);
     }
 
