@@ -28,6 +28,7 @@ public sealed partial class WarehouseConfigurationService(
     public async Task<WarehouseResult> CreateWarehouseAsync(SaveWarehouseData data, CancellationToken cancellationToken)
     {
         var normalized = ValidateWarehouse(data, includeCode: true);
+        await RequireActiveRegionAsync(normalized.RegionId, cancellationToken);
         if (await store.FindWarehouseByCodeAsync(normalized.Code, cancellationToken) is not null)
         {
             throw WarehouseConfigurationOperationException.Conflict($"Warehouse code '{normalized.Code}' already exists.");
@@ -58,6 +59,7 @@ public sealed partial class WarehouseConfigurationService(
         var normalized = ValidateWarehouse(data, includeCode: false);
         var warehouse = await store.FindWarehouseAsync(warehouseId, cancellationToken)
             ?? throw WarehouseConfigurationOperationException.NotFound("Warehouse was not found.");
+        await RequireActiveRegionAsync(normalized.RegionId, cancellationToken);
         var location = await store.FindWarehouseLocationAsync(warehouseId, cancellationToken);
         var now = timeProvider.GetUtcNow();
         warehouse.Name = normalized.Name;
@@ -91,6 +93,7 @@ public sealed partial class WarehouseConfigurationService(
     {
         var warehouse = await store.FindWarehouseAsync(warehouseId, cancellationToken)
             ?? throw WarehouseConfigurationOperationException.NotFound("Warehouse was not found.");
+        if (isActive) await RequireActiveRegionAsync(warehouse.RegionId, cancellationToken);
         warehouse.IsActive = isActive;
         warehouse.UpdatedAt = timeProvider.GetUtcNow();
         await store.SaveChangesAsync(cancellationToken);
@@ -382,6 +385,14 @@ public sealed partial class WarehouseConfigurationService(
         return key;
     }
 
+    private async Task RequireActiveRegionAsync(Guid regionId, CancellationToken cancellationToken)
+    {
+        var region = await store.FindRegionAsync(regionId, cancellationToken)
+            ?? throw WarehouseConfigurationOperationException.NotFound("Region was not found.");
+        if (!region.IsActive)
+            throw WarehouseConfigurationOperationException.Conflict("A warehouse must belong to an active region.");
+    }
+
     private static string ValidateConfigurationValue(string key, string rawJson)
     {
         JsonElement value;
@@ -395,31 +406,43 @@ public sealed partial class WarehouseConfigurationService(
                     !TryGetDecimal(value, "expiry", out var expiry) ||
                     !TryGetDecimal(value, "distance", out var distance) ||
                     !TryGetDecimal(value, "coverage", out var coverage) ||
-                    expiry < 0 || distance < 0 || coverage < 0 || expiry + distance + coverage != 1m)
+                    expiry is < 0 or > 1 || distance is < 0 or > 1 || coverage is < 0 or > 1 || expiry + distance + coverage != 1m)
                     throw WarehouseConfigurationOperationException.Validation("Allocation weights expiry, distance, and coverage must be non-negative and sum to 1.");
                 break;
             case BusinessConfigurationKeys.ServiceRadiusMeters:
-                if (!value.TryGetInt32(out var radius) || radius <= 0)
+                if (value.ValueKind != JsonValueKind.Number || !value.TryGetInt32(out var radius) || radius <= 0)
                     throw WarehouseConfigurationOperationException.Validation("Service radius must be a positive integer in meters.");
                 break;
             case BusinessConfigurationKeys.DefaultMlorRatio:
-                if (!value.TryGetDecimal(out var ratio) || ratio <= 0 || ratio >= 1)
+                if (value.ValueKind != JsonValueKind.Number || !value.TryGetDecimal(out var ratio) || ratio <= 0 || ratio >= 1)
                     throw WarehouseConfigurationOperationException.Validation("Default MLOR ratio must be greater than 0 and less than 1.");
+                break;
+            case BusinessConfigurationKeys.OrderStepCartons:
+                if (value.ValueKind != JsonValueKind.Number || !value.TryGetInt32(out var step) || step <= 0)
+                    throw WarehouseConfigurationOperationException.Validation("Order step must be a positive whole number of cartons.");
                 break;
             case BusinessConfigurationKeys.EtaSchedule:
                 if (value.ValueKind != JsonValueKind.Object ||
                     !value.TryGetProperty("timeZone", out var timeZone) ||
                     timeZone.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(timeZone.GetString()) ||
                     !value.TryGetProperty("preparationMinutes", out var preparation) ||
+                    preparation.ValueKind != JsonValueKind.Number ||
                     !preparation.TryGetInt32(out var preparationMinutes) || preparationMinutes < 0 ||
                     !value.TryGetProperty("bufferMinutes", out var buffer) ||
+                    buffer.ValueKind != JsonValueKind.Number ||
                     !buffer.TryGetInt32(out var bufferMinutes) || bufferMinutes < 0 ||
                     !value.TryGetProperty("dispatchSlotsLocalTime", out var slots) ||
                     slots.ValueKind != JsonValueKind.Array || slots.GetArrayLength() == 0 ||
                     slots.EnumerateArray().Any(slot => slot.ValueKind != JsonValueKind.String ||
-                        !TimeOnly.TryParse(slot.GetString(), out _)))
+                        !TimeOnly.TryParseExact(slot.GetString(), "HH:mm", System.Globalization.CultureInfo.InvariantCulture,
+                            System.Globalization.DateTimeStyles.None, out _)))
                     throw WarehouseConfigurationOperationException.Validation(
                         "ETA schedule needs a time zone, non-negative preparation/buffer minutes, and at least one valid dispatch slot.");
+                if (slots.EnumerateArray().Select(slot => slot.GetString()).Distinct().Count() != slots.GetArrayLength())
+                    throw WarehouseConfigurationOperationException.Validation("Dispatch slots must be unique.");
+                try { TimeZoneInfo.FindSystemTimeZoneById(timeZone.GetString()!); }
+                catch (Exception exception) when (exception is TimeZoneNotFoundException or InvalidTimeZoneException)
+                { throw WarehouseConfigurationOperationException.Validation("ETA schedule time zone is not supported."); }
                 break;
             case BusinessConfigurationKeys.SalesKpi:
                 if (value.ValueKind != JsonValueKind.Object ||
@@ -427,10 +450,10 @@ public sealed partial class WarehouseConfigurationService(
                     !TryGetDecimal(value, "retailersServedTarget", out var retailerTarget) || retailerTarget <= 0 ||
                     !TryGetDecimal(value, "newRetailersTarget", out var newRetailerTarget) || newRetailerTarget <= 0 ||
                     !TryGetDecimal(value, "promotionRevenueRatioMaximum", out var promotionMaximum) || promotionMaximum <= 0 || promotionMaximum >= 1 ||
-                    !TryGetDecimal(value, "successfulOrdersWeight", out var orderWeight) || orderWeight < 0 ||
-                    !TryGetDecimal(value, "retailersServedWeight", out var retailerWeight) || retailerWeight < 0 ||
-                    !TryGetDecimal(value, "newRetailersWeight", out var newRetailerWeight) || newRetailerWeight < 0 ||
-                    !TryGetDecimal(value, "promotionRevenueRatioWeight", out var promotionWeight) || promotionWeight < 0 ||
+                    !TryGetDecimal(value, "successfulOrdersWeight", out var orderWeight) || orderWeight is < 0 or > 1 ||
+                    !TryGetDecimal(value, "retailersServedWeight", out var retailerWeight) || retailerWeight is < 0 or > 1 ||
+                    !TryGetDecimal(value, "newRetailersWeight", out var newRetailerWeight) || newRetailerWeight is < 0 or > 1 ||
+                    !TryGetDecimal(value, "promotionRevenueRatioWeight", out var promotionWeight) || promotionWeight is < 0 or > 1 ||
                     Math.Abs(orderWeight + retailerWeight + newRetailerWeight + promotionWeight - 1m) > 0.0001m)
                     throw WarehouseConfigurationOperationException.Validation(
                         "Sales KPI targets must be positive, the promotion ratio must be between 0 and 1, and weights must be non-negative and sum to 1.");
@@ -451,7 +474,8 @@ public sealed partial class WarehouseConfigurationService(
     private static bool TryGetDecimal(JsonElement element, string name, out decimal value)
     {
         value = 0;
-        return element.TryGetProperty(name, out var property) && property.TryGetDecimal(out value);
+        return element.TryGetProperty(name, out var property) &&
+            property.ValueKind == JsonValueKind.Number && property.TryGetDecimal(out value);
     }
 
     private static bool JsonEquivalent(string left, string right)

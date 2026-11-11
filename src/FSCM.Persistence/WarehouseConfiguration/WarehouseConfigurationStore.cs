@@ -40,6 +40,9 @@ public sealed class WarehouseConfigurationStore(AppDbContext dbContext) : IWareh
                    assignment.WarehouseId, user.Id, user.FullName, user.Email))
             .ToArrayAsync(cancellationToken);
 
+    public Task<Region?> FindRegionAsync(Guid regionId, CancellationToken cancellationToken) =>
+        dbContext.RegionRecords.AsNoTracking().SingleOrDefaultAsync(item => item.Id == regionId, cancellationToken);
+
     public void AddWarehouse(Warehouse warehouse) => dbContext.WarehouseRecords.Add(warehouse);
     public void AddLocation(MapLocation location) => dbContext.MapLocationRecords.Add(location);
 

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using FSCM.Application.Common;
 using FSCM.Domain.Entities;
 
 namespace FSCM.Application.Features.TransitTables;
@@ -41,14 +42,17 @@ public sealed class TransitTableService(ITransitTableStore store, TimeProvider t
             throw TransitTableOperationException.Validation("Distance cannot be negative.");
         }
 
-        var view = at is { } moment
-            ? await store.FindEffectiveAtAsync(moment, cancellationToken)
-                ?? throw TransitTableOperationException.NotFound($"No transit table was in force at {moment:O}.")
-            : await store.FindCurrentAsync(cancellationToken)
-                ?? throw TransitTableOperationException.NotFound("No transit table has been published yet.");
+        var moment = at ?? timeProvider.GetUtcNow();
+        var view = await store.FindEffectiveAtAsync(moment, cancellationToken)
+            ?? throw TransitTableOperationException.NotFound($"No transit table was in force at {moment:O}.");
 
         var band = view.Bands.FirstOrDefault(item =>
             distanceMeters >= item.MinDistanceMeters && distanceMeters < item.MaxDistanceMeters)
+            // Serving radius is inclusive. If it is the table's final endpoint, it belongs to
+            // the final band; ordinary shared boundaries still resolve to the following band.
+            ?? (distanceMeters == view.Table.MaxServingDistanceMeters &&
+                view.Bands.Max(item => item.MaxDistanceMeters) == distanceMeters
+                ? view.Bands.FirstOrDefault(item => item.MaxDistanceMeters == distanceMeters) : null)
             ?? throw TransitTableOperationException.NotFound(
                 $"Transit table version {view.Table.Version} has no band covering {distanceMeters} m.");
 
@@ -72,6 +76,9 @@ public sealed class TransitTableService(ITransitTableStore store, TimeProvider t
         ArgumentNullException.ThrowIfNull(data);
         var bands = Validate(data);
         var now = timeProvider.GetUtcNow();
+        if (data.EffectiveFrom < EffectiveDates.Tomorrow(now))
+            throw TransitTableOperationException.Validation(
+                "A new transit table can take effect no earlier than tomorrow (Vietnam time).");
 
         var current = await store.FindCurrentForUpdateAsync(cancellationToken);
         if (current is not null)
@@ -83,7 +90,7 @@ public sealed class TransitTableService(ITransitTableStore store, TimeProvider t
             }
 
             current.IsActive = false;
-            current.EffectiveTo = data.EffectiveFrom;
+            current.EffectiveTo = data.EffectiveFrom.ToUniversalTime();
             current.UpdatedAt = now;
         }
 
@@ -92,10 +99,10 @@ public sealed class TransitTableService(ITransitTableStore store, TimeProvider t
             Id = Guid.NewGuid(),
             Version = await store.MaxVersionAsync(cancellationToken) + 1,
             MaxServingDistanceMeters = data.MaxServingDistanceMeters,
-            EffectiveFrom = data.EffectiveFrom,
+            EffectiveFrom = data.EffectiveFrom.ToUniversalTime(),
             EffectiveTo = null,
             IsActive = true,
-            Note = data.Note,
+            Note = data.Note?.Trim(),
             CreatedByUserId = actorUserId,
             CreatedAt = now,
             UpdatedAt = now
@@ -124,7 +131,7 @@ public sealed class TransitTableService(ITransitTableStore store, TimeProvider t
                 ? null
                 : JsonSerializer.Serialize(new { current.Version, current.EffectiveFrom }),
             NewValues = JsonSerializer.Serialize(new { table.Version, table.EffectiveFrom, BandCount = bands.Count }),
-            Reason = data.Note,
+            Reason = table.Note,
             CreatedAt = now
         });
 
@@ -142,6 +149,9 @@ public sealed class TransitTableService(ITransitTableStore store, TimeProvider t
         {
             throw TransitTableOperationException.Validation("Maximum serving distance must be greater than zero.");
         }
+
+        if (data.Note?.Trim().Length > 500)
+            throw TransitTableOperationException.Validation("Note cannot exceed 500 characters.");
 
         if (data.Bands.Count == 0)
         {
@@ -163,12 +173,12 @@ public sealed class TransitTableService(ITransitTableStore store, TimeProvider t
                     $"Band starting at {band.MinDistanceMeters} m must end after it starts.");
             }
 
-            if (band.HandlingMinutes < 0 || band.TransitMinutes < 0)
+            if (band.HandlingMinutes < 0 || band.TransitMinutes < 0 || (long)band.HandlingMinutes + band.TransitMinutes > int.MaxValue)
             {
                 throw TransitTableOperationException.Validation("Handling and transit minutes cannot be negative.");
             }
 
-            if (band.EstimatedCostAmount < 0)
+            if (band.EstimatedCostAmount < 0 || band.EstimatedCostAmount > 9999999999999999.99m || decimal.Round(band.EstimatedCostAmount, 2) != band.EstimatedCostAmount)
             {
                 throw TransitTableOperationException.Validation("Estimated cost cannot be negative.");
             }

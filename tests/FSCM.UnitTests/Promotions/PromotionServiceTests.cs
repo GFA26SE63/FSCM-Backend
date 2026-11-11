@@ -13,7 +13,7 @@ public sealed class PromotionServiceTests
         var fixture = new Fixture();
 
         var result = await fixture.Service.CreateAsync(new("Khuyến mãi sữa tháng mười", 10, 8,
-            Now.AddDays(-1), Now.AddDays(30),
+            Now, Now.AddDays(30),
             [fixture.Store.Product.Id, fixture.Store.Product.Id],
             [fixture.Store.Category.Id], [fixture.Store.Retailer.Id]),
             fixture.ActorId, CancellationToken.None);
@@ -155,6 +155,31 @@ public sealed class PromotionServiceTests
             CancellationToken.None)).Single();
 
         Assert.Equal(decimal.Parse(expectedRawDiscount), result.SuggestedDiscountPercent);
+    }
+
+    [Fact]
+    public async Task Campaign_today_starts_now_and_past_day_is_rejected()
+    {
+        var f = new Fixture();
+        var data = new CreatePromotionData("Khuyến mãi hôm nay", 1, 5, Now.AddHours(-5), Now.AddDays(1), [f.Store.Product.Id], [], []);
+        var result = await f.Service.CreateAsync(data, f.ActorId, CancellationToken.None);
+        Assert.Equal(Now, result.StartAt);
+        await Assert.ThrowsAsync<PromotionOperationException>(() => f.Service.CreateAsync(data with { StartAt = Now.AddDays(-1) }, f.ActorId, CancellationToken.None));
+        Assert.Single(f.Store.Promotions);
+    }
+
+    [Fact]
+    public async Task Activation_never_backdates_and_cannot_activate_at_expiry()
+    {
+        var f = new Fixture();
+        f.Store.AddCampaign(10, Now.AddDays(-2), Now.AddDays(1));
+        var promotion = f.Store.Promotions.Single();
+        promotion.IsActive = false;
+        await f.Service.ActivateAsync(promotion.Id, f.ActorId, CancellationToken.None);
+        Assert.Equal(Now, promotion.StartAt);
+        promotion.IsActive = false; promotion.EndAt = Now;
+        await Assert.ThrowsAsync<PromotionOperationException>(() => f.Service.ActivateAsync(promotion.Id, f.ActorId, CancellationToken.None));
+        Assert.False(promotion.IsActive);
     }
 
     private sealed class Fixture

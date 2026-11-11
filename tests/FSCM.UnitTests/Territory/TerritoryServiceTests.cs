@@ -95,6 +95,16 @@ public sealed class TerritoryServiceTests
         Assert.False(denied.CanCreateOrder);
     }
 
+    [Fact]
+    public async Task Region_with_active_warehouses_cannot_be_deactivated()
+    {
+        var f = new Fixture();
+        var region = f.AddRegion("HCM");
+        f.Store.HasActiveWarehouses = true;
+        await Assert.ThrowsAsync<TerritoryOperationException>(() => f.Service.SetRegionStatusAsync(region.Id, false, CancellationToken.None));
+        Assert.True(region.IsActive);
+    }
+
     private sealed class Fixture
     {
         public Fixture()
@@ -188,6 +198,8 @@ public sealed class TerritoryServiceTests
             Task.FromResult<IReadOnlyCollection<Region>>(Regions.Where(item => includeInactive || item.IsActive).ToArray());
         public Task<Region?> FindRegionAsync(Guid id, CancellationToken cancellationToken) => Task.FromResult(Regions.SingleOrDefault(item => item.Id == id));
         public Task<Region?> FindRegionByCodeAsync(string code, CancellationToken cancellationToken) => Task.FromResult(Regions.SingleOrDefault(item => item.Code == code));
+        public bool HasActiveWarehouses { get; set; }
+        public Task<bool> RegionHasActiveWarehousesAsync(Guid regionId, CancellationToken cancellationToken) => Task.FromResult(HasActiveWarehouses);
         public Task<bool> RegionHasActiveGroupsAsync(Guid id, CancellationToken cancellationToken) => Task.FromResult(Groups.Any(item => item.RegionId == id && item.IsActive));
         public void AddRegion(Region item) => Regions.Add(item);
         public Task<IReadOnlyCollection<SalesGroupView>> ListSalesGroupsAsync(Guid? regionId, bool includeInactive, CancellationToken cancellationToken) =>

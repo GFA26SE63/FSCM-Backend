@@ -25,6 +25,8 @@ public sealed class BusinessConfigurationsController(WarehouseConfigurationServi
     public Task<ConfigurationResult> Update(
         string key, UpdateBusinessConfigurationRequest request, CancellationToken cancellationToken)
     {
+        if (request.Value.ValueKind == System.Text.Json.JsonValueKind.Undefined)
+            throw WarehouseConfigurationOperationException.Validation("Configuration value is required.");
         var rawUserId = User.FindFirstValue(ClaimTypes.NameIdentifier);
         if (!Guid.TryParse(rawUserId, out var userId))
             throw WarehouseConfigurationOperationException.Validation("Authenticated user identifier is invalid.");

@@ -2,6 +2,7 @@ using FSCM.Application.Features.TransitTables;
 using FSCM.Domain.Entities;
 using FSCM.Persistence.DbContexts;
 using Microsoft.EntityFrameworkCore;
+using Npgsql;
 
 namespace FSCM.Persistence.TransitTables;
 
@@ -43,7 +44,14 @@ public sealed class TransitTableStore(AppDbContext dbContext) : ITransitTableSto
 
     public void AddAuditLog(AuditLog auditLog) => dbContext.AuditLogRecords.Add(auditLog);
 
-    public Task SaveChangesAsync(CancellationToken cancellationToken) => dbContext.SaveChangesAsync(cancellationToken);
+    public async Task SaveChangesAsync(CancellationToken cancellationToken)
+    {
+        try { await dbContext.SaveChangesAsync(cancellationToken); }
+        catch (DbUpdateException exception) when (exception.InnerException is PostgresException { SqlState: PostgresErrorCodes.UniqueViolation })
+        {
+            throw TransitTableOperationException.Conflict("Another version was published concurrently. Reload the latest version before publishing again.");
+        }
+    }
 
     private IQueryable<TransitTableView> CreateViewQuery(IQueryable<TransitTable> tables) =>
         tables.Select(table => new TransitTableView(

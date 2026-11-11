@@ -168,6 +168,51 @@ public sealed class WarehouseConfigurationServiceTests
         Assert.Empty(fixture.Store.Configurations);
     }
 
+    [Theory]
+    [InlineData(BusinessConfigurationKeys.ServiceRadiusMeters, "true")]
+    [InlineData(BusinessConfigurationKeys.DefaultMlorRatio, "\"0.2\"")]
+    [InlineData(BusinessConfigurationKeys.OrderStepCartons, "0")]
+    [InlineData(BusinessConfigurationKeys.OrderStepCartons, "1.5")]
+    [InlineData(BusinessConfigurationKeys.OrderStepCartons, "null")]
+    [InlineData(BusinessConfigurationKeys.AllocationWeights, "{\"expiry\":\"0.5\",\"distance\":0.3,\"coverage\":0.2}")]
+    [InlineData(BusinessConfigurationKeys.AllocationWeights, "{\"expiry\":79228162514264337593543950335,\"distance\":79228162514264337593543950335,\"coverage\":0}")]
+    public async Task Invalid_configuration_types_return_validation_without_creating_a_version(string key, string json)
+    {
+        var f = new Fixture();
+        var error = await Assert.ThrowsAsync<WarehouseConfigurationOperationException>(() => f.Service.UpdateConfigurationAsync(key, json, Guid.NewGuid(), CancellationToken.None));
+        Assert.Equal("validation_error", error.Code);
+        Assert.Empty(f.Store.Configurations);
+    }
+
+    [Theory]
+    [InlineData("Invalid/Zone", "0", "[\"06:00\"]")]
+    [InlineData("Asia/Ho_Chi_Minh", "\"0\"", "[\"06:00\"]")]
+    [InlineData("Asia/Ho_Chi_Minh", "0", "[\"06:00\",\"06:00\"]")]
+    [InlineData("Asia/Ho_Chi_Minh", "0", "[\"6am\"]")]
+    public async Task Eta_rejects_invalid_timezone_type_and_duplicate_slots(string zone, string preparation, string slots)
+    {
+        var f = new Fixture();
+        var json = $"{{\"timeZone\":\"{zone}\",\"preparationMinutes\":{preparation},\"bufferMinutes\":0,\"dispatchSlotsLocalTime\":{slots}}}";
+        var error = await Assert.ThrowsAsync<WarehouseConfigurationOperationException>(() => f.Service.UpdateConfigurationAsync(BusinessConfigurationKeys.EtaSchedule, json, Guid.NewGuid(), CancellationToken.None));
+        Assert.Equal("validation_error", error.Code);
+        Assert.Empty(f.Store.Configurations);
+    }
+
+    [Theory]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    public async Task Warehouse_requires_an_existing_active_region(bool exists, bool active)
+    {
+        var f = new Fixture();
+        f.Store.RegionExists = exists; f.Store.RegionActive = active;
+        await Assert.ThrowsAsync<WarehouseConfigurationOperationException>(() => f.Service.CreateWarehouseAsync(
+            new("WH-TD", "Kho Thủ Đức", f.RegionId, "Thành phố Thủ Đức", 10, 106, null, 0), CancellationToken.None));
+        Assert.Empty(f.Store.Warehouses);
+        var warehouse = f.AddWarehouse(); warehouse.IsActive = false;
+        await Assert.ThrowsAsync<WarehouseConfigurationOperationException>(() => f.Service.SetWarehouseStatusAsync(warehouse.Id, true, CancellationToken.None));
+        Assert.False(warehouse.IsActive);
+    }
+
     private sealed class Fixture
     {
         public Guid RegionId { get; } = Guid.NewGuid();
@@ -253,6 +298,10 @@ public sealed class WarehouseConfigurationServiceTests
             var item = Warehouses.SingleOrDefault(candidate => candidate.Id == id);
             return Task.FromResult(item is null ? null : new WarehouseView(item, Locations.SingleOrDefault(location => location.WarehouseId == id)));
         }
+        public bool RegionExists { get; set; } = true;
+        public bool RegionActive { get; set; } = true;
+        public Task<Region?> FindRegionAsync(Guid regionId, CancellationToken cancellationToken) =>
+            Task.FromResult<Region?>(RegionExists ? new Region { Id = regionId, IsActive = RegionActive } : null);
         public Task<Warehouse?> FindWarehouseAsync(Guid id, CancellationToken cancellationToken) => Task.FromResult(Warehouses.SingleOrDefault(item => item.Id == id));
         public Task<Warehouse?> FindWarehouseByCodeAsync(string code, CancellationToken cancellationToken) => Task.FromResult(Warehouses.SingleOrDefault(item => item.Code == code));
         public Task<MapLocation?> FindWarehouseLocationAsync(Guid id, CancellationToken cancellationToken) => Task.FromResult(Locations.SingleOrDefault(item => item.WarehouseId == id));
