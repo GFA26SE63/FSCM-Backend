@@ -35,6 +35,7 @@ public sealed record BatchCandidate(
     DateTimeOffset? EstimatedArrivalAt,
     DateOnly? EstimatedArrivalDate);
 
+[System.Text.Json.Serialization.JsonConverter(typeof(System.Text.Json.Serialization.JsonStringEnumConverter))]
 public enum AllocationFilterStage
 {
     Pool,
@@ -42,6 +43,7 @@ public enum AllocationFilterStage
     Delivery
 }
 
+[System.Text.Json.Serialization.JsonConverter(typeof(System.Text.Json.Serialization.JsonStringEnumConverter))]
 public enum AllocationFilterReason
 {
     Eligible,
