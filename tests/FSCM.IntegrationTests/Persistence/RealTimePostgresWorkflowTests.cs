@@ -151,6 +151,7 @@ public sealed class RealTimePostgresWorkflowTests
         {
             Assert.Equal(72m, await db.InventoryBalanceRecords.Where(b => db.BatchRecords.Any(x => x.Id == b.BatchId && x.ProductId == product)).SumAsync(b => b.ReservedQuantity));
         });
+        var qrGenerationAfterIssueVerified = false;
         async Task Fulfill(Guid orderId)
         {
             var lists = await Call<CurrentPickingService, IReadOnlyCollection<CurrentPickingResult>>(s => s.ListAsync(keeper, SystemRoles.WarehouseKeeper, null, null, default));
@@ -181,7 +182,45 @@ public sealed class RealTimePostgresWorkflowTests
                         db.AllocationRecords.Any(a => a.BatchId == b.Id && main.Lines.Select(l => l.Id).Contains(a.SalesOrderLineId))).ToArrayAsync())
                         batch.ExpirationDate = DateOnly.FromDateTime(DateTime.UtcNow).AddDays(7); await db.SaveChangesAsync(); });
                 }
+                foreach (var group in part.Lines.GroupBy(l => l.BatchId))
+                {
+                    var beforeIssue = await Call<QrLabelService, QrGenerationCapacityResult>(s =>
+                        s.GetGenerationCapacityAsync(group.Key, keeper, SystemRoles.WarehouseKeeper, default));
+                    Assert.Equal(group.Sum(l => l.Quantity), beforeIssue.LabelledQuantity);
+                }
                 var issued = await Call<ShipmentService, ShipmentResult>(s => s.ConfirmIssueAsync(part.Id, new(part.Version), keeper, SystemRoles.WarehouseKeeper, default));
+                // Regression: stock has left, but its labels stay Picked until dispatch.
+                foreach (var batchId in issued.Lines.Select(l => l.BatchId).Distinct())
+                {
+                    var capacity = await Call<QrLabelService, QrGenerationCapacityResult>(s =>
+                        s.GetGenerationCapacityAsync(batchId, keeper, SystemRoles.WarehouseKeeper, default));
+                    Assert.Equal(0, capacity.LabelledQuantity);
+                    Assert.Equal(capacity.PhysicalQuantity, capacity.UnlabelledQuantity);
+                    if (capacity.UnlabelledQuantity >= 11)
+                    {
+                        var generated = new List<Guid>();
+                        foreach (var quantity in new[] { 5m, 6m })
+                        {
+                            var key = Guid.NewGuid().ToString();
+                            var label = await Call<QrLabelService, QrLabelResult>(s => s.GenerateAsync(
+                                new(batchId, quantity, null), key, keeper, SystemRoles.WarehouseKeeper, default));
+                            var labelReplay = await Call<QrLabelService, QrLabelResult>(s => s.GenerateAsync(
+                                new(batchId, quantity, null), key, keeper, SystemRoles.WarehouseKeeper, default));
+                            Assert.Equal(label.Id, labelReplay.Id);
+                            generated.Add(label.Id);
+                        }
+                        var after = await Call<QrLabelService, QrGenerationCapacityResult>(s =>
+                            s.GetGenerationCapacityAsync(batchId, keeper, SystemRoles.WarehouseKeeper, default));
+                        Assert.Equal(capacity.PhysicalQuantity, after.PhysicalQuantity);
+                        Assert.Equal(capacity.UnlabelledQuantity - 11, after.UnlabelledQuantity);
+                        qrGenerationAfterIssueVerified = true;
+                        await Assert.ThrowsAsync<QrLabelOperationException>(() => Call<QrLabelService, QrLabelResult>(s =>
+                            s.GenerateAsync(new(batchId, after.UnlabelledQuantity + 1, null), Guid.NewGuid().ToString(), keeper, SystemRoles.WarehouseKeeper, default)));
+                        // Retire these test-only labels so the later picking scenarios create their own labels.
+                        await Db(async db => { foreach (var label in await db.BatchQrLabelRecords.Where(l => generated.Contains(l.Id)).ToArrayAsync())
+                            label.Status = QrLabelStatuses.Invalidated; await db.SaveChangesAsync(); });
+                    }
+                }
                 Guid driver = default, vehicle = default;
                 await Db(async db =>
                 {
@@ -233,6 +272,7 @@ public sealed class RealTimePostgresWorkflowTests
             await db.SaveChangesAsync();
         });
         await Fulfill(main.Id);
+        Assert.True(qrGenerationAfterIssueVerified, "Exercise 5- and 6-carton generation between issue and dispatch.");
         var targets = await Call<ComplaintService, IReadOnlyCollection<ComplaintTarget>>(s => s.ListTargetsAsync(retailerUser, main.Id, default));
         Assert.Equal(2, targets.Count);
         var complaintTarget = targets.First();

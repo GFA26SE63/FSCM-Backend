@@ -100,6 +100,24 @@ public sealed class QrLabelService(IQrLabelStore store, IQrCodeRenderer qrCodeRe
         return await ToDetailAsync(view, cancellationToken);
     }
 
+    public async Task<QrGenerationCapacityResult> GetGenerationCapacityAsync(
+        Guid batchId, Guid userId, string role, CancellationToken cancellationToken)
+    {
+        var batch = await store.FindBatchAsync(batchId, cancellationToken)
+            ?? throw QrLabelOperationException.NotFound("Batch was not found.");
+        await EnsureWarehouseAccessAsync(userId, role, batch.WarehouseId, cancellationToken);
+        return await CalculateGenerationCapacityAsync(batch.Id, cancellationToken);
+    }
+
+    private async Task<QrGenerationCapacityResult> CalculateGenerationCapacityAsync(
+        Guid batchId, CancellationToken cancellationToken)
+    {
+        var balance = await store.FindBalanceAsync(batchId, cancellationToken)
+            ?? throw QrLabelOperationException.Conflict("Batch inventory balance was not found.");
+        var labelled = await store.SumActiveQuantityAsync(batchId, cancellationToken);
+        return new(batchId, balance.PhysicalQuantity, labelled, Math.Max(0, balance.PhysicalQuantity - labelled));
+    }
+
     public async Task<QrLabelResult> GenerateAsync(
         GenerateQrLabelData data, string operationKey, Guid userId, string role, CancellationToken cancellationToken)
     {
@@ -122,11 +140,10 @@ public sealed class QrLabelService(IQrLabelStore store, IQrCodeRenderer qrCodeRe
         var batch = await store.FindBatchAsync(data.BatchId, cancellationToken)
             ?? throw QrLabelOperationException.NotFound("Batch was not found.");
         await EnsureWarehouseAccessAsync(userId, role, batch.WarehouseId, cancellationToken);
-        var balance = await store.FindBalanceAsync(batch.Id, cancellationToken)
-            ?? throw QrLabelOperationException.Conflict("Batch inventory balance was not found.");
-        var activeQuantity = await store.SumActiveQuantityAsync(batch.Id, cancellationToken);
-        if (activeQuantity + data.Quantity > balance.PhysicalQuantity)
-            throw QrLabelOperationException.Conflict("Label quantity exceeds the unlabelled physical batch quantity.");
+        var capacity = await CalculateGenerationCapacityAsync(batch.Id, cancellationToken);
+        if (data.Quantity > capacity.UnlabelledQuantity)
+            throw QrLabelOperationException.Conflict(
+                $"Lô hàng chỉ còn {capacity.UnlabelledQuantity:0.###} thùng chưa có tem QR. Vui lòng tải lại và kiểm tra số lượng.");
 
         var now = timeProvider.GetUtcNow();
         var id = Guid.NewGuid();
