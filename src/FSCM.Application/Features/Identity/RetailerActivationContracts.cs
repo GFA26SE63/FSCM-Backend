@@ -69,6 +69,7 @@ public sealed record RetailerAccountCreatedEmail(
 
 public interface IRetailerActivationStore
 {
+    Task<UserAccount?> FindUserByEmailAsync(string email, CancellationToken cancellationToken);
     Task<UserAccount?> FindUserByPhoneAsync(string phone, CancellationToken cancellationToken);
     Task<UserAccount?> FindUserByIdAsync(Guid userId, CancellationToken cancellationToken);
     Task<UserCredential?> FindCredentialAsync(Guid userId, CancellationToken cancellationToken);

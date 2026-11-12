@@ -68,6 +68,7 @@ public sealed record AuthenticationResult(
     string RefreshToken,
     DateTimeOffset RefreshTokenExpiresAt,
     AuthenticatedUser User);
+public sealed record LoginLookupResult(bool RequiresActivation);
 
 public sealed record AuthenticatedUser(
     Guid Id,
