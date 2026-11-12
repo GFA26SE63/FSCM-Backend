@@ -19,7 +19,7 @@ public sealed class MapService(IMapStore store, IMapProvider provider, TimeProvi
         catch (MapOperationException) { throw; }
         catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException)
         {
-            throw MapOperationException.Provider("Google Maps geocoding is temporarily unavailable.");
+            throw MapOperationException.Provider("VietMap geocoding is temporarily unavailable.");
         }
 
         ValidateCoordinates(resolved.Latitude, resolved.Longitude);
@@ -77,10 +77,10 @@ public sealed class MapService(IMapStore store, IMapProvider provider, TimeProvi
         catch (MapOperationException) { throw; }
         catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException)
         {
-            throw MapOperationException.Provider("Google Maps route distance is temporarily unavailable.");
+            throw MapOperationException.Provider("VietMap route distance is temporarily unavailable.");
         }
         if (resolved.DistanceMeters <= 0 || resolved.DurationSeconds <= 0)
-            throw MapOperationException.Provider("Google Maps did not return a usable route; zero distance is not accepted.");
+            throw MapOperationException.Provider("VietMap did not return a usable route; zero distance is not accepted.");
 
         var now = timeProvider.GetUtcNow();
         var previous = await store.FindActiveDistanceAsync(warehouseId, retailerId, true, cancellationToken);
@@ -142,7 +142,7 @@ public sealed class MapService(IMapStore store, IMapProvider provider, TimeProvi
     private static void ValidateCoordinates(decimal latitude, decimal longitude)
     {
         if (latitude is < -90 or > 90 || longitude is < -180 or > 180)
-            throw MapOperationException.Provider("Google Maps returned invalid coordinates.");
+            throw MapOperationException.Provider("VietMap returned invalid coordinates.");
     }
 
     private static MapLocationResult ToLocationResult(MapLocation item) => new(

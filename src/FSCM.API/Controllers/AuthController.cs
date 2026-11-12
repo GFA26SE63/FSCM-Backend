@@ -25,6 +25,9 @@ public sealed class AuthController(
             request.Password ?? string.Empty,
             GetRemoteIpAddress(),
             cancellationToken);
+    [AllowAnonymous]
+    [HttpPost("login/lookup")]
+    public Task<LoginLookupResult> LookupLogin(LookupLoginRequest request, CancellationToken cancellationToken) => identityService.LookupLoginAsync(request.Identifier, cancellationToken);
 
     [Authorize(Policy = AuthorizationPolicies.GoogleExchange)]
     [HttpPost("google/exchange")]
@@ -62,14 +65,14 @@ public sealed class AuthController(
     public async Task<ActionResult<OtpRequestResult>> RequestRetailerOtp(
         RequestRetailerOtpRequest request, CancellationToken cancellationToken) =>
         Accepted(await retailerActivationService.RequestOtpAsync(
-            request.Phone, request.Channel, GetRemoteIpAddress(), cancellationToken));
+            request.ResolvedIdentifier, request.Channel, GetRemoteIpAddress(), cancellationToken));
 
     [AllowAnonymous]
     [HttpPost("otp/verify")]
     [ProducesResponseType<OtpVerificationResult>(StatusCodes.Status200OK)]
     public Task<OtpVerificationResult> VerifyRetailerOtp(
         VerifyRetailerOtpRequest request, CancellationToken cancellationToken) =>
-        retailerActivationService.VerifyOtpAsync(request.Phone, request.Code, cancellationToken);
+        retailerActivationService.VerifyOtpAsync(request.ResolvedIdentifier, request.Code, cancellationToken);
 
     [AllowAnonymous]
     [HttpPost("password")]
