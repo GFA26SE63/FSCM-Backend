@@ -29,9 +29,10 @@ public sealed class RetailerActivationService(
         var requestedChannel = OtpChannels.Normalize(channel)
             ?? OtpChannels.Normalize(options.DefaultOtpChannel)
             ?? OtpChannels.Email;
-        phone = NormalizePhone(phone);
-        var user = await store.FindUserByPhoneAsync(phone, cancellationToken)
-            ?? throw IdentityOperationException.NotFound("Không tìm thấy tài khoản Retailer với số điện thoại này.");
+        var identifier = phone;
+        var user = await FindUserAsync(identifier, cancellationToken)
+            ?? throw IdentityOperationException.NotFound("Không tìm thấy tài khoản Retailer với Email hoặc số điện thoại này.");
+        phone = user.Phone ?? string.Empty;
         if (user.Role != SystemRoles.Retailer)
             throw IdentityOperationException.Forbidden("Chỉ tài khoản Retailer được kích hoạt qua OTP.");
         if (user.IsActive)
@@ -112,10 +113,10 @@ public sealed class RetailerActivationService(
 
     public async Task<OtpVerificationResult> VerifyOtpAsync(string phone, string code, CancellationToken cancellationToken)
     {
-        phone = NormalizePhone(phone);
+        var identifier = phone;
         if (code.Length != 6 || code.Any(character => !char.IsAsciiDigit(character)))
             throw IdentityOperationException.InvalidOtp();
-        var user = await store.FindUserByPhoneAsync(phone, cancellationToken)
+        var user = await FindUserAsync(identifier, cancellationToken)
             ?? throw IdentityOperationException.InvalidOtp();
         var challenge = await store.FindLatestAsync(user.Id, cancellationToken)
             ?? throw IdentityOperationException.InvalidOtp();
@@ -139,6 +140,11 @@ public sealed class RetailerActivationService(
         await store.SaveChangesAsync(cancellationToken);
         return new OtpVerificationResult(setupToken, challenge.SetupTokenExpiresAt.Value);
     }
+
+    private Task<UserAccount?> FindUserAsync(string identifier, CancellationToken cancellationToken) =>
+        identifier.Contains('@', StringComparison.Ordinal)
+            ? store.FindUserByEmailAsync(identifier.Trim().ToLowerInvariant(), cancellationToken)
+            : store.FindUserByPhoneAsync(NormalizePhone(identifier), cancellationToken);
 
     public async Task<AuthenticationResult> SetPasswordAsync(string setupToken, string password, string? ipAddress, CancellationToken cancellationToken)
     {
