@@ -34,7 +34,7 @@ public sealed class OrderService(
         CancellationToken cancellationToken,
         string actorRole = SystemRoles.Sales)
     {
-        if (actorRole is not (SystemRoles.Sales or SystemRoles.Retailer))
+        if (actorRole is not (SystemRoles.Admin or SystemRoles.Sales or SystemRoles.Retailer))
             throw OrderOperationException.Forbidden("Role cannot create orders.");
         var normalized = Normalize(data);
         var requestHash = ComputeRequestHash(normalized, salesUserId);

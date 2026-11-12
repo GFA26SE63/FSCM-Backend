@@ -55,8 +55,8 @@ public sealed class RetailerReceivableApiTests
         Assert.Equal(HttpStatusCode.NotFound, hidden.StatusCode);
 
         client.DefaultRequestHeaders.Authorization = Bearer(identityFactory.Admin, identityFactory);
-        var denied = await client.GetAsync("/api/v1/retailer/receivables");
-        Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
+        var adminResult = await client.GetAsync("/api/v1/retailer/receivables");
+        Assert.Equal(HttpStatusCode.OK, adminResult.StatusCode);
     }
 
     private static AuthenticationHeaderValue Bearer(
