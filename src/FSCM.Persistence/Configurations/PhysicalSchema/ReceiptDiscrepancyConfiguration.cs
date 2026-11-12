@@ -22,6 +22,22 @@ public sealed class ReceiptDiscrepancyConfiguration : IEntityTypeConfiguration<R
         builder.Property(entity => entity.ReportedAt).HasColumnType("timestamp with time zone").IsRequired();
         builder.Property(entity => entity.ReviewedAt).HasColumnType("timestamp with time zone").IsRequired(false);
         builder.Property(entity => entity.ResolvedAt).HasColumnType("timestamp with time zone").IsRequired(false);
+        builder.Property(x => x.RequestType).HasMaxLength(30).HasDefaultValue("Complaint");
+        builder.Property(x => x.SettlementMethod).HasMaxLength(20).HasDefaultValue("DebtOffset");
+        builder.Property(x => x.ApprovedSettlementMethod).HasMaxLength(20);
+        builder.Property(x => x.RequestedQuantity).HasPrecision(18,3);
+        builder.Property(x => x.ApprovedQuantity).HasPrecision(18,3);
+        builder.Property(x => x.HandledQuantity).HasPrecision(18,3);
+        builder.Property(x => x.DebtOffsetAmount).HasPrecision(18,0);
+        builder.Property(x => x.RefundAmount).HasPrecision(18,0);
+        builder.Property(x => x.Version).HasDefaultValue(1).IsConcurrencyToken();
+        builder.Property(x => x.RequestHash).HasMaxLength(64);
+        builder.HasIndex(x => new { x.ReportedByRetailerUserId, x.RequestId }).IsUnique().HasFilter("\"RequestId\" IS NOT NULL");
+        builder.ToTable(t => {
+            t.HasCheckConstraint("CK_REQUEST_Type", "\"RequestType\" IN ('Complaint','Return','DamagedCollection')");
+            t.HasCheckConstraint("CK_REQUEST_Settlement", "\"SettlementMethod\" IN ('DebtOffset','CashRefund','None') AND (\"ApprovedSettlementMethod\" IS NULL OR \"ApprovedSettlementMethod\" IN ('DebtOffset','CashRefund','None'))");
+            t.HasCheckConstraint("CK_REQUEST_Quantities", "\"RequestedQuantity\" >= 0 AND (\"ApprovedQuantity\" IS NULL OR (\"ApprovedQuantity\" > 0 AND \"ApprovedQuantity\" <= \"RequestedQuantity\")) AND (\"HandledQuantity\" IS NULL OR (\"HandledQuantity\" >= 0 AND \"HandledQuantity\" <= \"ApprovedQuantity\"))");
+        });
         builder.HasOne<SalesOrder>()
             .WithMany()
             .HasForeignKey(entity => entity.SalesOrderId)

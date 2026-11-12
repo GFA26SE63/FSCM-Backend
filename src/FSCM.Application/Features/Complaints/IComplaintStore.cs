@@ -10,6 +10,10 @@ public interface IComplaintStore
     Task<IReadOnlyCollection<ComplaintResult>> ListAsync(Guid actorUserId, string role, CancellationToken ct);
     Task<ComplaintResult> ResolveAsync(Guid id, Guid actorUserId, ResolveComplaintData data, DateTimeOffset now, CancellationToken ct);
     Task MarkFinancialAdjustmentAppliedAsync(Guid id, CancellationToken ct);
+    Task<ComplaintResult> CompleteHandlingAsync(Guid id, Guid actor, CompleteRequestHandlingData data, DateTimeOffset now, CancellationToken ct)
+        => throw new NotSupportedException();
+    Task RecordSettlementAsync(Guid id, decimal debtOffset, decimal refundAmount, Guid? refundId, DateTimeOffset now, CancellationToken ct)
+        => MarkFinancialAdjustmentAppliedAsync(id, ct);
     Task CancelAsync(Guid id, Guid actorUserId, DateTimeOffset now, CancellationToken ct);
     Task RequestEvidenceAsync(Guid id, Guid actorUserId, string reason, DateTimeOffset now, CancellationToken ct);
 

@@ -15,6 +15,8 @@ using FSCM.Persistence;
 using FSCM.Persistence.DbContexts;
 using FSCM.Persistence.Seeding;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -152,6 +154,8 @@ public sealed class RealTimePostgresWorkflowTests
             Assert.Equal(72m, await db.InventoryBalanceRecords.Where(b => db.BatchRecords.Any(x => x.Id == b.BatchId && x.ProductId == product)).SumAsync(b => b.ReservedQuantity));
         });
         var qrGenerationAfterIssueVerified = false;
+        ComplaintResult? earlyReturn = null;
+        Guid earlyAllocation = default;
         var twoChildSplitVerified = false;
         async Task Fulfill(Guid orderId)
         {
@@ -276,10 +280,35 @@ public sealed class RealTimePostgresWorkflowTests
                         new("Shortage recorded for complaint handling", receipt.Version), op, SystemRoles.Operator, default));
                     Assert.Equal(ShipmentStatuses.Received, resolved.Status);
                 }
+                if (orderId == main.Id && part.Id == parts.First().Id)
+                {
+                    var targetPart = Assert.Single(await Call<ComplaintService, IReadOnlyCollection<ComplaintTarget>>(s => s.ListTargetsAsync(retailerUser, main.Id, default)));
+                    earlyAllocation = targetPart.AllocationId;
+                    var early = await Call<ComplaintService, ReceiptDiscrepancy>(s => s.CreateAsync(retailerUser,
+                        new(main.OrderCode, targetPart.Sku, targetPart.LabelCode, 0, "Return received part before other deliveries", null,
+                            targetPart.ShipmentId, AllocationId: targetPart.AllocationId, RequestType: "Return", AffectedQuantity: 1, RequestId: Guid.NewGuid()), default));
+                    var view = await Call<ComplaintService, ComplaintResult>(s => s.GetAsync(early.Id, op, SystemRoles.Admin, default));
+                    var approved = await Call<ComplaintService, ComplaintResult>(s => s.ResolveAsync(early.Id, op, new("Approved", true, 1, ExpectedVersion: view.Version), default));
+                    earlyReturn = await Call<ComplaintService, ComplaintResult>(s => s.CompleteHandlingAsync(early.Id,op,
+                        new(approved.Version,1,DateTimeOffset.UtcNow,"Received externally","early-return-proof"),default));
+                    Assert.True(earlyReturn.PhysicalHandlingCompleted);
+                    Assert.Equal("Approved",earlyReturn.Status);
+                    Assert.False(earlyReturn.FinancialAdjustmentApplied);
+                    Assert.Null(earlyReturn.RefundId);
+                }
             }
             OrderDetailResult detail;
             detail = await Call<OrderService, OrderDetailResult>(s => s.GetAsync(orderId, retailerUser, SystemRoles.Retailer, default));
             Assert.Equal(OrderStatuses.Delivered, detail.Status);
+            if (orderId == main.Id && earlyReturn is not null)
+            {
+                earlyReturn = await Call<ComplaintService, ComplaintResult>(s => s.ResolveAsync(earlyReturn.Id,op,
+                    new("Finalize after whole order delivery",true,1,ExpectedVersion:earlyReturn.Version),default));
+                Assert.Equal("Resolved",earlyReturn.Status);
+                Assert.True(earlyReturn.FinancialAdjustmentApplied);
+                Assert.Equal(earlyReturn.AdjustmentAmount,earlyReturn.DebtOffsetAmount);
+                Assert.Null(earlyReturn.RefundId);
+            }
             var payment = await Call<PaymentService, PaymentResult>(s => s.GetByOrderAsync(orderId, sales, SystemRoles.Sales, default));
             Assert.NotNull(payment.DeliveredDate); Assert.Equal(payment.DeliveredDate.Value.AddDays(14), payment.DueDate);
             var paid = await Call<PaymentService, PaymentResult>(s => s.CollectAsync(orderId, new("Cash", payment.Version, "E2E cash"), $"e2e:{orderId}", sales, SystemRoles.Sales, default));
@@ -301,10 +330,54 @@ public sealed class RealTimePostgresWorkflowTests
             await db.SaveChangesAsync();
         });
         await Fulfill(main.Id);
+        Assert.NotNull(earlyReturn);
+        Assert.Equal("Resolved",earlyReturn.Status);
         Assert.True(qrGenerationAfterIssueVerified, "Exercise 5- and 6-carton generation between issue and dispatch.");
         var targets = await Call<ComplaintService, IReadOnlyCollection<ComplaintTarget>>(s => s.ListTargetsAsync(retailerUser, main.Id, default));
         Assert.Equal(2, targets.Count);
-        var complaintTarget = targets.First();
+        var returnTarget = targets.Single(t => t.AllocationId == earlyAllocation);
+        var beforeReturn = await Call<PaymentService, PaymentResult>(s => s.GetByOrderAsync(main.Id, op, SystemRoles.Operator, default));
+        var returnRequest = new CreateComplaintData(main.OrderCode, returnTarget.Sku, returnTarget.LabelCode, 0,
+            "Return received goods", null, returnTarget.ShipmentId, AllocationId: returnTarget.AllocationId,
+            RequestType: "Return", SettlementMethod: "CashRefund", AffectedQuantity: 2, RequiresCollection: true, RequestId: Guid.NewGuid());
+        var createdReturn = await Call<ComplaintService, ReceiptDiscrepancy>(s => s.CreateAsync(retailerUser, returnRequest, default));
+        var replayReturn = await Call<ComplaintService, ReceiptDiscrepancy>(s => s.CreateAsync(retailerUser, returnRequest, default));
+        Assert.Equal(createdReturn.Id, replayReturn.Id);
+        await Assert.ThrowsAsync<ComplaintOperationException>(() => Call<ComplaintService, ReceiptDiscrepancy>(s =>
+            s.CreateAsync(retailerUser, returnRequest with { Note = "changed request" }, default)));
+        var returnView = await Call<ComplaintService, ComplaintResult>(s => s.GetAsync(createdReturn.Id, retailerUser, SystemRoles.Retailer, default));
+        var returnApproval = new ResolveComplaintData("Approved return", true, 2, "CashRefund", returnView.Version);
+        var approvedReturn = await Call<ComplaintService, ComplaintResult>(s => s.ResolveAsync(createdReturn.Id, op, returnApproval, default));
+        Assert.False(approvedReturn.FinancialAdjustmentApplied);
+        Assert.Null(approvedReturn.RefundId);
+        Assert.Equal(2, approvedReturn.Documents.Count);
+        Assert.All(approvedReturn.Documents, d => Assert.Equal("Pending", d.Status));
+        Assert.Equal(beforeReturn.AdjustedAmount, (await Call<PaymentService, PaymentResult>(s => s.GetByOrderAsync(main.Id,op,SystemRoles.Operator,default))).AdjustedAmount);
+        await Assert.ThrowsAsync<ComplaintOperationException>(() => Call<ComplaintService, ComplaintResult>(s =>
+            s.CompleteHandlingAsync(createdReturn.Id, op, new(approvedReturn.Version, 3, DateTimeOffset.UtcNow, "collected", "proof"), default)));
+        var handling = new CompleteRequestHandlingData(approvedReturn.Version, 1, DateTimeOffset.UtcNow, "Collected one carton", "external-receipt-01");
+        var completedReturns = await Task.WhenAll(Enumerable.Range(0,2).Select(_ => Call<ComplaintService, ComplaintResult>(s =>
+            s.CompleteHandlingAsync(createdReturn.Id, op, handling, default))));
+        var returned = completedReturns[0];
+        Assert.Equal("Resolved", returned.Status);
+        Assert.True(returned.FinancialAdjustmentApplied);
+        Assert.NotNull(returned.RefundId);
+        Assert.Equal(returned.RefundId, completedReturns[1].RefundId);
+        Assert.Equal(returned.FinalUnitPrice, returned.RefundAmount);
+        Assert.Equal(0, returned.DebtOffsetAmount);
+        await Db(async db => Assert.Single(await db.ManualRefundRecords.Where(r => r.ReceiptDiscrepancyId == createdReturn.Id).ToArrayAsync()));
+        var collection = await Call<ComplaintService, ReceiptDiscrepancy>(s => s.CreateAsync(retailerUser,
+            returnRequest with { RequestId = Guid.NewGuid(), RequestType = "DamagedCollection", SettlementMethod = "None", AffectedQuantity = 1 }, default));
+        var collectionView = await Call<ComplaintService, ComplaintResult>(s => s.GetAsync(collection.Id,retailerUser,SystemRoles.Retailer,default));
+        var collectionApproval = await Call<ComplaintService, ComplaintResult>(s => s.ResolveAsync(collection.Id, op, new("Collect only",true,1,"None",collectionView.Version),default));
+        Assert.Equal("CollectionOrder", Assert.Single(collectionApproval.Documents).Kind);
+        var collected = await Call<ComplaintService, ComplaintResult>(s => s.CompleteHandlingAsync(collection.Id,op,
+            new(collectionApproval.Version,1,DateTimeOffset.UtcNow,"Disposed externally","disposal-proof-01"),default));
+        Assert.Equal("Resolved", collected.Status);
+        Assert.Null(collected.RefundId);
+        Assert.False(collected.FinancialAdjustmentApplied);
+        Assert.Equal(0, collected.AdjustmentAmount);
+        var complaintTarget = targets.Single(t => t.AllocationId != returnTarget.AllocationId);
         var rejectedClaim = await Call<ComplaintService, ReceiptDiscrepancy>(s => s.CreateAsync(retailerUser,
             new(main.OrderCode, complaintTarget.Sku, complaintTarget.LabelCode, complaintTarget.ExpectedQuantity - 1, "reject test", null, complaintTarget.ShipmentId, AllocationId: complaintTarget.AllocationId), default));
         await Call<ComplaintService, ComplaintResult>(s => s.ResolveAsync(rejectedClaim.Id, op, new("Rejected", false), default));
@@ -361,5 +434,26 @@ public sealed class RealTimePostgresWorkflowTests
         var recoveredQuote = await Quote(interruptedId);
         await Call<QuoteService, SalesOrderQuoteResult>(s => s.RejectAsync(recoveredQuote.Id, recoveredQuote.Version, "Release recovery test stock", retailerUser, SystemRoles.Retailer, default));
         await Db(async db => { Assert.All(await db.InventoryBalanceRecords.Where(b => db.BatchRecords.Any(x => x.Id == b.BatchId && x.ProductId == product)).ToArrayAsync(), b => Assert.Equal(0m, b.ReservedQuantity)); });
+        // Rehearse the upgrade over actual legacy records. Migration must never post money.
+        await Db(async db =>
+        {
+            var paymentBefore = await db.PaymentRecords.AsNoTracking().OrderBy(x => x.Id).Select(x => new {x.Id,x.AdjustedAmount,x.ConfirmedAmount,x.Version}).ToArrayAsync();
+            var refundCount = await db.ManualRefundRecords.CountAsync();
+            var migrator = db.GetService<IMigrator>();
+            await migrator.MigrateAsync("20261111120430_AddUniqueAccountPhone");
+            await db.Database.ExecuteSqlInterpolatedAsync($"UPDATE \"RECEIPT_DISCREPANCY\" SET \"Status\"=3, \"ResolutionType\"=1, \"ResolvedAt\"=NOW() WHERE \"Id\"={rejectedClaim.Id}");
+            await migrator.MigrateAsync();
+            db.ChangeTracker.Clear();
+            var posted = await db.ReceiptDiscrepancyRecords.SingleAsync(x=>x.Id==claim.Id);
+            Assert.True(posted.FinancialAdjustmentApplied);
+            Assert.Equal("Resolved",posted.Status);
+            var unposted = await db.ReceiptDiscrepancyRecords.SingleAsync(x=>x.Id==rejectedClaim.Id);
+            Assert.False(unposted.FinancialAdjustmentApplied);
+            Assert.True(unposted.PhysicalHandlingCompleted);
+            Assert.Equal("Approved",unposted.Status);
+            Assert.Null(unposted.ResolvedAt);
+            Assert.Equal(paymentBefore,await db.PaymentRecords.AsNoTracking().OrderBy(x=>x.Id).Select(x=>new {x.Id,x.AdjustedAmount,x.ConfirmedAmount,x.Version}).ToArrayAsync());
+            Assert.Equal(refundCount,await db.ManualRefundRecords.CountAsync());
+        });
     }
 }
