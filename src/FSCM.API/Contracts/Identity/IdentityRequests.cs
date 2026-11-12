@@ -18,6 +18,7 @@ public sealed record LoginRequest(string? Identifier, string? Password, string? 
 }
 
 public sealed record RefreshTokenRequest(string RefreshToken);
+public sealed record LookupLoginRequest(string Identifier);
 
 public sealed record ActivateAccountRequest(string Token, string Password);
 
@@ -27,8 +28,8 @@ public sealed record ConfirmPasswordResetRequest(string Token, string Password);
 
 /// <param name="Phone">Retailer phone number (10 digits starting with 0).</param>
 /// <param name="Channel">Optional <c>Sms</c> or <c>Email</c>; defaults to <c>RetailerActivation:DefaultOtpChannel</c>.</param>
-public sealed record RequestRetailerOtpRequest(string Phone, string? Channel = null);
-public sealed record VerifyRetailerOtpRequest(string Phone, string Code);
+public sealed record RequestRetailerOtpRequest(string? Phone, string? Channel = null, string? Identifier = null) { public string ResolvedIdentifier => Identifier ?? Phone ?? string.Empty; }
+public sealed record VerifyRetailerOtpRequest(string? Phone, string Code, string? Identifier = null) { public string ResolvedIdentifier => Identifier ?? Phone ?? string.Empty; }
 public sealed record SetRetailerPasswordRequest(string SetupToken, string Password);
 
 public sealed record CreateUserRequest(

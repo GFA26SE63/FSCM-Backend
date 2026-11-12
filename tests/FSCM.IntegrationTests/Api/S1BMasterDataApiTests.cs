@@ -333,7 +333,7 @@ public sealed class S1BMasterDataApiTests
             DestinationLocationVersion = 1,
             DistanceMeters = 12_000,
             DurationSeconds = 1_800,
-            Provider = "GoogleMaps",
+            Provider = "VietMap",
             ProviderStatus = "ROUTE_EXISTS",
             Version = 2,
             CalculatedAt = Now.AddHours(-1),

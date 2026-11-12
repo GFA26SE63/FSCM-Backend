@@ -16,6 +16,13 @@ public sealed class IdentityService(
     private static readonly TimeSpan LockoutDuration = TimeSpan.FromMinutes(15);
     private static readonly TimeSpan ActivationTokenLifetime = TimeSpan.FromHours(24);
     private static readonly TimeSpan PasswordResetTokenLifetime = TimeSpan.FromMinutes(30);
+    public async Task<LoginLookupResult> LookupLoginAsync(string identifier, CancellationToken cancellationToken)
+    {
+        var value = identifier.Trim();
+        var user = value.Contains('@') ? await store.FindUserByEmailAsync(NormalizeEmail(value), cancellationToken) : await store.FindUserByPhoneAsync(ValidatePhone(value), cancellationToken);
+        if (user is null) throw IdentityOperationException.NotFound("Không tìm thấy tài khoản với Email hoặc số điện thoại này.");
+        return new LoginLookupResult(user.Role == SystemRoles.Retailer && !user.IsActive && await store.FindCredentialAsync(user.Id, cancellationToken) is null);
+    }
 
     public async Task<AuthenticationResult> LoginAsync(
         string identifier,
@@ -645,7 +652,11 @@ public sealed class IdentityService(
             accessToken.ExpiresAt,
             rawRefreshToken,
             refreshToken.ExpiresAt,
-            ToAuthenticatedUser(user, credential?.MustChangePassword ?? false, scope));
+            ToAuthenticatedUser(
+                user,
+                credential?.MustChangePassword ?? false,
+                scope,
+                await store.GetScopeLabelsAsync(scope, cancellationToken)));
     }
 
     private async Task<AccountToken> FindUsableAccountTokenAsync(
