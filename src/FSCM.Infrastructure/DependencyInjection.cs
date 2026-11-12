@@ -38,8 +38,8 @@ public static class DependencyInjection
         });
         services.AddSingleton(configuration.GetSection(RetailerActivationOptions.SectionName)
             .Get<RetailerActivationOptions>() ?? new RetailerActivationOptions());
-        services.AddHttpClient("GoogleMaps", client => client.Timeout = TimeSpan.FromSeconds(10));
-        services.AddSingleton<IMapProvider, GoogleMapsProvider>();
+        services.AddHttpClient("VietMap", client => client.Timeout = TimeSpan.FromSeconds(10));
+        services.AddSingleton<IMapProvider, VietMapProvider>();
         services.AddSingleton<IPasswordHasher, BcryptPasswordHasher>();
         services.AddSingleton<IIdentityTokenProvider, JwtIdentityTokenProvider>();
         services.AddSingleton<IQrCodeRenderer, QrCoderQrCodeRenderer>();

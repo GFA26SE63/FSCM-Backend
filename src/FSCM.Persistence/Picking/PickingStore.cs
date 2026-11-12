@@ -87,9 +87,21 @@ public sealed class PickingStore(AppDbContext dbContext) : IPickingStore
             from labelEvent in dbContext.QrLabelEventRecords.AsNoTracking()
             join label in dbContext.BatchQrLabelRecords.AsNoTracking()
                 on labelEvent.BatchQrLabelId equals label.Id
+            join parent in dbContext.BatchQrLabelRecords.AsNoTracking()
+                on label.ParentLabelId equals (Guid?)parent.Id into parents
+            from parent in parents.DefaultIfEmpty()
+            join replacementEvent in dbContext.QrLabelEventRecords.AsNoTracking()
+                on labelEvent.OperationKey + ":replacement" equals replacementEvent.OperationKey into replacementEvents
+            from replacementEvent in replacementEvents.DefaultIfEmpty()
+            join replacement in dbContext.BatchQrLabelRecords.AsNoTracking()
+                on (Guid?)replacementEvent.BatchQrLabelId equals (Guid?)replacement.Id into replacements
+            from replacement in replacements.DefaultIfEmpty()
             where labelEvent.EventType == QrLabelEventTypes.Picked && labelEvent.ReferenceCode == list.PickingCode
             orderby labelEvent.OccurredAt, labelEvent.Id
-            select new PickingScanView(labelEvent, label.QrCode)).ToArrayAsync(cancellationToken);
+            select new PickingScanView(labelEvent, label.QrCode,
+                parent == null || replacement == null ? label.QrCode : parent.QrCode,
+                replacement == null ? null : replacement.QrCode,
+                replacement == null ? 0 : replacement.Quantity)).ToArrayAsync(cancellationToken);
         var itemViews = items.Select(item =>
         {
             var allocation = allocations[item.AllocationId];

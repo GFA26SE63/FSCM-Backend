@@ -3158,10 +3158,39 @@ namespace FSCM.Persistence.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
+                    b.Property<decimal?>("ApprovedQuantity")
+                        .HasPrecision(18, 3)
+                        .HasColumnType("numeric(18,3)");
+
+                    b.Property<string>("ApprovedSettlementMethod")
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<decimal>("DebtOffsetAmount")
+                        .HasPrecision(18)
+                        .HasColumnType("numeric(18,0)");
+
+                    b.Property<bool>("FinancialAdjustmentApplied")
+                        .HasColumnType("boolean");
+
+                    b.Property<decimal?>("HandledQuantity")
+                        .HasPrecision(18, 3)
+                        .HasColumnType("numeric(18,3)");
+
                     b.Property<string>("Note")
                         .HasColumnType("text");
 
+                    b.Property<bool>("PhysicalHandlingCompleted")
+                        .HasColumnType("boolean");
+
                     b.Property<Guid>("ReceiptConfirmationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<decimal>("RefundAmount")
+                        .HasPrecision(18)
+                        .HasColumnType("numeric(18,0)");
+
+                    b.Property<Guid?>("RefundId")
                         .HasColumnType("uuid");
 
                     b.Property<DateTimeOffset>("ReportedAt")
@@ -3169,6 +3198,27 @@ namespace FSCM.Persistence.Migrations
 
                     b.Property<Guid>("ReportedByRetailerUserId")
                         .HasColumnType("uuid");
+
+                    b.Property<string>("RequestHash")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<Guid?>("RequestId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("RequestType")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)")
+                        .HasDefaultValue("Complaint");
+
+                    b.Property<decimal>("RequestedQuantity")
+                        .HasPrecision(18, 3)
+                        .HasColumnType("numeric(18,3)");
+
+                    b.Property<bool>("RequiresCollection")
+                        .HasColumnType("boolean");
 
                     b.Property<short?>("ResolutionType")
                         .HasColumnType("smallint");
@@ -3185,24 +3235,45 @@ namespace FSCM.Persistence.Migrations
                     b.Property<Guid>("SalesOrderId")
                         .HasColumnType("uuid");
 
+                    b.Property<string>("SettlementMethod")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasDefaultValue("DebtOffset");
+
                     b.Property<short>("Status")
                         .HasColumnType("smallint");
+
+                    b.Property<int>("Version")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(1);
 
                     b.HasKey("Id");
 
                     b.HasIndex("ReceiptConfirmationId");
 
-                    b.HasIndex("ReportedByRetailerUserId");
-
                     b.HasIndex("ReviewedByUserId");
 
                     b.HasIndex("SalesOrderId");
+
+                    b.HasIndex("ReportedByRetailerUserId", "RequestId")
+                        .IsUnique()
+                        .HasFilter("\"RequestId\" IS NOT NULL");
 
                     b.ToTable("RECEIPT_DISCREPANCY", null, t =>
                         {
                             t.HasCheckConstraint("CK_RECEIPT_DISCREPANCY_ResolutionType", "\"ResolutionType\" IS NULL OR \"ResolutionType\" BETWEEN 0 AND 1");
 
                             t.HasCheckConstraint("CK_RECEIPT_DISCREPANCY_Status", "\"Status\" BETWEEN 0 AND 5");
+
+                            t.HasCheckConstraint("CK_REQUEST_Quantities", "\"RequestedQuantity\" >= 0 AND (\"ApprovedQuantity\" IS NULL OR (\"ApprovedQuantity\" > 0 AND \"ApprovedQuantity\" <= \"RequestedQuantity\")) AND (\"HandledQuantity\" IS NULL OR (\"HandledQuantity\" >= 0 AND \"HandledQuantity\" <= \"ApprovedQuantity\"))");
+
+                            t.HasCheckConstraint("CK_REQUEST_Settlement", "\"SettlementMethod\" IN ('DebtOffset','CashRefund','None') AND (\"ApprovedSettlementMethod\" IS NULL OR \"ApprovedSettlementMethod\" IN ('DebtOffset','CashRefund','None'))");
+
+                            t.HasCheckConstraint("CK_REQUEST_Type", "\"RequestType\" IN ('Complaint','Return','DamagedCollection')");
                         });
                 });
 
@@ -3900,6 +3971,73 @@ namespace FSCM.Persistence.Migrations
                     b.HasIndex("SalesGroupId", "AssignedAt");
 
                     b.ToTable("RETAILER_SALES_ASSIGNMENT", (string)null);
+                });
+
+            modelBuilder.Entity("FSCM.Domain.Entities.ReturnHandlingDocument", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<decimal?>("ActualQuantity")
+                        .HasPrecision(18, 3)
+                        .HasColumnType("numeric(18,3)");
+
+                    b.Property<decimal>("ApprovedQuantity")
+                        .HasPrecision(18, 3)
+                        .HasColumnType("numeric(18,3)");
+
+                    b.Property<string>("Code")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
+
+                    b.Property<DateTimeOffset?>("CompletedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("CompletedByUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("EvidenceReference")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)");
+
+                    b.Property<string>("Note")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<Guid>("ReceiptDiscrepancyId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Code")
+                        .IsUnique();
+
+                    b.HasIndex("ReceiptDiscrepancyId", "Kind")
+                        .IsUnique();
+
+                    b.ToTable("RETURN_HANDLING_DOCUMENT", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_RETURN_HANDLING_Kind", "\"Kind\" IN ('ReturnOrder','CollectionOrder')");
+
+                            t.HasCheckConstraint("CK_RETURN_HANDLING_Quantity", "\"ApprovedQuantity\" > 0 AND (\"ActualQuantity\" IS NULL OR (\"ActualQuantity\" >= 0 AND \"ActualQuantity\" <= \"ApprovedQuantity\"))");
+
+                            t.HasCheckConstraint("CK_RETURN_HANDLING_Status", "\"Status\" IN ('Pending','Completed','Waived')");
+                        });
                 });
 
             modelBuilder.Entity("FSCM.Domain.Entities.RewardRedemption", b =>
@@ -6226,6 +6364,15 @@ namespace FSCM.Persistence.Migrations
                     b.HasOne("FSCM.Domain.Entities.SalesGroup", null)
                         .WithMany()
                         .HasForeignKey("SalesGroupId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("FSCM.Domain.Entities.ReturnHandlingDocument", b =>
+                {
+                    b.HasOne("FSCM.Domain.Entities.ReceiptDiscrepancy", null)
+                        .WithMany()
+                        .HasForeignKey("ReceiptDiscrepancyId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
                 });

@@ -69,11 +69,24 @@ public sealed class QrLabelStore(AppDbContext dbContext) : IQrLabelStore
     public Task<InventoryBalance?> FindBalanceAsync(Guid batchId, CancellationToken cancellationToken) =>
         dbContext.InventoryBalanceRecords.AsNoTracking().SingleOrDefaultAsync(item => item.BatchId == batchId, cancellationToken);
 
-    public Task<decimal> SumActiveQuantityAsync(Guid batchId, CancellationToken cancellationToken) =>
-        dbContext.BatchQrLabelRecords.AsNoTracking()
+    public Task<decimal> SumActiveQuantityAsync(Guid batchId, CancellationToken cancellationToken)
+    {
+        // ConfirmIssue deducts physical stock before Dispatch changes Picked to InTransit.
+        // Those labels belong to the issued shipment, not to the stock still in the warehouse.
+        var issuedLabels =
+            from picked in dbContext.QrLabelEventRecords
+            join list in dbContext.PickingListRecords on picked.ReferenceCode equals list.PickingCode
+            join shipment in dbContext.ShipmentRecords on list.Id equals shipment.PickingListId
+            where picked.EventType == QrLabelEventTypes.Picked && shipment.IssuedAt != null &&
+                  picked.WarehouseId == shipment.WarehouseId
+            select picked.BatchQrLabelId;
+
+        return dbContext.BatchQrLabelRecords.AsNoTracking()
             .Where(item => item.BatchId == batchId &&
-                           (item.Status == QrLabelStatuses.Available || item.Status == QrLabelStatuses.Picked))
+                           (item.Status == QrLabelStatuses.Available ||
+                            item.Status == QrLabelStatuses.Picked && !issuedLabels.Contains(item.Id)))
             .SumAsync(item => item.Quantity, cancellationToken);
+    }
 
     public async Task<string> NextQrCodeAsync(CancellationToken cancellationToken)
     {

@@ -9,7 +9,8 @@ public sealed record PickingItemView(
     SalesOrderLine OrderLine,
     Batch Batch);
 
-public sealed record PickingScanView(QrLabelEvent Event, string QrCode);
+public sealed record PickingScanView(QrLabelEvent Event, string QrCode,
+    string? SourceQrCode = null, string? ReplacementQrCode = null, decimal ReplacementQuantity = 0);
 
 public sealed record PickingView(
     PickingList List,

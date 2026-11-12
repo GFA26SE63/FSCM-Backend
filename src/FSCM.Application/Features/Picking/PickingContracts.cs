@@ -24,7 +24,8 @@ public sealed record ScanPickingLabelData(string QrCode, decimal? Quantity, int 
     int ExpectedLabelVersion, IReadOnlyCollection<RunPickingSplitQuantityData> Splits);
 public sealed record CompleteRunPickingData(int ExpectedPickingVersion, string? ExceptionType, string? Note);
 public sealed record PickingScanResult(string OperationKey, string QrCode, decimal Quantity,
-    Guid PerformedByUserId, DateTimeOffset OccurredAt);
+    Guid PerformedByUserId, DateTimeOffset OccurredAt,
+    string? SourceQrCode = null, string? ReplacementQrCode = null, decimal ReplacementQuantity = 0);
 public sealed record RunPickingSplitWorkflowResult(Guid Id, Guid AllocationRunAllocationId,
     Guid AllocationPlanPriceId, Guid SalesOrderId, Guid SalesOrderLineId, string OrderCode,
     decimal RequiredQuantity, decimal PickedQuantity, decimal RemainingQuantity);

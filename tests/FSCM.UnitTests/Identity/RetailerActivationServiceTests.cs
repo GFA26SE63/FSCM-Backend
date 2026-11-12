@@ -143,6 +143,8 @@ public sealed class RetailerActivationServiceTests
 
     private sealed class ActivationStore : IRetailerActivationStore
     {
+        public Task<UserAccount?> FindUserByEmailAsync(string email, CancellationToken cancellationToken) =>
+            Task.FromResult(Users.SingleOrDefault(user => user.Email == email));
         public List<UserAccount> Users { get; } = [];
         public List<Retailer> Retailers { get; } = [];
         public List<UserCredential> Credentials { get; } = [];

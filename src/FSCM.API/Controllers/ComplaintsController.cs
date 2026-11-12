@@ -27,15 +27,17 @@ public sealed class ComplaintsController(ComplaintService service) : ControllerB
     {
         var created = await service.CreateAsync(ActorId(), new(request.OrderCode, request.Sku, request.LabelCode,
             request.ActualQty, request.Note, request.EvidenceUrl, request.ShipmentId,
-            request.AllocationPlanPriceId, request.AllocationId, request.IssueType), ct);
+            request.AllocationPlanPriceId, request.AllocationId, request.IssueType, request.RequestType,
+            request.SettlementMethod, request.AffectedQuantity, request.RequiresCollection, request.RequestId), ct);
         var result = (await service.ListAsync(ActorId(), SystemRoles.Retailer, ct)).Single(x => x.Id == created.Id);
         return CreatedAtAction(nameof(List), new { id = result.Id }, result);
     }
 
-    [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator}")]
+    [Authorize(Roles = SystemRoles.Admin)]
     [HttpPost("{id:guid}/resolve")]
     public Task<ComplaintResult> Resolve(Guid id, ResolveComplaintRequest request, CancellationToken ct) =>
-        service.ResolveAsync(id, ActorId(), new(request.Result, request.Approved), ct);
+        service.ResolveAsync(id, ActorId(), new(request.Result, request.Approved, request.ApprovedQuantity,
+            request.SettlementMethod, request.ExpectedVersion, request.WaivePhysicalHandling, request.WaiverReason), ct);
 
     [HttpGet("{id:guid}")]
     public Task<ComplaintResult> Get(Guid id, CancellationToken ct) => service.GetAsync(id, ActorId(), Role(), ct);
@@ -50,14 +52,21 @@ public sealed class ComplaintsController(ComplaintService service) : ControllerB
     [Authorize(Roles = SystemRoles.Admin)]
     [HttpPost("{id:guid}/reject")]
     public Task<ComplaintResult> Reject(Guid id, RejectComplaintRequest request, CancellationToken ct) =>
-        service.ResolveAsync(id, ActorId(), new(request.Reason, false), ct);
+        service.ResolveAsync(id, ActorId(), new(request.Reason, false, ExpectedVersion: request.ExpectedVersion), ct);
 
     /// <summary>Admin duyệt khiếu nại; xử lý bằng tiền (điều chỉnh công nợ / hoàn tiền F101).</summary>
     [Authorize(Roles = SystemRoles.Admin)]
     [HttpPost("{id:guid}/approve")]
     public Task<ComplaintResult> Approve(Guid id, ApproveComplaintRequest request, CancellationToken ct) =>
         service.ResolveAsync(id, ActorId(),
-            new(string.IsNullOrWhiteSpace(request.Note) ? "Approved" : request.Note, true), ct);
+            new(string.IsNullOrWhiteSpace(request.Note) ? "Approved" : request.Note, true, request.ApprovedQuantity,
+                request.SettlementMethod, request.ExpectedVersion, request.WaivePhysicalHandling, request.WaiverReason), ct);
+
+    [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator}")]
+    [HttpPost("{id:guid}/complete-handling")]
+    public Task<ComplaintResult> CompleteHandling(Guid id, CompleteRequestHandlingRequest request, CancellationToken ct) =>
+        service.CompleteHandlingAsync(id, ActorId(), new(request.ExpectedVersion, request.ActualQuantity,
+            request.CompletedAt, request.Note, request.EvidenceReference), ct);
 
     /// <summary>Retailer hủy khiếu nại của mình khi chưa được duyệt hoặc từ chối.</summary>
     [Authorize(Roles = SystemRoles.Retailer)]
