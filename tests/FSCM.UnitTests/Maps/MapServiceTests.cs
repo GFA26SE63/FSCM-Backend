@@ -43,7 +43,7 @@ public sealed class MapServiceTests
 
     private sealed class FakeProvider : IMapProvider
     {
-        public string Name => "GoogleMaps";
+        public string Name => "VietMap";
         public RouteDistanceProviderResult Distance { get; set; } = new(1_000, 300, "ROUTE_EXISTS");
         public Task<GeocodeProviderResult> GeocodeAsync(string address, CancellationToken cancellationToken) =>
             Task.FromResult(new GeocodeProviderResult(10.77m, 106.70m, address, "place-1", "OK"));
