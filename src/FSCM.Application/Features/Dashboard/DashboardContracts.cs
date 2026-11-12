@@ -6,7 +6,7 @@ public sealed record DashboardOption(Guid Id, string Code, string Name, Guid? Re
 public sealed record DashboardScope(bool IsGlobal, bool HasAssignments, string Description,
     IReadOnlyCollection<DashboardOption> Regions, IReadOnlyCollection<DashboardOption> Warehouses,
     IReadOnlyCollection<DashboardOption> SalesGroups);
-public sealed record DashboardCard(string Key, string Label, decimal Value, string Unit, string Note, string Tone = "neutral");
+public sealed record DashboardCard(string Key, string Label, decimal Value, string Unit, string Note, string Tone = "neutral", string? Href = null);
 public sealed record DashboardStatus(string Status, int Count);
 public sealed record DashboardDay(DateOnly Date, decimal RecognizedRevenue, decimal CollectedAmount);
 public sealed record DashboardProduct(Guid Id, string Sku, string Name, decimal Quantity, decimal Revenue);

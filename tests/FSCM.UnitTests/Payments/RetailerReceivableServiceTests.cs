@@ -108,6 +108,13 @@ public sealed class RetailerReceivableServiceTests
         public Task<RetailerReceivableView?> FindByOrderAsync(
             Guid retailerUserId, Guid orderId, CancellationToken cancellationToken) =>
             Task.FromResult(detail?.Payment.Order.Id == orderId ? detail : null);
+
+        public Task<IReadOnlyCollection<RetailerReceivableView>> ListAllAsync(CancellationToken cancellationToken) =>
+            Task.FromResult(views);
+
+        public Task<RetailerReceivableView?> FindAnyByOrderAsync(
+            Guid orderId, CancellationToken cancellationToken) =>
+            Task.FromResult(detail?.Payment.Order.Id == orderId ? detail : null);
     }
 
     private sealed class FixedTimeProvider(DateTimeOffset now) : TimeProvider

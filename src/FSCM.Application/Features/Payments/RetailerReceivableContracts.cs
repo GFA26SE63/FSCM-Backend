@@ -80,4 +80,9 @@ public interface IRetailerReceivableStore
 
     Task<RetailerReceivableView?> FindByOrderAsync(
         Guid retailerUserId, Guid orderId, CancellationToken cancellationToken);
+
+    Task<IReadOnlyCollection<RetailerReceivableView>> ListAllAsync(CancellationToken cancellationToken);
+
+    Task<RetailerReceivableView?> FindAnyByOrderAsync(
+        Guid orderId, CancellationToken cancellationToken);
 }
