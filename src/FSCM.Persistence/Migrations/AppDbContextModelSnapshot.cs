@@ -4046,12 +4046,6 @@ namespace FSCM.Persistence.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
-                    b.Property<DateTimeOffset?>("ApprovedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<Guid?>("ApprovedByUserId")
-                        .HasColumnType("uuid");
-
                     b.Property<DateTimeOffset?>("CancelledAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -4062,12 +4056,6 @@ namespace FSCM.Persistence.Migrations
 
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
-
-                    b.Property<DateTimeOffset?>("DeliveredAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<Guid?>("DeliveredByUserId")
-                        .HasColumnType("uuid");
 
                     b.Property<DateTimeOffset?>("FulfilledAt")
                         .HasColumnType("timestamp with time zone");
@@ -4081,9 +4069,6 @@ namespace FSCM.Persistence.Migrations
                     b.Property<string>("Note")
                         .HasColumnType("text");
 
-                    b.Property<int?>("Quantity")
-                        .HasColumnType("integer");
-
                     b.Property<DateTimeOffset>("RedeemedAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -4091,9 +4076,6 @@ namespace FSCM.Persistence.Migrations
                         .HasColumnType("uuid");
 
                     b.Property<int>("RedeemedPoints")
-                        .HasColumnType("integer");
-
-                    b.Property<int?>("RequiredPointsSnapshot")
                         .HasColumnType("integer");
 
                     b.Property<Guid>("RetailerId")

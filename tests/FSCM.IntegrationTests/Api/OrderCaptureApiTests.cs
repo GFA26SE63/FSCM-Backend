@@ -26,7 +26,7 @@ public sealed class OrderCaptureApiTests
                 1000, at.AddHours(12), DateOnly.FromDateTime(at.AddHours(12).UtcDateTime))).ToArray());
     }
     [Fact]
-    public async Task Admin_and_sales_can_read_mobile_snapshot_and_sync_conflict_does_not_create_order()
+    public async Task Mobile_snapshot_is_sales_only_and_sync_conflict_does_not_create_order()
     {
         using var identityFactory = new IdentityAuthorizationTests.IdentityApiFactory();
         var orderStore = new TestOrderStore(identityFactory.Sales.Id);
@@ -50,7 +50,7 @@ public sealed class OrderCaptureApiTests
         using var client = factory.CreateClient();
 
         client.DefaultRequestHeaders.Authorization = Bearer(identityFactory.Admin, identityFactory);
-        Assert.Equal(HttpStatusCode.OK,
+        Assert.Equal(HttpStatusCode.Forbidden,
             (await client.GetAsync("/api/v1/mobile/snapshot")).StatusCode);
         client.DefaultRequestHeaders.Authorization = Bearer(identityFactory.Sales, identityFactory);
         var snapshot = await client.GetFromJsonAsync<JsonElement>("/api/v1/mobile/snapshot");

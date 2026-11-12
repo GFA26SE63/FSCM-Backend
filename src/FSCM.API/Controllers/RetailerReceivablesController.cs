@@ -26,14 +26,14 @@ public sealed class RetailerReceivablesController(
         [FromQuery] int pageSize = 20,
         CancellationToken cancellationToken = default) =>
         service.ListAsync(UserId(), new(status, orderCode, dueFrom, dueTo, overdue, page, pageSize),
-            cancellationToken, Role());
+            cancellationToken);
 
     [HttpGet("orders/{orderId:guid}")]
     [ProducesResponseType<RetailerReceivableResult>(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public Task<RetailerReceivableResult> GetByOrder(
         Guid orderId, CancellationToken cancellationToken) =>
-        service.GetByOrderAsync(UserId(), orderId, cancellationToken, Role());
+        service.GetByOrderAsync(UserId(), orderId, cancellationToken);
 
     [HttpPost("payos-checkouts")]
     [ProducesResponseType<RetailerDebtPayOsCheckoutResult>(StatusCodes.Status200OK)]
@@ -41,20 +41,17 @@ public sealed class RetailerReceivablesController(
         CreateRetailerDebtPayOsCheckoutRequest request,
         [FromHeader(Name = "Idempotency-Key")] string operationKey,
         CancellationToken cancellationToken) =>
-        debtPayOsService.CreateAsync(new(request.Mode, request.PaymentIds, request.RetailerId), operationKey,
-            UserId(), Role(), cancellationToken);
+        debtPayOsService.CreateAsync(new(request.Mode, request.PaymentIds), operationKey,
+            UserId(), SystemRoles.Retailer, cancellationToken);
 
     [HttpGet("payos-checkouts/{checkoutId:guid}")]
     [ProducesResponseType<RetailerDebtPayOsCheckoutResult>(StatusCodes.Status200OK)]
     public Task<RetailerDebtPayOsCheckoutResult> GetPayOsCheckout(
         Guid checkoutId, CancellationToken cancellationToken) =>
-        debtPayOsService.GetAsync(checkoutId, UserId(), Role(), cancellationToken);
+        debtPayOsService.GetAsync(checkoutId, UserId(), SystemRoles.Retailer, cancellationToken);
 
     private Guid UserId() =>
         Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var id)
             ? id
             : throw PaymentOperationException.Validation("Authenticated user identifier is invalid.");
-
-    private string Role() => User.FindFirstValue(ClaimTypes.Role)
-        ?? throw PaymentOperationException.Validation("Authenticated user role is invalid.");
 }

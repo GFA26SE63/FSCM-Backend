@@ -295,7 +295,7 @@ public sealed class CurrentPickingService(IPickingStore store, TimeProvider time
     }
     private static void EnsureWarehouseKeeper(string role)
     {
-        if (role is not (SystemRoles.Admin or SystemRoles.WarehouseKeeper))
-            throw PickingOperationException.Forbidden("Only Warehouse Keeper or Admin can change picking work.");
+        if (role != SystemRoles.WarehouseKeeper)
+            throw PickingOperationException.Forbidden("Only Warehouse Keeper can change picking work.");
     }
 }

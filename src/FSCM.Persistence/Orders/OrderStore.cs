@@ -46,18 +46,6 @@ public sealed class OrderStore(AppDbContext dbContext) : IOrderStore
             .SingleOrDefaultAsync(cancellationToken);
     }
 
-    public async Task<OrderRetailerContext?> FindAnyRetailerContextAsync(
-        Guid retailerId, CancellationToken cancellationToken)
-    {
-        return await (
-            from retailer in dbContext.RetailerRecords.AsNoTracking()
-            join assignment in dbContext.RetailerSalesAssignmentRecords.AsNoTracking()
-                on retailer.Id equals assignment.RetailerId
-            where retailer.Id == retailerId && retailer.Status == "Active" && assignment.IsActive
-            select new OrderRetailerContext(retailer, assignment.SalesGroupId))
-            .SingleOrDefaultAsync(cancellationToken);
-    }
-
     public Task<Product?> FindPublishedProductAsync(Guid productId, CancellationToken cancellationToken) =>
         dbContext.ProductRecords.AsNoTracking().SingleOrDefaultAsync(
             item => item.Id == productId && item.Status == ProductStatuses.Published, cancellationToken);

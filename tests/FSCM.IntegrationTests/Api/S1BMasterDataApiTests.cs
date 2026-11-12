@@ -135,42 +135,6 @@ public sealed class S1BMasterDataApiTests
     }
 
     [Fact]
-    public async Task Admin_can_edit_retailer_profile_while_sales_declaration_authorization_is_preserved()
-    {
-        using var identity = new IdentityAuthorizationTests.IdentityApiFactory();
-        var store = new TestRetailerStore(identity.Admin.Id, identity.Sales.Id);
-        using var factory = identity.WithWebHostBuilder(builder => builder.ConfigureTestServices(services =>
-        {
-            services.RemoveAll<IRetailerStore>();
-            services.AddSingleton<IRetailerStore>(store);
-        }));
-        using var client = factory.CreateClient();
-        var request = new
-        {
-            name = "Updated store", contactName = "Updated contact", phone = "0909888777",
-            email = "updated@retailer.test", address = "Updated address", retailerType = RetailerTypes.GroceryStore,
-            forecastRevenue = 40_000_000, storeSizeSquareMeters = 45, purchasingCapacity = 80,
-            purchaseFrequencyPerMonth = 5, requestedCreditTermDays = 7
-        };
-        client.DefaultRequestHeaders.Authorization = Bearer(identity.Sales, identity);
-        Assert.Equal(System.Net.HttpStatusCode.Forbidden,
-            (await client.PutAsJsonAsync($"/api/v1/retailers/{store.Retailer.Id}/profile", request)).StatusCode);
-        client.DefaultRequestHeaders.Authorization = Bearer(identity.Admin, identity);
-        Assert.Equal(System.Net.HttpStatusCode.Forbidden,
-            (await client.PutAsJsonAsync($"/api/v1/retailers/{store.Retailer.Id}/declaration", request)).StatusCode);
-        var response = await client.PutAsJsonAsync($"/api/v1/retailers/{store.Retailer.Id}/profile", request);
-        response.EnsureSuccessStatusCode();
-        var profile = JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement;
-        Assert.Equal("Updated store", profile.GetProperty("name").GetString());
-        Assert.Equal("Updated contact", profile.GetProperty("contactName").GetString());
-        Assert.Equal("updated@retailer.test", store.ContactAccount.Email);
-        Assert.Equal("10004127", profile.GetProperty("code").GetString());
-        Assert.Equal(RetailerStatuses.Active, profile.GetProperty("status").GetString());
-        Assert.Equal(14, profile.GetProperty("creditTermDays").GetInt32());
-        Assert.Equal(2, profile.GetProperty("mlorDeclarations").GetArrayLength());
-    }
-
-    [Fact]
     public async Task Retailer_rest_and_graphql_return_general_information_mlor_and_sku_precedence()
     {
         using var identityFactory = new IdentityAuthorizationTests.IdentityApiFactory();
@@ -477,8 +441,6 @@ public sealed class S1BMasterDataApiTests
                     : [new(Retailer, ContactAccount.FullName, ContactAccount.Phone!, ContactAccount.Email, Guid.NewGuid(), "HCM-A", null)]);
         public Task<RetailerView?> FindViewAsync(Guid retailerId, CancellationToken cancellationToken) => Task.FromResult<RetailerView?>(new(Retailer, ContactAccount.FullName, ContactAccount.Phone!, ContactAccount.Email, Guid.NewGuid(), "HCM-A", null));
         public Task<Retailer?> FindForUpdateAsync(Guid retailerId, CancellationToken cancellationToken) => Task.FromResult<Retailer?>(Retailer);
-        public Task<UserAccount?> FindContactAccountForUpdateAsync(Guid accountId, CancellationToken cancellationToken) =>
-            Task.FromResult<UserAccount?>(accountId == ContactAccount.Id ? ContactAccount : null);
         public Task<RetailerDeclarationContact?> FindDeclarationContactForUpdateAsync(Guid retailerId, CancellationToken cancellationToken) => Task.FromResult<RetailerDeclarationContact?>(null);
         public Task<IReadOnlyList<UserAccount>> FindUnassignedRetailerAccountsAsync(
             string email, string phone, CancellationToken cancellationToken) =>

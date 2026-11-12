@@ -108,8 +108,7 @@ public sealed class OrdersController(
                 item.ProductId, item.ExpectedBaseUnitPrice, item.ExpectedMlorVersion,
                 item.ExpectedMlorRatio)).ToArray()),
             GetActorUserId(),
-            cancellationToken,
-            GetActorRole());
+            cancellationToken);
         return CreatedAtAction(nameof(Get), new { id = result.Id }, result);
     }
 

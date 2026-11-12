@@ -23,8 +23,8 @@ public sealed class RetailerDebtPayOsService(
         string actorRole,
         CancellationToken cancellationToken)
     {
-        if (actorRole is not (SystemRoles.Admin or SystemRoles.Retailer))
-            throw PaymentOperationException.Forbidden("Only a Retailer or Admin can create a debt checkout.");
+        if (actorRole != SystemRoles.Retailer)
+            throw PaymentOperationException.Forbidden("Only a Retailer can create a debt checkout.");
         operationKey = NormalizeKey(operationKey);
         var mode = NormalizeMode(data.Mode);
         var ids = NormalizeIds(mode, data.PaymentIds);
@@ -37,15 +37,8 @@ public sealed class RetailerDebtPayOsService(
             return ToResult(replay);
         }
 
-        var retailer = await (actorRole == SystemRoles.Admin
-                ? data.RetailerId is { } retailerId
-                    ? store.FindRetailerByIdAsync(retailerId, cancellationToken)
-                    : Task.FromResult<Retailer?>(null)
-                : store.FindRetailerByUserAsync(retailerUserId, cancellationToken))
-            ?? throw PaymentOperationException.Forbidden(
-                actorRole == SystemRoles.Admin
-                    ? "Admin must select a retailer for this debt checkout."
-                    : "Retailer account was not found for the signed-in user.");
+        var retailer = await store.FindRetailerByUserAsync(retailerUserId, cancellationToken)
+            ?? throw PaymentOperationException.Forbidden("Retailer account was not found for the signed-in user.");
         var pending = await store.ListPendingForPaymentsAsync(
             retailer.Id, mode == RetailerDebtCheckoutModes.All ? null : ids, cancellationToken);
         foreach (var checkout in pending)
@@ -124,29 +117,18 @@ public sealed class RetailerDebtPayOsService(
     public async Task<RetailerDebtPayOsCheckoutResult> GetAsync(
         Guid checkoutId, Guid retailerUserId, string actorRole, CancellationToken cancellationToken)
     {
-        if (actorRole is not (SystemRoles.Admin or SystemRoles.Retailer))
-            throw PaymentOperationException.Forbidden("Only a Retailer or Admin can view a debt checkout.");
-        var view = await (actorRole == SystemRoles.Admin
-                ? store.FindByIdAsync(checkoutId, cancellationToken)
-                : FindRetailerCheckoutAsync(checkoutId, retailerUserId, cancellationToken))
+        if (actorRole != SystemRoles.Retailer)
+            throw PaymentOperationException.Forbidden("Only a Retailer can view a debt checkout.");
+        var retailer = await store.FindRetailerByUserAsync(retailerUserId, cancellationToken)
+            ?? throw PaymentOperationException.Forbidden("Retailer account was not found for the signed-in user.");
+        var view = await store.FindByIdForRetailerAsync(checkoutId, retailer.Id, cancellationToken)
             ?? throw PaymentOperationException.NotFound("Debt checkout was not found.");
         if (view.Checkout.Status == RetailerDebtPayOsStatuses.Pending)
         {
             await ReconcilePendingCheckoutAsync(view.Checkout, cancellationToken);
-            view = await (actorRole == SystemRoles.Admin
-                ? store.FindByIdAsync(checkoutId, cancellationToken)
-                : FindRetailerCheckoutAsync(checkoutId, retailerUserId, cancellationToken)) ?? view;
+            view = await store.FindByIdForRetailerAsync(checkoutId, retailer.Id, cancellationToken) ?? view;
         }
         return ToResult(view);
-    }
-
-    private async Task<RetailerDebtCheckoutView?> FindRetailerCheckoutAsync(
-        Guid checkoutId, Guid retailerUserId, CancellationToken cancellationToken)
-    {
-        var retailer = await store.FindRetailerByUserAsync(retailerUserId, cancellationToken);
-        return retailer is null
-            ? null
-            : await store.FindByIdForRetailerAsync(checkoutId, retailer.Id, cancellationToken);
     }
 
     public Task<RetailerDebtCheckoutView?> FindByPayOsOrderCodeAsync(

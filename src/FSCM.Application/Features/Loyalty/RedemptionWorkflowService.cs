@@ -12,8 +12,7 @@ public sealed class RedemptionWorkflowService(IRedemptionWorkflowStore store, Ti
 
     private static RedemptionResult ToResult(RedemptionView view) => new(
         view.Redemption.Id, view.Redemption.RetailerId, view.Redemption.LoyaltyRewardId,
-        view.Reward.Code, view.Reward.Name, view.Redemption.Quantity ?? view.Redemption.RedeemedPoints / (view.Redemption.RequiredPointsSnapshot ?? view.Reward.RequiredPoints),
+        view.Reward.Code, view.Reward.Name, view.Redemption.RedeemedPoints / view.Reward.RequiredPoints,
         view.Redemption.RedeemedPoints, view.Redemption.Status, view.BalanceAfter,
-        view.Redemption.ClientRequestId, view.Redemption.CreatedAt, view.Redemption.UpdatedAt,
-        view.RetailerCode, view.RetailerName, view.HeldPoints, view.Redemption.Quantity == null, view.RegionId, view.SalesGroupIds);
+        view.Redemption.ClientRequestId, view.Redemption.CreatedAt, view.Redemption.UpdatedAt);
 }

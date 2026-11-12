@@ -34,37 +34,15 @@ public sealed class RetailerReceivableStore(AppDbContext dbContext) : IRetailerR
         Guid retailerUserId, Guid orderId, CancellationToken cancellationToken) =>
         LoadAsync(retailerUserId, orderId, cancellationToken);
 
-    public async Task<IReadOnlyCollection<RetailerReceivableView>> ListAllAsync(CancellationToken cancellationToken)
-    {
-        var orderIds = await (from payment in dbContext.PaymentRecords.AsNoTracking()
-                              join order in dbContext.SalesOrderRecords.AsNoTracking()
-                                  on payment.SalesOrderId equals order.Id
-                              where payment.Method == OrderPaymentMethods.Credit
-                              orderby payment.DueDate, order.OrderCode
-                              select order.Id).ToArrayAsync(cancellationToken);
-        var results = new List<RetailerReceivableView>(orderIds.Length);
-        foreach (var orderId in orderIds)
-        {
-            var view = await LoadAsync(null, orderId, cancellationToken);
-            if (view is not null) results.Add(view);
-        }
-        return results;
-    }
-
-    public Task<RetailerReceivableView?> FindAnyByOrderAsync(
-        Guid orderId, CancellationToken cancellationToken) =>
-        LoadAsync(null, orderId, cancellationToken);
-
     private async Task<RetailerReceivableView?> LoadAsync(
-        Guid? retailerUserId, Guid orderId, CancellationToken cancellationToken)
+        Guid retailerUserId, Guid orderId, CancellationToken cancellationToken)
     {
         var core = await (from payment in dbContext.PaymentRecords.AsNoTracking()
                           join order in dbContext.SalesOrderRecords.AsNoTracking()
                               on payment.SalesOrderId equals order.Id
                           join retailer in dbContext.RetailerRecords.AsNoTracking()
                               on order.RetailerId equals retailer.Id
-                          where order.Id == orderId &&
-                              (!retailerUserId.HasValue || retailer.UserAccountId == retailerUserId.Value)
+                          where order.Id == orderId && retailer.UserAccountId == retailerUserId
                           select new { payment, order, retailer }).SingleOrDefaultAsync(cancellationToken);
         if (core is null) return null;
 
