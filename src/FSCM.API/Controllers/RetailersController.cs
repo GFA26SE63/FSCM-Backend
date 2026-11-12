@@ -52,18 +52,6 @@ public sealed class RetailersController(RetailerService service) : ControllerBas
             request.Latitude, request.Longitude, request.ProviderPlaceId,
             request.MlorDeclarations?.Select(ToMlorData).ToArray(), request.SubmitForReview, cancellationToken);
 
-    /// <summary>Admin edits profile/contact/location without resubmitting the Sales declaration.</summary>
-    [Authorize(Roles = SystemRoles.Admin)]
-    [HttpPut("{retailerId:guid}/profile")]
-    public Task<RetailerDetails> UpdateProfile(
-        Guid retailerId, UpdateRetailerProfileRequest request, CancellationToken cancellationToken) =>
-        service.UpdateProfileAsync(retailerId, GetActorUserId(), GetActorRole(),
-            new(request.Name, request.ContactName, request.Phone, request.Email, request.Address,
-                request.RetailerType, request.ForecastRevenue, request.StoreSizeSquareMeters,
-                request.PurchasingCapacity, request.PurchaseFrequencyPerMonth, request.RequestedCreditTermDays,
-                request.AssessmentNote, request.Latitude, request.Longitude, request.ProviderPlaceId),
-            cancellationToken);
-
     [Authorize(Roles = SystemRoles.Sales)]
     [HttpPost("{retailerId:guid}/submit-review")]
     public Task<RetailerDetails> SubmitForReview(Guid retailerId, CancellationToken cancellationToken) =>

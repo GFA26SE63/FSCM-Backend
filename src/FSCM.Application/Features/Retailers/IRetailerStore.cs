@@ -23,7 +23,6 @@ public interface IRetailerStore
     Task<IReadOnlyCollection<RetailerView>> ListAsync(Guid actorUserId, string actorRole, string? status, CancellationToken cancellationToken);
     Task<RetailerView?> FindViewAsync(Guid retailerId, CancellationToken cancellationToken);
     Task<Retailer?> FindForUpdateAsync(Guid retailerId, CancellationToken cancellationToken);
-    Task<UserAccount?> FindContactAccountForUpdateAsync(Guid accountId, CancellationToken cancellationToken);
     Task<RetailerDeclarationContact?> FindDeclarationContactForUpdateAsync(Guid retailerId, CancellationToken cancellationToken);
     /// <summary>
     /// Returns every inactive Retailer account not yet linked to a Retailer whose email or phone

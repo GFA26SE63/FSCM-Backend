@@ -66,14 +66,13 @@ public sealed class RedemptionStore(AppDbContext dbContext) : IRedemptionStore, 
             var redemption = new RewardRedemption { Id = Guid.NewGuid(), RetailerId = retailer.Id,
                 LoyaltyRewardId = reward.Id, LoyaltyTransactionId = transactionRow.Id,
                 ClientRequestId = data.ClientRequestId.Trim(), RedeemedPoints = totalPoints,
-                Quantity = data.Quantity, RequiredPointsSnapshot = reward.RequiredPoints,
                 Status = "Pending", RedeemedByUserId = userAccountId, RedeemedAt = now,
                 Note = data.Note, CreatedAt = now, UpdatedAt = now };
             dbContext.LoyaltyTransactionRecords.Add(transactionRow);
             dbContext.RewardRedemptionRecords.Add(redemption);
             await dbContext.SaveChangesAsync(cancellationToken);
             await transaction.CommitAsync(cancellationToken);
-            return new(redemption, reward, balance.CurrentPoints, HeldPoints: balance.HeldPoints);
+            return new(redemption, reward, balance.CurrentPoints);
         }
         catch (DbUpdateException exception) when (exception.InnerException is PostgresException { SqlState: PostgresErrorCodes.UniqueViolation })
         { throw LoyaltyOperationException.Conflict("This redemption request was already submitted."); }
@@ -104,15 +103,9 @@ public sealed class RedemptionStore(AppDbContext dbContext) : IRedemptionStore, 
                           orderby redemption.CreatedAt descending
                           select new { redemption, reward, retailer }).ToArrayAsync(cancellationToken);
         var balances = await dbContext.RetailerLoyaltyRecords.AsNoTracking()
-            .ToDictionaryAsync(item => item.RetailerId, cancellationToken);
-        var groups = (await dbContext.RetailerSalesAssignmentRecords.AsNoTracking()
-            .Where(a => a.IsActive && a.UnassignedAt == null)
-            .Select(a => new { a.RetailerId, a.SalesGroupId }).ToArrayAsync(cancellationToken))
-            .ToLookup(a => a.RetailerId, a => a.SalesGroupId);
+            .ToDictionaryAsync(item => item.RetailerId, item => item.CurrentPoints, cancellationToken);
         return rows.Select(item => new RedemptionView(item.redemption, item.reward,
-            balances.GetValueOrDefault(item.retailer.Id)?.CurrentPoints ?? 0, item.retailer.Code, item.retailer.Name,
-            balances.GetValueOrDefault(item.retailer.Id)?.HeldPoints ?? 0, item.retailer.RegionId,
-            groups[item.retailer.Id].ToArray())).ToArray();
+            balances.GetValueOrDefault(item.retailer.Id), item.retailer.Code, item.retailer.Name)).ToArray();
     }
 
     public async Task<RedemptionView> TransitionAsync(Guid redemptionId, string targetStatus,
@@ -129,7 +122,7 @@ public sealed class RedemptionStore(AppDbContext dbContext) : IRedemptionStore, 
             item => item.RetailerId == redemption.RetailerId, cancellationToken)
             ?? throw LoyaltyOperationException.Conflict("Retailer loyalty balance was not found.");
         if (redemption.Status == targetStatus)
-            return new(redemption, reward, loyalty.CurrentPoints, HeldPoints: loyalty.HeldPoints);
+            return new(redemption, reward, loyalty.CurrentPoints);
         var allowed = (redemption.Status, targetStatus) switch
         {
             ("Pending", "Approved") => true,
@@ -147,8 +140,7 @@ public sealed class RedemptionStore(AppDbContext dbContext) : IRedemptionStore, 
                 throw LoyaltyOperationException.Conflict("Held loyalty points are inconsistent.");
             loyalty.HeldPoints -= redemption.RedeemedPoints;
             loyalty.CurrentPoints += redemption.RedeemedPoints;
-            if (reward.AvailableQuantity.HasValue) reward.AvailableQuantity += redemption.Quantity
-                ?? redemption.RedeemedPoints / (redemption.RequiredPointsSnapshot ?? reward.RequiredPoints);
+            if (reward.AvailableQuantity.HasValue) reward.AvailableQuantity += redemption.RedeemedPoints / reward.RequiredPoints;
             dbContext.LoyaltyTransactionRecords.Add(new LoyaltyTransaction
             {
                 Id = Guid.NewGuid(), LoyaltyProgramId = reward.LoyaltyProgramId,
@@ -173,21 +165,11 @@ public sealed class RedemptionStore(AppDbContext dbContext) : IRedemptionStore, 
             });
             redemption.FulfilledAt = now;
         }
-        if (targetStatus == "Approved")
-        {
-            redemption.ApprovedByUserId = actorUserId;
-            redemption.ApprovedAt = now;
-        }
-        if (targetStatus == "Delivered")
-        {
-            redemption.DeliveredByUserId = actorUserId;
-            redemption.DeliveredAt = now;
-        }
         redemption.Status = targetStatus;
         redemption.UpdatedAt = now;
         loyalty.UpdatedAt = now;
         await dbContext.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
-        return new(redemption, reward, loyalty.CurrentPoints, HeldPoints: loyalty.HeldPoints);
+        return new(redemption, reward, loyalty.CurrentPoints);
     }
 }

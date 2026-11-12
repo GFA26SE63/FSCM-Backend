@@ -41,5 +41,4 @@ public sealed record SwitchToCreditRequest(int ExpectedVersion);
 
 public sealed record CreateRetailerDebtPayOsCheckoutRequest(
     string Mode,
-    IReadOnlyCollection<Guid> PaymentIds,
-    Guid? RetailerId = null);
+    IReadOnlyCollection<Guid> PaymentIds);

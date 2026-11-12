@@ -157,8 +157,6 @@ public sealed class RetailerDebtPayOsServiceTests
 
         public Task<Retailer?> FindRetailerByUserAsync(Guid userId, CancellationToken cancellationToken) =>
             Task.FromResult<Retailer?>(retailer.UserAccountId == userId ? retailer : null);
-        public Task<Retailer?> FindRetailerByIdAsync(Guid retailerId, CancellationToken cancellationToken) =>
-            Task.FromResult<Retailer?>(retailer.Id == retailerId ? retailer : null);
         public Task<IReadOnlyCollection<ReceiptPaymentView>> ListCollectibleForUpdateAsync(Guid retailerId, IReadOnlyCollection<Guid>? paymentIds, CancellationToken cancellationToken)
         {
             var available = Checkouts.Any(c => c.Status == RetailerDebtPayOsStatuses.Pending &&
@@ -184,8 +182,6 @@ public sealed class RetailerDebtPayOsServiceTests
             Task.FromResult(View(Checkouts.SingleOrDefault(x => x.PayOsOrderCode == payOsOrderCode)));
         public Task<RetailerDebtCheckoutView?> FindByIdForRetailerAsync(Guid checkoutId, Guid retailerId, CancellationToken cancellationToken) =>
             Task.FromResult(View(Checkouts.SingleOrDefault(x => x.Id == checkoutId && x.RetailerId == retailerId)));
-        public Task<RetailerDebtCheckoutView?> FindByIdAsync(Guid checkoutId, CancellationToken cancellationToken) =>
-            Task.FromResult(View(Checkouts.SingleOrDefault(x => x.Id == checkoutId)));
         public void AddCheckout(RetailerDebtPayOsCheckout checkout) => Checkouts.Add(checkout);
         public void AddAllocations(IEnumerable<RetailerDebtPayOsAllocation> allocations) => Allocations.AddRange(allocations);
         public void AddReceipt(PaymentReceipt receipt, IEnumerable<PaymentReceiptAllocation> allocations) => Receipts.Add(receipt);
