@@ -61,10 +61,16 @@ public sealed class QrLabelPrintApiTests
         Assert.Equal(100m, detail.GetProperty("lineage").EnumerateArray()
             .Sum(item => item.GetProperty("quantity").GetDecimal()));
 
+        var capacityPath = $"/api/v1/qr-labels/batches/{store.Batch.Id}/generation-capacity";
+        var capacity = await client.GetFromJsonAsync<JsonElement>(capacityPath);
+        Assert.Equal(store.Batch.Id, capacity.GetProperty("batchId").GetGuid());
+        Assert.Equal(0m, capacity.GetProperty("unlabelledQuantity").GetDecimal());
+
         client.DefaultRequestHeaders.Authorization = Bearer(identityFactory.WarehouseKeeper, identityFactory);
         Assert.Equal(HttpStatusCode.OK,
             (await client.GetAsync($"/api/v1/qr-labels/{store.Child.QrCode}")).StatusCode);
         store.AllowWarehouseAccess = false;
+        Assert.Equal(HttpStatusCode.Forbidden, (await client.GetAsync(capacityPath)).StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden,
             (await client.GetAsync($"/api/v1/qr-labels/{store.Child.QrCode}")).StatusCode);
     }
