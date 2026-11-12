@@ -102,5 +102,12 @@ public sealed class RetailerReceivableApiTests
             Guid userId, Guid orderId, CancellationToken cancellationToken) =>
             Task.FromResult<RetailerReceivableView?>(
                 userId == retailerUserId && orderId == Order.Id ? view : null);
+
+        public Task<IReadOnlyCollection<RetailerReceivableView>> ListAllAsync(CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyCollection<RetailerReceivableView>>([view]);
+
+        public Task<RetailerReceivableView?> FindAnyByOrderAsync(
+            Guid orderId, CancellationToken cancellationToken) =>
+            Task.FromResult<RetailerReceivableView?>(orderId == Order.Id ? view : null);
     }
 }

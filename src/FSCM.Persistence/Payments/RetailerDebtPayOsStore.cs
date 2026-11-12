@@ -12,6 +12,9 @@ public sealed class RetailerDebtPayOsStore(AppDbContext db) : IRetailerDebtPayOs
     public Task<Retailer?> FindRetailerByUserAsync(Guid userId, CancellationToken cancellationToken) =>
         db.RetailerRecords.AsNoTracking().SingleOrDefaultAsync(x => x.UserAccountId == userId, cancellationToken);
 
+    public Task<Retailer?> FindRetailerByIdAsync(Guid retailerId, CancellationToken cancellationToken) =>
+        db.RetailerRecords.AsNoTracking().SingleOrDefaultAsync(x => x.Id == retailerId, cancellationToken);
+
     public async Task<IReadOnlyCollection<ReceiptPaymentView>> ListCollectibleForUpdateAsync(
         Guid retailerId, IReadOnlyCollection<Guid>? paymentIds, CancellationToken cancellationToken)
     {
@@ -67,6 +70,10 @@ public sealed class RetailerDebtPayOsStore(AppDbContext db) : IRetailerDebtPayOs
     public Task<RetailerDebtCheckoutView?> FindByIdForRetailerAsync(
         Guid checkoutId, Guid retailerId, CancellationToken cancellationToken) =>
         LoadAsync(db.RetailerDebtPayOsCheckoutRecords.Where(x => x.Id == checkoutId && x.RetailerId == retailerId), false, cancellationToken);
+
+    public Task<RetailerDebtCheckoutView?> FindByIdAsync(
+        Guid checkoutId, CancellationToken cancellationToken) =>
+        LoadAsync(db.RetailerDebtPayOsCheckoutRecords.Where(x => x.Id == checkoutId), false, cancellationToken);
 
     public void AddCheckout(RetailerDebtPayOsCheckout checkout) => db.RetailerDebtPayOsCheckoutRecords.Add(checkout);
     public void AddAllocations(IEnumerable<RetailerDebtPayOsAllocation> allocations) => db.RetailerDebtPayOsAllocationRecords.AddRange(allocations);
