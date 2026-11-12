@@ -623,8 +623,8 @@ public sealed class ShipmentService(
         string actorRole,
         CancellationToken cancellationToken)
     {
-        if (actorRole != SystemRoles.Retailer)
-            throw ShipmentOperationException.Forbidden("Only the order Retailer can confirm a shipment receipt.");
+        if (actorRole is not (SystemRoles.Admin or SystemRoles.Retailer))
+            throw ShipmentOperationException.Forbidden("Only the order Retailer or Admin can confirm a shipment receipt.");
         operationKey = NormalizeOperationKey(operationKey);
         var note = NormalizeNote(data.Note);
         var qrCodes = NormalizeQrCodes(data.QrCodes);

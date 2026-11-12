@@ -98,6 +98,17 @@ public sealed class DashboardPostgresTests
         foreach(var (batch,qty,reserved) in new[]{(near,100m,20m),(expired,7m,0m),(foreign,999m,0m)}) db.Add(new InventoryBalance { Id=Guid.NewGuid(),BatchId=batch.Id,PhysicalQuantity=qty,ReservedQuantity=reserved,AvailableQuantity=qty-reserved,Version=1,UpdatedAt=now });
         db.Add(new InventoryLock { Id=Guid.NewGuid(),BatchId=near.Id,WarehouseId=wa.Id,ProductId=product.Id,LockedQuantity=15,Status="Active",Reason="Damaged",Version=1,CreatedAt=now,UpdatedAt=now });
         await db.SaveChangesAsync(); db.ChangeTracker.Clear();
+        // Retailer self-orders remain business revenue/product sales, but are not Sales KPI rows.
+        var reports = new ReportStore(db);
+        var kpiOrders = await reports.ListRecognizedOrdersAsync(today, today, [ga.Id], null, default);
+        var salesOrder = Assert.Single(kpiOrders);
+        Assert.Equal(oa.Id, salesOrder.OrderId);
+        Assert.Equal(sales.Id, salesOrder.SalesUserId);
+        Assert.Equal(900m, salesOrder.RecognizedRevenue);
+        Assert.Empty(await reports.ListRecognizedOrdersAsync(today, today, [ga.Id], retailerUser.Id, default));
+        var ranking = Assert.Single(await reports.AggregateSalesRevenueAsync(today, today, [ga.Id], default));
+        Assert.Equal(sales.Id, ranking.SalesUserId);
+        Assert.Equal(900m, ranking.RecognizedRevenue);
         var dashboard=scope.ServiceProvider.GetRequiredService<DashboardService>();
         var query=new DashboardQuery(today,today);
         async Task<DashboardResult> Read(UserAccount person,DashboardQuery? filter=null) => await dashboard.GetAsync(person.Id,person.Role,filter??query,default);
