@@ -65,6 +65,34 @@ public sealed class DashboardStore(AppDbContext db) : IDashboardStore
         var payments = db.PaymentRecords.AsNoTracking().Where(p => orderIds.Contains(p.SalesOrderId) && p.Status != "Cancelled");
         var completed = Array.Empty<CompletedRow>(); var collections = Array.Empty<CollectionRow>();
 
+        if (global)
+        {
+            var retailers = db.RetailerRecords.AsNoTracking().Where(r =>
+                (!query.RegionId.HasValue || r.RegionId == query.RegionId) &&
+                (!query.SalesGroupId.HasValue || db.RetailerSalesAssignmentRecords.Any(a =>
+                    a.RetailerId == r.Id && a.SalesGroupId == query.SalesGroupId && a.IsActive && a.UnassignedAt == null)));
+            var redemptionQuery = db.RewardRedemptionRecords.AsNoTracking()
+                .Where(x => retailers.Select(r => r.Id).Contains(x.RetailerId));
+            var redemptionScope = (query.RegionId.HasValue ? $"&regionId={query.RegionId}" : "") +
+                (query.SalesGroupId.HasValue ? $"&salesGroupId={query.SalesGroupId}" : "");
+            foreach (var (status, key, label) in new[] {
+                ("Pending", "redemptionPending", "Đổi quà chờ duyệt"),
+                ("Approved", "redemptionApproved", "Quà đã duyệt chờ giao"),
+                ("Delivered", "redemptionDelivered", "Quà chờ xác nhận nhận") })
+                cards.Add(new(key, label, await redemptionQuery.CountAsync(x => x.Status == status, ct),
+                    "count", "Hiện tại · không giới hạn ngày tạo", "warn", $"/redeem?status={status}{redemptionScope}"));
+            var openRedemptions = redemptionQuery.Where(x => x.Status == "Pending" || x.Status == "Approved" || x.Status == "Delivered");
+            cards.Add(new("redemptionAged", "Đổi quà tồn quá 3 ngày", await openRedemptions.CountAsync(x => x.UpdatedAt < now.AddDays(-3), ct),
+                "count", "Tính từ lần xử lý gần nhất", "danger", $"/redeem?aged=true{redemptionScope}"));
+            var redemptionWork = await (from x in openRedemptions join r in db.RetailerRecords on x.RetailerId equals r.Id
+                join gift in db.LoyaltyRewardRecords on x.LoyaltyRewardId equals gift.Id
+                orderby x.UpdatedAt select new { x.Id, x.Status, x.UpdatedAt, r.Name, Gift = gift.Name }).Take(15).ToArrayAsync(ct);
+            work.AddRange(redemptionWork.Select(x => new DashboardWorkItem("redemption", x.Id, x.Id.ToString(),
+                $"{x.Name} · {x.Gift}", x.Status, x.Status == "Pending" ? "Chờ duyệt đổi quà" : x.Status == "Approved" ? "Chờ giao quà" : "Chờ xác nhận nhận quà",
+                x.UpdatedAt, x.UpdatedAt < now.AddDays(-3) ? 1 : 2, $"/redeem/{x.Id}")));
+            notes.Add("Hàng chờ đổi quà theo khu vực/nhóm Sales, không phụ thuộc kho hoặc kỳ ngày.");
+        }
+
         if (!keeper)
         {
             statuses = await periodOrders.GroupBy(o => o.Status).Select(g => new DashboardStatus(g.Key, g.Count())).ToArrayAsync(ct);
@@ -143,17 +171,22 @@ public sealed class DashboardStore(AppDbContext db) : IDashboardStore
             cards.Add(new("allocationIssues", "Phân bổ cần xử lý", await orders.CountAsync(o => o.Status == OrderStatuses.AllocationFailed || o.Status == OrderStatuses.AllocationConflict || o.Status == OrderStatuses.Allocating && o.UpdatedAt < now.AddMinutes(-2), ct), "count", "Lỗi, xung đột hoặc quá 2 phút", "danger"));
             cards.Add(new("quotesPending", "Báo giá chờ phản hồi", await orders.CountAsync(o => o.Status == OrderStatuses.Quoted, ct), "count", "Đang chờ Retailer xác nhận PO"));
             cards.Add(new("prepaidOrders", "Đơn chờ trả trước", await payments.CountAsync(p => p.Method == "Prepaid" && p.ConfirmedAmount < p.AdjustedAmount, ct), "count", "Chưa xác nhận đủ tiền"));
-            cards.Add(new("complaintsOpen", "Khiếu nại đang mở", await db.ReceiptDiscrepancyRecords.CountAsync(c => orderIds.Contains(c.SalesOrderId) && c.ResolvedAt == null, ct), "count", "Chưa đối soát xong", "warn"));
+            var requests = db.ReceiptDiscrepancyRecords.AsNoTracking().Where(c => orderIds.Contains(c.SalesOrderId) &&
+                c.ResolvedAt == null && c.Status != "Rejected" && c.Status != "Cancelled");
+            cards.Add(new("complaintsOpen", "Yêu cầu đang mở", await requests.CountAsync(ct), "count", "Khiếu nại, trả hàng và thu hồi hàng hỏng", "warn", manager ? null : "/complaints"));
+            cards.Add(new("returnsPending", "Trả hàng / thu hồi chờ xử lý", await requests.CountAsync(c => c.RequestType != "Complaint", ct),
+                "count", "Chưa hoàn tất xử lý vật lý và tài chính", "warn", manager ? null : "/complaints"));
 
             var failures = await orders.Where(o => o.Status == OrderStatuses.AllocationFailed || o.Status == OrderStatuses.AllocationConflict ||
                     o.Status == OrderStatuses.Allocating && o.UpdatedAt < now.AddMinutes(-2))
                 .OrderBy(o => o.UpdatedAt).Take(15).Select(o => new { o.Id, o.OrderCode, o.Status, o.RejectionReason, o.UpdatedAt }).ToArrayAsync(ct);
             work.AddRange(failures.Select(o => new DashboardWorkItem("allocation", o.Id, o.OrderCode, "Phân bổ cần xử lý", o.Status,
                 o.RejectionReason ?? "Đang phân bổ quá 2 phút", o.UpdatedAt, 1, manager ? null : $"/orders/{o.Id}")));
-            var complaints = await db.ReceiptDiscrepancyRecords.AsNoTracking().Where(c => orderIds.Contains(c.SalesOrderId) && c.ResolvedAt == null)
-                .OrderBy(c => c.ReportedAt).Take(15).Select(c => new { c.Id, c.ReportedAt, c.SalesOrderId, c.Status }).ToArrayAsync(ct);
+            var complaints = await requests.OrderBy(c => c.ReportedAt).Take(15)
+                .Select(c => new { c.Id, c.ReportedAt, c.SalesOrderId, c.Status, c.RequestType }).ToArrayAsync(ct);
             work.AddRange(complaints.Select(c => new DashboardWorkItem("complaint", c.Id, $"KN-{c.Id.ToString("N")[..8].ToUpperInvariant()}",
-                "Khiếu nại đang chờ", c.Status, "Cần đối chiếu phần giao và bằng chứng", c.ReportedAt, 2,
+                c.RequestType == "Return" ? "Yêu cầu trả hàng" : c.RequestType == "DamagedCollection" ? "Thu hồi hàng hỏng" : "Khiếu nại đang chờ",
+                c.Status, "Cần đối chiếu phần giao, thu hồi và xử lý tài chính", c.ReportedAt, 2,
                 manager ? null : $"/complaints/KN-{c.Id.ToString("N")[..8].ToUpperInvariant()}")));
             if (global)
             {
