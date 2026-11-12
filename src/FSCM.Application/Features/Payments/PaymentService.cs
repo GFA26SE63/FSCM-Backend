@@ -306,8 +306,8 @@ public sealed class PaymentService(
         Guid orderId, int expectedVersion, Guid actorUserId, string actorRole,
         CancellationToken cancellationToken)
     {
-        if (actorRole != SystemRoles.Retailer)
-            throw PaymentOperationException.Forbidden("Chỉ chủ cửa hàng được đổi phương thức thanh toán.");
+        if (actorRole is not (SystemRoles.Admin or SystemRoles.Retailer))
+            throw PaymentOperationException.Forbidden("Chỉ chủ cửa hàng hoặc Admin được đổi phương thức thanh toán.");
         await store.ExecuteInTransactionAsync(async token =>
         {
             var view = await store.FindByOrderAsync(orderId, true, token)

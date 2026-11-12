@@ -9,11 +9,14 @@ public sealed class RetailerReceivableService(
     public async Task<RetailerReceivablePage> ListAsync(
         Guid retailerUserId,
         RetailerReceivableFilter filter,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string actorRole = FSCM.Domain.Authorization.SystemRoles.Retailer)
     {
         Validate(filter);
         var today = Today();
-        var query = (await store.ListAsync(retailerUserId, cancellationToken))
+        var query = (await (actorRole == FSCM.Domain.Authorization.SystemRoles.Admin
+                ? store.ListAllAsync(cancellationToken)
+                : store.ListAsync(retailerUserId, cancellationToken)))
             .Select(view => ToResult(view, today));
 
         if (!string.IsNullOrWhiteSpace(filter.Status))
@@ -44,9 +47,12 @@ public sealed class RetailerReceivableService(
     public async Task<RetailerReceivableResult> GetByOrderAsync(
         Guid retailerUserId,
         Guid orderId,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string actorRole = FSCM.Domain.Authorization.SystemRoles.Retailer)
     {
-        var view = await store.FindByOrderAsync(retailerUserId, orderId, cancellationToken)
+        var view = await (actorRole == FSCM.Domain.Authorization.SystemRoles.Admin
+                ? store.FindAnyByOrderAsync(orderId, cancellationToken)
+                : store.FindByOrderAsync(retailerUserId, orderId, cancellationToken))
             ?? throw PaymentOperationException.NotFound("Receivable was not found for this retailer.");
         return ToResult(view, Today());
     }
