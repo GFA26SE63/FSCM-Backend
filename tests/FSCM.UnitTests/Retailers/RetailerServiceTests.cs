@@ -293,6 +293,96 @@ public sealed class RetailerServiceTests
         Assert.True(active.IsEligible);
     }
 
+    private static UpdateRetailerProfileData ProfileData() => new(
+        "Updated store", "Updated contact", "0909888777", "updated@retailer.test", "Updated address",
+        RetailerTypes.GroceryStore, 40_000_000, 45, 80, 5, 30, "Updated assessment",
+        10.8m, 106.7m, null);
+
+    [Fact]
+    public async Task Admin_profile_edit_updates_linked_contact_without_reopening_approval_or_changing_credit_and_mlor()
+    {
+        var fixture = new Fixture();
+        var declared = await fixture.DeclareAsync(30_000_000, 20, 60);
+        var reviewer = Guid.NewGuid();
+        await fixture.Service.ReviewAsync(declared.Id, reviewer, true, 14, "Approved", default);
+        var retailer = Assert.Single(fixture.Store.Retailers);
+        var account = Assert.Single(fixture.Store.ContactAccounts);
+        var code = retailer.Code;
+        var accountId = retailer.UserAccountId;
+        var mlor = Assert.Single(fixture.Store.Mlors);
+        var mlorVersion = mlor.Version;
+        var region = retailer.RegionId;
+
+        var result = await fixture.Service.UpdateProfileAsync(declared.Id, Guid.NewGuid(), "Admin", ProfileData(), default);
+
+        Assert.Equal("Updated store", result.Name);
+        Assert.Equal("Updated contact", result.ContactName);
+        Assert.Equal("updated@retailer.test", account.Email);
+        Assert.Equal("0909888777", account.Phone);
+        Assert.Equal("Retailer", account.Role);
+        Assert.False(account.IsActive); // Profile editing must not bypass account activation.
+        Assert.Equal(accountId, retailer.UserAccountId);
+        Assert.Equal(code, retailer.Code);
+        Assert.Equal(region, retailer.RegionId);
+        Assert.Equal(RetailerStatuses.Active, retailer.Status);
+        Assert.Equal(reviewer, retailer.ReviewedByUserId);
+        Assert.Equal("Approved", retailer.ReviewReason);
+        Assert.Equal(14, retailer.CreditTermDays);
+        Assert.Equal(fixture.SalesUserId, retailer.DeclaredByUserId);
+        Assert.Single(fixture.Store.Assignments);
+        Assert.Same(mlor, Assert.Single(fixture.Store.Mlors));
+        Assert.Equal(mlorVersion, mlor.Version);
+        Assert.True(mlor.IsActive);
+        Assert.Equal(10.8m, result.Latitude);
+        Assert.Single(fixture.EmailSender.AccountCreatedEmails);
+        Assert.Contains(fixture.Store.AuditLogs, log => log.Action == "RetailerProfileUpdated");
+    }
+
+    [Fact]
+    public async Task Admin_profile_edit_updates_declaration_contact_and_keeps_pending_review()
+    {
+        var fixture = new Fixture();
+        var declared = await fixture.DeclareAsync(30_000_000, 20, 60);
+        var result = await fixture.Service.UpdateProfileAsync(declared.Id, Guid.NewGuid(), "Admin", ProfileData(), default);
+        Assert.Equal(RetailerStatuses.PendingApproval, result.Status);
+        Assert.Equal("updated@retailer.test", Assert.Single(fixture.Store.DeclarationContacts).Email);
+        Assert.Empty(fixture.Store.ContactAccounts);
+        Assert.Null(Assert.Single(fixture.Store.Retailers).UserAccountId);
+    }
+
+    [Theory]
+    [InlineData("Operator")]
+    [InlineData("Sales")]
+    [InlineData("SalesManager")]
+    [InlineData("Retailer")]
+    [InlineData("WarehouseKeeper")]
+    public async Task Profile_edit_is_admin_only_in_the_service_as_well_as_the_controller(string role)
+    {
+        var fixture = new Fixture();
+        var declared = await fixture.DeclareAsync(30_000_000, 20, 60);
+        var exception = await Assert.ThrowsAsync<RetailerOperationException>(() =>
+            fixture.Service.UpdateProfileAsync(declared.Id, fixture.SalesUserId, role, ProfileData(), default));
+        Assert.Equal("forbidden", exception.Code);
+        Assert.Equal(declared.Name, Assert.Single(fixture.Store.Retailers).Name);
+    }
+
+    [Fact]
+    public async Task Profile_edit_rejects_duplicate_contacts_and_invalid_coordinates_without_changing_profile()
+    {
+        var fixture = new Fixture();
+        var declared = await fixture.DeclareAsync(30_000_000, 20, 60);
+        fixture.Store.ContactAccounts.Add(UnassignedAccount("updated@retailer.test", "0909888777"));
+        await Assert.ThrowsAsync<RetailerOperationException>(() =>
+            fixture.Service.UpdateProfileAsync(declared.Id, Guid.NewGuid(), "Admin", ProfileData(), default));
+        fixture.Store.ContactAccounts.Clear();
+        await Assert.ThrowsAsync<RetailerOperationException>(() =>
+            fixture.Service.UpdateProfileAsync(declared.Id, Guid.NewGuid(), "Admin", ProfileData() with { Latitude = 91 }, default));
+        await Assert.ThrowsAsync<RetailerOperationException>(() =>
+            fixture.Service.UpdateProfileAsync(declared.Id, Guid.NewGuid(), "Admin", ProfileData() with { Name = " " }, default));
+        Assert.Equal(declared.Name, Assert.Single(fixture.Store.Retailers).Name);
+        Assert.Equal(declared.Email, Assert.Single(fixture.Store.DeclarationContacts).Email);
+    }
+
     private sealed class Fixture
     {
         public Guid SalesUserId { get; } = Guid.NewGuid();
@@ -386,6 +476,8 @@ public sealed class RetailerServiceTests
             Task.FromResult(Retailers.Where(item => item.Id == retailerId).Select(ToView).SingleOrDefault());
         public Task<Retailer?> FindForUpdateAsync(Guid retailerId, CancellationToken cancellationToken) =>
             Task.FromResult(Retailers.SingleOrDefault(item => item.Id == retailerId));
+        public Task<UserAccount?> FindContactAccountForUpdateAsync(Guid accountId, CancellationToken cancellationToken) =>
+            Task.FromResult(ContactAccounts.SingleOrDefault(item => item.Id == accountId));
         public Task<RetailerDeclarationContact?> FindDeclarationContactForUpdateAsync(Guid retailerId, CancellationToken cancellationToken) =>
             Task.FromResult(DeclarationContacts.SingleOrDefault(item => item.RetailerId == retailerId));
         public Task<IReadOnlyList<UserAccount>> FindUnassignedRetailerAccountsAsync(
