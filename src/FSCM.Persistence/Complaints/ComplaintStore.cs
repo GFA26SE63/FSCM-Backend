@@ -3,6 +3,9 @@ using FSCM.Domain.Authorization;
 using FSCM.Domain.Entities;
 using FSCM.Persistence.DbContexts;
 using Microsoft.EntityFrameworkCore;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
 using FSCM.Application.Features.Deliveries;
 
 namespace FSCM.Persistence.Complaints;
@@ -27,11 +30,18 @@ public sealed class ComplaintStore(AppDbContext db) : IComplaintStore
             where receipt.SalesOrderId == orderId && receipt.ShipmentId != null
                 && (receipt.Status == ReceiptConfirmationStatuses.Confirmed || receipt.Status == ReceiptConfirmationStatuses.Exception)
                 && allocation.SalesOrderLineId == line.Id && pick.SourceBatchId == item.BatchId && label.BatchId == item.BatchId
-                && !db.ReceiptDiscrepancyItemRecords.Any(i => i.AllocationId == allocation.Id &&
-                    db.ReceiptDiscrepancyRecords.Any(d => d.Id == i.ReceiptDiscrepancyId && d.Status != "Rejected" && d.Status != "Cancelled"))
             select new ComplaintTarget(part.Id, part.ShipmentCode, allocation.Id, product.Sku,
-                product.Name, batch.BatchCode, label.QrCode, item.ExpectedQuantity)).ToArrayAsync(ct);
-        return rows.GroupBy(t => t.AllocationId).Select(g => g.OrderBy(t => t.LabelCode).First()).ToArray();
+                product.Name, batch.BatchCode, label.QrCode, item.ExpectedQuantity,
+                item.ReceivedQuantity + item.DamagedQuantity)).ToArrayAsync(ct);
+        var allocationIds = rows.Select(x => x.AllocationId).Distinct().ToArray();
+        var prior = await (from d in db.ReceiptDiscrepancyRecords join i in db.ReceiptDiscrepancyItemRecords on d.Id equals i.ReceiptDiscrepancyId
+            where i.AllocationId.HasValue && allocationIds.Contains(i.AllocationId.Value) && d.Status != "Rejected" && d.Status != "Cancelled"
+            select new { i.AllocationId, SettlementMethod = d.ApprovedSettlementMethod ?? d.SettlementMethod, d.RequestType, d.RequiresCollection,
+                Quantity = d.HandledQuantity ?? d.ApprovedQuantity ?? d.RequestedQuantity }).ToArrayAsync(ct);
+        return rows.GroupBy(t => t.AllocationId).Select(g => g.OrderBy(t => t.LabelCode).First()).Select(t => t with {
+            RemainingClaimableQuantity = Math.Max(0, t.ExpectedQuantity - prior.Where(p => p.AllocationId == t.AllocationId && p.SettlementMethod != "None").Sum(p => p.Quantity)),
+            RemainingReturnableQuantity = Math.Max(0, t.ReceivedQuantity - prior.Where(p => p.AllocationId == t.AllocationId && (p.RequestType != "Complaint" || p.RequiresCollection)).Sum(p => p.Quantity))
+        }).Where(t => t.RemainingClaimableQuantity > 0 || t.RemainingReturnableQuantity > 0).ToArray();
     }
     public async Task ExecuteInTransactionAsync(Func<CancellationToken, Task> operation, CancellationToken ct)
     {
@@ -56,10 +66,27 @@ public sealed class ComplaintStore(AppDbContext db) : IComplaintStore
 
     private async Task<ReceiptDiscrepancy> CreateCoreAsync(Guid actor, CreateComplaintData data, DateTimeOffset now, CancellationToken ct)
     {
+        if (data.RequestType is not ("Complaint" or "Return" or "DamagedCollection") ||
+            data.SettlementMethod is not ("DebtOffset" or "CashRefund" or "None") ||
+            data.SettlementMethod == "None" && data.RequestType != "DamagedCollection")
+            throw ComplaintOperationException.Validation("Loại yêu cầu hoặc phương án bồi hoàn không hợp lệ.");
+        if (data.Note?.Length > 2000) throw ComplaintOperationException.Validation("Mô tả tối đa 2000 ký tự.");
+        var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(data with { RequestId = null }))));
+        if (data.RequestId.HasValue)
+        {
+            var priorRequest = await db.ReceiptDiscrepancyRecords.SingleOrDefaultAsync(d => d.ReportedByRetailerUserId == actor && d.RequestId == data.RequestId, ct);
+            if (priorRequest is not null)
+            {
+                if (priorRequest.RequestHash != hash) throw ComplaintOperationException.Conflict("Mã yêu cầu đã dùng với nội dung khác.");
+                return priorRequest;
+            }
+        }
         if (string.IsNullOrWhiteSpace(data.OrderCode) || string.IsNullOrWhiteSpace(data.Sku) || string.IsNullOrWhiteSpace(data.LabelCode))
             throw ComplaintOperationException.Validation("Order, SKU and label are required.");
         if (data.ActualQuantity < 0) throw ComplaintOperationException.Validation("Actual quantity cannot be negative.");
-        var issueType = string.IsNullOrWhiteSpace(data.IssueType)
+        if (data.RequestType != "Complaint" && string.IsNullOrWhiteSpace(data.Note))
+            throw ComplaintOperationException.Validation("Vui lòng ghi rõ lý do trả/thu hồi hàng.");
+        var issueType = data.RequestType == "Return" ? "Return" : data.RequestType == "DamagedCollection" ? "Damaged" : string.IsNullOrWhiteSpace(data.IssueType)
             ? "Shortage"
             : data.IssueType.Trim() switch
             {
@@ -97,9 +124,15 @@ public sealed class ComplaintStore(AppDbContext db) : IComplaintStore
         if (!await db.ReceiptConfirmationQrLabelRecords.AnyAsync(l => l.ReceiptConfirmationId == receipt.Id && l.BatchQrLabelId == label.Label.Id, ct))
             throw ComplaintOperationException.Validation("Tem không thuộc phiếu nhận của phần hàng này.");
         var shipment = await db.ShipmentRecords.SingleOrDefaultAsync(x => x.Id == receipt.ShipmentId && x.SalesOrderId == order.Id, ct)
-            ?? throw ComplaintOperationException.Conflict("The receipt shipment part was not found.");        if (data.ActualQuantity > receiptItem.ExpectedQuantity)
+            ?? throw ComplaintOperationException.Conflict("The receipt shipment part was not found.");
+        var affected = data.RequestType == "Complaint" ? receiptItem.ExpectedQuantity - data.ActualQuantity
+            : data.AffectedQuantity ?? 0;
+        if (affected <= 0 || decimal.Truncate(affected) != affected)
+            throw ComplaintOperationException.Validation("Số thùng yêu cầu phải là số nguyên lớn hơn 0.");
+        var actual = receiptItem.ExpectedQuantity - affected;
+        if (actual < 0 || data.ActualQuantity > receiptItem.ExpectedQuantity)
             throw ComplaintOperationException.Validation("Actual quantity cannot exceed the received expectation.");
-        if (data.ActualQuantity == receiptItem.ExpectedQuantity)
+        if (actual == receiptItem.ExpectedQuantity)
             throw ComplaintOperationException.Validation(
                 "A complaint must identify at least one missing or unusable carton.");
         if (receipt.ShipmentId is not Guid shipmentId)
@@ -123,27 +156,33 @@ public sealed class ComplaintStore(AppDbContext db) : IComplaintStore
         var requestedAllocationId = data.AllocationId ?? data.AllocationPlanPriceId;
         if (requestedAllocationId.HasValue && requestedAllocationId.Value != priceRow.Id)
             throw ComplaintOperationException.Validation("Allocation does not belong to the shipment batch.");
-        var adjustment = Math.Round((receiptItem.ExpectedQuantity - data.ActualQuantity) * priceRow.FinalNetUnitPrice, 0,
+        var adjustment = data.SettlementMethod == "None" ? 0 : Math.Round(affected * priceRow.FinalNetUnitPrice, 0,
             MidpointRounding.AwayFromZero);
         var previous = await (from d in db.ReceiptDiscrepancyRecords
             join i in db.ReceiptDiscrepancyItemRecords on d.Id equals i.ReceiptDiscrepancyId
             where i.AllocationId == priceRow.Id && d.Status != "Rejected" && d.Status != "Cancelled"
-            select new { d.Status, i.ExpectedQuantity, i.ActualReceivedQuantity, i.AdjustmentAmount }).ToArrayAsync(ct);
-        if (previous.Any(p => p.Status is "Submitted" or "UnderReview"))
-            throw ComplaintOperationException.Conflict("Phần hàng này đang có khiếu nại chờ xử lý.");
-        var affected = receiptItem.ExpectedQuantity - data.ActualQuantity;
-        if (previous.Sum(p => p.ExpectedQuantity - p.ActualReceivedQuantity) + affected > receiptItem.ExpectedQuantity ||
-            previous.Sum(p => p.AdjustmentAmount) + adjustment > Math.Round(receiptItem.ExpectedQuantity * priceRow.FinalNetUnitPrice, 0, MidpointRounding.AwayFromZero))
+            select new { d.Status, d.RequestType, d.RequiresCollection, SettlementMethod = d.ApprovedSettlementMethod ?? d.SettlementMethod, i.AdjustmentAmount,
+                Quantity = d.HandledQuantity ?? d.ApprovedQuantity ?? d.RequestedQuantity }).ToArrayAsync(ct);
+        if (data.RequestType == "Complaint" && !data.RequestId.HasValue && previous.Any())
+            throw ComplaintOperationException.Conflict("Phần hàng này đã có yêu cầu. Vui lòng kiểm tra trước khi gửi lại.");
+        var needsCollection = data.RequiresCollection || data.RequestType == "DamagedCollection";
+        if (issueType == "Shortage" && data.RequestType == "Complaint" && needsCollection)
+            throw ComplaintOperationException.Validation("Hàng giao thiếu không có hàng để thu hồi.");
+        var physical = data.RequestType != "Complaint" || needsCollection;
+        if (physical && affected + previous.Where(p => p.RequestType != "Complaint" || p.RequiresCollection).Sum(p => p.Quantity) > receiptItem.ReceivedQuantity + receiptItem.DamagedQuantity)
+            throw ComplaintOperationException.Conflict("Số thùng trả/thu hồi vượt phần hàng đã nhận còn đủ điều kiện.");
+        if (data.SettlementMethod != "None" && (previous.Where(p => p.SettlementMethod != "None").Sum(p => p.Quantity) + affected > receiptItem.ExpectedQuantity ||
+            previous.Sum(p => p.AdjustmentAmount) + adjustment > Math.Round(receiptItem.ExpectedQuantity * priceRow.FinalNetUnitPrice, 0, MidpointRounding.AwayFromZero)))
             throw ComplaintOperationException.Conflict("Tổng hàng/tiền khiếu nại vượt phần hàng đã giao.");
-        if (previous.Length > 0)
-            throw ComplaintOperationException.Conflict("Phần hàng này đã được khiếu nại; không thể gửi lại bằng ghi chú khác.");
         var discrepancy = new ReceiptDiscrepancy { Id = Guid.NewGuid(), SalesOrderId = order.Id, ReceiptConfirmationId = receipt.Id,
-            ReportedByRetailerUserId = actor, Status = "Submitted", Note = data.Note, ReportedAt = now };
+            ReportedByRetailerUserId = actor, Status = "Submitted", Note = data.Note, ReportedAt = now,
+            RequestType = data.RequestType, SettlementMethod = data.SettlementMethod, RequestedQuantity = affected,
+            RequiresCollection = needsCollection, RequestId = data.RequestId, RequestHash = hash };
         db.ReceiptDiscrepancyRecords.Add(discrepancy);
         db.ReceiptDiscrepancyItemRecords.Add(new ReceiptDiscrepancyItem { Id = Guid.NewGuid(), ReceiptDiscrepancyId = discrepancy.Id,
             BatchId = label.Batch.Id, ShipmentId = shipmentId, AllocationId = priceRow.Id,
             IssueType = issueType,
-            ExpectedQuantity = receiptItem.ExpectedQuantity, ActualReceivedQuantity = data.ActualQuantity,
+            ExpectedQuantity = receiptItem.ExpectedQuantity, ActualReceivedQuantity = actual,
             FinalUnitPrice = priceRow.FinalNetUnitPrice, AdjustmentAmount = adjustment,
             EvidenceBlobUrl = data.EvidenceUrl, Note = data.Note });
         await db.SaveChangesAsync(ct);
@@ -161,7 +200,8 @@ public sealed class ComplaintStore(AppDbContext db) : IComplaintStore
                 join p in db.ProductRecords.AsNoTracking() on b.ProductId equals p.Id into products
                 from p in products.DefaultIfEmpty()
                 join l in db.BatchQrLabelRecords.AsNoTracking() on b.Id equals l.BatchId into labels
-                from l in labels.OrderByDescending(x => x.UpdatedAt).Take(1).DefaultIfEmpty()
+                from l in labels.Where(l => db.ReceiptConfirmationQrLabelRecords.Any(link => link.ReceiptConfirmationId == d.ReceiptConfirmationId && link.BatchQrLabelId == l.Id))
+                    .OrderByDescending(x => x.UpdatedAt).Take(1).DefaultIfEmpty()
                 select new { d, o, r, i, p, l };
         if (role == SystemRoles.Retailer)
         {
@@ -171,12 +211,15 @@ public sealed class ComplaintStore(AppDbContext db) : IComplaintStore
         }
         var rows = await q.OrderByDescending(x => x.d.ReportedAt).ToArrayAsync(ct);
         var ids = rows.Select(x => x.d.Id).ToArray();
+        var documents = await db.ReturnHandlingDocumentRecords.AsNoTracking().Where(x => ids.Contains(x.ReceiptDiscrepancyId)).ToArrayAsync(ct);
         var requests = (await db.AuditLogRecords.AsNoTracking()
             .Where(a => a.EntityName == nameof(ReceiptDiscrepancy) && a.Action == "ComplaintEvidenceRequested" && ids.Contains(a.EntityId))
             .OrderByDescending(a => a.CreatedAt).ToArrayAsync(ct))
             .GroupBy(a => a.EntityId).ToDictionary(g => g.Key, g => g.First().Reason);
         return rows.Select(x => ToResult(x.d, x.o.OrderCode, x.r.Code, x.r.Name, x.p?.Sku ?? "", x.p?.Name ?? "", x.i, x.l?.QrCode, x.i.EvidenceBlobUrl,
-            x.d.Status == "UnderReview" ? requests.GetValueOrDefault(x.d.Id) : null)).ToArray();
+            x.d.Status == "UnderReview" ? requests.GetValueOrDefault(x.d.Id) : null) with {
+                Documents = documents.Where(d => d.ReceiptDiscrepancyId == x.d.Id).Select(DocumentResult).ToArray()
+            }).ToArray();
     }
 
     public async Task<ComplaintResult> ResolveAsync(Guid id, Guid actor, ResolveComplaintData data, DateTimeOffset now, CancellationToken ct)
@@ -193,17 +236,69 @@ public sealed class ComplaintStore(AppDbContext db) : IComplaintStore
         {
             if ((row.d.Status != "Rejected") != data.Approved)
                 throw ComplaintOperationException.Conflict("Khiếu nại đã chốt kết quả, không thể đổi quyết định.");
-            return ToResult(row.d, row.o.OrderCode, row.r.Code, row.r.Name, row.p.Sku, row.p.Name, row.i, null, row.i.EvidenceBlobUrl);
+            if (data.ApprovedQuantity.HasValue && data.ApprovedQuantity != row.d.ApprovedQuantity ||
+                data.SettlementMethod is not null && data.SettlementMethod != row.d.ApprovedSettlementMethod)
+                throw ComplaintOperationException.Conflict("Yêu cầu đã được duyệt với phương án khác.");
+            return await ResultAsync(id, ct);
+        }
+        if (data.ExpectedVersion.HasValue && data.ExpectedVersion != row.d.Version)
+            throw ComplaintOperationException.Conflict("Yêu cầu đã thay đổi, hãy tải lại trước khi xử lý.");
+        if (row.d.RequestType != "Complaint" && !data.ExpectedVersion.HasValue)
+            throw ComplaintOperationException.Validation("Cần phiên bản hiện tại của yêu cầu.");
+        var approvedQuantity = data.ApprovedQuantity ?? row.d.RequestedQuantity;
+        var settlement = data.SettlementMethod ?? row.d.SettlementMethod;
+        if (data.Approved && (approvedQuantity <= 0 || decimal.Truncate(approvedQuantity) != approvedQuantity || approvedQuantity > row.d.RequestedQuantity))
+            throw ComplaintOperationException.Validation("Số thùng được duyệt phải nguyên, lớn hơn 0 và không vượt số yêu cầu.");
+        if (settlement is not ("DebtOffset" or "CashRefund" or "None") || settlement == "None" && row.d.RequestType != "DamagedCollection")
+            throw ComplaintOperationException.Validation("Phương án bồi hoàn không hợp lệ.");
+        if (data.WaivePhysicalHandling && string.IsNullOrWhiteSpace(data.WaiverReason))
+            throw ComplaintOperationException.Validation("Miễn xử lý hàng thực tế phải có lý do.");
+        if (data.Result.Length > 2000 || data.WaiverReason?.Length > 1000)
+            throw ComplaintOperationException.Validation("Ghi chú tối đa 2000 ký tự, lý do miễn xử lý tối đa 1000 ký tự.");
+        // Changing a collection-only request to compensation must reserve the financial budget too.
+        if (data.Approved && settlement != "None")
+        {
+            var otherQuantities = await (from d in db.ReceiptDiscrepancyRecords
+                join i in db.ReceiptDiscrepancyItemRecords on d.Id equals i.ReceiptDiscrepancyId
+                where d.Id != id && i.AllocationId == row.i.AllocationId && d.Status != "Rejected" && d.Status != "Cancelled"
+                    && (d.ApprovedSettlementMethod ?? d.SettlementMethod) != "None"
+                select d.HandledQuantity ?? d.ApprovedQuantity ?? d.RequestedQuantity).ToArrayAsync(ct);
+            if (otherQuantities.Sum() + approvedQuantity > row.i.ExpectedQuantity)
+                throw ComplaintOperationException.Conflict("Phần hàng không còn đủ số lượng được bồi hoàn; hãy tải lại các yêu cầu liên quan.");
         }
         var oldStatus = row.d.Status;
         row.d.Status = data.Approved ? "Approved" : "Rejected";
-        row.d.ReviewedByUserId = actor; row.d.ReviewedAt = now; row.d.ResolvedAt = now; row.d.Note = data.Result;
+        row.d.ReviewedByUserId = actor; row.d.ReviewedAt = now;
+        row.d.ResolvedAt = data.Approved ? null : now; row.d.Note = data.Result.Trim(); row.d.Version++;
         // An approved claim is settled in money only: the receivable is adjusted and any amount the
         // retailer already paid is refunded through a manual refund record (F101).
-        if (data.Approved) row.d.ResolutionType = "FinancialAdjustment";
+        if (data.Approved)
+        {
+            row.d.ApprovedQuantity = approvedQuantity;
+            row.d.ApprovedSettlementMethod = settlement;
+            row.i.AdjustmentAmount = settlement == "None" ? 0 : Money(approvedQuantity * row.i.FinalUnitPrice);
+            row.d.ResolutionType = settlement == "None" ? null : "FinancialAdjustment";
+            var physical = row.d.RequestType != "Complaint" || row.d.RequiresCollection;
+            row.d.PhysicalHandlingCompleted = !physical || data.WaivePhysicalHandling;
+            if (row.d.PhysicalHandlingCompleted) row.d.HandledQuantity = approvedQuantity;
+            if (physical)
+            {
+                void AddDocument(string kind, string prefix) => db.ReturnHandlingDocumentRecords.Add(new() {
+                    Id = Guid.NewGuid(), ReceiptDiscrepancyId = id, Kind = kind,
+                    Code = $"{prefix}-{id:N}", ApprovedQuantity = approvedQuantity, CreatedAt = now,
+                    Status = data.WaivePhysicalHandling ? "Waived" : "Pending",
+                    ActualQuantity = data.WaivePhysicalHandling ? approvedQuantity : null,
+                    CompletedAt = data.WaivePhysicalHandling ? now : null,
+                    CompletedByUserId = data.WaivePhysicalHandling ? actor : null,
+                    Note = data.WaivePhysicalHandling ? data.WaiverReason?.Trim() : null
+                });
+                if (row.d.RequestType == "Return" || settlement != "None") AddDocument("ReturnOrder", "RT");
+                if (row.d.RequiresCollection) AddDocument("CollectionOrder", "TH");
+            }
+        }
         Audit(actor, data.Approved ? "ApproveClaimFinancial" : "RejectClaim", row.d, oldStatus, data.Result, now);
         await db.SaveChangesAsync(ct);
-        return ToResult(row.d, row.o.OrderCode, row.r.Code, row.r.Name, row.p.Sku, row.p.Name, row.i, null, row.i.EvidenceBlobUrl);
+        return await ResultAsync(id, ct);
     }
 
     public async Task MarkFinancialAdjustmentAppliedAsync(Guid id, CancellationToken ct)
@@ -212,8 +307,58 @@ public sealed class ComplaintStore(AppDbContext db) : IComplaintStore
             item => item.Id == id, ct)
             ?? throw ComplaintOperationException.NotFound("Complaint was not found.");
         discrepancy.ResolutionType = "FinancialAdjustment";
+        discrepancy.FinancialAdjustmentApplied = true;
         await db.SaveChangesAsync(ct);
     }
+
+    public async Task<ComplaintResult> CompleteHandlingAsync(Guid id, Guid actor, CompleteRequestHandlingData data, DateTimeOffset now, CancellationToken ct)
+    {
+        var completedAt = new DateTimeOffset(data.CompletedAt.UtcTicks - data.CompletedAt.UtcTicks % 10, TimeSpan.Zero);
+        var d = await db.ReceiptDiscrepancyRecords.SingleOrDefaultAsync(x => x.Id == id, ct)
+            ?? throw ComplaintOperationException.NotFound("Không tìm thấy yêu cầu.");
+        var docs = await db.ReturnHandlingDocumentRecords.Where(x => x.ReceiptDiscrepancyId == id).ToArrayAsync(ct);
+        if (d.PhysicalHandlingCompleted)
+        {
+            if (d.HandledQuantity != data.ActualQuantity || docs.Any(x => x.Status != "Completed" || x.Note != data.Note.Trim() || x.EvidenceReference != data.EvidenceReference.Trim() || x.CompletedAt != completedAt))
+                throw ComplaintOperationException.Conflict("Yêu cầu đã chốt xử lý với nội dung khác.");
+            return await ResultAsync(id, ct);
+        }
+        if (d.Status != "Approved" || docs.Length == 0)
+            throw ComplaintOperationException.Conflict("Chỉ xác nhận phiếu đã được Admin duyệt và đang chờ xử lý hàng.");
+        if (d.Version != data.ExpectedVersion) throw ComplaintOperationException.Conflict("Yêu cầu đã thay đổi, hãy tải lại.");
+        if (data.ActualQuantity < 0 || decimal.Truncate(data.ActualQuantity) != data.ActualQuantity || data.ActualQuantity > d.ApprovedQuantity)
+            throw ComplaintOperationException.Validation("Số thùng xử lý thực tế phải nguyên, từ 0 đến số được duyệt.");
+        if (string.IsNullOrWhiteSpace(data.Note) || data.Note.Length > 1000 || string.IsNullOrWhiteSpace(data.EvidenceReference) || data.EvidenceReference.Length > 2000)
+            throw ComplaintOperationException.Validation("Cần ghi chú và bằng chứng xử lý thực tế (tối đa 1000/2000 ký tự).");
+        if (completedAt > now || completedAt < d.ReviewedAt)
+            throw ComplaintOperationException.Validation("Ngày xử lý phải sau lúc duyệt và không ở tương lai.");
+        foreach (var doc in docs)
+        {
+            doc.Status = "Completed"; doc.ActualQuantity = data.ActualQuantity; doc.CompletedAt = completedAt;
+            doc.CompletedByUserId = actor; doc.Note = data.Note.Trim(); doc.EvidenceReference = data.EvidenceReference.Trim();
+        }
+        d.HandledQuantity = data.ActualQuantity; d.PhysicalHandlingCompleted = true; d.Version++;
+        var item = await db.ReceiptDiscrepancyItemRecords.SingleAsync(i => i.ReceiptDiscrepancyId == id, ct);
+        item.AdjustmentAmount = d.ApprovedSettlementMethod == "None" ? 0 : Money(data.ActualQuantity * item.FinalUnitPrice);
+        Audit(actor, "RequestHandlingCompleted", d, d.Status, data.Note, now);
+        await db.SaveChangesAsync(ct);
+        return await ResultAsync(id, ct);
+    }
+
+    public async Task RecordSettlementAsync(Guid id, decimal debtOffset, decimal refundAmount, Guid? refundId, DateTimeOffset now, CancellationToken ct)
+    {
+        var d = await db.ReceiptDiscrepancyRecords.SingleAsync(x => x.Id == id, ct);
+        d.DebtOffsetAmount = debtOffset; d.RefundAmount = refundAmount; d.RefundId = refundId;
+        d.FinancialAdjustmentApplied = d.ApprovedSettlementMethod != "None";
+        d.Status = "Resolved"; d.ResolvedAt = now; d.Version++;
+        await db.SaveChangesAsync(ct);
+    }
+
+    private async Task<ComplaintResult> ResultAsync(Guid id, CancellationToken ct) =>
+        (await ListAsync(Guid.Empty, SystemRoles.Admin, ct)).Single(x => x.Id == id);
+    private static decimal Money(decimal amount) => Math.Round(amount, 0, MidpointRounding.AwayFromZero);
+    private static ReturnHandlingDocumentResult DocumentResult(ReturnHandlingDocument d) =>
+        new(d.Id, d.Code, d.Kind, d.Status, d.ApprovedQuantity, d.ActualQuantity, d.CompletedAt, d.Note, d.EvidenceReference);
 
     public async Task CancelAsync(Guid id, Guid actor, DateTimeOffset now, CancellationToken ct)
     {
@@ -224,7 +369,7 @@ public sealed class ComplaintStore(AppDbContext db) : IComplaintStore
             throw ComplaintOperationException.Conflict("Khiếu nại đã có kết quả, không thể hủy.");
         var old = d.Status;
         // ResolvedAt closes the claim for the completion gate and frees the batch for a new claim.
-        d.Status = "Cancelled"; d.ResolvedAt = now;
+        d.Status = "Cancelled"; d.ResolvedAt = now; d.Version++;
         Audit(actor, "CancelClaim", d, old, "Retailer hủy khiếu nại", now);
         await db.SaveChangesAsync(ct);
     }
@@ -237,7 +382,7 @@ public sealed class ComplaintStore(AppDbContext db) : IComplaintStore
         if (d.Status is not ("Submitted" or "UnderReview"))
             throw ComplaintOperationException.Conflict("Khiếu nại đã có kết quả, không thể yêu cầu bổ sung.");
         var old = d.Status;
-        d.Status = "UnderReview"; d.ReviewedByUserId = actor;
+        d.Status = "UnderReview"; d.ReviewedByUserId = actor; d.Version++;
         Audit(actor, "ComplaintEvidenceRequested", d, old, reason.Trim(), now);
         await db.SaveChangesAsync(ct);
     }
@@ -284,8 +429,14 @@ public sealed class ComplaintStore(AppDbContext db) : IComplaintStore
             .SingleOrDefaultAsync(x => x.Id == evidenceId && x.ReceiptDiscrepancyId == complaintId, ct);
 
     private static ComplaintResult ToResult(ReceiptDiscrepancy d, string order, string retailerCode, string retailerName, string sku, string product, ReceiptDiscrepancyItem i, string? label, string? evidence, string? evidenceRequest = null) =>
-        new(d.Id, $"KN-{d.Id.ToString("N")[..8].ToUpperInvariant()}", order, retailerCode, retailerName, sku, product, i.ExpectedQuantity, i.ActualReceivedQuantity, i.IssueType, d.Status is "Submitted" or "UnderReview" ? "Open" : d.Status, label, i.Note ?? d.Note, evidence, d.ReportedAt, d.Status is "Approved" or "Rejected" or "Resolved" ? d.Note : null, i.ShipmentId, i.AllocationPlanPriceId, i.FinalUnitPrice, i.AdjustmentAmount, d.SalesOrderId, i.AllocationId, d.ResolutionType == "FinancialAdjustment",
-            d.ResolutionType, d.Status, evidenceRequest);
+        new ComplaintResult(d.Id, $"KN-{d.Id.ToString("N")[..8].ToUpperInvariant()}", order, retailerCode, retailerName, sku, product, i.ExpectedQuantity, i.ActualReceivedQuantity, i.IssueType, d.Status is "Submitted" or "UnderReview" ? "Open" : d.Status, label, i.Note ?? d.Note, evidence, d.ReportedAt, d.Status is "Approved" or "Rejected" or "Resolved" ? d.Note : null, i.ShipmentId, i.AllocationPlanPriceId, i.FinalUnitPrice, i.AdjustmentAmount, d.SalesOrderId, i.AllocationId, d.ResolutionType == "FinancialAdjustment",
+            d.ResolutionType, d.Status, evidenceRequest) with {
+                FinancialAdjustmentApplied = d.FinancialAdjustmentApplied,
+                RequestType = d.RequestType, SettlementMethod = d.SettlementMethod, ApprovedSettlementMethod = d.ApprovedSettlementMethod,
+                RequestedQuantity = d.RequestedQuantity, ApprovedQuantity = d.ApprovedQuantity, HandledQuantity = d.HandledQuantity,
+                RequiresCollection = d.RequiresCollection, PhysicalHandlingCompleted = d.PhysicalHandlingCompleted,
+                DebtOffsetAmount = d.DebtOffsetAmount, RefundAmount = d.RefundAmount, RefundId = d.RefundId, Version = d.Version
+            };
 
     private void Audit(Guid? actor, string action, ReceiptDiscrepancy d, string? oldStatus, string? reason, DateTimeOffset now) =>
         db.AuditLogRecords.Add(new AuditLog
@@ -293,7 +444,9 @@ public sealed class ComplaintStore(AppDbContext db) : IComplaintStore
             Id = Guid.NewGuid(), UserAccountId = actor, EntityName = nameof(ReceiptDiscrepancy), EntityId = d.Id,
             Action = action,
             OldValues = System.Text.Json.JsonSerializer.Serialize(new { Status = oldStatus }),
-            NewValues = System.Text.Json.JsonSerializer.Serialize(new { d.Status, d.ResolutionType }),
+            NewValues = System.Text.Json.JsonSerializer.Serialize(new { d.Status, d.ResolutionType, d.RequestType,
+                d.SettlementMethod, d.ApprovedSettlementMethod, d.RequestedQuantity, d.ApprovedQuantity,
+                d.HandledQuantity, d.PhysicalHandlingCompleted, d.Version }),
             Reason = reason, CreatedAt = now
         });
 }

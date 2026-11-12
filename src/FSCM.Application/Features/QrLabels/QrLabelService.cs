@@ -14,6 +14,8 @@ public sealed class QrLabelService(IQrLabelStore store, IQrCodeRenderer qrCodeRe
         string qrCode, Guid userId, string role, CancellationToken cancellationToken)
     {
         var view = await FindAccessibleAsync(qrCode, userId, role, cancellationToken);
+        if (view.Label.Status is QrLabelStatuses.Invalidated or QrLabelStatuses.Split)
+            throw QrLabelOperationException.Conflict("Tem đã hết hiệu lực. Hãy in các tem con thay thế.");
         var label = BuildPrintLabel(view);
         var html = BuildPrintHtml([label]);
         return new QrLabelPrintDocument("text/html", $"TEM-{view.Label.QrCode}.html", html, [label]);
@@ -33,7 +35,7 @@ public sealed class QrLabelService(IQrLabelStore store, IQrCodeRenderer qrCodeRe
         if (views.Count == 0)
             throw QrLabelOperationException.NotFound("The batch has no QR labels to print.");
         var labels = views
-            .Where(item => item.Label.Status != QrLabelStatuses.Invalidated)
+            .Where(item => item.Label.Status is not (QrLabelStatuses.Invalidated or QrLabelStatuses.Split))
             .Select(BuildPrintLabel)
             .ToArray();
         if (labels.Length == 0)
@@ -100,6 +102,24 @@ public sealed class QrLabelService(IQrLabelStore store, IQrCodeRenderer qrCodeRe
         return await ToDetailAsync(view, cancellationToken);
     }
 
+    public async Task<QrGenerationCapacityResult> GetGenerationCapacityAsync(
+        Guid batchId, Guid userId, string role, CancellationToken cancellationToken)
+    {
+        var batch = await store.FindBatchAsync(batchId, cancellationToken)
+            ?? throw QrLabelOperationException.NotFound("Batch was not found.");
+        await EnsureWarehouseAccessAsync(userId, role, batch.WarehouseId, cancellationToken);
+        return await CalculateGenerationCapacityAsync(batch.Id, cancellationToken);
+    }
+
+    private async Task<QrGenerationCapacityResult> CalculateGenerationCapacityAsync(
+        Guid batchId, CancellationToken cancellationToken)
+    {
+        var balance = await store.FindBalanceAsync(batchId, cancellationToken)
+            ?? throw QrLabelOperationException.Conflict("Batch inventory balance was not found.");
+        var labelled = await store.SumActiveQuantityAsync(batchId, cancellationToken);
+        return new(batchId, balance.PhysicalQuantity, labelled, Math.Max(0, balance.PhysicalQuantity - labelled));
+    }
+
     public async Task<QrLabelResult> GenerateAsync(
         GenerateQrLabelData data, string operationKey, Guid userId, string role, CancellationToken cancellationToken)
     {
@@ -122,11 +142,10 @@ public sealed class QrLabelService(IQrLabelStore store, IQrCodeRenderer qrCodeRe
         var batch = await store.FindBatchAsync(data.BatchId, cancellationToken)
             ?? throw QrLabelOperationException.NotFound("Batch was not found.");
         await EnsureWarehouseAccessAsync(userId, role, batch.WarehouseId, cancellationToken);
-        var balance = await store.FindBalanceAsync(batch.Id, cancellationToken)
-            ?? throw QrLabelOperationException.Conflict("Batch inventory balance was not found.");
-        var activeQuantity = await store.SumActiveQuantityAsync(batch.Id, cancellationToken);
-        if (activeQuantity + data.Quantity > balance.PhysicalQuantity)
-            throw QrLabelOperationException.Conflict("Label quantity exceeds the unlabelled physical batch quantity.");
+        var capacity = await CalculateGenerationCapacityAsync(batch.Id, cancellationToken);
+        if (data.Quantity > capacity.UnlabelledQuantity)
+            throw QrLabelOperationException.Conflict(
+                $"Lô hàng chỉ còn {capacity.UnlabelledQuantity:0.###} thùng chưa có tem QR. Vui lòng tải lại và kiểm tra số lượng.");
 
         var now = timeProvider.GetUtcNow();
         var id = Guid.NewGuid();
@@ -181,28 +200,20 @@ public sealed class QrLabelService(IQrLabelStore store, IQrCodeRenderer qrCodeRe
             throw QrLabelOperationException.Validation("Split quantity must be less than the parent label quantity.");
 
         var now = timeProvider.GetUtcNow();
-        parent.Quantity -= data.Quantity;
-        parent.Version++;
-        parent.UpdatedAt = now;
-        var childId = Guid.NewGuid();
-        var child = new BatchQrLabel
-        {
-            Id = childId,
-            BatchId = parent.BatchId,
-            CurrentWarehouseId = parent.CurrentWarehouseId,
-            GoodsReceiptId = parent.GoodsReceiptId,
-            ParentLabelId = parent.Id,
-            RootLabelId = parent.RootLabelId ?? parent.Id,
-            QrCode = await store.NextQrCodeAsync(cancellationToken),
-            Quantity = data.Quantity,
-            Status = QrLabelStatuses.Available,
-            Version = 1,
-            GeneratedAt = now,
-            UpdatedAt = now
-        };
+        var split = QrLabelSplit.Create(parent, data.Quantity,
+            await store.NextQrCodeAsync(cancellationToken), await store.NextQrCodeAsync(cancellationToken),
+            QrLabelStatuses.Available, now);
+        var child = split.Taken;
         store.AddLabel(child);
+        store.AddLabel(split.Replacement);
+        store.AddEvent(CreateEvent(parent, parent.CurrentWarehouseId, userId, $"{operationKey}:source",
+            QrLabelEventTypes.Split, QrLabelStatuses.Available, QrLabelStatuses.Split, child.QrCode,
+            $"Replaced by {child.QrCode} and {split.Replacement.QrCode}", now));
+        store.AddEvent(CreateEvent(split.Replacement, parent.CurrentWarehouseId, userId, $"{operationKey}:replacement",
+            QrLabelEventTypes.Split, QrLabelStatuses.Available, QrLabelStatuses.Available, parent.QrCode,
+            "Replacement for split source", now));
         store.AddEvent(CreateEvent(child, child.CurrentWarehouseId, userId, operationKey,
-            QrLabelEventTypes.Split, parent.Status, child.Status, parent.QrCode,
+            QrLabelEventTypes.Split, QrLabelStatuses.Available, child.Status, parent.QrCode,
             $"Tách {data.Quantity:0.###} đơn vị từ tem cha {parent.QrCode}", now));
         await store.SaveChangesAsync(cancellationToken);
         return ToResult((await store.FindByIdAsync(child.Id, cancellationToken))!);
@@ -233,7 +244,7 @@ public sealed class QrLabelService(IQrLabelStore store, IQrCodeRenderer qrCodeRe
         await EnsureWarehouseAccessAsync(userId, role, data.WarehouseId, cancellationToken);
         if (label.Version != data.ExpectedVersion)
             throw QrLabelOperationException.Conflict("QR label was changed by another operation. Refresh and retry.");
-        if (label.Status == QrLabelStatuses.Invalidated)
+        if (label.Status is QrLabelStatuses.Invalidated or QrLabelStatuses.Split)
             throw QrLabelOperationException.Conflict("Invalidated labels cannot be inspected.");
 
         var fromStatus = label.Status;
