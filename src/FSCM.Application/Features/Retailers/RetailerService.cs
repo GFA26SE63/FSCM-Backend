@@ -166,6 +166,59 @@ public sealed class RetailerService(
         return await GetResultAsync(retailerId, cancellationToken);
     }
 
+    public async Task<RetailerDetails> UpdateProfileAsync(
+        Guid retailerId, Guid actorUserId, string actorRole, UpdateRetailerProfileData data,
+        CancellationToken cancellationToken)
+    {
+        if (actorRole != SystemRoles.Admin)
+            throw RetailerOperationException.Forbidden("Only Admin can update a retailer profile.");
+        var retailer = await store.FindForUpdateAsync(retailerId, cancellationToken)
+            ?? throw RetailerOperationException.NotFound("Retailer was not found.");
+        var input = Validate(data.Name, data.ContactName, data.Phone, data.Email, data.Address,
+            data.RetailerType, data.ForecastRevenue, data.StoreSizeSquareMeters, data.PurchasingCapacity,
+            data.PurchaseFrequencyPerMonth, data.RequestedCreditTermDays, data.AssessmentNote);
+        await EnsureNoDuplicateAsync(input, retailerId, cancellationToken);
+        UserAccount? account = null;
+        RetailerDeclarationContact? contact = null;
+        if (retailer.UserAccountId.HasValue)
+        {
+            account = await store.FindContactAccountForUpdateAsync(retailer.UserAccountId.Value, cancellationToken)
+                ?? throw RetailerOperationException.InvalidTransition("Linked retailer account was not found.");
+            if (account.Role != SystemRoles.Retailer)
+                throw RetailerOperationException.InvalidTransition("Linked account must have the Retailer role.");
+        }
+        else
+        {
+            contact = await store.FindDeclarationContactForUpdateAsync(retailerId, cancellationToken)
+                ?? throw RetailerOperationException.InvalidTransition("Retailer declaration contact was not found.");
+        }
+
+        var now = timeProvider.GetUtcNow();
+        var oldValues = GeneralInformationAuditJson(retailer, account?.FullName ?? contact!.ContactName,
+            account?.Phone ?? contact?.Phone ?? "", account?.Email ?? contact!.Email);
+        await ApplyLocationAsync(retailerId, data.Latitude, data.Longitude, data.ProviderPlaceId, now, cancellationToken);
+        Apply(retailer, input, actorUserId, now);
+        if (account is not null)
+        {
+            account.FullName = input.ContactName;
+            account.Phone = input.Phone;
+            account.Email = input.Email;
+            account.UpdatedAt = now;
+        }
+        else
+        {
+            contact!.ContactName = input.ContactName;
+            contact.Phone = input.Phone;
+            contact.Email = input.Email;
+            contact.UpdatedAt = now;
+        }
+        // Deliberately leave code, ownership, review/status, agreed credit terms and MLOR untouched.
+        AddAudit(retailerId, actorUserId, "RetailerProfileUpdated", oldValues,
+            GeneralInformationAuditJson(retailer, input.ContactName, input.Phone, input.Email), null, now);
+        await store.SaveChangesAsync(cancellationToken);
+        return await GetResultAsync(retailerId, cancellationToken);
+    }
+
     public async Task<RetailerDetails> SubmitForReviewAsync(
         Guid retailerId, Guid actorUserId, CancellationToken cancellationToken)
     {
@@ -401,7 +454,8 @@ public sealed class RetailerService(
         decimal purchasingCapacity, int purchaseFrequencyPerMonth, int creditTermDays,
         string? assessmentNote)
     {
-        name = Clean(name, 200, "Retailer name")!;
+        name = Clean(name, 200, "Retailer name")
+            ?? throw RetailerOperationException.Validation("Retailer name is required.");
         if (name.Length < 2) throw RetailerOperationException.Validation("Retailer name must contain at least 2 characters.");
         contactName = Clean(contactName, 150, "Contact name")
             ?? throw RetailerOperationException.Validation("Contact name is required.");
