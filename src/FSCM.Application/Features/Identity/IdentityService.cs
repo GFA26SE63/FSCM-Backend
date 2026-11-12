@@ -652,7 +652,11 @@ public sealed class IdentityService(
             accessToken.ExpiresAt,
             rawRefreshToken,
             refreshToken.ExpiresAt,
-            ToAuthenticatedUser(user, credential?.MustChangePassword ?? false, scope));
+            ToAuthenticatedUser(
+                user,
+                credential?.MustChangePassword ?? false,
+                scope,
+                await store.GetScopeLabelsAsync(scope, cancellationToken)));
     }
 
     private async Task<AccountToken> FindUsableAccountTokenAsync(
