@@ -30,6 +30,7 @@ public sealed class IdentityService(
         string? ipAddress,
         CancellationToken cancellationToken)
     {
+        password = password?.Trim() ?? string.Empty;
         var normalizedIdentifier = identifier?.Trim() ?? string.Empty;
         var user = normalizedIdentifier.Contains('@', StringComparison.Ordinal)
             ? await store.FindUserByEmailAsync(NormalizeEmail(normalizedIdentifier), cancellationToken)
@@ -175,6 +176,7 @@ public sealed class IdentityService(
         string password,
         CancellationToken cancellationToken)
     {
+        password = password?.Trim() ?? string.Empty;
         ValidatePassword(password);
         var now = timeProvider.GetUtcNow();
         var token = await FindUsableAccountTokenAsync(
@@ -239,6 +241,7 @@ public sealed class IdentityService(
         string password,
         CancellationToken cancellationToken)
     {
+        password = password?.Trim() ?? string.Empty;
         ValidatePassword(password);
         var now = timeProvider.GetUtcNow();
         var token = await FindUsableAccountTokenAsync(
@@ -326,6 +329,7 @@ public sealed class IdentityService(
         Guid actorUserId,
         CancellationToken cancellationToken)
     {
+        password = password?.Trim() ?? string.Empty;
         var normalizedEmail = NormalizeEmail(email);
         ValidateFullName(fullName);
         phone = ValidatePhone(phone);
