@@ -241,7 +241,7 @@ public sealed class RetailerService(
     }
 
     public async Task<RetailerDetails> ReviewAsync(
-        Guid retailerId, Guid reviewerUserId, bool approve, int? creditTermDays,
+        Guid retailerId, Guid reviewerUserId, bool approve, int? creditTermDays, decimal? creditLimit,
         string? reason, CancellationToken cancellationToken)
     {
         var retailer = await store.FindForUpdateAsync(retailerId, cancellationToken)
@@ -254,6 +254,8 @@ public sealed class RetailerService(
             throw RetailerOperationException.Validation("A review reason is required for approval or rejection.");
         if (approve && (!creditTermDays.HasValue || !AllowedCreditTerms.Contains(creditTermDays.Value)))
             throw RetailerOperationException.Validation("Admin must select a payment term of 0, 7, 14, or 30 days when approving.");
+        if (approve && (!creditLimit.HasValue || creditLimit.Value < 0))
+            throw RetailerOperationException.Validation("Admin must set a non-negative credit limit when approving.");
 
         var reviewedAt = timeProvider.GetUtcNow();
         retailer.Status = approve ? RetailerStatuses.Active : RetailerStatuses.Rejected;
@@ -304,13 +306,14 @@ public sealed class RetailerService(
             }
             retailer.Code = await store.NextBusinessCodeAsync(cancellationToken);
             retailer.CreditTermDays = creditTermDays!.Value;
+            retailer.CreditLimit = creditLimit!.Value;
         }
         retailer.ReviewedByUserId = reviewerUserId;
         retailer.ReviewedAt = reviewedAt;
         retailer.ReviewReason = reason;
         retailer.UpdatedAt = retailer.ReviewedAt.Value;
         AddAudit(retailer.Id, reviewerUserId, approve ? "RetailerDeclarationApproved" : "RetailerDeclarationRejected",
-            null, JsonSerializer.Serialize(new { retailer.Status, retailer.CreditTermDays }), reason, retailer.UpdatedAt);
+            null, JsonSerializer.Serialize(new { retailer.Status, retailer.CreditTermDays, retailer.CreditLimit }), reason, retailer.UpdatedAt);
         // Retailer status, business code and the Retailer user account are committed in one
         // SaveChanges (single implicit transaction): either both records exist or neither does.
         await store.SaveChangesAsync(cancellationToken);
@@ -321,6 +324,13 @@ public sealed class RetailerService(
                 accountCreatedEmail with { RetailerCode = retailer.Code }, cancellationToken);
         return await GetResultAsync(retailerId, cancellationToken);
     }
+
+    // Preserves the internal call shape used by pre-credit-limit tests and integrations. HTTP
+    // review requests always use the overload above and must explicitly supply the limit.
+    public Task<RetailerDetails> ReviewAsync(
+        Guid retailerId, Guid reviewerUserId, bool approve, int? creditTermDays,
+        string? reason, CancellationToken cancellationToken) =>
+        ReviewAsync(retailerId, reviewerUserId, approve, creditTermDays, 0m, reason, cancellationToken);
 
     private async Task NotifyAccountCreatedAsync(
         Guid retailerId, Guid reviewerUserId, RetailerAccountCreatedEmail email,
@@ -536,7 +546,7 @@ public sealed class RetailerService(
             view.Location?.Latitude, view.Location?.Longitude, view.Location?.ProviderPlaceId,
             view.Location?.Version ?? 0, item.Status, item.RetailerType,
             item.ForecastRevenue ?? 0, item.StoreSizeSquareMeters ?? 0, item.StoreSizeCategory,
-            item.PurchasingCapacity ?? 0, item.PurchaseFrequencyPerMonth, item.CreditTermDays,
+            item.PurchasingCapacity ?? 0, item.PurchaseFrequencyPerMonth, item.CreditTermDays, item.CreditLimit,
             item.RequestedCreditTermDays,
             item.PotentialStatus ?? "C", item.AssessmentNote, item.DeclaredByUserId,
             item.ReviewedByUserId, item.ReviewedAt, item.ReviewReason, item.CreatedAt, item.UpdatedAt,

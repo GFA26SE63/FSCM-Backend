@@ -43,7 +43,7 @@ public sealed class MobileSnapshotStore(AppDbContext dbContext) : IMobileSnapsho
                 (!x.EffectiveTo.HasValue || x.EffectiveTo.Value > effectiveAt));
 
         var retailers = await retailerQuery.OrderBy(x => x.Code).Select(x => new MobileSnapshotRetailer(
-            x.Id, x.Code, x.Name, x.Address, x.Status, x.CreditTermDays, x.UpdatedAt)).ToArrayAsync(cancellationToken);
+            x.Id, x.Code, x.Name, x.Address, x.Status, x.CreditTermDays, x.UpdatedAt, x.CreditLimit)).ToArrayAsync(cancellationToken);
         var categories = await categoryQuery.OrderBy(x => x.Code).Select(x => new MobileSnapshotCategory(
             x.Id, x.ParentCategoryId, x.Code, x.Name, x.IsActive, x.UpdatedAt)).ToArrayAsync(cancellationToken);
         var products = await productQuery.OrderBy(x => x.Sku).Select(x => new MobileSnapshotProduct(

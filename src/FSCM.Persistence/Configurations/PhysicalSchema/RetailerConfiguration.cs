@@ -24,6 +24,7 @@ public sealed class RetailerConfiguration : IEntityTypeConfiguration<Retailer>
         builder.Property(entity => entity.PurchasingCapacity).HasPrecision(18, 2).IsRequired(false);
         builder.Property(entity => entity.PurchaseFrequencyPerMonth).IsRequired();
         builder.Property(entity => entity.CreditTermDays).IsRequired();
+        builder.Property(entity => entity.CreditLimit).HasPrecision(18, 2).IsRequired();
         builder.Property(entity => entity.RequestedCreditTermDays).IsRequired(false);
         builder.Property(entity => entity.PotentialStatus).HasMaxLength(30).IsRequired(false);
         builder.Property(entity => entity.PotentialScore).HasPrecision(5, 2).IsRequired(false);
@@ -46,6 +47,7 @@ public sealed class RetailerConfiguration : IEntityTypeConfiguration<Retailer>
         builder.ToTable(table =>
         {
             table.HasCheckConstraint("CK_RETAILER_CreditTermDays", "\"CreditTermDays\" IN (0, 7, 14, 30)");
+            table.HasCheckConstraint("CK_RETAILER_CreditLimit", "\"CreditLimit\" >= 0");
             table.HasCheckConstraint("CK_RETAILER_RequestedCreditTermDays", "\"RequestedCreditTermDays\" IS NULL OR \"RequestedCreditTermDays\" IN (0, 7, 14, 30)");
             table.HasCheckConstraint("CK_RETAILER_PurchaseFrequencyPerMonth", "\"PurchaseFrequencyPerMonth\" > 0");
             table.HasCheckConstraint("CK_RETAILER_StoreSizeCategory", "\"StoreSizeCategory\" IN ('S', 'M', 'L')");

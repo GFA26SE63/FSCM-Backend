@@ -13,6 +13,7 @@ public sealed class QuoteService(
     PurchaseOrderGateService purchaseOrderGateService,
     OrderReleaseService releaseService,
     TimeProvider timeProvider,
+    RetailerCreditPolicy creditPolicy,
     OrderNotificationService? notifications = null,
     AllocationDeliveryGuard? deliveryGuard = null)
 {
@@ -47,8 +48,11 @@ public sealed class QuoteService(
         RequirePending(view.Quote, expectedVersion);
         RequireOrderAwaitingDecision(view.Order);
         paymentMethod = NormalizePaymentMethod(paymentMethod);
-        if (paymentMethod == OrderPaymentMethods.Credit && view.Retailer.CreditTermDays is not (7 or 14 or 30))
-            throw QuoteOperationException.Conflict("Retailer is not eligible for an approved credit term.");
+        if (paymentMethod == OrderPaymentMethods.Credit)
+        {
+            try { await creditPolicy.EnsureEligibleAsync(view.Retailer, view.Order.FinalAmount, ct); }
+            catch (PaymentOperationException exception) { throw QuoteOperationException.Conflict(exception.Message); }
+        }
         var now = timeProvider.GetUtcNow();
         if (now > view.Quote.ExpiresAt)
         {
