@@ -2,7 +2,7 @@ namespace FSCM.Application.Features.MobileSnapshots;
 
 public sealed record MobileSnapshotRetailer(
     Guid Id, string Code, string Name, string? Address, string Status, int CreditTermDays,
-    DateTimeOffset UpdatedAt);
+    DateTimeOffset UpdatedAt, decimal CreditLimit = 0);
 
 public sealed record MobileSnapshotProduct(
     Guid Id, Guid CategoryId, string Sku, string Name, string Unit, int ShelfLifeHours,

@@ -20,7 +20,8 @@ public sealed class PaymentService(
     OrderNotificationService? notifications = null,
     LoyaltyAccrualService? loyalty = null,
     AllocationDeliveryGuard? deliveryGuard = null,
-    RetailerDebtPayOsService? debtPayOsService = null)
+    RetailerDebtPayOsService? debtPayOsService = null,
+    RetailerCreditPolicy? creditPolicy = null)
 {
     private static readonly TimeSpan VietnamOffset = TimeSpan.FromHours(7);
 
@@ -341,6 +342,8 @@ public sealed class PaymentService(
                 throw PaymentOperationException.Conflict("Thanh toán đã thay đổi. Hãy tải lại đơn.");
             if (view.Retailer.CreditTermDays is not (7 or 14 or 30))
                 throw PaymentOperationException.Conflict("Cửa hàng chưa được duyệt kỳ hạn công nợ.");
+            if (creditPolicy is not null)
+                await creditPolicy.EnsureEligibleAsync(view.Retailer, view.Payment.AdjustedAmount, token);
             if (view.Payment.PayOsPaymentLinkId is not null || view.Payment.PayOsOrderCode is not null)
                 throw PaymentOperationException.Conflict(
                     "Đơn đã có giao dịch PayOS. Cần xác nhận hủy giao dịch đó trước khi đổi phương thức.");

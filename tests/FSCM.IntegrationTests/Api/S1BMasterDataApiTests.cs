@@ -224,6 +224,7 @@ public sealed class S1BMasterDataApiTests
         {
             approve = true,
             creditTermDays = 14,
+            creditLimit = 25_000_000m,
             reason = "Hồ sơ và MLOR hợp lệ"
         });
         review.EnsureSuccessStatusCode();
