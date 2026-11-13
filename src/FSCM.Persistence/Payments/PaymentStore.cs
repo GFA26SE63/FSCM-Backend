@@ -1,4 +1,5 @@
 using FSCM.Application.Features.Payments;
+using FSCM.Application.Features.Orders;
 using FSCM.Application.Features.Refunds;
 using FSCM.Domain.Authorization;
 using FSCM.Domain.Entities;
@@ -60,6 +61,24 @@ public sealed class PaymentStore(AppDbContext dbContext) : IPaymentStore
         };
         var orderIds = await query.OrderBy(item => item.DueDate).ThenBy(item => item.CreatedAt)
             .Select(item => item.SalesOrderId).ToArrayAsync(cancellationToken);
+        var results = new List<PaymentView>(orderIds.Length);
+        foreach (var orderId in orderIds)
+        {
+            var view = await FindByOrderAsync(orderId, false, cancellationToken);
+            if (view is not null) results.Add(view);
+        }
+        return results;
+    }
+
+    public async Task<IReadOnlyCollection<PaymentView>> ListCreditForRetailerAsync(
+        Guid retailerId, CancellationToken cancellationToken)
+    {
+        var orderIds = await (from payment in dbContext.PaymentRecords.AsNoTracking()
+                              join order in dbContext.SalesOrderRecords.AsNoTracking()
+                                  on payment.SalesOrderId equals order.Id
+                              where order.RetailerId == retailerId && payment.Method == OrderPaymentMethods.Credit
+                              select payment.SalesOrderId)
+            .ToArrayAsync(cancellationToken);
         var results = new List<PaymentView>(orderIds.Length);
         foreach (var orderId in orderIds)
         {
