@@ -3540,6 +3540,10 @@ namespace FSCM.Persistence.Migrations
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<decimal>("CreditLimit")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
                     b.Property<int>("CreditTermDays")
                         .HasColumnType("integer");
 
@@ -3631,6 +3635,8 @@ namespace FSCM.Persistence.Migrations
 
                     b.ToTable("RETAILER", null, t =>
                         {
+                            t.HasCheckConstraint("CK_RETAILER_CreditLimit", "\"CreditLimit\" >= 0");
+
                             t.HasCheckConstraint("CK_RETAILER_CreditTermDays", "\"CreditTermDays\" IN (0, 7, 14, 30)");
 
                             t.HasCheckConstraint("CK_RETAILER_PurchaseFrequencyPerMonth", "\"PurchaseFrequencyPerMonth\" > 0");

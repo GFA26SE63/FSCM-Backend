@@ -35,7 +35,7 @@ public sealed class RetailersController(RetailerService service) : ControllerBas
         var result = await service.DeclareAsync(GetActorUserId(), request.RegionId, request.SalesGroupId,
             request.Name, request.ContactName, request.Phone, request.Email, request.Address,
             request.RetailerType, request.ForecastRevenue, request.StoreSizeSquareMeters,
-            request.PurchasingCapacity, request.PurchaseFrequencyPerMonth, request.RequestedCreditTermDays,
+            request.PurchasingCapacity, request.PurchaseFrequencyPerMonth, 0,
             request.AssessmentNote, request.Latitude, request.Longitude, request.ProviderPlaceId,
             request.MlorDeclarations?.Select(ToMlorData).ToArray(), request.SubmitForReview, cancellationToken);
         return CreatedAtAction(nameof(Get), new { retailerId = result.Id }, result);
@@ -48,7 +48,7 @@ public sealed class RetailersController(RetailerService service) : ControllerBas
         service.UpdateDeclarationAsync(retailerId, GetActorUserId(), request.Name, request.ContactName,
             request.Phone, request.Email, request.Address, request.RetailerType, request.ForecastRevenue,
             request.StoreSizeSquareMeters, request.PurchasingCapacity, request.PurchaseFrequencyPerMonth,
-            request.RequestedCreditTermDays, request.AssessmentNote,
+            0, request.AssessmentNote,
             request.Latitude, request.Longitude, request.ProviderPlaceId,
             request.MlorDeclarations?.Select(ToMlorData).ToArray(), request.SubmitForReview, cancellationToken);
 
@@ -60,7 +60,7 @@ public sealed class RetailersController(RetailerService service) : ControllerBas
         service.UpdateProfileAsync(retailerId, GetActorUserId(), GetActorRole(),
             new(request.Name, request.ContactName, request.Phone, request.Email, request.Address,
                 request.RetailerType, request.ForecastRevenue, request.StoreSizeSquareMeters,
-                request.PurchasingCapacity, request.PurchaseFrequencyPerMonth, request.RequestedCreditTermDays,
+                request.PurchasingCapacity, request.PurchaseFrequencyPerMonth, 0,
                 request.AssessmentNote, request.Latitude, request.Longitude, request.ProviderPlaceId),
             cancellationToken);
 
@@ -74,7 +74,7 @@ public sealed class RetailersController(RetailerService service) : ControllerBas
     public Task<RetailerDetails> Review(
         Guid retailerId, ReviewRetailerRequest request, CancellationToken cancellationToken) =>
         service.ReviewAsync(retailerId, GetActorUserId(), request.Approve,
-            request.CreditTermDays, request.Reason, cancellationToken);
+            request.CreditTermDays, request.CreditLimit, request.Reason, cancellationToken);
 
     [Authorize(Roles = SystemRoles.Admin)]
     [HttpPatch("{retailerId:guid}/status")]

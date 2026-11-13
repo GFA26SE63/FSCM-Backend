@@ -6,7 +6,7 @@ public sealed record RetailerDetails(
     decimal? Latitude, decimal? Longitude, string? ProviderPlaceId, int LocationVersion, string Status,
     string RetailerType, decimal ForecastRevenue, decimal StoreSizeSquareMeters,
     string StoreSizeCategory, decimal PurchasingCapacity, int PurchaseFrequencyPerMonth,
-    int CreditTermDays, int? RequestedCreditTermDays, string PotentialClass, string? AssessmentNote, Guid DeclaredByUserId,
+    int CreditTermDays, decimal CreditLimit, int? RequestedCreditTermDays, string PotentialClass, string? AssessmentNote, Guid DeclaredByUserId,
     Guid? ReviewedByUserId, DateTimeOffset? ReviewedAt, string? ReviewReason,
     DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt,
     string? StorefrontImageUrl,

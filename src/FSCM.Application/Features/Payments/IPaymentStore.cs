@@ -30,6 +30,9 @@ public interface IPaymentStore
         long payOsOrderCode, bool forUpdate, CancellationToken cancellationToken);
     Task<IReadOnlyCollection<PaymentView>> ListAsync(
         Guid actorUserId, string actorRole, CancellationToken cancellationToken);
+    Task<IReadOnlyCollection<PaymentView>> ListCreditForRetailerAsync(
+        Guid retailerId, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyCollection<PaymentView>>([]);
     Task<bool> CanViewAsync(
         PaymentView view, Guid actorUserId, string actorRole, CancellationToken cancellationToken);
     void Add(Payment payment);
