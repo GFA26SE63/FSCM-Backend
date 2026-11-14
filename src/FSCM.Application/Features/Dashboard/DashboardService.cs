@@ -22,8 +22,9 @@ public sealed class DashboardService(IDashboardStore store, TimeProvider clock, 
             {
                 var kpi = await reports.GetSalesKpiAsync(new(from, to, query.SalesGroupId, null), actor, role, ct);
                 var scores = kpi.Entries.ToDictionary(e => (e.SalesUserId, e.SalesGroupId), e => e.OverallCompletionRate * 100m);
+                // A member without a KPI entry has no target for the period: show "Chưa cấu hình", not 0%.
                 result = result with { SalesTeam = result.SalesTeam.Select(s => s with
-                    { KpiCompletion = scores.GetValueOrDefault((s.Id, s.GroupId), 0m) }).ToArray() };
+                    { KpiCompletion = scores.TryGetValue((s.Id, s.GroupId), out var score) ? score : null }).ToArray() };
             }
             catch (ReportOperationException e) when (e.Code == "validation_error")
             { result = result with { Notes = result.Notes.Append("Chưa có cấu hình KPI hợp lệ cho kỳ này; bảng nhóm vẫn hiển thị doanh thu và số đơn thực tế.").ToArray() }; }
