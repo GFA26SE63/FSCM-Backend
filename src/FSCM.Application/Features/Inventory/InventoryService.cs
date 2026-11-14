@@ -115,6 +115,7 @@ public sealed class InventoryService(IInventoryStore store, TimeProvider timePro
         var businessDate = GetVietnamDate(now);
         var batches = new Dictionary<(Guid ProductId, DateOnly ProductionDate, DateOnly ExpirationDate),
             (Batch Batch, InventoryBalance Balance)>();
+        var receivedByBatch = new Dictionary<Guid, decimal>();
         foreach (var item in approval.Lines)
         {
             var input = new ReceiveGoodsLineData(item.Line.ProductId, item.Line.SourceLotCode,
@@ -174,6 +175,7 @@ public sealed class InventoryService(IInventoryStore store, TimeProvider timePro
             stock.Batch.StockStatus = BatchStockStatuses.InStock;
             stock.Batch.Version++;
             stock.Batch.UpdatedAt = now;
+            receivedByBatch[stock.Batch.Id] = receivedByBatch.GetValueOrDefault(stock.Batch.Id) + item.Line.ReceivedQuantity;
             stock.Balance.PhysicalQuantity += item.Line.ReceivedQuantity;
             stock.Balance.AvailableQuantity = stock.Balance.PhysicalQuantity - stock.Balance.ReservedQuantity;
             EnsureNonNegative(stock.Balance);
@@ -197,6 +199,43 @@ public sealed class InventoryService(IInventoryStore store, TimeProvider timePro
                 ReservedQuantityAfter = stock.Balance.ReservedQuantity,
                 AvailableQuantityAfter = stock.Balance.AvailableQuantity,
                 Note = "Duyệt phiếu nhập kho",
+                OccurredAt = now
+            });
+        }
+
+        // Approval labels every carton received by this receipt: one QR label per batch covering
+        // the received quantity, saved in the same transaction (no manual "Sinh mã QR" step).
+        // Warehouse staff can still split a label later when only part of it is picked.
+        foreach (var (batchId, quantity) in receivedByBatch.Where(item => item.Value > 0))
+        {
+            var labelId = Guid.NewGuid();
+            var label = new BatchQrLabel
+            {
+                Id = labelId,
+                BatchId = batchId,
+                CurrentWarehouseId = approval.Receipt.WarehouseId,
+                GoodsReceiptId = approval.Receipt.Id,
+                RootLabelId = labelId,
+                QrCode = await store.NextQrLabelCodeAsync(cancellationToken),
+                Quantity = quantity,
+                Status = QrLabels.QrLabelStatuses.Available,
+                Version = 1,
+                GeneratedAt = now,
+                UpdatedAt = now
+            };
+            store.AddQrLabel(label, new QrLabelEvent
+            {
+                Id = Guid.NewGuid(),
+                BatchQrLabelId = labelId,
+                WarehouseId = approval.Receipt.WarehouseId,
+                PerformedByUserId = actorUserId,
+                OperationKey = $"receipt:{approval.Receipt.Id:N}:{batchId:N}",
+                EventType = QrLabels.QrLabelEventTypes.Generated,
+                FromStatus = string.Empty,
+                ToStatus = label.Status,
+                Quantity = quantity,
+                ReferenceCode = approval.Receipt.ReceiptCode,
+                Note = "Tự sinh tem QR khi duyệt phiếu nhập kho",
                 OccurredAt = now
             });
         }

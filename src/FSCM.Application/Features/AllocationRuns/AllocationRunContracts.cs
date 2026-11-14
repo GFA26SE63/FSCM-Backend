@@ -29,6 +29,7 @@ public static class MlorSources
 {
     public const string RetailerProduct = "RetailerProduct";
     public const string RetailerCategory = "RetailerCategory";
+    public const string CategoryDefault = "CategoryDefault";
     public const string ProductDefault = "ProductDefault";
 }
 
