@@ -1,4 +1,5 @@
 using System.Text.Json;
+using FSCM.Application.Features.Catalog;
 using FSCM.Application.Features.Identity;
 using FSCM.Application.Features.Storage;
 using FSCM.Application.Features.WarehouseConfiguration;
@@ -424,6 +425,12 @@ public sealed class RetailerService(
                 break;
             currentCategoryId = category.ParentCategoryId.Value;
         }
+
+        // Category-level default MLOR before the system default.
+        if (CategoryDefaultMlor.Resolve(product.ProductCategoryId, categories) is { } categoryDefault)
+            return new RetailerMlorResolutionResult(retailerId, productId, CategoryDefaultMlor.Scope, null,
+                categoryDefault.DefaultMlorVersion, categoryDefault.Id, categoryDefault.DefaultMlorRatio!.Value,
+                null, timeProvider.GetUtcNow());
 
         var defaultConfiguration = await store.FindCurrentConfigurationAsync(
             BusinessConfigurationKeys.DefaultMlorRatio, cancellationToken)

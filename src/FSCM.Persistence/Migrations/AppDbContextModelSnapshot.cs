@@ -2710,6 +2710,18 @@ namespace FSCM.Persistence.Migrations
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<decimal?>("DefaultMlorRatio")
+                        .HasPrecision(6, 5)
+                        .HasColumnType("numeric(6,5)");
+
+                    b.Property<DateTimeOffset?>("DefaultMlorUpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("DefaultMlorVersion")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0);
+
                     b.Property<string>("Description")
                         .HasColumnType("text");
 
@@ -2734,7 +2746,10 @@ namespace FSCM.Persistence.Migrations
 
                     b.HasIndex("ParentCategoryId");
 
-                    b.ToTable("PRODUCT_CATEGORY", (string)null);
+                    b.ToTable("PRODUCT_CATEGORY", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_PRODUCT_CATEGORY_DEFAULT_MLOR", "\"DefaultMlorRatio\" IS NULL OR (\"DefaultMlorRatio\" > 0 AND \"DefaultMlorRatio\" < 1)");
+                        });
                 });
 
             modelBuilder.Entity("FSCM.Domain.Entities.ProductPrice", b =>
