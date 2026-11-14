@@ -224,7 +224,8 @@ public sealed class ComplaintStore(AppDbContext db) : IComplaintStore
 
     public async Task<ComplaintResult> ResolveAsync(Guid id, Guid actor, ResolveComplaintData data, DateTimeOffset now, CancellationToken ct)
     {
-        if (string.IsNullOrWhiteSpace(data.Result)) throw ComplaintOperationException.Validation("A resolution result is required.");
+        if (string.IsNullOrWhiteSpace(data.Result))
+            throw ComplaintOperationException.Validation("Vui lòng nhập lý do / ghi chú khi xử lý khiếu nại.");
         var row = await (from d in db.ReceiptDiscrepancyRecords join o in db.SalesOrderRecords on d.SalesOrderId equals o.Id
                          join r in db.RetailerRecords on o.RetailerId equals r.Id join i in db.ReceiptDiscrepancyItemRecords on d.Id equals i.ReceiptDiscrepancyId
                          join b in db.BatchRecords on i.BatchId equals b.Id join p in db.ProductRecords on b.ProductId equals p.Id
@@ -376,7 +377,8 @@ public sealed class ComplaintStore(AppDbContext db) : IComplaintStore
 
     public async Task RequestEvidenceAsync(Guid id, Guid actor, string reason, DateTimeOffset now, CancellationToken ct)
     {
-        if (string.IsNullOrWhiteSpace(reason)) throw ComplaintOperationException.Validation("A reason is required to request more evidence.");
+        if (string.IsNullOrWhiteSpace(reason))
+            throw ComplaintOperationException.Validation("Vui lòng nhập lý do yêu cầu bổ sung bằng chứng.");
         var d = await db.ReceiptDiscrepancyRecords.SingleOrDefaultAsync(x => x.Id == id, ct)
             ?? throw ComplaintOperationException.NotFound("Complaint was not found.");
         if (d.Status is not ("Submitted" or "UnderReview"))

@@ -38,6 +38,28 @@ public sealed class InventoryServiceTests
     }
 
     [Fact]
+    public async Task Approval_generates_qr_label_for_every_received_carton()
+    {
+        var fixture = new Fixture();
+        var first = await fixture.CreateAsync("receipt-key-0001", 25, new DateOnly(2027, 4, 30));
+        await fixture.ApproveAsync(first.Id);
+        var label = Assert.Single(fixture.Store.QrLabels);
+        Assert.Equal(25, label.Quantity);
+        Assert.Equal(fixture.Store.Batches.Single().Id, label.BatchId);
+        Assert.Equal(first.Id, label.GoodsReceiptId);
+        Assert.Equal("Available", label.Status);
+        Assert.Equal("Generated", Assert.Single(fixture.Store.QrLabelEvents).EventType);
+
+        // A second receipt merged into the same batch labels only its own cartons.
+        var second = await fixture.CreateAsync("receipt-key-0002", 15, new DateOnly(2027, 4, 30));
+        await fixture.ApproveAsync(second.Id);
+        Assert.Equal(new decimal[] { 25, 15 }, fixture.Store.QrLabels.Select(item => item.Quantity));
+
+        // Re-approving is idempotent and does not label the stock twice.
+        await fixture.ApproveAsync(second.Id);
+        Assert.Equal(2, fixture.Store.QrLabels.Count);
+    }
+    [Fact]
     public async Task Same_warehouse_sku_and_expiry_merges_into_existing_batch_on_approval()
     {
         var fixture = new Fixture();
@@ -221,6 +243,11 @@ public sealed class InventoryServiceTests
         public void AddBatch(Batch batch) => Batches.Add(batch);
         public void AddBalance(InventoryBalance balance) => Balances.Add(balance);
         public void AddTransaction(InventoryTransaction transaction) => Transactions.Add(transaction);
+        public List<BatchQrLabel> QrLabels { get; } = [];
+        public List<QrLabelEvent> QrLabelEvents { get; } = [];
+        private int _qrSequence;
+        public Task<string> NextQrLabelCodeAsync(CancellationToken cancellationToken) => Task.FromResult($"TEM-{++_qrSequence:000000}");
+        public void AddQrLabel(BatchQrLabel label, QrLabelEvent generatedEvent) { QrLabels.Add(label); QrLabelEvents.Add(generatedEvent); }
         public void ClearTracking() { }
         public Task SaveChangesAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 

@@ -2,6 +2,7 @@ using System.Data;
 using System.Text.Json;
 using FSCM.Application.Features.Orders;
 using FSCM.Application.Features.AllocationRuns;
+using FSCM.Application.Features.Catalog;
 using FSCM.Application.Features.WarehouseConfiguration;
 using FSCM.Domain.Authorization;
 using FSCM.Domain.Entities;
@@ -115,6 +116,11 @@ public sealed class OrderStore(AppDbContext dbContext) : IOrderStore
                 break;
             categoryId = category.ParentCategoryId.Value;
         }
+
+        // No retailer rule: use the category-level default before the system default.
+        if (CategoryDefaultMlor.Resolve(product.ProductCategoryId, categories) is { } categoryDefault)
+            return new(CategoryDefaultMlor.Scope, null, categoryDefault.DefaultMlorVersion,
+                categoryDefault.Id, categoryDefault.DefaultMlorRatio!.Value, null, at);
 
         var configuration = await dbContext.SystemConfigurationRecords.AsNoTracking()
             .Where(item => item.ConfigKey == BusinessConfigurationKeys.DefaultMlorRatio &&

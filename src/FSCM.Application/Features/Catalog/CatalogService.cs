@@ -186,6 +186,34 @@ public sealed partial class CatalogService(
     }
 
     /// <summary>
+    /// Sets or clears the category-level default MLOR ("MLOR theo danh mục sản phẩm"). It applies
+    /// to new orders whose retailer has no SKU/Category rule; a null ratio falls back to the parent
+    /// category and then the system default. The version is bumped on every effective change.
+    /// </summary>
+    public async Task<CategoryResult> SetCategoryDefaultMlorAsync(
+        Guid categoryId,
+        decimal? minimumLifeRatio,
+        CancellationToken cancellationToken)
+    {
+        if (minimumLifeRatio is { } ratio && (ratio <= 0 || ratio >= 1))
+            throw CatalogOperationException.Validation("MLOR ratio must be greater than 0 and less than 1.");
+        if (minimumLifeRatio.HasValue)
+            minimumLifeRatio = decimal.Round(minimumLifeRatio.Value, 5, MidpointRounding.AwayFromZero);
+
+        var category = await RequireCategoryAsync(categoryId, cancellationToken);
+        if (category.DefaultMlorRatio == minimumLifeRatio)
+            return ToResult(category);
+
+        var now = timeProvider.GetUtcNow();
+        category.DefaultMlorRatio = minimumLifeRatio;
+        category.DefaultMlorVersion++;
+        category.DefaultMlorUpdatedAt = now;
+        category.UpdatedAt = now;
+        await store.SaveChangesAsync(cancellationToken);
+        return ToResult(category);
+    }
+
+    /// <summary>
     /// Deletes a category (F14). Hard-deletes when the category has no child categories and no
     /// products at all; otherwise it is inactivated (soft delete) so existing references stay valid.
     /// </summary>
@@ -712,7 +740,10 @@ public sealed partial class CatalogService(
         category.Description,
         category.IsActive,
         category.CreatedAt,
-        category.UpdatedAt);
+        category.UpdatedAt,
+        category.DefaultMlorRatio,
+        category.DefaultMlorVersion,
+        category.DefaultMlorUpdatedAt);
 
     private ProductResult ToResult(ProductView view) => new(
         view.Product.Id,
