@@ -197,6 +197,31 @@ public sealed class InventoryStore(AppDbContext dbContext) : IInventoryStore, II
     public void AddBatch(Batch batch) => dbContext.BatchRecords.Add(batch);
     public void AddBalance(InventoryBalance balance) => dbContext.InventoryBalanceRecords.Add(balance);
     public void AddTransaction(InventoryTransaction transaction) => dbContext.InventoryTransactionRecords.Add(transaction);
+
+    public async Task<string> NextQrLabelCodeAsync(CancellationToken cancellationToken)
+    {
+        // Same sequence and format as QrLabelStore, so codes stay unique across both paths.
+        var connection = dbContext.Database.GetDbConnection();
+        var openedHere = connection.State != System.Data.ConnectionState.Open;
+        if (openedHere) await connection.OpenAsync(cancellationToken);
+        try
+        {
+            await using var command = connection.CreateCommand();
+            command.CommandText = "SELECT nextval('\"QrLabelCodeSequence\"');";
+            var number = Convert.ToInt64(await command.ExecuteScalarAsync(cancellationToken));
+            return $"TEM-{number:000000}";
+        }
+        finally
+        {
+            if (openedHere) await connection.CloseAsync();
+        }
+    }
+
+    public void AddQrLabel(BatchQrLabel label, QrLabelEvent generatedEvent)
+    {
+        dbContext.BatchQrLabelRecords.Add(label);
+        dbContext.QrLabelEventRecords.Add(generatedEvent);
+    }
     public void AddReservation(Reservation reservation) => dbContext.ReservationRecords.Add(reservation);
     public void ClearTracking() => dbContext.ChangeTracker.Clear();
 

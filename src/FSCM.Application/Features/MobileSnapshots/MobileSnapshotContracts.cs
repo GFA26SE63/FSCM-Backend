@@ -10,7 +10,7 @@ public sealed record MobileSnapshotProduct(
 
 public sealed record MobileSnapshotCategory(
     Guid Id, Guid? ParentCategoryId, string Code, string Name, bool IsActive,
-    DateTimeOffset UpdatedAt);
+    DateTimeOffset UpdatedAt, decimal? DefaultMlorRatio = null, int DefaultMlorVersion = 0);
 
 public sealed record MobileSnapshotPrice(
     Guid Id, Guid ProductId, decimal UnitPrice, DateTimeOffset EffectiveFrom,

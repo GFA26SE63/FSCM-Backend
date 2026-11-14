@@ -17,7 +17,10 @@ public sealed record CategoryResult(
     string? Description,
     bool IsActive,
     DateTimeOffset CreatedAt,
-    DateTimeOffset UpdatedAt);
+    DateTimeOffset UpdatedAt,
+    decimal? DefaultMlorRatio = null,
+    int DefaultMlorVersion = 0,
+    DateTimeOffset? DefaultMlorUpdatedAt = null);
 
 /// <summary>Outcome of deleting a category: either a hard delete or an inactivation (soft delete).</summary>
 public sealed record DeleteCategoryResult(Guid CategoryId, bool Deleted, bool Inactivated);
