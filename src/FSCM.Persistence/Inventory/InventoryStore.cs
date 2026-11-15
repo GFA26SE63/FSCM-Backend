@@ -10,6 +10,8 @@ namespace FSCM.Persistence.Inventory;
 
 public sealed class InventoryStore(AppDbContext dbContext) : IInventoryStore, IInventoryLifecycleStore, IBatchExpiryStore
 {
+    public Task<bool> IsDocumentControlledReceiptAsync(Guid receiptId, CancellationToken ct) =>
+        dbContext.WarehouseDocuments.AnyAsync(d => d.GoodsReceiptId == receiptId, ct);
     public Task<bool> CanAccessWarehouseAsync(Guid userId, string role, Guid warehouseId, CancellationToken cancellationToken) =>
         role is SystemRoles.Admin or SystemRoles.Operator
             ? Task.FromResult(true)
@@ -80,7 +82,7 @@ public sealed class InventoryStore(AppDbContext dbContext) : IInventoryStore, II
     public Task<Batch?> FindBatchForUpdateAsync(
         Guid warehouseId, Guid productId, DateOnly productionDate, DateOnly expirationDate,
         CancellationToken cancellationToken) =>
-        dbContext.BatchRecords.SingleOrDefaultAsync(item => item.WarehouseId == warehouseId &&
+        dbContext.BatchRecords.SingleOrDefaultAsync(item => item.FactoryProductionBatchId == null && item.WarehouseId == warehouseId &&
             item.ProductId == productId && item.ProductionDate == productionDate &&
             item.ExpirationDate == expirationDate, cancellationToken);
 
@@ -223,7 +225,7 @@ public sealed class InventoryStore(AppDbContext dbContext) : IInventoryStore, II
             on new { WarehouseId = warehouseId, line.ProductId, line.ExpirationDate }
             equals new { batch.WarehouseId, batch.ProductId, batch.ExpirationDate } into matchingBatches
         from batch in matchingBatches.DefaultIfEmpty()
-        where line.GoodsReceiptId == receiptId
+        where line.GoodsReceiptId == receiptId && (batch == null || batch.FactoryProductionBatchId == null)
         orderby product.Sku, line.CreatedAt
         select new GoodsReceiptLineView(line, product.Sku, product.Name,
             batch == null ? null : batch.Id, batch == null ? null : batch.BatchCode);

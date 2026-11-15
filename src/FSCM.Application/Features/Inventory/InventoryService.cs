@@ -96,8 +96,10 @@ public sealed class InventoryService(IInventoryStore store, TimeProvider timePro
     }
 
     public async Task<GoodsReceiptResult> ApproveReceiptAsync(
-        Guid receiptId, Guid actorUserId, string actorRole, CancellationToken cancellationToken)
+        Guid receiptId, Guid actorUserId, string actorRole, CancellationToken cancellationToken, bool documentWorkflow = false)
     {
+        if (!documentWorkflow && await store.IsDocumentControlledReceiptAsync(receiptId, cancellationToken))
+            throw InventoryOperationException.Conflict("Quét và xác nhận trên phiếu nhập kho trước khi ghi nhận tồn.");
         var approval = await store.FindReceiptForApprovalAsync(receiptId, cancellationToken)
             ?? throw InventoryOperationException.NotFound("Goods receipt was not found.");
         if (!await store.CanAccessWarehouseAsync(

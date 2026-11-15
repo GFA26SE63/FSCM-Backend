@@ -19,6 +19,7 @@ public sealed record InventoryHistoryView(
 
 public interface IInventoryStore
 {
+    Task<bool> IsDocumentControlledReceiptAsync(Guid receiptId, CancellationToken ct) => Task.FromResult(false);
     Task<bool> CanAccessWarehouseAsync(Guid userId, string role, Guid warehouseId, CancellationToken cancellationToken);
     Task<Warehouse?> FindWarehouseAsync(Guid warehouseId, CancellationToken cancellationToken);
     Task<Product?> FindProductAsync(Guid productId, CancellationToken cancellationToken);

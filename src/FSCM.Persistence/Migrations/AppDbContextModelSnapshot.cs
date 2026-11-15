@@ -669,8 +669,8 @@ namespace FSCM.Persistence.Migrations
 
                     b.Property<string>("BatchCodeSnapshot")
                         .IsRequired()
-                        .HasMaxLength(50)
-                        .HasColumnType("character varying(50)");
+                        .HasMaxLength(240)
+                        .HasColumnType("character varying(240)");
 
                     b.Property<Guid>("BatchId")
                         .HasColumnType("uuid");
@@ -729,8 +729,8 @@ namespace FSCM.Persistence.Migrations
 
                     b.Property<string>("BatchCodeSnapshot")
                         .IsRequired()
-                        .HasMaxLength(50)
-                        .HasColumnType("character varying(50)");
+                        .HasMaxLength(240)
+                        .HasColumnType("character varying(240)");
 
                     b.Property<Guid>("BatchId")
                         .HasColumnType("uuid");
@@ -836,8 +836,8 @@ namespace FSCM.Persistence.Migrations
 
                     b.Property<string>("BatchCode")
                         .IsRequired()
-                        .HasMaxLength(80)
-                        .HasColumnType("character varying(80)");
+                        .HasMaxLength(240)
+                        .HasColumnType("character varying(240)");
 
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
@@ -849,6 +849,9 @@ namespace FSCM.Persistence.Migrations
                         .IsRequired()
                         .HasMaxLength(30)
                         .HasColumnType("character varying(30)");
+
+                    b.Property<Guid?>("FactoryProductionBatchId")
+                        .HasColumnType("uuid");
 
                     b.Property<Guid?>("GoodsReceiptLineId")
                         .HasColumnType("uuid");
@@ -884,10 +887,15 @@ namespace FSCM.Persistence.Migrations
                     b.Property<Guid>("WarehouseId")
                         .HasColumnType("uuid");
 
+                    b.Property<DateOnly?>("WarehouseReceiptDate")
+                        .HasColumnType("date");
+
                     b.HasKey("Id");
 
                     b.HasIndex("BatchCode")
                         .IsUnique();
+
+                    b.HasIndex("FactoryProductionBatchId");
 
                     b.HasIndex("GoodsReceiptLineId");
 
@@ -897,8 +905,13 @@ namespace FSCM.Persistence.Migrations
 
                     b.HasIndex("RootBatchId");
 
+                    b.HasIndex("WarehouseId", "FactoryProductionBatchId", "WarehouseReceiptDate")
+                        .IsUnique()
+                        .HasFilter("\"FactoryProductionBatchId\" IS NOT NULL");
+
                     b.HasIndex("WarehouseId", "ProductId", "ProductionDate", "ExpirationDate")
-                        .IsUnique();
+                        .IsUnique()
+                        .HasFilter("\"FactoryProductionBatchId\" IS NULL");
 
                     b.ToTable("BATCH", null, t =>
                         {
@@ -1212,6 +1225,233 @@ namespace FSCM.Persistence.Migrations
                     b.HasIndex("StartedAt");
 
                     b.ToTable("EXPIRY_SWEEP_RUN", (string)null);
+                });
+
+            modelBuilder.Entity("FSCM.Domain.Entities.FactoryCarton", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Code")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)");
+
+                    b.Property<Guid>("PalletId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Sequence")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Code")
+                        .IsUnique();
+
+                    b.HasIndex("PalletId");
+
+                    b.ToTable("FACTORY_CARTON", (string)null);
+                });
+
+            modelBuilder.Entity("FSCM.Domain.Entities.FactoryPallet", b =>
+                {
+                    b.Property<string>("ReceiptInspectionJson").HasColumnType("text");
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Code")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<Guid?>("DestinationWarehouseId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset?>("DispatchedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("ProductionBatchId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("ReceiptDocumentId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset?>("ReceivedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<int>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Code")
+                        .IsUnique();
+
+                    b.HasIndex("DestinationWarehouseId");
+
+                    b.HasIndex("ProductionBatchId");
+
+                    b.HasIndex("ReceiptDocumentId");
+
+                    b.ToTable("FACTORY_PALLET", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_FACTORY_PALLET_Status", "\"Status\" IN ('Packed','Dispatched','Received')");
+                        });
+                });
+
+            modelBuilder.Entity("FSCM.Domain.Entities.FactoryProductUnit", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("CartonId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Code")
+                        .IsRequired()
+                        .HasMaxLength(160)
+                        .HasColumnType("character varying(160)");
+
+                    b.Property<int>("Sequence")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CartonId");
+
+                    b.HasIndex("Code")
+                        .IsUnique();
+
+                    b.ToTable("FACTORY_PRODUCT_UNIT", (string)null);
+                });
+
+            modelBuilder.Entity("FSCM.Domain.Entities.FactoryProductionBatch", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Code")
+                        .IsRequired()
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("CreatedByUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("DailySequence")
+                        .HasColumnType("integer");
+
+                    b.Property<DateOnly>("ExpirationDate")
+                        .HasColumnType("date");
+
+                    b.Property<string>("FactoryCode")
+                        .IsRequired()
+                        .HasMaxLength(12)
+                        .HasColumnType("character varying(12)");
+
+                    b.Property<string>("OperationKey")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<Guid>("ProductId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ProductName")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .HasColumnType("character varying(300)");
+
+                    b.Property<DateOnly>("ProductionDate")
+                        .HasColumnType("date");
+
+                    b.Property<string>("ProductionLine")
+                        .IsRequired()
+                        .HasMaxLength(1)
+                        .HasColumnType("character varying(1)");
+
+                    b.Property<string>("RequestHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("Sku")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<int>("UnitsPerCarton")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Code")
+                        .IsUnique();
+
+                    b.HasIndex("CreatedByUserId");
+
+                    b.HasIndex("OperationKey")
+                        .IsUnique();
+
+                    b.HasIndex("ProductId");
+
+                    b.HasIndex("FactoryCode", "ProductionDate", "DailySequence")
+                        .IsUnique();
+
+                    b.ToTable("FACTORY_PRODUCTION_BATCH", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_FACTORY_BATCH_Count", "\"DailySequence\" BETWEEN 1 AND 9999 AND \"UnitsPerCarton\" > 0");
+
+                            t.HasCheckConstraint("CK_FACTORY_BATCH_Dates", "\"ProductionDate\" < \"ExpirationDate\"");
+
+                            t.HasCheckConstraint("CK_FACTORY_BATCH_Line", "\"ProductionLine\" IN ('A','B','C','D')");
+                        });
+                });
+
+            modelBuilder.Entity("FSCM.Domain.Entities.FactoryReceiptSync", b =>
+                {
+                    b.Property<string>("ReceiptInspectionJson").HasColumnType("text");
+                    b.Property<Guid>("PalletId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Attempts")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("LastError")
+                        .HasMaxLength(300)
+                        .HasColumnType("character varying(300)");
+
+                    b.Property<Guid>("ReceiptDocumentId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("ReceivedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset?>("SyncedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("WarehouseId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("PalletId");
+
+                    b.HasIndex("ReceiptDocumentId");
+
+                    b.HasIndex("SyncedAt");
+
+                    b.ToTable("FACTORY_RECEIPT_SYNC", (string)null);
                 });
 
             modelBuilder.Entity("FSCM.Domain.Entities.GoodsReceipt", b =>
@@ -1575,7 +1815,7 @@ namespace FSCM.Persistence.Migrations
 
                     b.ToTable("INVENTORY_TRANSACTION", null, t =>
                         {
-                            t.HasCheckConstraint("CK_INVENTORY_TRANSACTION_TransactionType", "\"TransactionType\" BETWEEN 0 AND 8");
+                            t.HasCheckConstraint("CK_INVENTORY_TRANSACTION_TransactionType", "\"TransactionType\" BETWEEN 0 AND 10");
                         });
                 });
 
@@ -5209,6 +5449,194 @@ namespace FSCM.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("FSCM.Domain.Entities.WarehouseDocument", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Code")
+                        .IsRequired()
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("CreatedByUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("DestinationWarehouseId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("GoodsReceiptId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Note")
+                        .HasColumnType("text");
+
+                    b.Property<string>("OperationKey")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)");
+
+                    b.Property<DateTimeOffset?>("PostedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("RequestHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<Guid?>("SourceDocumentId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<int>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("integer");
+
+                    b.Property<Guid>("WarehouseId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Code")
+                        .IsUnique();
+
+                    b.HasIndex("DestinationWarehouseId");
+
+                    b.HasIndex("GoodsReceiptId");
+
+                    b.HasIndex("OperationKey")
+                        .IsUnique();
+
+                    b.HasIndex("SourceDocumentId")
+                        .IsUnique();
+
+                    b.HasIndex("WarehouseId");
+
+                    b.ToTable("WAREHOUSE_DOCUMENT", (string)null);
+                });
+
+            modelBuilder.Entity("FSCM.Domain.Entities.WarehouseDocumentCarton", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("CartonId")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)");
+
+                    b.Property<Guid>("DocumentId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("LabelId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("LineId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset?>("ScannedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("ScannedByUserId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("LabelId");
+
+                    b.HasIndex("LineId");
+
+                    b.HasIndex("DocumentId", "CartonId")
+                        .IsUnique();
+
+                    b.ToTable("WAREHOUSE_DOCUMENT_CARTON", (string)null);
+                });
+
+            modelBuilder.Entity("FSCM.Domain.Entities.WarehouseDocumentLine", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("BatchCode")
+                        .HasColumnType("text");
+
+                    b.Property<Guid?>("BatchId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("DocumentId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateOnly>("ExpirationDate")
+                        .HasColumnType("date");
+
+                    b.Property<string>("OrderCode")
+                        .HasColumnType("text");
+
+                    b.Property<Guid?>("PickingItemId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("PickingListId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("ProductId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ProductName")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateOnly>("ProductionDate")
+                        .HasColumnType("date");
+
+                    b.Property<decimal>("Quantity")
+                        .HasPrecision(18, 3)
+                        .HasColumnType("numeric(18,3)");
+
+                    b.Property<Guid?>("SalesOrderId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Sku")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("SourceLotCode")
+                        .HasColumnType("text");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("BatchId");
+
+                    b.HasIndex("PickingItemId");
+
+                    b.HasIndex("PickingListId");
+
+                    b.HasIndex("ProductId");
+
+                    b.HasIndex("SalesOrderId");
+
+                    b.HasIndex("DocumentId", "PickingItemId")
+                        .IsUnique();
+
+                    b.ToTable("WAREHOUSE_DOCUMENT_LINE", (string)null);
+                });
+
             modelBuilder.Entity("FSCM.Domain.Entities.WriteOff", b =>
                 {
                     b.Property<Guid>("Id")
@@ -5494,6 +5922,11 @@ namespace FSCM.Persistence.Migrations
 
             modelBuilder.Entity("FSCM.Domain.Entities.Batch", b =>
                 {
+                    b.HasOne("FSCM.Domain.Entities.FactoryProductionBatch", null)
+                        .WithMany()
+                        .HasForeignKey("FactoryProductionBatchId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
                     b.HasOne("FSCM.Domain.Entities.GoodsReceiptLine", null)
                         .WithMany()
                         .HasForeignKey("GoodsReceiptLineId")
@@ -5593,6 +6026,73 @@ namespace FSCM.Persistence.Migrations
                     b.HasOne("FSCM.Domain.Entities.Warehouse", null)
                         .WithMany()
                         .HasForeignKey("WarehouseId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("FSCM.Domain.Entities.FactoryCarton", b =>
+                {
+                    b.HasOne("FSCM.Domain.Entities.FactoryPallet", null)
+                        .WithMany()
+                        .HasForeignKey("PalletId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("FSCM.Domain.Entities.FactoryPallet", b =>
+                {
+                    b.HasOne("FSCM.Domain.Entities.Warehouse", null)
+                        .WithMany()
+                        .HasForeignKey("DestinationWarehouseId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("FSCM.Domain.Entities.FactoryProductionBatch", null)
+                        .WithMany()
+                        .HasForeignKey("ProductionBatchId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("FSCM.Domain.Entities.WarehouseDocument", null)
+                        .WithMany()
+                        .HasForeignKey("ReceiptDocumentId")
+                        .OnDelete(DeleteBehavior.Restrict);
+                });
+
+            modelBuilder.Entity("FSCM.Domain.Entities.FactoryProductUnit", b =>
+                {
+                    b.HasOne("FSCM.Domain.Entities.FactoryCarton", null)
+                        .WithMany()
+                        .HasForeignKey("CartonId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("FSCM.Domain.Entities.FactoryProductionBatch", b =>
+                {
+                    b.HasOne("FSCM.Domain.Entities.UserAccount", null)
+                        .WithMany()
+                        .HasForeignKey("CreatedByUserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("FSCM.Domain.Entities.Product", null)
+                        .WithMany()
+                        .HasForeignKey("ProductId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("FSCM.Domain.Entities.FactoryReceiptSync", b =>
+                {
+                    b.HasOne("FSCM.Domain.Entities.FactoryPallet", null)
+                        .WithMany()
+                        .HasForeignKey("PalletId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("FSCM.Domain.Entities.WarehouseDocument", null)
+                        .WithMany()
+                        .HasForeignKey("ReceiptDocumentId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
                 });
@@ -6670,6 +7170,85 @@ namespace FSCM.Persistence.Migrations
                         .HasForeignKey("RegionId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
+                });
+
+            modelBuilder.Entity("FSCM.Domain.Entities.WarehouseDocument", b =>
+                {
+                    b.HasOne("FSCM.Domain.Entities.Warehouse", null)
+                        .WithMany()
+                        .HasForeignKey("DestinationWarehouseId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("FSCM.Domain.Entities.GoodsReceipt", null)
+                        .WithMany()
+                        .HasForeignKey("GoodsReceiptId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("FSCM.Domain.Entities.WarehouseDocument", null)
+                        .WithMany()
+                        .HasForeignKey("SourceDocumentId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("FSCM.Domain.Entities.Warehouse", null)
+                        .WithMany()
+                        .HasForeignKey("WarehouseId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("FSCM.Domain.Entities.WarehouseDocumentCarton", b =>
+                {
+                    b.HasOne("FSCM.Domain.Entities.WarehouseDocument", null)
+                        .WithMany()
+                        .HasForeignKey("DocumentId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("FSCM.Domain.Entities.BatchQrLabel", null)
+                        .WithMany()
+                        .HasForeignKey("LabelId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("FSCM.Domain.Entities.WarehouseDocumentLine", null)
+                        .WithMany()
+                        .HasForeignKey("LineId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("FSCM.Domain.Entities.WarehouseDocumentLine", b =>
+                {
+                    b.HasOne("FSCM.Domain.Entities.Batch", null)
+                        .WithMany()
+                        .HasForeignKey("BatchId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("FSCM.Domain.Entities.WarehouseDocument", null)
+                        .WithMany()
+                        .HasForeignKey("DocumentId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("FSCM.Domain.Entities.PickingItem", null)
+                        .WithMany()
+                        .HasForeignKey("PickingItemId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("FSCM.Domain.Entities.PickingList", null)
+                        .WithMany()
+                        .HasForeignKey("PickingListId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("FSCM.Domain.Entities.Product", null)
+                        .WithMany()
+                        .HasForeignKey("ProductId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("FSCM.Domain.Entities.SalesOrder", null)
+                        .WithMany()
+                        .HasForeignKey("SalesOrderId")
+                        .OnDelete(DeleteBehavior.Restrict);
                 });
 
             modelBuilder.Entity("FSCM.Domain.Entities.WriteOff", b =>

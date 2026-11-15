@@ -6,6 +6,19 @@ namespace FSCM.IntegrationTests.Persistence;
 
 public sealed class PhysicalSchemaModelTests
 {
+    [Fact]
+    public void Warehouse_documents_enforce_one_execution_per_source_and_unique_carton_scans()
+    {
+        using var context = CreateContext();
+        var document = context.Model.FindEntityType(typeof(WarehouseDocument))!;
+        Assert.True(document.FindProperty(nameof(WarehouseDocument.Version))!.IsConcurrencyToken);
+        Assert.True(document.GetIndexes().Single(i => i.Properties.Count == 1 && i.Properties[0].Name == nameof(WarehouseDocument.SourceDocumentId)).IsUnique);
+        Assert.True(document.GetIndexes().Single(i => i.Properties.Count == 1 && i.Properties[0].Name == nameof(WarehouseDocument.OperationKey)).IsUnique);
+        var carton = context.Model.FindEntityType(typeof(WarehouseDocumentCarton))!;
+        Assert.True(carton.GetIndexes().Single(i => i.Properties.Select(p => p.Name).SequenceEqual(new[] { "DocumentId", "CartonId" })).IsUnique);
+        Assert.All(new[] { document, carton, context.Model.FindEntityType(typeof(WarehouseDocumentLine))! }
+            .SelectMany(e => e.GetForeignKeys()), fk => Assert.Equal(DeleteBehavior.Restrict, fk.DeleteBehavior));
+    }
     private static readonly string[] ExpectedTables =
     [
         "ALLOCATION",
