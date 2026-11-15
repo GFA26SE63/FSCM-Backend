@@ -6,6 +6,9 @@ namespace FSCM.Persistence.DbContexts;
 
 public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(options)
 {
+    public DbSet<WarehouseDocument> WarehouseDocuments => Set<WarehouseDocument>();
+    public DbSet<WarehouseDocumentLine> WarehouseDocumentLines => Set<WarehouseDocumentLine>();
+    public DbSet<WarehouseDocumentCarton> WarehouseDocumentCartons => Set<WarehouseDocumentCarton>();
     public DbSet<AccountToken> AccountTokens => Set<AccountToken>();
     public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
     public DbSet<UserCredential> UserCredentials => Set<UserCredential>();

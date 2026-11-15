@@ -23,16 +23,8 @@ public sealed class GoodsReceiptsController(InventoryService service) : Controll
 
     [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.WarehouseKeeper}")]
     [HttpPost]
-    public async Task<IActionResult> Create(
-        CreateGoodsReceiptRequest request,
-        [FromHeader(Name = "Idempotency-Key")] string idempotencyKey,
-        CancellationToken cancellationToken)
-    {
-        var result = await service.CreateReceiptAsync(GetActorUserId(), GetActorRole(), request.WarehouseId,
-            idempotencyKey, request.Lines.Select(item => new ReceiveGoodsLineData(item.ProductId,
-                item.SourceLotCode, item.Quantity, item.ProductionDate, item.ExpirationDate)).ToArray(), cancellationToken);
-        return CreatedAtAction(nameof(Get), new { receiptId = result.Id }, result);
-    }
+    public IActionResult Create(CreateGoodsReceiptRequest request) =>
+        Conflict(new { code = "FACTORY_PALLET_REQUIRED", message = "Tạo phiếu nhập từ nhà máy tại /warehouse-work và quét pallet đã phát hành. Kho không sinh batch hoặc mã carton nhà máy." });
 
     [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.WarehouseKeeper}")]
     [HttpPost("{receiptId:guid}/approve")]

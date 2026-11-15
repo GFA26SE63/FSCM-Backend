@@ -13,7 +13,7 @@ public sealed class AllocationTraceCandidateConfiguration : IEntityTypeConfigura
         builder.Property(entity => entity.Id).HasColumnType("uuid").IsRequired();
         builder.Property(entity => entity.AllocationLineTraceId).HasColumnType("uuid").IsRequired();
         builder.Property(entity => entity.BatchId).HasColumnType("uuid").IsRequired();
-        builder.Property(entity => entity.BatchCodeSnapshot).HasMaxLength(50).IsRequired();
+        builder.Property(entity => entity.BatchCodeSnapshot).HasMaxLength(240).IsRequired();
         builder.Property(entity => entity.WarehouseId).HasColumnType("uuid").IsRequired();
         builder.Property(entity => entity.WarehouseCodeSnapshot).HasMaxLength(50).IsRequired();
         builder.Property(entity => entity.Stage).HasMaxLength(30).IsRequired();

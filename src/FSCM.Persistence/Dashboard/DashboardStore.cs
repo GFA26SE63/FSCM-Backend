@@ -2,6 +2,7 @@ using FSCM.Application.Features.Dashboard;
 using FSCM.Application.Features.Reports;
 using FSCM.Application.Features.Orders;
 using FSCM.Application.Features.Inventory;
+using FSCM.Application.Features.WarehouseConfiguration;
 using FSCM.Domain.Authorization;
 using FSCM.Domain.Entities;
 using FSCM.Persistence.DbContexts;
@@ -15,6 +16,59 @@ public sealed class DashboardStore(AppDbContext db) : IDashboardStore
     private sealed record CompletedRow(Guid Id, Guid CreatorId, Guid GroupId, Guid RetailerId,
         string CreatorRole, decimal Amount, DateOnly Date);
     private sealed record CollectionRow(DateTimeOffset At, decimal Amount);
+    /// <summary>Settable members so EF can keep composing (joins, sums) on top of the projection.</summary>
+    private sealed class RecognizedRow
+    {
+        public Guid Id { get; set; }
+        public Guid CreatedByUserId { get; set; }
+        public Guid SalesGroupId { get; set; }
+        public Guid RetailerId { get; set; }
+        public string CreatorRole { get; set; } = "";
+        public decimal Amount { get; set; }
+        public DateTimeOffset? At { get; set; }
+        public DateOnly? Delivered { get; set; }
+        public DateTimeOffset ServerReceivedAt { get; set; }
+    }
+    private static readonly string[] AllocationFailureStatuses =
+        [OrderStatuses.AllocationFailed, OrderStatuses.OutOfStock, OrderStatuses.AllocationConflict];
+    private static readonly string[] QuoteAcceptedStatuses =
+        [OrderStatuses.PaymentPending, OrderStatuses.ConvertedToPo, OrderStatuses.Picking, OrderStatuses.Issued,
+         OrderStatuses.Delivering, OrderStatuses.Delivered, OrderStatuses.Completed];
+    private static readonly string[] QuoteDeclinedStatuses = [OrderStatuses.QuoteRejected, OrderStatuses.QuoteExpired];
+
+    /// <summary>
+    /// Completed orders recognised in [start, end): by completion time, else delivered date, else
+    /// server-received time (older orders without completion history).
+    /// </summary>
+    private IQueryable<RecognizedRow> Recognized(IQueryable<SalesOrder> orders,
+        DateTimeOffset start, DateTimeOffset end, DateOnly periodFrom, DateOnly periodTo)
+    {
+        var completionDates = db.OrderStatusHistoryRecords.AsNoTracking().Where(h => h.ToStatus == OrderStatuses.Completed)
+            .GroupBy(h => h.SalesOrderId).Select(g => new { Id = g.Key, At = (DateTimeOffset?)g.Max(h => h.ChangedAt) });
+        return from order in orders.Where(o => o.Status == OrderStatuses.Completed)
+            join payment in db.PaymentRecords.AsNoTracking() on order.Id equals payment.SalesOrderId into paymentRows
+            from payment in paymentRows.DefaultIfEmpty()
+            join date in completionDates on order.Id equals date.Id into dateRows
+            from date in dateRows.DefaultIfEmpty()
+            join creator in db.UserAccountRecords.AsNoTracking() on order.CreatedByUserId equals creator.Id
+            where date.At != null ? date.At >= start && date.At < end :
+                payment != null && payment.DeliveredDate != null ? payment.DeliveredDate >= periodFrom && payment.DeliveredDate <= periodTo :
+                order.ServerReceivedAt >= start && order.ServerReceivedAt < end
+            select new RecognizedRow
+            {
+                Id = order.Id, CreatedByUserId = order.CreatedByUserId, SalesGroupId = order.SalesGroupId,
+                RetailerId = order.RetailerId, CreatorRole = creator.Role,
+                Amount = payment != null ? payment.AdjustedAmount : order.FinalAmount,
+                At = date.At, Delivered = payment == null ? (DateOnly?)null : payment.DeliveredDate,
+                ServerReceivedAt = order.ServerReceivedAt
+            };
+    }
+
+    /// <summary>Batches returned for the Portal's paged "Batch cần chú ý" list (shown 10 at a time).</summary>
+    private const int ExpiryRiskLimit = 200;
+
+    private static decimal Percent(decimal part, decimal whole) =>
+        whole <= 0 ? 0m : Math.Round(part / whole * 100m, 1, MidpointRounding.AwayFromZero);
 
     public async Task<DashboardResult> ReadAsync(Guid userId, string role, DashboardQuery query, DateTimeOffset now, CancellationToken ct)
     {
@@ -58,6 +112,8 @@ public sealed class DashboardStore(AppDbContext db) : IDashboardStore
         var products = Array.Empty<DashboardProduct>(); var team = Array.Empty<DashboardSalesPerson>();
         var inventory = Array.Empty<DashboardWarehouse>(); var risks = Array.Empty<DashboardExpiry>();
         var customers = Array.Empty<DashboardCustomer>(); DashboardHealth? health = null;
+        var debtAging = Array.Empty<DashboardAgingBucket>(); var stockCover = Array.Empty<DashboardStockCover>();
+        var expiryRiskTotal = 0;
         decimal? unattributed = null;
         var orders = db.SalesOrderRecords.AsNoTracking().Where(o => !keeper && allowedGroups.Contains(o.SalesGroupId));
         var periodOrders = orders.Where(o => o.ServerReceivedAt >= start && o.ServerReceivedAt < end);
@@ -75,15 +131,15 @@ public sealed class DashboardStore(AppDbContext db) : IDashboardStore
                 .Where(x => retailers.Select(r => r.Id).Contains(x.RetailerId));
             var redemptionScope = (query.RegionId.HasValue ? $"&regionId={query.RegionId}" : "") +
                 (query.SalesGroupId.HasValue ? $"&salesGroupId={query.SalesGroupId}" : "");
-            foreach (var (status, key, label) in new[] {
-                ("Pending", "redemptionPending", "Đổi quà chờ duyệt"),
-                ("Approved", "redemptionApproved", "Quà đã duyệt chờ giao"),
-                ("Delivered", "redemptionDelivered", "Quà chờ xác nhận nhận") })
-                cards.Add(new(key, label, await redemptionQuery.CountAsync(x => x.Status == status, ct),
-                    "count", "Hiện tại · không giới hạn ngày tạo", "warn", $"/redeem?status={status}{redemptionScope}"));
+            // One tile for the whole redemption queue; the per-status split lives on the Đổi quà page.
             var openRedemptions = redemptionQuery.Where(x => x.Status == "Pending" || x.Status == "Approved" || x.Status == "Delivered");
-            cards.Add(new("redemptionAged", "Đổi quà tồn quá 3 ngày", await openRedemptions.CountAsync(x => x.UpdatedAt < now.AddDays(-3), ct),
-                "count", "Tính từ lần xử lý gần nhất", "danger", $"/redeem?aged=true{redemptionScope}"));
+            var redemptionCounts = await openRedemptions.GroupBy(x => x.Status)
+                .Select(g => new { g.Key, Count = g.Count() }).ToDictionaryAsync(x => x.Key, x => x.Count, ct);
+            var agedRedemptions = await openRedemptions.CountAsync(x => x.UpdatedAt < now.AddDays(-3), ct);
+            cards.Add(new("redemptionOpen", "Đổi quà cần xử lý", redemptionCounts.Values.Sum(), "count",
+                $"Chờ duyệt {redemptionCounts.GetValueOrDefault("Pending")} · chờ giao {redemptionCounts.GetValueOrDefault("Approved")} · " +
+                $"chờ xác nhận {redemptionCounts.GetValueOrDefault("Delivered")} · quá 3 ngày {agedRedemptions}",
+                agedRedemptions > 0 ? "danger" : "warn", $"/redeem{(redemptionScope.Length > 0 ? "?" + redemptionScope[1..] : "")}"));
             var redemptionWork = await (from x in openRedemptions join r in db.RetailerRecords on x.RetailerId equals r.Id
                 join gift in db.LoyaltyRewardRecords on x.LoyaltyRewardId equals gift.Id
                 orderby x.UpdatedAt select new { x.Id, x.Status, x.UpdatedAt, r.Name, Gift = gift.Name }).Take(15).ToArrayAsync(ct);
@@ -96,22 +152,14 @@ public sealed class DashboardStore(AppDbContext db) : IDashboardStore
         if (!keeper)
         {
             statuses = await periodOrders.GroupBy(o => o.Status).Select(g => new DashboardStatus(g.Key, g.Count())).ToArrayAsync(ct);
-            var completionDates = db.OrderStatusHistoryRecords.AsNoTracking().Where(h => h.ToStatus == OrderStatuses.Completed)
-                .GroupBy(h => h.SalesOrderId).Select(g => new { Id = g.Key, At = (DateTimeOffset?)g.Max(h => h.ChangedAt) });
-            var recognizedQuery = from order in orders.Where(o => o.Status == OrderStatuses.Completed)
-                join payment in db.PaymentRecords.AsNoTracking() on order.Id equals payment.SalesOrderId into paymentRows
-                from payment in paymentRows.DefaultIfEmpty()
-                join date in completionDates on order.Id equals date.Id into dateRows
-                from date in dateRows.DefaultIfEmpty()
-                join creator in db.UserAccountRecords.AsNoTracking() on order.CreatedByUserId equals creator.Id
-                where date.At != null ? date.At >= start && date.At < end :
-                    payment != null && payment.DeliveredDate != null ? payment.DeliveredDate >= periodFrom && payment.DeliveredDate <= periodTo :
-                    order.ServerReceivedAt >= start && order.ServerReceivedAt < end
-                select new { order.Id, order.CreatedByUserId, order.SalesGroupId, order.RetailerId, CreatorRole = creator.Role,
-                    Amount = payment != null ? payment.AdjustedAmount : order.FinalAmount,
-                    order.FinalAmount, date.At,
-                    Delivered = payment == null ? (DateOnly?)null : payment.DeliveredDate, order.ServerReceivedAt };
+            var recognizedQuery = Recognized(orders, start, end, periodFrom, periodTo);
             var recognized = await recognizedQuery.ToArrayAsync(ct);
+            // Same-length period immediately before, for the comparison shown on the revenue tiles.
+            var span = periodTo.DayNumber - periodFrom.DayNumber + 1;
+            var previousFrom = periodFrom.AddDays(-span); var previousTo = periodFrom.AddDays(-1);
+            var previousAmounts = await Recognized(orders, start.AddDays(-span), start, previousFrom, previousTo)
+                .Select(r => r.Amount).ToArrayAsync(ct);
+            var previous = new { Count = previousAmounts.Length, Amount = previousAmounts.Sum() };
             completed = recognized.Select(r => new CompletedRow(r.Id, r.CreatedByUserId, r.SalesGroupId, r.RetailerId, r.CreatorRole,
                 r.Amount, r.At.HasValue ? DateOnly.FromDateTime(r.At.Value.ToOffset(Vietnam).DateTime) :
                     r.Delivered ?? DateOnly.FromDateTime(r.ServerReceivedAt.ToOffset(Vietnam).DateTime))).ToArray();
@@ -162,20 +210,68 @@ public sealed class DashboardStore(AppDbContext db) : IDashboardStore
                 return new DashboardSalesPerson(p.Id, p.FullName, p.GroupId, p.Code, rows.Length, rows.Select(o => o.RetailerId).Distinct().Count(), rows.Sum(o => o.Amount)); })
                 .OrderByDescending(p => p.Revenue).ThenBy(p => p.Name).ToArray();
             unattributed = completed.Sum(o => o.Amount) - team.Sum(s => s.Revenue);
-            cards.Add(new("revenue", "Doanh thu ghi nhận", completed.Sum(o => o.Amount), "VND", "Đơn hoàn tất trong kỳ", "success"));
-            cards.Add(new("completed", "Đơn hoàn tất", completed.Length, "count", "Theo ngày hoàn tất"));
+            cards.Add(new("revenue", "Doanh thu ghi nhận", completed.Sum(o => o.Amount), "VND", "Đơn hoàn tất trong kỳ", "success",
+                PreviousValue: previous?.Amount ?? 0m));
+            cards.Add(new("completed", "Đơn hoàn tất", completed.Length, "count", "Theo ngày hoàn tất", PreviousValue: previous?.Count ?? 0));
             cards.Add(new("collected", "Tiền đã thu trong kỳ", collections.Sum(r => r.Amount), "VND", "Giao dịch thu đã xác nhận", "success"));
             cards.Add(new("outstanding", "Công nợ còn phải thu", totals?.Outstanding ?? 0m, "VND", "Đơn công nợ đã giao, chưa thu đủ"));
             cards.Add(new("overdue", "Công nợ quá hạn", totals?.Overdue ?? 0m, "VND", "Phần còn lại đã vượt hạn thu", "danger"));
-            cards.Add(new("prepaid", "Trả trước đang chờ", totals?.Prepaid ?? 0m, "VND", "Tách riêng khỏi công nợ"));
+            // Amount and order count of the same prepaid queue, in one tile.
+            var prepaidOrders = await payments.CountAsync(p => p.Method == "Prepaid" && p.ConfirmedAmount < p.AdjustedAmount, ct);
+            cards.Add(new("prepaid", "Trả trước đang chờ", totals?.Prepaid ?? 0m, "VND",
+                $"{prepaidOrders} đơn chưa xác nhận đủ tiền · tách riêng khỏi công nợ"));
+
+            // Credit receivables by how far past due, so collection effort goes to the oldest money first.
+            var openCredit = await payments.Where(p => p.Method == "Credit" && p.DeliveredDate != null && p.AdjustedAmount > p.ConfirmedAmount)
+                .Select(p => new { p.DueDate, Amount = p.AdjustedAmount - p.ConfirmedAmount }).ToArrayAsync(ct);
+            string Bucket(DateOnly? due) => due is null || due.Value >= today ? "current"
+                : today.DayNumber - due.Value.DayNumber <= 7 ? "d1_7" : today.DayNumber - due.Value.DayNumber <= 30 ? "d8_30" : "d31";
+            debtAging = new[] { ("current", "Chưa đến hạn"), ("d1_7", "Quá hạn 1–7 ngày"), ("d8_30", "Quá hạn 8–30 ngày"), ("d31", "Quá hạn trên 30 ngày") }
+                .Select(b => { var rows = openCredit.Where(p => Bucket(p.DueDate) == b.Item1).ToArray();
+                    return new DashboardAgingBucket(b.Item1, b.Item2, rows.Length, rows.Sum(p => p.Amount)); }).ToArray();
+
             cards.Add(new("allocationIssues", "Phân bổ cần xử lý", await orders.CountAsync(o => o.Status == OrderStatuses.AllocationFailed || o.Status == OrderStatuses.AllocationConflict || o.Status == OrderStatuses.Allocating && o.UpdatedAt < now.AddMinutes(-2), ct), "count", "Lỗi, xung đột hoặc quá 2 phút", "danger"));
             cards.Add(new("quotesPending", "Báo giá chờ phản hồi", await orders.CountAsync(o => o.Status == OrderStatuses.Quoted, ct), "count", "Đang chờ Retailer xác nhận PO"));
-            cards.Add(new("prepaidOrders", "Đơn chờ trả trước", await payments.CountAsync(p => p.Method == "Prepaid" && p.ConfirmedAmount < p.AdjustedAmount, ct), "count", "Chưa xác nhận đủ tiền"));
             var requests = db.ReceiptDiscrepancyRecords.AsNoTracking().Where(c => orderIds.Contains(c.SalesOrderId) &&
                 c.ResolvedAt == null && c.Status != "Rejected" && c.Status != "Cancelled");
-            cards.Add(new("complaintsOpen", "Yêu cầu đang mở", await requests.CountAsync(ct), "count", "Khiếu nại, trả hàng và thu hồi hàng hỏng", "warn", manager ? null : "/complaints"));
-            cards.Add(new("returnsPending", "Trả hàng / thu hồi chờ xử lý", await requests.CountAsync(c => c.RequestType != "Complaint", ct),
-                "count", "Chưa hoàn tất xử lý vật lý và tài chính", "warn", manager ? null : "/complaints"));
+            var openRequests = await requests.CountAsync(ct);
+            var openReturns = await requests.CountAsync(c => c.RequestType != "Complaint", ct);
+            cards.Add(new("complaintsOpen", "Yêu cầu đang mở", openRequests, "count",
+                $"Khiếu nại {openRequests - openReturns} · trả hàng / thu hồi {openReturns}", "warn", manager ? null : "/complaints"));
+
+            // Service quality for orders created in the period (allocation, quote) and parts received in it.
+            var statusCount = statuses.ToDictionary(s => s.Status, s => s.Count);
+            var decided = statuses.Where(s => s.Status != OrderStatuses.Allocating).Sum(s => s.Count);
+            var failed = AllocationFailureStatuses.Sum(s => statusCount.GetValueOrDefault(s));
+            cards.Add(new("allocationSuccess", "Tỷ lệ phân bổ thành công", Percent(decided - failed, decided), "percent",
+                decided == 0 ? "Chưa có đơn phân bổ xong trong kỳ" : $"{failed}/{decided} đơn thất bại, hết hàng hoặc xung đột",
+                failed > 0 ? "warn" : "success"));
+            var accepted = QuoteAcceptedStatuses.Sum(s => statusCount.GetValueOrDefault(s));
+            var declined = QuoteDeclinedStatuses.Sum(s => statusCount.GetValueOrDefault(s));
+            cards.Add(new("quoteConversion", "Tỷ lệ báo giá thành PO", Percent(accepted, accepted + declined), "percent",
+                accepted + declined == 0 ? "Chưa có báo giá được chốt trong kỳ" : $"{accepted} chấp nhận · {declined} từ chối hoặc hết hạn"));
+            var orderEta = db.SalesOrderLineRecords.AsNoTracking().GroupBy(l => l.SalesOrderId)
+                .Select(g => new { Id = g.Key, Eta = g.Max(l => l.EstimatedArrivalAt) });
+            var orderShipments = db.ShipmentRecords.AsNoTracking().Where(s => orderIds.Contains(s.SalesOrderId));
+            var receivedParts = await (from s in orderShipments.Where(s => s.ReceivedAt >= start && s.ReceivedAt < end)
+                join eta in orderEta on s.SalesOrderId equals eta.Id into etaRows from eta in etaRows.DefaultIfEmpty()
+                select new { s.TotalQuantity, s.ReceivedQuantity, s.ReceivedAt, Eta = eta == null ? null : eta.Eta }).ToArrayAsync(ct);
+            var shipped = receivedParts.Sum(s => s.TotalQuantity);
+            cards.Add(new("fillRate", "Tỷ lệ giao đủ hàng", Percent(receivedParts.Sum(s => s.ReceivedQuantity), shipped), "percent",
+                shipped == 0 ? "Chưa có phần giao được nhận trong kỳ" : $"{receivedParts.Sum(s => s.ReceivedQuantity):#,0}/{shipped:#,0} thùng retailer xác nhận nhận"));
+            var timed = receivedParts.Where(s => s.Eta.HasValue).ToArray();
+            var onTime = timed.Count(s => s.ReceivedAt <= s.Eta);
+            cards.Add(new("onTimeRate", "Tỷ lệ giao đúng hạn", Percent(onTime, timed.Length), "percent",
+                timed.Length == 0 ? "Chưa có phần giao có ETA trong kỳ" : $"{onTime}/{timed.Length} phần giao nhận trước ETA",
+                onTime < timed.Length ? "warn" : "success"));
+            cards.Add(new("shipmentsLate", "Đang giao quá ETA", await (from s in orderShipments.Where(s => s.Status == "Delivering")
+                join eta in orderEta on s.SalesOrderId equals eta.Id where eta.Eta < now select s.Id).CountAsync(ct),
+                "count", "Đã rời kho, retailer chưa nhận, đã qua giờ dự kiến", "danger", manager ? null : "/orders"));
+            var deliveredInPeriod = await payments.CountAsync(p => p.DeliveredDate >= periodFrom && p.DeliveredDate <= periodTo, ct);
+            var reportedInPeriod = await db.ReceiptDiscrepancyRecords.AsNoTracking()
+                .CountAsync(c => orderIds.Contains(c.SalesOrderId) && c.ReportedAt >= start && c.ReportedAt < end && c.Status != "Cancelled", ct);
+            cards.Add(new("complaintRate", "Tỷ lệ khiếu nại", Percent(reportedInPeriod, deliveredInPeriod), "percent",
+                $"{reportedInPeriod} yêu cầu / {deliveredInPeriod} đơn giao trong kỳ", reportedInPeriod > 0 ? "warn" : "success"));
 
             var failures = await orders.Where(o => o.Status == OrderStatuses.AllocationFailed || o.Status == OrderStatuses.AllocationConflict ||
                     o.Status == OrderStatuses.Allocating && o.UpdatedAt < now.AddMinutes(-2))
@@ -195,6 +291,10 @@ public sealed class DashboardStore(AppDbContext db) : IDashboardStore
                 work.AddRange(refunds.Select(r => new DashboardWorkItem("refund", r.Id, $"HT-{r.Id.ToString("N")[..8].ToUpperInvariant()}",
                     r.Status == "AwaitingVerification" ? "Hoàn tiền chờ xác minh" : "Hoàn tiền cần xử lý", r.Status,
                     "Chỉ trạng thái Refunded mới tính là đã hoàn", r.CreatedAt, r.Status == "AwaitingVerification" ? 1 : 2, $"/refunds/{r.Id}", r.Amount)));
+            }
+            // Background-job health is technical; only Admin sees it.
+            if (role == SystemRoles.Admin)
+            {
                 var sweep = await db.ExpirySweepRunRecords.AsNoTracking().OrderByDescending(r => r.StartedAt)
                     .Select(r => new { r.StartedAt, r.Status }).FirstOrDefaultAsync(ct);
                 health = new(sweep?.StartedAt, sweep?.Status,
@@ -202,9 +302,31 @@ public sealed class DashboardStore(AppDbContext db) : IDashboardStore
                     await db.OutboxMessageRecords.CountAsync(m => m.Status == "Failed", ct),
                     await orders.CountAsync(o => o.Status == OrderStatuses.Allocating && o.UpdatedAt < now.AddMinutes(-2), ct));
             }
-            if (manager)
+            if (manager || global)
             {
-                var scopedRetailers = db.RetailerRecords.AsNoTracking().Where(r => db.RetailerSalesAssignmentRecords.Any(a => a.RetailerId == r.Id && a.IsActive && allowedGroups.Contains(a.SalesGroupId)));
+                var scopedRetailers = global
+                    ? db.RetailerRecords.AsNoTracking().Where(r => (!query.RegionId.HasValue || r.RegionId == query.RegionId) &&
+                        (!query.SalesGroupId.HasValue || db.RetailerSalesAssignmentRecords.Any(a =>
+                            a.RetailerId == r.Id && a.SalesGroupId == query.SalesGroupId && a.IsActive && a.UnassignedAt == null)))
+                    : db.RetailerRecords.AsNoTracking().Where(r => db.RetailerSalesAssignmentRecords.Any(a => a.RetailerId == r.Id && a.IsActive && allowedGroups.Contains(a.SalesGroupId)));
+
+                // Purchase cycle: an active store is overdue when the gap since its last order exceeds
+                // the interval implied by its declared frequency (30 / orders per month days).
+                var cycleRows = await scopedRetailers.Where(r => r.Status == "Active" && r.PurchaseFrequencyPerMonth > 0)
+                    .Select(r => new { r.Id, r.PurchaseFrequencyPerMonth, r.ReviewedAt, r.CreatedAt,
+                        Last = orders.Where(o => o.RetailerId == r.Id).Max(o => (DateTimeOffset?)o.ServerReceivedAt) }).ToArrayAsync(ct);
+                bool CycleOverdue(DateTimeOffset? last, DateTimeOffset since, int frequency) =>
+                    now - (last ?? since) > TimeSpan.FromDays(30d / frequency);
+                var overdueCycle = cycleRows.Where(r => CycleOverdue(r.Last, r.ReviewedAt ?? r.CreatedAt, r.PurchaseFrequencyPerMonth))
+                    .Select(r => r.Id).ToHashSet();
+                cards.Add(new("cycleOverdue", "Điểm bán quá chu kỳ mua", overdueCycle.Count, "count",
+                    "Lâu chưa đặt so với tần suất mua đã khai báo", overdueCycle.Count > 0 ? "warn" : "neutral"));
+                cards.Add(new("newRetailers", "Điểm bán mới được duyệt", await scopedRetailers.CountAsync(r =>
+                    r.Status == "Active" && r.ReviewedAt >= start && r.ReviewedAt < end, ct), "count", "Duyệt trong kỳ đã chọn", "success",
+                    manager ? null : "/retailers"));
+                cards.Add(new("pendingDeclarations", "Khai báo chờ duyệt", await scopedRetailers.CountAsync(r => r.Status == "PendingApproval", ct),
+                    "count", "Sales đã gửi, chờ Admin xét duyệt", "warn", manager ? null : "/retailers"));
+
                 var customerRows = await scopedRetailers.Select(r => new { r.Id, r.Code, r.Name, r.Status, r.PurchaseFrequencyPerMonth,
                     Count = periodOrders.Count(o => o.RetailerId == r.Id),
                     Last = orders.Where(o => o.RetailerId == r.Id).Max(o => (DateTimeOffset?)o.ServerReceivedAt),
@@ -212,9 +334,9 @@ public sealed class DashboardStore(AppDbContext db) : IDashboardStore
                         .Sum(p => (decimal?)Math.Max(0m, p.AdjustedAmount - p.ConfirmedAmount)) ?? 0m,
                     Overdue = payments.Where(p => p.DeliveredDate != null && p.Method == "Credit" && p.DueDate < today && orders.Any(o => o.Id == p.SalesOrderId && o.RetailerId == r.Id))
                         .Sum(p => (decimal?)Math.Max(0m, p.AdjustedAmount - p.ConfirmedAmount)) ?? 0m,
-                }).OrderByDescending(r => r.Overdue).ThenBy(r => r.Last).Take(30).ToArrayAsync(ct);
+                }).OrderByDescending(r => r.Overdue).ThenByDescending(r => r.Outstanding).ThenBy(r => r.Last).Take(30).ToArrayAsync(ct);
                 customers = customerRows.Select(r => new DashboardCustomer(r.Id, r.Code, r.Name, r.Status, r.Count, r.Last,
-                    r.PurchaseFrequencyPerMonth, r.Outstanding, r.Overdue)).ToArray();
+                    r.PurchaseFrequencyPerMonth, r.Outstanding, r.Overdue, overdueCycle.Contains(r.Id))).ToArray();
             }
         }
 
@@ -228,6 +350,7 @@ public sealed class DashboardStore(AppDbContext db) : IDashboardStore
                 let locked = db.InventoryLockRecords.Where(l => l.BatchId == batch.Id && l.Status == "Active").Sum(l => (decimal?)l.LockedQuantity) ?? 0m
                 let available = batch.ExpirationDate < today ? 0m : Math.Max(0m, balance.PhysicalQuantity - balance.ReservedQuantity - locked)
                 select new { batch.Id, batch.BatchCode, batch.ExpirationDate, warehouseId = warehouse.Id, warehouse.Code, warehouse.Name,
+                    warehouse.RegionId, ProductId = product.Id,
                     product.Sku, product.NearDateThresholdHours, OnHand = balance.PhysicalQuantity, Reserved = balance.ReservedQuantity, Locked = locked, Available = available };
             var stockRows = await stock.ToArrayAsync(ct);
             var warehouseRows = stockRows.GroupBy(b => new { b.warehouseId, b.Code, b.Name });
@@ -238,8 +361,10 @@ public sealed class DashboardStore(AppDbContext db) : IDashboardStore
                 g.Where(b => b.ExpirationDate < today).Sum(b => b.OnHand))).OrderBy(w => w.Code).ToArray();
             inventory = warehouses.Where(w => allowedWarehouses.Contains(w.Id)).Select(w => inventory.FirstOrDefault(i => i.Id == w.Id)
                 ?? new DashboardWarehouse(w.Id, w.Code, w.Name, 0, 0, 0, 0, 0, 0)).OrderBy(w => w.Code).ToArray();
-            risks = stockRows.Where(b => b.OnHand > 0 && (b.ExpirationDate < today || IsNear(b.ExpirationDate, b.NearDateThresholdHours)))
-                .OrderBy(b => b.ExpirationDate).ThenByDescending(b => b.OnHand).Take(15)
+            var riskRows = stockRows.Where(b => b.OnHand > 0 && (b.ExpirationDate < today || IsNear(b.ExpirationDate, b.NearDateThresholdHours))).ToArray();
+            expiryRiskTotal = riskRows.Length;
+            risks = riskRows
+                .OrderBy(b => b.ExpirationDate).ThenByDescending(b => b.OnHand).Take(ExpiryRiskLimit)
                 .Select(b => new DashboardExpiry(b.Id, b.BatchCode, b.Code, b.Sku, b.ExpirationDate, b.OnHand, b.Available,
                     b.ExpirationDate < today ? "Expired" : "NearExpiry")).ToArray();
             var picks = db.PickingListRecords.AsNoTracking().Where(p => allowedWarehouses.Contains(p.WarehouseId) && p.Status != "Completed");
@@ -248,10 +373,51 @@ public sealed class DashboardStore(AppDbContext db) : IDashboardStore
                 cards.Add(new("receiptPending", "Phiếu nhập chờ xử lý", await receiptRows.CountAsync(ct), "count", "Toàn bộ phiếu còn mở"));
                 cards.Add(new("pickingPending", "Phiếu chờ soạn", await picks.CountAsync(p => p.Status == "Pending", ct), "count", "Kho được phân công"));
                 cards.Add(new("pickingActive", "Phiếu đang soạn", await picks.CountAsync(p => p.Status == "InProgress", ct), "count", "Chưa hoàn tất"));
-                cards.Add(new("ready", "Shipment chờ xuất", await shipments.CountAsync(s => s.Status == "Ready", ct), "count", "Kiểm tra readiness trước xuất"));
                 cards.Add(new("nearExpiry", "Hàng cận hạn", inventory.Sum(w => w.NearExpiry), "carton", "Theo ngưỡng cận hạn từng SKU", "warn"));
                 cards.Add(new("expired", "Hàng hết hạn", inventory.Sum(w => w.Expired), "carton", "Tồn vật lý chưa xử lý", "danger"));
-                cards.Add(new("shipmentsReady", "Shipment chờ xuất", await shipments.CountAsync(s => s.Status == "Ready", ct), "count", "Tại các kho trong bộ lọc"));
+                cards.Add(new("shipmentsReady", "Shipment chờ xuất", await shipments.CountAsync(s => s.Status == "Ready", ct), "count", "Tại các kho trong bộ lọc · kiểm tra readiness trước xuất"));
+
+            // Stock cover per SKU and region: regional minimum, recent sales pace and shelf life.
+            var minimumRaw = await db.SystemConfigurationRecords.AsNoTracking()
+                .Where(c => c.ConfigKey == BusinessConfigurationKeys.RegionalMinimumStockCartons && c.IsActive)
+                .OrderByDescending(c => c.EffectiveFrom).Select(c => c.ConfigValue).FirstOrDefaultAsync(ct);
+            var minimum = decimal.TryParse(minimumRaw?.Trim('"'), System.Globalization.NumberStyles.Number,
+                System.Globalization.CultureInfo.InvariantCulture, out var configured) && configured >= 0 ? configured : 35m;
+            var salesSince = now.AddDays(-30);
+            var sold = await db.InventoryTransactionRecords.AsNoTracking()
+                .Where(t => t.TransactionType == InventoryTransactionTypes.SalesIssue && allowedWarehouses.Contains(t.WarehouseId) && t.OccurredAt >= salesSince)
+                .Join(db.WarehouseRecords.AsNoTracking(), t => t.WarehouseId, w => w.Id, (t, w) => new { t.ProductId, w.RegionId, t.PhysicalQuantityDelta })
+                .GroupBy(t => new { t.ProductId, t.RegionId }).Select(g => new { g.Key.ProductId, g.Key.RegionId, Qty = -g.Sum(t => t.PhysicalQuantityDelta) })
+                .ToDictionaryAsync(x => (x.ProductId, x.RegionId), x => x.Qty, ct);
+            var scopeRegions = warehouses.Where(w => allowedWarehouses.Contains(w.Id)).Select(w => w.RegionId!.Value).Distinct().ToArray();
+            var regionCodes = await db.RegionRecords.AsNoTracking().Where(r => scopeRegions.Contains(r.Id)).ToDictionaryAsync(r => r.Id, r => r.Code, ct);
+            var publishedProducts = await db.ProductRecords.AsNoTracking().Where(p => p.Status == "Published")
+                .Select(p => new { p.Id, p.Sku, p.Name, p.ShelfLifeHours }).ToArrayAsync(ct);
+            var availableBySkuRegion = stockRows.GroupBy(b => (b.ProductId, b.RegionId)).ToDictionary(g => g.Key, g => g.Sum(b => b.Available));
+            var coverRows = new List<DashboardStockCover>();
+            foreach (var regionId in scopeRegions)
+            foreach (var product in publishedProducts)
+            {
+                var available = availableBySkuRegion.GetValueOrDefault((product.Id, regionId));
+                var soldQty = Math.Max(0m, sold.GetValueOrDefault((product.Id, regionId)));
+                // Products neither stocked nor sold in a region are not part of its assortment.
+                if (available <= 0 && soldQty <= 0) continue;
+                var daily = soldQty / 30m;
+                decimal? cover = daily > 0 ? Math.Round(available / daily, 1) : null;
+                var shelfDays = (int)Math.Ceiling(product.ShelfLifeHours / 24m);
+                var flag = available < minimum ? "BelowMinimum"
+                    : soldQty <= 0 ? "NoSales"
+                    : cover > shelfDays ? "Overstock" : null;
+                if (flag is null) continue;
+                coverRows.Add(new(product.Id, product.Sku, product.Name, regionId, regionCodes.GetValueOrDefault(regionId, ""),
+                    available, soldQty, cover, shelfDays, minimum, flag));
+            }
+            stockCover = coverRows.OrderBy(r => r.Flag == "BelowMinimum" ? 0 : r.Flag == "Overstock" ? 1 : 2)
+                .ThenBy(r => r.Flag == "BelowMinimum" ? r.Available : -(r.DaysOfSupply ?? decimal.MaxValue))
+                .ThenBy(r => r.Sku, StringComparer.Ordinal).Take(20).ToArray();
+            // Not shown on the Portal tiles; the mobile warehouse home uses it for its low-stock banner.
+            cards.Add(new("lowStock", "SKU dưới ngưỡng tồn khu vực", coverRows.Count(r => r.Flag == "BelowMinimum"), "count",
+                $"Ngưỡng tối thiểu {minimum:0.#} thùng / SKU / khu vực", coverRows.Any(r => r.Flag == "BelowMinimum") ? "danger" : "neutral"));
                 cards.Add(new("shipmentExceptions", "Shipment ngoại lệ", await shipments.CountAsync(s => s.Status == "Exception", ct), "count", "Cần kiểm tra trước khi tiếp tục", "danger"));
             var pickRows = await picks.OrderByDescending(p => p.Status == "Exception").ThenBy(p => p.CreatedAt).Take(15).Select(p => new { p.Id, p.PickingCode, p.Status, p.CreatedAt }).ToArrayAsync(ct);
             work.AddRange(pickRows.Select(p => new DashboardWorkItem("picking", p.Id, p.PickingCode, "Phiếu soạn còn mở", p.Status,
@@ -266,6 +432,7 @@ public sealed class DashboardStore(AppDbContext db) : IDashboardStore
                     "Kiểm tra SKU, batch và số lượng nhập", r.CreatedAt, 3, $"/receipts/{Uri.EscapeDataString(r.ReceiptCode)}")));
         }
         return new(role, now, periodFrom, periodTo, scope, cards, statuses, trend, products, team, inventory, risks,
-            work.OrderBy(w => w.Priority).ThenBy(w => w.Since).Take(30).ToArray(), customers, health, unattributed, notes);
+            work.OrderBy(w => w.Priority).ThenBy(w => w.Since).Take(30).ToArray(), customers, health, unattributed, notes,
+            debtAging, stockCover, expiryRiskTotal);
     }
 }

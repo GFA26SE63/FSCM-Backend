@@ -319,7 +319,7 @@ public sealed class ShipmentService(
     /// </summary>
     public async Task<ShipmentResult> ConfirmIssueAsync(
         Guid id, ConfirmShipmentIssueData data, Guid actorUserId, string actorRole,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, bool documentWorkflow = false)
     {
         if (actorRole is not (SystemRoles.Admin or SystemRoles.Operator or SystemRoles.WarehouseKeeper))
             throw ShipmentOperationException.Forbidden(
@@ -347,6 +347,10 @@ public sealed class ShipmentService(
                 throw ShipmentOperationException.Conflict(
                     $"Shipment is {view.Shipment.Status}; only a ready part can be issued.");
             }
+
+            if (!documentWorkflow && view.Shipment.PickingListId.HasValue &&
+                await store.IsDocumentControlledPickingAsync(view.Shipment.PickingListId.Value, transactionCancellationToken))
+                throw ShipmentOperationException.Conflict("Xác nhận xuất trên phiếu xuất tổng thay vì từng đơn hàng.");
 
             if (view.Shipment.Version != data.ExpectedVersion)
             {

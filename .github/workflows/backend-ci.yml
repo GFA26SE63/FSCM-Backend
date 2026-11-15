@@ -18,10 +18,20 @@ jobs:
   validate:
     name: Restore, build, and test
     runs-on: ubuntu-24.04
+    env:
+      TraceabilityProjectPath: ${{ github.workspace }}/.ci/traceability/FSCM.Traceability.csproj
 
     steps:
       - name: Check out source
         uses: actions/checkout@v7
+
+      - name: Check out factory integration test dependency
+        uses: actions/checkout@v7
+        with:
+          repository: GFA26SE63/FSCM-Traceability
+          ref: be7070e0f353a6e7f8be5889c5c97d883f1fda87
+          path: .ci/traceability
+          persist-credentials: false
 
       - name: Set up .NET
         uses: actions/setup-dotnet@v6

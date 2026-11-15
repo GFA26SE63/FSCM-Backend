@@ -12,6 +12,9 @@ namespace FSCM.Persistence.Picking;
 
 public sealed class PickingStore(AppDbContext dbContext) : IPickingStore
 {
+    public Task<bool> IsDocumentControlledAsync(Guid pickingListId, CancellationToken ct) =>
+        dbContext.WarehouseDocumentLines.AnyAsync(l => l.PickingListId == pickingListId &&
+            dbContext.WarehouseDocuments.Any(d => d.Id == l.DocumentId && d.Kind == "Request" && d.Status != "Cancelled"), ct);
     public Task<bool> CanAccessWarehouseAsync(
         Guid userId, string role, Guid warehouseId, CancellationToken cancellationToken) =>
         role is SystemRoles.Admin or SystemRoles.Operator
@@ -221,6 +224,11 @@ public sealed class PickingStore(AppDbContext dbContext) : IPickingStore
         Func<CancellationToken, Task> operation,
         CancellationToken cancellationToken)
     {
+        if (dbContext.Database.CurrentTransaction is not null)
+        {
+            await operation(cancellationToken);
+            return;
+        }
         var strategy = dbContext.Database.CreateExecutionStrategy();
         await strategy.ExecuteAsync(async () =>
         {
