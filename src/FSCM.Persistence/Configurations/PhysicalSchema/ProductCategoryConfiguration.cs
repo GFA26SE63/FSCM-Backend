@@ -8,7 +8,9 @@ public sealed class ProductCategoryConfiguration : IEntityTypeConfiguration<Prod
 {
     public void Configure(EntityTypeBuilder<ProductCategory> builder)
     {
-        builder.ToTable("PRODUCT_CATEGORY");
+        builder.ToTable("PRODUCT_CATEGORY", table =>
+            table.HasCheckConstraint("CK_PRODUCT_CATEGORY_DEFAULT_MLOR",
+                "\"DefaultMlorRatio\" IS NULL OR (\"DefaultMlorRatio\" > 0 AND \"DefaultMlorRatio\" < 1)"));
         builder.HasKey(entity => entity.Id);
         builder.Property(entity => entity.Id).HasColumnType("uuid").IsRequired();
         builder.Property(entity => entity.ParentCategoryId).HasColumnType("uuid").IsRequired(false);
@@ -16,6 +18,9 @@ public sealed class ProductCategoryConfiguration : IEntityTypeConfiguration<Prod
         builder.Property(entity => entity.Name).HasMaxLength(150).IsRequired();
         builder.Property(entity => entity.Description).HasColumnType("text").IsRequired(false);
         builder.Property(entity => entity.IsActive).IsRequired();
+        builder.Property(entity => entity.DefaultMlorRatio).HasPrecision(6, 5).IsRequired(false);
+        builder.Property(entity => entity.DefaultMlorVersion).HasDefaultValue(0).IsRequired();
+        builder.Property(entity => entity.DefaultMlorUpdatedAt).HasColumnType("timestamp with time zone").IsRequired(false);
         builder.Property(entity => entity.CreatedAt).HasColumnType("timestamp with time zone").IsRequired();
         builder.Property(entity => entity.UpdatedAt).HasColumnType("timestamp with time zone").IsRequired();
         builder.HasIndex(entity => entity.Code).IsUnique();

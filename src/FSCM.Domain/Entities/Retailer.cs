@@ -18,6 +18,8 @@ public sealed class Retailer
     public decimal? PurchasingCapacity { get; set; }
     public int PurchaseFrequencyPerMonth { get; set; }
     public int CreditTermDays { get; set; }
+    /// <summary>Maximum outstanding receivable approved by Admin or Operator.</summary>
+    public decimal CreditLimit { get; set; }
     public int? RequestedCreditTermDays { get; set; }
     public string? PotentialStatus { get; set; }
     public decimal? PotentialScore { get; set; }

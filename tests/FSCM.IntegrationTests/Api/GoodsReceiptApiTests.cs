@@ -171,6 +171,11 @@ public sealed class GoodsReceiptApiTests
         public void AddBatch(Batch batch) => Batches.Add(batch);
         public void AddBalance(InventoryBalance balance) => Balance = balance;
         public void AddTransaction(InventoryTransaction transaction) => Transactions.Add(transaction);
+        public List<BatchQrLabel> QrLabels { get; } = [];
+        public List<QrLabelEvent> QrLabelEvents { get; } = [];
+        private int _qrSequence;
+        public Task<string> NextQrLabelCodeAsync(CancellationToken cancellationToken) => Task.FromResult($"TEM-{++_qrSequence:000000}");
+        public void AddQrLabel(BatchQrLabel label, QrLabelEvent generatedEvent) { QrLabels.Add(label); QrLabelEvents.Add(generatedEvent); }
         public void ClearTracking() { }
         public Task SaveChangesAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 

@@ -49,6 +49,23 @@ public sealed class RetailerServiceTests
     }
 
     [Fact]
+    public async Task Approval_requires_and_persists_a_non_negative_credit_limit()
+    {
+        var fixture = new Fixture();
+        var declared = await fixture.DeclareAsync(30_000_000, 20, 60);
+
+        var missing = await Assert.ThrowsAsync<RetailerOperationException>(() =>
+            fixture.Service.ReviewAsync(declared.Id, Guid.NewGuid(), true, 14, null, "Hồ sơ hợp lệ", CancellationToken.None));
+        Assert.Equal("validation_error", missing.Code);
+
+        var result = await fixture.Service.ReviewAsync(
+            declared.Id, Guid.NewGuid(), true, 14, 25_000_000m, "Hồ sơ hợp lệ", CancellationToken.None);
+
+        Assert.Equal(25_000_000m, result.CreditLimit);
+        Assert.Equal(25_000_000m, fixture.Store.Retailers[0].CreditLimit);
+    }
+
+    [Fact]
     public async Task Approval_creates_inactive_retailer_account_and_sends_account_created_email()
     {
         var fixture = new Fixture();

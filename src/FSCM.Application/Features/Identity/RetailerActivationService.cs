@@ -148,6 +148,7 @@ public sealed class RetailerActivationService(
 
     public async Task<AuthenticationResult> SetPasswordAsync(string setupToken, string password, string? ipAddress, CancellationToken cancellationToken)
     {
+        password = password?.Trim() ?? string.Empty;
         var challenge = await store.FindBySetupTokenHashAsync(tokenProvider.HashOpaqueToken(setupToken), cancellationToken)
             ?? throw IdentityOperationException.InvalidToken();
         var now = timeProvider.GetUtcNow();
