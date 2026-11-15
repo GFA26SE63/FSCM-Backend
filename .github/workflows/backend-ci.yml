@@ -18,8 +18,19 @@ jobs:
   validate:
     name: Restore, build, and test
     runs-on: ubuntu-24.04
+    services:
+      disposal-postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: disposal-ci-only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 12
     env:
       TraceabilityProjectPath: ${{ github.workspace }}/.ci/traceability/FSCM.Traceability.csproj
+      FSCM_DISPOSAL_TEST_POSTGRES: Host=127.0.0.1;Port=5432;Database=postgres;Username=postgres;Password=disposal-ci-only
 
     steps:
       - name: Check out source
