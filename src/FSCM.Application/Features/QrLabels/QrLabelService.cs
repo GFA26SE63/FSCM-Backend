@@ -60,7 +60,7 @@ public sealed class QrLabelService(IQrLabelStore store, IQrCodeRenderer qrCodeRe
         // sub-pixel rounding push the last line (HSD) onto a second page.
         builder.Append("@page{size:70mm 50mm;margin:2mm}");
         builder.Append("html,body{margin:0;padding:0}");
-        builder.Append("body{font-family:Arial,Helvetica,sans-serif}");
+        builder.Append("body{font-family:Arial,sans-serif}");
         builder.Append(".label{width:66mm;height:45mm;padding:1.5mm;box-sizing:border-box;overflow:hidden;");
         builder.Append("display:flex;gap:2.5mm;align-items:center;border:1px solid #000}");
         // Break only between labels, never after the last one (a trailing break = blank page).
@@ -142,6 +142,8 @@ public sealed class QrLabelService(IQrLabelStore store, IQrCodeRenderer qrCodeRe
         var batch = await store.FindBatchAsync(data.BatchId, cancellationToken)
             ?? throw QrLabelOperationException.NotFound("Batch was not found.");
         await EnsureWarehouseAccessAsync(userId, role, batch.WarehouseId, cancellationToken);
+        if (batch.FactoryProductionBatchId.HasValue)
+            throw QrLabelOperationException.Conflict("Carton nhà máy giữ nguyên mã CID. In lại mã hiện có; không sinh mã mới tại kho.");
         var capacity = await CalculateGenerationCapacityAsync(batch.Id, cancellationToken);
         if (data.Quantity > capacity.UnlabelledQuantity)
             throw QrLabelOperationException.Conflict(

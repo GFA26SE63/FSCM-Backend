@@ -1,3 +1,6 @@
+extern alias WarehouseApi;
+using WarehouseProgram = WarehouseApi::Program;
+
 using System.IdentityModel.Tokens.Jwt;
 using System.Net;
 using System.Net.Http.Headers;
@@ -273,7 +276,7 @@ public sealed class IdentityAuthorizationTests : IClassFixture<IdentityAuthoriza
 
     private static AuthenticationHeaderValue Bearer(string token) => new("Bearer", token);
 
-    public sealed class IdentityApiFactory : WebApplicationFactory<Program>
+    public sealed class IdentityApiFactory : WebApplicationFactory<WarehouseProgram>
     {
         private const string Issuer = "FSCM.API.Tests";
         private const string Audience = "FSCM.Clients.Tests";
