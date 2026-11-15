@@ -6,6 +6,7 @@ using FSCM.Application.Features.Orders;
 using FSCM.Application.Features.AllocationRuns;
 using FSCM.Application.Features.MobileSnapshots;
 using FSCM.Application.Features.Promotions;
+using FSCM.Domain.Allocation;
 using FSCM.Domain.Authorization;
 using FSCM.Domain.Entities;
 using Microsoft.AspNetCore.TestHost;
@@ -16,8 +17,16 @@ namespace FSCM.IntegrationTests.Api;
 
 public sealed class OrderCaptureApiTests
 {
+    private sealed class CapturePolicy() : AllocationPolicyService(null!, null!)
+    {
+        public override Task<AllocationWeights> WeightsAsync(CancellationToken ct) => Task.FromResult(new AllocationWeights());
+        public override Task<BatchCandidate[]> CandidatesAsync(Guid retailer, IReadOnlyCollection<RealTimeInventoryCandidate> positions, DateTimeOffset at, CancellationToken ct) =>
+            Task.FromResult(positions.Select(p => new BatchCandidate(p.Batch.Id, p.Batch.BatchCode, p.Warehouse.Id, p.Warehouse.Code,
+                new DateTimeOffset(p.Batch.ExpirationDate.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero), p.IssuableQuantity,
+                1000, at.AddHours(12), DateOnly.FromDateTime(at.AddHours(12).UtcDateTime))).ToArray());
+    }
     [Fact]
-    public async Task Mobile_snapshot_is_sales_only_and_sync_conflict_does_not_create_order()
+    public async Task Admin_and_sales_can_read_mobile_snapshot_and_sync_conflict_does_not_create_order()
     {
         using var identityFactory = new IdentityAuthorizationTests.IdentityApiFactory();
         var orderStore = new TestOrderStore(identityFactory.Sales.Id);
@@ -29,6 +38,10 @@ public sealed class OrderCaptureApiTests
                 services.AddSingleton<IOrderStore>(orderStore);
                 services.RemoveAll<IRealTimeAllocationService>();
                 services.AddSingleton<IRealTimeAllocationService, NoOpRealTimeAllocationService>();
+                // This fixture isolates capture contracts; real route/ETA integration is covered by the PostgreSQL workflow.
+                services.RemoveAll<AllocationPolicyService>();
+                services.AddSingleton<AllocationPolicyService>(new CapturePolicy());
+                services.RemoveAll<AllocationDeliveryGuard>();
                 services.RemoveAll<IOrderPricingService>();
                 services.AddSingleton<IOrderPricingService, TestPricingService>();
                 services.RemoveAll<IMobileSnapshotStore>();
@@ -37,7 +50,7 @@ public sealed class OrderCaptureApiTests
         using var client = factory.CreateClient();
 
         client.DefaultRequestHeaders.Authorization = Bearer(identityFactory.Admin, identityFactory);
-        Assert.Equal(HttpStatusCode.Forbidden,
+        Assert.Equal(HttpStatusCode.OK,
             (await client.GetAsync("/api/v1/mobile/snapshot")).StatusCode);
         client.DefaultRequestHeaders.Authorization = Bearer(identityFactory.Sales, identityFactory);
         var snapshot = await client.GetFromJsonAsync<JsonElement>("/api/v1/mobile/snapshot");
@@ -92,6 +105,10 @@ public sealed class OrderCaptureApiTests
                 services.AddSingleton<IOrderStore>(orderStore);
                 services.RemoveAll<IRealTimeAllocationService>();
                 services.AddSingleton<IRealTimeAllocationService, NoOpRealTimeAllocationService>();
+                // This fixture isolates capture contracts; real route/ETA integration is covered by the PostgreSQL workflow.
+                services.RemoveAll<AllocationPolicyService>();
+                services.AddSingleton<AllocationPolicyService>(new CapturePolicy());
+                services.RemoveAll<AllocationDeliveryGuard>();
             }));
         using var client = factory.CreateClient();
         client.DefaultRequestHeaders.Authorization = Bearer(identityFactory.Sales, identityFactory);
@@ -158,6 +175,10 @@ public sealed class OrderCaptureApiTests
                 services.AddSingleton<IOrderStore>(store);
                 services.RemoveAll<IRealTimeAllocationService>();
                 services.AddSingleton<IRealTimeAllocationService, NoOpRealTimeAllocationService>();
+                // This fixture isolates capture contracts; real route/ETA integration is covered by the PostgreSQL workflow.
+                services.RemoveAll<AllocationPolicyService>();
+                services.AddSingleton<AllocationPolicyService>(new CapturePolicy());
+                services.RemoveAll<AllocationDeliveryGuard>();
                 services.RemoveAll<IOrderPricingService>();
                 services.AddSingleton<IOrderPricingService, TestPricingService>();
             }));
@@ -215,7 +236,7 @@ public sealed class OrderCaptureApiTests
         var list = await client.GetFromJsonAsync<JsonElement>(
             "/api/v1/orders?createdByMe=true&page=1&pageSize=10&search=DH-");
         Assert.Equal(1, list.GetProperty("totalCount").GetInt32());
-        Assert.Equal("PendingRun", list.GetProperty("items")[0].GetProperty("allocationState").GetString());
+        Assert.Equal("Allocating", list.GetProperty("items")[0].GetProperty("allocationState").GetString());
 
         var detail = await client.GetFromJsonAsync<JsonElement>($"/api/v1/orders/{orderId}");
         Assert.Equal("KM-001", detail.GetProperty("lines")[0]
@@ -227,7 +248,7 @@ public sealed class OrderCaptureApiTests
                 query {
                   entities {
                     orderRead(id: "{{orderId}}") {
-                      id orderCode allocationState officialAmount
+                      id orderCode allocationState
                       lines { id allocationFragments { batchId finalUnitPrice netAmount } }
                     }
                     orderReads(createdByMe: true, search: "DH-") {
@@ -262,6 +283,10 @@ public sealed class OrderCaptureApiTests
                 services.AddSingleton<IOrderStore>(store);
                 services.RemoveAll<IRealTimeAllocationService>();
                 services.AddSingleton<IRealTimeAllocationService, NoOpRealTimeAllocationService>();
+                // This fixture isolates capture contracts; real route/ETA integration is covered by the PostgreSQL workflow.
+                services.RemoveAll<AllocationPolicyService>();
+                services.AddSingleton<AllocationPolicyService>(new CapturePolicy());
+                services.RemoveAll<AllocationDeliveryGuard>();
                 services.RemoveAll<IOrderPricingService>();
                 services.AddSingleton<IOrderPricingService, TestPricingService>();
             }));
@@ -296,6 +321,10 @@ public sealed class OrderCaptureApiTests
                 services.AddSingleton<IOrderStore>(store);
                 services.RemoveAll<IRealTimeAllocationService>();
                 services.AddSingleton<IRealTimeAllocationService, NoOpRealTimeAllocationService>();
+                // This fixture isolates capture contracts; real route/ETA integration is covered by the PostgreSQL workflow.
+                services.RemoveAll<AllocationPolicyService>();
+                services.AddSingleton<AllocationPolicyService>(new CapturePolicy());
+                services.RemoveAll<AllocationDeliveryGuard>();
                 services.RemoveAll<IOrderPricingService>();
                 services.AddSingleton<IOrderPricingService, TestPricingService>();
             }));
@@ -358,7 +387,7 @@ public sealed class OrderCaptureApiTests
         Assert.Equal(store.Retailer.Id, syncedOrder.GetProperty("retailerId").GetGuid());
         Assert.Equal(OrderPaymentMethods.Prepaid,
             syncedOrder.GetProperty("paymentMethod").GetString());
-        Assert.Equal(OrderStatuses.PendingApproval, syncedOrder.GetProperty("status").GetString());
+        Assert.Equal(OrderStatuses.Allocating, syncedOrder.GetProperty("status").GetString());
         Assert.True(syncedOrder.GetProperty("finalPricePendingAllocation").GetBoolean());
         Assert.Equal(900m, syncedOrder.GetProperty("finalAmount").GetDecimal());
         Assert.Empty(syncedOrder.GetProperty("lines")[0].GetProperty("allocations").EnumerateArray());
@@ -393,6 +422,10 @@ public sealed class OrderCaptureApiTests
 
     private sealed class TestQuoteStore : IPromotionStore
     {
+        public Dictionary<Guid, CampaignSubmission> Submissions { get; } = [];
+        public Task<CampaignSubmission?> FindCampaignSubmissionAsync(Guid id, CancellationToken ct) => Task.FromResult(Submissions.GetValueOrDefault(id));
+        public void AddCampaignSubmission(Guid id, CampaignSubmission submission, DateTimeOffset now) => Submissions.Add(id, submission);
+
         private readonly Promotion campaign;
         public TestQuoteStore()
         {

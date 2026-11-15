@@ -16,8 +16,7 @@ public sealed class PickingStore(AppDbContext dbContext) : IPickingStore
         Guid userId, string role, Guid warehouseId, CancellationToken cancellationToken) =>
         role is SystemRoles.Admin or SystemRoles.Operator
             ? Task.FromResult(true)
-            : dbContext.UserWarehouseAssignmentRecords.AsNoTracking().AnyAsync(item =>
-                item.UserAccountId == userId && item.WarehouseId == warehouseId && item.IsActive,
+            : ReportingScopeQueries.ManagedWarehouses(dbContext, userId).AnyAsync(item => item.Id == warehouseId,
                 cancellationToken);
 
     public async Task<IReadOnlyCollection<PickingView>> ListAsync(
@@ -32,8 +31,7 @@ public sealed class PickingStore(AppDbContext dbContext) : IPickingStore
         if (!string.IsNullOrWhiteSpace(status)) query = query.Where(item => item.Status == status);
         if (role == SystemRoles.WarehouseKeeper)
         {
-            query = query.Where(item => dbContext.UserWarehouseAssignmentRecords.Any(assignment =>
-                assignment.UserAccountId == userId && assignment.WarehouseId == item.WarehouseId && assignment.IsActive));
+            query = query.Where(item => ReportingScopeQueries.ManagedWarehouses(dbContext, userId).Select(w => w.Id).Contains(item.WarehouseId));
         }
         else if (role is not (SystemRoles.Admin or SystemRoles.Operator))
         {
@@ -89,9 +87,21 @@ public sealed class PickingStore(AppDbContext dbContext) : IPickingStore
             from labelEvent in dbContext.QrLabelEventRecords.AsNoTracking()
             join label in dbContext.BatchQrLabelRecords.AsNoTracking()
                 on labelEvent.BatchQrLabelId equals label.Id
+            join parent in dbContext.BatchQrLabelRecords.AsNoTracking()
+                on label.ParentLabelId equals (Guid?)parent.Id into parents
+            from parent in parents.DefaultIfEmpty()
+            join replacementEvent in dbContext.QrLabelEventRecords.AsNoTracking()
+                on labelEvent.OperationKey + ":replacement" equals replacementEvent.OperationKey into replacementEvents
+            from replacementEvent in replacementEvents.DefaultIfEmpty()
+            join replacement in dbContext.BatchQrLabelRecords.AsNoTracking()
+                on (Guid?)replacementEvent.BatchQrLabelId equals (Guid?)replacement.Id into replacements
+            from replacement in replacements.DefaultIfEmpty()
             where labelEvent.EventType == QrLabelEventTypes.Picked && labelEvent.ReferenceCode == list.PickingCode
             orderby labelEvent.OccurredAt, labelEvent.Id
-            select new PickingScanView(labelEvent, label.QrCode)).ToArrayAsync(cancellationToken);
+            select new PickingScanView(labelEvent, label.QrCode,
+                parent == null || replacement == null ? label.QrCode : parent.QrCode,
+                replacement == null ? null : replacement.QrCode,
+                replacement == null ? 0 : replacement.Quantity)).ToArrayAsync(cancellationToken);
         var itemViews = items.Select(item =>
         {
             var allocation = allocations[item.AllocationId];
@@ -117,6 +127,21 @@ public sealed class PickingStore(AppDbContext dbContext) : IPickingStore
     public Task<QrLabelEvent?> FindOperationAsync(string operationKey, CancellationToken cancellationToken) =>
         dbContext.QrLabelEventRecords.AsNoTracking()
             .SingleOrDefaultAsync(item => item.OperationKey == operationKey, cancellationToken);
+
+    public Task<BatchPickState?> FindBatchPickStateAsync(Guid batchId, CancellationToken cancellationToken) =>
+        dbContext.BatchRecords.AsNoTracking()
+            .Where(batch => batch.Id == batchId)
+            .Join(dbContext.InventoryBalanceRecords.AsNoTracking(),
+                batch => batch.Id, balance => balance.BatchId, (batch, balance) => new { batch, balance })
+            .Select(item => new BatchPickState(
+                item.batch.BatchCode, item.batch.ExpiryStatus, item.batch.ExpirationDate,
+                item.balance.PhysicalQuantity, item.balance.ReservedQuantity,
+                dbContext.InventoryLockRecords.AsNoTracking()
+                    .Where(l => l.BatchId == batchId && l.Status == "Active")
+                    .Sum(l => (decimal?)l.LockedQuantity) ?? 0m,
+                dbContext.InventoryLockRecords.AsNoTracking()
+                    .Any(l => l.BatchId == batchId && l.Status == "Active" && l.RequiresResolution)))
+            .SingleOrDefaultAsync(cancellationToken);
 
     public Task<BatchQrLabel?> FindLabelForUpdateAsync(string qrCode, CancellationToken cancellationToken) =>
         dbContext.BatchQrLabelRecords.SingleOrDefaultAsync(item => item.QrCode == qrCode, cancellationToken);
@@ -216,3 +241,4 @@ public sealed class PickingStore(AppDbContext dbContext) : IPickingStore
 
     public void ClearTracking() => dbContext.ChangeTracker.Clear();
 }
+

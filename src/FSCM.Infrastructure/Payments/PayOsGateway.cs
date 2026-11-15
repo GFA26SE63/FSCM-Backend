@@ -79,6 +79,25 @@ public sealed class PayOsGateway : IPayOsGateway
         }
     }
 
+    public async Task<PayOsPaymentLinkStatus> GetPaymentLinkStatusAsync(
+        long orderCode, CancellationToken cancellationToken)
+    {
+        ValidateConfiguration(requireRedirectUrls: false);
+        try
+        {
+            using var client = CreateClient();
+            var link = await client.PaymentRequests.GetAsync(orderCode,
+                new RequestOptions<PaymentLink> { CancellationToken = cancellationToken });
+            return new PayOsPaymentLinkStatus(link.OrderCode, link.Id,
+                PaymentLinkStatusConverter.ToSerializedString(link.Status), null);
+        }
+        catch (PayOSException exception)
+        {
+            throw PaymentOperationException.Gateway(
+                $"payOS could not retrieve payment-link status: {exception.Message}");
+        }
+    }
+
     private PayOSClient CreateClient() => new(new PayOSOptions
     {
         ClientId = clientId,

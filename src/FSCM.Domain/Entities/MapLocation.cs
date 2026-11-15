@@ -11,7 +11,7 @@ public sealed class MapLocation
     public decimal Longitude { get; set; }
     public string? FormattedAddress { get; set; }
     public string? ProviderPlaceId { get; set; }
-    public string Provider { get; set; } = "GoogleMaps";
+    public string Provider { get; set; } = "VietMap";
     public int Version { get; set; }
     public DateTimeOffset? NormalizedAt { get; set; }
     public DateTimeOffset CreatedAt { get; set; }

@@ -7,6 +7,14 @@ namespace FSCM.UnitTests.DeliveryEta;
 
 public sealed class DeliveryEtaServiceTests
 {
+    [Fact]
+    public async Task Expired_route_cache_is_rejected_instead_of_promising_a_stale_ETA()
+    {
+        var fixture = await Fixture.CreateAsync();
+        fixture.Store.Distance.ExpiresAt = Now.AddMinutes(-1);
+        var error = await Assert.ThrowsAsync<DeliveryEtaOperationException>(() => fixture.Service.EstimateAsync(fixture.Request(), default));
+        Assert.Equal("conflict", error.Code);
+    }
     // 2026-10-21 03:00 UTC is 10:00 in Vietnam.
     private static readonly DateTimeOffset Now = new(2026, 10, 21, 3, 0, 0, TimeSpan.Zero);
     private static readonly Guid Actor = Guid.Parse("11111111-1111-1111-1111-111111111111");
@@ -275,7 +283,7 @@ public sealed class DeliveryEtaServiceTests
         {
             var fixture = new Fixture();
             var transitStore = new FakeTransitTableStore();
-            var transitTables = new TransitTableService(transitStore, new FixedClock());
+            var transitTables = new TransitTableService(transitStore, new FixedClock(Now.AddDays(-31)));
             // Bands reach further than the serving distance, so a distance past 15 km still
             // resolves to a band and is reported as out of range instead of failing.
             await transitTables.PublishAsync(
@@ -315,9 +323,9 @@ public sealed class DeliveryEtaServiceTests
             });
     }
 
-    private sealed class FixedClock : TimeProvider
+    private sealed class FixedClock(DateTimeOffset? utcNow = null) : TimeProvider
     {
-        public override DateTimeOffset GetUtcNow() => Now;
+        public override DateTimeOffset GetUtcNow() => utcNow ?? Now;
     }
 
     private sealed class FakeStore : IDeliveryEtaStore

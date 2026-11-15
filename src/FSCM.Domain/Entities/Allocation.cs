@@ -1,4 +1,4 @@
-// Generated from the approved FSCM physical ERD. Review schema changes through EF migrations.
+﻿// Generated from the approved FSCM physical ERD. Review schema changes through EF migrations.
 
 namespace FSCM.Domain.Entities;
 
@@ -26,5 +26,19 @@ public sealed class Allocation
     public string? DiscountSourceType { get; set; }
     public string? DiscountSourceCode { get; set; }
     public string Status { get; set; } = string.Empty;
+
+    // Price snapshot taken when the allocation was quoted (F98/F60). Nullable for rows created
+    // before the snapshot existed. Locked at quote time; never recomputed from current tables.
+    /// <summary>Per-carton list price minus the quantity promotion, before shelf-life discount.</summary>
+    public decimal? PostPromotionUnitPrice { get; set; }
+    public decimal? ShelfLifeDiscountPerUnit { get; set; }
+    public decimal? RemainingShelfLifePercent { get; set; }
+    public Guid? ShelfLifeDiscountTierId { get; set; }
+    public string? ShelfLifeDiscountType { get; set; }
+    public decimal? ShelfLifeDiscountValue { get; set; }
+    public int? ShelfLifeDiscountTableVersion { get; set; }
+    public string? PricingExplanation { get; set; }
+    public DateTimeOffset? PricedAt { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
 }
+

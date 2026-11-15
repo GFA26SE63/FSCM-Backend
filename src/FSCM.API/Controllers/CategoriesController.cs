@@ -65,6 +65,16 @@ public sealed class CategoriesController(CatalogService catalogService) : Contro
         return NoContent();
     }
 
+    /// <summary>Sets (or clears with null) the category default MLOR.</summary>
+    [Authorize(Roles = SystemRoles.Admin)]
+    [HttpPut("{categoryId:guid}/default-mlor")]
+    [ProducesResponseType<CategoryResult>(StatusCodes.Status200OK)]
+    public Task<CategoryResult> SetDefaultMlor(
+        Guid categoryId,
+        UpdateCategoryDefaultMlorRequest request,
+        CancellationToken cancellationToken) =>
+        catalogService.SetCategoryDefaultMlorAsync(categoryId, request.MinimumLifeRatio, cancellationToken);
+
     [Authorize(Roles = SystemRoles.Admin)]
     [HttpDelete("{categoryId:guid}")]
     [ProducesResponseType<DeleteCategoryResult>(StatusCodes.Status200OK)]

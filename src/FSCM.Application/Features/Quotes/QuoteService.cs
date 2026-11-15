@@ -3,6 +3,7 @@ using FSCM.Domain.Entities;
 using FSCM.Application.Features.Orders;
 using FSCM.Application.Features.Payments;
 using FSCM.Application.Features.Notifications;
+using FSCM.Application.Features.AllocationRuns;
 
 namespace FSCM.Application.Features.Quotes;
 
@@ -12,7 +13,9 @@ public sealed class QuoteService(
     PurchaseOrderGateService purchaseOrderGateService,
     OrderReleaseService releaseService,
     TimeProvider timeProvider,
-    OrderNotificationService? notifications = null)
+    RetailerCreditPolicy creditPolicy,
+    OrderNotificationService? notifications = null,
+    AllocationDeliveryGuard? deliveryGuard = null)
 {
     public async Task<IReadOnlyCollection<SalesOrderQuoteResult>> ListForOrderAsync(Guid orderId, Guid actor, string role, CancellationToken ct)
     {
@@ -39,13 +42,17 @@ public sealed class QuoteService(
         CancellationToken ct)
     {
         EnsureRetailer(role);
-        if (!await store.CanRetailerAccessAsync(id, actor, ct)) throw QuoteOperationException.Forbidden("Retailer cannot access this quote.");
+        if (role != SystemRoles.Admin && !await store.CanRetailerAccessAsync(id, actor, ct))
+            throw QuoteOperationException.Forbidden("Retailer cannot access this quote.");
         var view = await store.FindAsync(id, true, ct) ?? throw QuoteOperationException.NotFound("Quote was not found.");
         RequirePending(view.Quote, expectedVersion);
         RequireOrderAwaitingDecision(view.Order);
         paymentMethod = NormalizePaymentMethod(paymentMethod);
-        if (paymentMethod == OrderPaymentMethods.Credit && view.Retailer.CreditTermDays is not (7 or 14 or 30))
-            throw QuoteOperationException.Conflict("Retailer is not eligible for an approved credit term.");
+        if (paymentMethod == OrderPaymentMethods.Credit)
+        {
+            try { await creditPolicy.EnsureEligibleAsync(view.Retailer, view.Order.FinalAmount, ct); }
+            catch (PaymentOperationException exception) { throw QuoteOperationException.Conflict(exception.Message); }
+        }
         var now = timeProvider.GetUtcNow();
         if (now > view.Quote.ExpiresAt)
         {
@@ -59,6 +66,7 @@ public sealed class QuoteService(
             await store.SaveChangesAsync(ct);
             throw QuoteOperationException.Conflict("Quote acceptance deadline has passed.");
         }
+        if (deliveryGuard is not null) await deliveryGuard.ValidateAsync(view.Order.Id, ct);
         view.Quote.Status = SalesOrderQuoteStatuses.Accepted;
         view.Quote.AcceptedByUserId = actor; view.Quote.AcceptedAt = now; view.Quote.Version++; view.Quote.UpdatedAt = now;
         view.Order.PaymentMethod = paymentMethod;
@@ -89,7 +97,8 @@ public sealed class QuoteService(
     public async Task<SalesOrderQuoteResult> RejectAsync(Guid id, int expectedVersion, string reason, Guid actor, string role, CancellationToken ct)
     {
         EnsureRetailer(role);
-        if (!await store.CanRetailerAccessAsync(id, actor, ct)) throw QuoteOperationException.Forbidden("Retailer cannot access this quote.");
+        if (role != SystemRoles.Admin && !await store.CanRetailerAccessAsync(id, actor, ct))
+            throw QuoteOperationException.Forbidden("Retailer cannot access this quote.");
         var view = await store.FindAsync(id, true, ct) ?? throw QuoteOperationException.NotFound("Quote was not found.");
         RequirePending(view.Quote, expectedVersion);
         RequireOrderAwaitingDecision(view.Order);
@@ -111,7 +120,11 @@ public sealed class QuoteService(
         if (order.Status != OrderStatuses.Quoted)
             throw QuoteOperationException.Conflict("Order is no longer awaiting a quote decision.");
     }
-    private static void EnsureRetailer(string role) { if (role != SystemRoles.Retailer) throw QuoteOperationException.Forbidden("Only the retailer can decide a quote."); }
+    private static void EnsureRetailer(string role)
+    {
+        if (role is not (SystemRoles.Admin or SystemRoles.Retailer))
+            throw QuoteOperationException.Forbidden("Only the retailer or Admin can decide a quote.");
+    }
     private static string NormalizePaymentMethod(string value) => value?.Trim() switch
     {
         OrderPaymentMethods.Prepaid => OrderPaymentMethods.Prepaid,

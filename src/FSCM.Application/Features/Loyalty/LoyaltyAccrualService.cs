@@ -92,7 +92,7 @@ public sealed class LoyaltyAccrualService(ILoyaltyAccrualStore store, TimeProvid
 
         var after = await store.AppendAsync(balance.Id, view.Program.Id, salesOrderId, actorUserId,
             LoyaltyTransactionTypes.Earned, points, true,
-            $"Cộng {points} điểm theo tổng giá cuối đã duyệt của đơn.", now, cancellationToken);
+            $"Cộng {points} điểm theo tổng giá cuối đã duyệt của đơn.", now, cancellationToken, view.Program.SpendAmountPerPoint);
         await store.SaveChangesAsync(cancellationToken);
 
         return new(salesOrderId, true, points, after, LoyaltyAccrualBlock.None,
@@ -118,6 +118,8 @@ public sealed class LoyaltyAccrualService(ILoyaltyAccrualStore store, TimeProvid
         }
 
         var view = await store.FindAsync(salesOrderId, cancellationToken);
+        if (view is { AlreadyEarned: true, Program: null })
+            throw LoyaltyOperationException.Conflict("Điểm cũ thiếu tỷ lệ tích điểm gốc; cần đối soát trước khi điều chỉnh tiền.");
         if (view?.Program is null || view.Balance is null || !view.AlreadyEarned)
         {
             return new(salesOrderId, false, 0, view?.Balance?.CurrentPoints ?? 0,
@@ -136,7 +138,7 @@ public sealed class LoyaltyAccrualService(ILoyaltyAccrualStore store, TimeProvid
         var after = await store.AppendAsync(view.Balance.Id, view.Program.Id, salesOrderId,
             actorUserId, LoyaltyTransactionTypes.EarnedAdjusted, delta, true,
             $"Sửa điểm theo giá trị đơn sau điều chỉnh: {reason}",
-            timeProvider.GetUtcNow(), cancellationToken);
+            timeProvider.GetUtcNow(), cancellationToken, view.Program.SpendAmountPerPoint);
         await store.SaveChangesAsync(cancellationToken);
 
         return new(salesOrderId, false, delta, after, LoyaltyAccrualBlock.None,

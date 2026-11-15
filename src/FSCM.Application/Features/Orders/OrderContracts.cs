@@ -153,10 +153,10 @@ public sealed record OrderLineResult(
     IReadOnlyCollection<OrderAllocationResult> Allocations)
 {
     public decimal BaseUnitPrice => UnitPrice;
-    public decimal OrdinaryPromotionDiscountAmount => DiscountAmount;
-    public decimal IndicativeNetAmount => NetAmount;
+    public decimal OrdinaryPromotionDiscountAmount => OrdinaryPromotion?.DiscountAmount ?? 0m;
+    public decimal IndicativeNetAmount => GrossAmount - OrdinaryPromotionDiscountAmount;
+    public decimal? OfficialNetAmount => FinalPricePendingAllocation ? null : NetAmount;
     public IReadOnlyCollection<OrderAllocationFragmentResult> AllocationFragments { get; init; } = [];
-    public decimal? OfficialNetAmount { get; init; }
 }
 
 public sealed record OrderStatusHistoryResult(
@@ -180,7 +180,6 @@ public sealed record OrderSummaryResult(
     bool FinalPricePendingAllocation,
     string AllocationState,
     Guid? AllocationRunId,
-    string? AllocationProposalStatus,
     string? AllocationResult,
     int ShipmentCount,
     int TotalCartons,
@@ -190,7 +189,7 @@ public sealed record OrderSummaryResult(
     DateTimeOffset CreatedAt)
 {
     public decimal IndicativeAmount => FinalAmount;
-    public decimal? OfficialAmount { get; init; }
+    public decimal? OfficialAmount => FinalPricePendingAllocation ? null : FinalAmount;
 }
 
 public sealed record OrderListQuery(
@@ -237,7 +236,6 @@ public sealed record OrderDetailResult(
     string RetailerName,
     Guid SalesGroupId,
     Guid CreatedByUserId,
-    Guid? ReviewedByUserId,
     string Source,
     string Status,
     string? PaymentMethod,
@@ -251,7 +249,6 @@ public sealed record OrderDetailResult(
     bool FinalPricePendingAllocation,
     string AllocationState,
     Guid? AllocationRunId,
-    string? AllocationProposalStatus,
     string? AllocationResult,
     string? RejectionReason,
     decimal? OfflineEstimatedAmount,
@@ -264,13 +261,27 @@ public sealed record OrderDetailResult(
     IReadOnlyCollection<OrderStatusHistoryResult> History,
     IReadOnlyCollection<OrderShipmentLinkResult> Shipments)
 {
-    public decimal IndicativeAmount => FinalAmount;
-    public decimal? OfficialAmount { get; init; }
+    public decimal IndicativeAmount => Lines.Sum(line => line.IndicativeNetAmount);
+    public decimal? OfficialAmount => FinalPricePendingAllocation ? null : FinalAmount;
     public string? AllocationRunCode { get; init; }
-    public int? AllocationPlanVersion { get; init; }
     public DateTimeOffset? OfficialPricedAt { get; init; }
     public IReadOnlyCollection<OrderWarehouseProgressResult> WarehouseProgress { get; init; } = [];
+    public OrderPaymentSummaryResult? Payment { get; init; }
+    public FSCM.Application.Features.AllocationRuns.AllocationAudit? AllocationAudit { get; init; }
+    public decimal QuantityPromotionTotal { get; init; }
+    public decimal ShelfLifeDiscountTotal { get; init; }
 }
+
+/// <summary>Payment state of an order as the Retailer sees it (prepaid status or credit receivable).</summary>
+public sealed record OrderPaymentSummaryResult(
+    string Method,
+    string Status,
+    decimal Amount,
+    decimal AdjustedAmount,
+    decimal ConfirmedAmount,
+    decimal OutstandingAmount,
+    DateOnly? DueDate,
+    bool IsOverdue);
 
 public sealed record OrderTimelineResult(
     Guid OrderId,
@@ -278,7 +289,6 @@ public sealed record OrderTimelineResult(
     string CurrentStatus,
     string AllocationState,
     Guid? AllocationRunId,
-    string? AllocationProposalStatus,
     string? AllocationResult,
     IReadOnlyCollection<OrderStatusHistoryResult> Events,
     IReadOnlyCollection<OrderShipmentLinkResult> Shipments);
@@ -296,18 +306,12 @@ public static class OrderStatuses
     public const string PaymentPending = "PaymentPending";
     public const string ConvertedToPo = "ConvertedToPo";
 
-    public const string PendingApproval = Allocating;
-
-    /// <summary>
-    /// Reviewed and waiting for the next allocation run. Approval commits no stock: the run
-    /// decides which batches an order gets, and only run approval reserves them (F87, F88).
-    /// </summary>
-    public const string PendingAllocation = Allocating;
-
-    public const string Approved = Quoted;
+    // Review 2: the canonical order lifecycle is Allocating → Quoted → PaymentPending →
+    // ConvertedToPo → Picking → Issued → Delivering → Delivered → Completed, plus the terminal
+    // exits Withdrawn / QuoteRejected / QuoteExpired / OutOfStock / AllocationConflict. The legacy
+    // PendingApproval / PendingAllocation / Approved / Rejected / Cancelled aliases were removed
+    // along with SO approval.
     public const string Picking = "Picking";
-    public const string Rejected = QuoteRejected;
-    public const string Cancelled = Withdrawn;
     public const string Issued = "Issued";
     public const string Delivering = "Delivering";
     public const string Delivered = "Delivered";
@@ -345,3 +349,4 @@ public static class OrderPaymentMethods
 
     public static bool IsSupported(string? value) => value is Prepaid or Credit;
 }
+

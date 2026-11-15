@@ -8,6 +8,33 @@ public sealed class IdentityServiceTests
 {
     private static readonly DateTimeOffset Now = new(2026, 10, 12, 10, 0, 0, TimeSpan.Zero);
 
+    [Theory]
+    [InlineData(SystemRoles.WarehouseKeeper)]
+    [InlineData(SystemRoles.SalesManager)]
+    public async Task Region_grants_can_be_added_and_revoked_for_scoped_management_roles(string role)
+    {
+        var fixture = new IdentityFixture();
+        var user = fixture.AddActiveUser(role, "region-scope@fscm.local", "Correct#Pass1");
+        var region = Guid.NewGuid(); fixture.Store.Regions.Add(region);
+        await fixture.Service.AssignRegionAsync(user.Id, region, Guid.NewGuid(), default);
+        Assert.True(Assert.Single(fixture.Store.RegionAssignments).IsActive);
+        await fixture.Service.UnassignRegionAsync(user.Id, region, Guid.NewGuid(), default);
+        Assert.False(Assert.Single(fixture.Store.RegionAssignments).IsActive);
+    }
+
+    [Theory]
+    [InlineData(SystemRoles.Sales)]
+    [InlineData(SystemRoles.Retailer)]
+    [InlineData(SystemRoles.Operator)]
+    public async Task Direct_region_grants_do_not_expand_other_roles(string role)
+    {
+        var fixture = new IdentityFixture();
+        var user = fixture.AddActiveUser(role, "region-scope@fscm.local", "Correct#Pass1");
+        var region = Guid.NewGuid(); fixture.Store.Regions.Add(region);
+        await Assert.ThrowsAsync<IdentityOperationException>(() => fixture.Service.AssignRegionAsync(user.Id, region, Guid.NewGuid(), default));
+        Assert.Empty(fixture.Store.RegionAssignments);
+    }
+
     [Fact]
     public async Task Login_issues_tokens_and_includes_current_scope()
     {
@@ -269,6 +296,69 @@ public sealed class IdentityServiceTests
         Assert.Single(result.Items);
         Assert.Equal(SystemRoles.Sales, result.Items.Single().Role);
         Assert.Equal(1, result.TotalCount);
+    }
+
+    [Fact]
+    public async Task Locking_an_account_requires_a_reason()
+    {
+        var fixture = new IdentityFixture();
+        var user = fixture.AddActiveUser(SystemRoles.Sales, "sales@fscm.local", "Correct#Pass1");
+
+        var exception = await Assert.ThrowsAsync<IdentityOperationException>(() =>
+            fixture.Service.SetActiveStatusAsync(user.Id, false, "  ", Guid.NewGuid(), CancellationToken.None));
+
+        Assert.Equal("validation_error", exception.Code);
+        Assert.True(user.IsActive);
+        Assert.Empty(fixture.Store.AuditLogs);
+    }
+
+    [Fact]
+    public async Task Locking_an_account_records_trimmed_reason_actor_and_timestamp_in_audit_history()
+    {
+        var fixture = new IdentityFixture();
+        var user = fixture.AddActiveUser(SystemRoles.Sales, "sales@fscm.local", "Correct#Pass1");
+        var actorUserId = Guid.NewGuid();
+
+        await fixture.Service.SetActiveStatusAsync(
+            user.Id, false, "  Vi phạm chính sách sử dụng.  ", actorUserId, CancellationToken.None);
+
+        var audit = Assert.Single(fixture.Store.AuditLogs);
+        Assert.False(user.IsActive);
+        Assert.Equal("Deactivated", audit.Action);
+        Assert.Equal("Vi phạm chính sách sử dụng.", audit.Reason);
+        Assert.Equal(actorUserId, audit.UserAccountId);
+        Assert.Equal(Now, audit.CreatedAt);
+        Assert.Equal(user.Id, audit.EntityId);
+    }
+
+    [Fact]
+    public async Task Activating_an_account_does_not_require_a_lock_reason()
+    {
+        var fixture = new IdentityFixture();
+        var user = fixture.AddActiveUser(SystemRoles.Sales, "sales@fscm.local", "Correct#Pass1");
+        user.IsActive = false;
+
+        await fixture.Service.SetActiveStatusAsync(user.Id, true, null, Guid.NewGuid(), CancellationToken.None);
+
+        Assert.True(user.IsActive);
+        Assert.Null(Assert.Single(fixture.Store.AuditLogs).Reason);
+    }
+
+    [Fact]
+    public async Task Creating_an_account_with_an_existing_phone_is_rejected_before_staging_any_writes()
+    {
+        var f = new IdentityFixture();
+        var existing = f.AddActiveUser(SystemRoles.Sales, "existing@fscm.local", "Correct#Pass1"); existing.Phone = "0901234567";
+        var error = await Assert.ThrowsAsync<IdentityOperationException>(() => f.Service.CreateUserAsync("other@fscm.local", "Other Sales", SystemRoles.Sales, " 0901234567 ", "Correct#Pass1", Guid.NewGuid(), default));
+        Assert.Equal("conflict", error.Code); Assert.Single(f.Store.Users); Assert.Single(f.Store.Credentials);
+    }
+
+    [Fact]
+    public async Task Phone_validation_rejects_non_ASCII_digits()
+    {
+        var f = new IdentityFixture();
+        await Assert.ThrowsAsync<IdentityOperationException>(() => f.Service.CreateUserAsync("other@fscm.local", "Other Sales", SystemRoles.Sales, "090123456٧", "Correct#Pass1", Guid.NewGuid(), default));
+        Assert.Empty(f.Store.Users);
     }
 
     private sealed class IdentityFixture

@@ -1,6 +1,8 @@
 namespace FSCM.Application.Features.QrLabels;
 
 public sealed record GenerateQrLabelData(Guid BatchId, decimal Quantity, string? BlobUrl);
+public sealed record QrGenerationCapacityResult(
+    Guid BatchId, decimal PhysicalQuantity, decimal LabelledQuantity, decimal UnlabelledQuantity);
 public sealed record SplitQrLabelData(decimal Quantity, int ExpectedVersion);
 public sealed record ScanQrLabelData(
     string Action, Guid WarehouseId, Guid? DestinationBatchId, string? ReferenceCode,

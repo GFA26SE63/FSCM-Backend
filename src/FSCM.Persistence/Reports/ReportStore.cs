@@ -3,6 +3,7 @@ using FSCM.Application.Features.Reports;
 using FSCM.Application.Features.AllocationRuns;
 using FSCM.Persistence.DbContexts;
 using FSCM.Application.Features.WarehouseConfiguration;
+using FSCM.Domain.Authorization;
 using Microsoft.EntityFrameworkCore;
 
 namespace FSCM.Persistence.Reports;
@@ -13,15 +14,30 @@ public sealed class ReportStore(AppDbContext dbContext) : IReportStore
 
     public async Task<IReadOnlyCollection<Guid>> ListActiveGroupIdsAsync(
         Guid userId, CancellationToken cancellationToken) =>
-        await dbContext.SalesGroupMemberRecords.AsNoTracking()
-            .Where(item => item.UserAccountId == userId && item.IsActive)
-            .Select(item => item.SalesGroupId)
+        await ReportingScopeQueries.ManagedGroups(dbContext, userId)
+            .Select(item => item.Id)
             .Distinct()
             .ToArrayAsync(cancellationToken);
 
     public Task<bool> IsActiveGroupMemberAsync(Guid userId, Guid salesGroupId, CancellationToken cancellationToken) =>
-        dbContext.SalesGroupMemberRecords.AsNoTracking().AnyAsync(item =>
-            item.UserAccountId == userId && item.SalesGroupId == salesGroupId && item.IsActive, cancellationToken);
+        ReportingScopeQueries.ManagedGroups(dbContext, userId).AnyAsync(item => item.Id == salesGroupId, cancellationToken);
+
+    /// <summary>
+    /// Review 2 / D11: revenue belongs to the period in which the order was Completed (delivery,
+    /// payment and claims settled), so a closed period never changes after the fact. Orders with no
+    /// recorded completion fall back to the delivered/received date.
+    /// </summary>
+    private async Task<Dictionary<Guid, DateOnly>> LoadCompletionDatesAsync(
+        IReadOnlyCollection<Guid> orderIds, CancellationToken cancellationToken)
+    {
+        var rows = await dbContext.OrderStatusHistoryRecords.AsNoTracking()
+            .Where(item => item.ToStatus == OrderStatuses.Completed && orderIds.Contains(item.SalesOrderId))
+            .Select(item => new { item.SalesOrderId, item.ChangedAt })
+            .ToArrayAsync(cancellationToken);
+        return rows.GroupBy(item => item.SalesOrderId).ToDictionary(
+            group => group.Key,
+            group => DateOnly.FromDateTime(group.Max(item => item.ChangedAt).ToOffset(VietnamOffset).DateTime));
+    }
 
     public async Task<IReadOnlyCollection<SalesRevenueRow>> AggregateSalesRevenueAsync(
         DateOnly fromDate,
@@ -29,24 +45,28 @@ public sealed class ReportStore(AppDbContext dbContext) : IReportStore
         IReadOnlyCollection<Guid>? salesGroupIds,
         CancellationToken cancellationToken)
     {
-        // Delivered orders are the recognized-revenue source (same as the KPI, F75). The recognized
-        // amount is the F64-adjusted payment amount when a ledger exists, else the post-promotion
-        // order total. The recognition date is the payment delivered date, else the order's
-        // Vietnam-local received date — both bounded to the inclusive [fromDate, toDate] window.
+        // Completed orders are the recognized-revenue source (same as the KPI, F75). Review 2:
+        // revenue is recognized only when the order is fully closed (delivery + payment + claims
+        // settled), not merely delivered. The recognized amount is the F64-adjusted payment amount
+        // when a ledger exists, else the post-promotion order total. The recognition date is the
+        // payment delivered date, else the order's Vietnam-local received date — both bounded to the
+        // inclusive [fromDate, toDate] window.
         var groupSet = salesGroupIds?.ToHashSet();
 
         var rows = await (
             from order in dbContext.SalesOrderRecords.AsNoTracking()
-            where order.Status == OrderStatuses.Delivered
+            where order.Status == OrderStatuses.Completed
             join payment in dbContext.PaymentRecords.AsNoTracking()
                 on order.Id equals payment.SalesOrderId into payments
             from payment in payments.DefaultIfEmpty()
             join user in dbContext.UserAccountRecords.AsNoTracking()
                 on order.CreatedByUserId equals user.Id
+            where user.Role == SystemRoles.Sales
             join salesGroup in dbContext.SalesGroupRecords.AsNoTracking()
                 on order.SalesGroupId equals salesGroup.Id
             select new
             {
+                OrderId = order.Id,
                 order.CreatedByUserId,
                 UserName = user.FullName,
                 order.SalesGroupId,
@@ -60,11 +80,13 @@ public sealed class ReportStore(AppDbContext dbContext) : IReportStore
                 order.ServerReceivedAt
             }).ToArrayAsync(cancellationToken);
 
+        var completedOn = await LoadCompletionDatesAsync(rows.Select(row => row.OrderId).ToArray(), cancellationToken);
         var filtered = rows
             .Where(row => groupSet == null || groupSet.Contains(row.SalesGroupId))
             .Where(row =>
             {
-                var recognitionDate = row.DeliveredDate
+                var recognitionDate = completedOn.TryGetValue(row.OrderId, out var completed) ? completed
+                    : row.DeliveredDate
                     ?? DateOnly.FromDateTime(row.ServerReceivedAt.ToOffset(VietnamOffset).DateTime);
                 return recognitionDate >= fromDate && recognitionDate <= toDate;
             });
@@ -94,12 +116,13 @@ public sealed class ReportStore(AppDbContext dbContext) : IReportStore
         var groupSet = salesGroupIds?.ToHashSet();
         var rows = await (
             from order in dbContext.SalesOrderRecords.AsNoTracking()
-            where order.Status == OrderStatuses.Delivered
+            where order.Status == OrderStatuses.Completed
             join payment in dbContext.PaymentRecords.AsNoTracking()
                 on order.Id equals payment.SalesOrderId into payments
             from payment in payments.DefaultIfEmpty()
             join user in dbContext.UserAccountRecords.AsNoTracking()
                 on order.CreatedByUserId equals user.Id
+            where user.Role == SystemRoles.Sales
             join salesGroup in dbContext.SalesGroupRecords.AsNoTracking()
                 on order.SalesGroupId equals salesGroup.Id
             join retailer in dbContext.RetailerRecords.AsNoTracking()
@@ -111,12 +134,14 @@ public sealed class ReportStore(AppDbContext dbContext) : IReportStore
                 RetailerCreatedAt = retailer.CreatedAt
             }).ToArrayAsync(cancellationToken);
 
+        var kpiCompletedOn = await LoadCompletionDatesAsync(rows.Select(row => row.Order.Id).ToArray(), cancellationToken);
         return rows.Where(row => groupSet == null || groupSet.Contains(row.Order.SalesGroupId))
             .Where(row => !salesUserId.HasValue || row.Order.CreatedByUserId == salesUserId.Value)
             .Select(row => new
             {
                 Row = row,
-                RecognitionDate = row.Payment?.DeliveredDate
+                RecognitionDate = kpiCompletedOn.TryGetValue(row.Order.Id, out var completed) ? completed
+                    : row.Payment?.DeliveredDate
                     ?? DateOnly.FromDateTime(row.Order.ServerReceivedAt.ToOffset(VietnamOffset).DateTime)
             })
             .Where(row => row.RecognitionDate >= fromDate && row.RecognitionDate <= toDate)
@@ -154,7 +179,7 @@ public sealed class ReportStore(AppDbContext dbContext) : IReportStore
         var groupSet = salesGroupIds?.ToHashSet();
         var orderLines = await (
             from order in dbContext.SalesOrderRecords.AsNoTracking()
-            where order.Status == OrderStatuses.Delivered
+            where order.Status == OrderStatuses.Completed
             join payment in dbContext.PaymentRecords.AsNoTracking()
                 on order.Id equals payment.SalesOrderId into payments
             from payment in payments.DefaultIfEmpty()
@@ -168,53 +193,31 @@ public sealed class ReportStore(AppDbContext dbContext) : IReportStore
                 ProductSku = product.Sku, ProductName = product.Name
             }).ToArrayAsync(cancellationToken);
 
+        var productCompletedOn = await LoadCompletionDatesAsync(
+            orderLines.Select(row => row.Order.Id).Distinct().ToArray(), cancellationToken);
         var recognized = orderLines
             .Where(row => groupSet == null || groupSet.Contains(row.Order.SalesGroupId))
             .Where(row =>
             {
-                var recognitionDate = row.Payment?.DeliveredDate
+                var recognitionDate = productCompletedOn.TryGetValue(row.Order.Id, out var completed) ? completed
+                    : row.Payment?.DeliveredDate
                     ?? DateOnly.FromDateTime(row.Order.ServerReceivedAt.ToOffset(VietnamOffset).DateTime);
                 return recognitionDate >= fromDate && recognitionDate <= toDate;
             })
             .ToArray();
         if (recognized.Length == 0) return [];
 
-        var orderIds = recognized.Select(row => row.Order.Id).Distinct().ToArray();
-        var approvedPrices = await (
-            from runOrder in dbContext.AllocationRunOrderRecords.AsNoTracking()
-            where orderIds.Contains(runOrder.SalesOrderId)
-            join runLine in dbContext.AllocationRunLineRecords.AsNoTracking()
-                on runOrder.Id equals runLine.AllocationRunOrderId
-            join version in dbContext.AllocationPlanVersionRecords.AsNoTracking()
-                on runOrder.AllocationRunId equals version.AllocationRunId
-            where version.Status == AllocationPlanVersionStatuses.Approved
-            join price in dbContext.AllocationPlanPriceRecords.AsNoTracking()
-                on new { VersionId = version.Id, LineId = runLine.Id }
-                equals new { VersionId = price.AllocationPlanVersionId, LineId = price.AllocationRunLineId }
-            select new { runOrder.SalesOrderId, runLine.SalesOrderLineId, price.Quantity, price.Amount })
-            .ToArrayAsync(cancellationToken);
-
-        var approvedByLine = approvedPrices
-            .GroupBy(row => new { row.SalesOrderId, row.SalesOrderLineId })
-            .ToDictionary(group => (group.Key.SalesOrderId, group.Key.SalesOrderLineId), group => new
-            {
-                Quantity = group.Sum(row => row.Quantity),
-                Amount = group.Sum(row => row.Amount)
-            });
-
-        var normalized = recognized.Select(row =>
+        // Real-time allocation writes the final per-line quantity and net amount onto the order
+        // line itself, so the former approved-plan-version join is no longer needed.
+        var normalized = recognized.Select(row => new
         {
-            approvedByLine.TryGetValue((row.Order.Id, row.Line.Id), out var approved);
-            return new
-            {
-                row.Order.Id,
-                row.Line.ProductId,
-                Sku = string.IsNullOrWhiteSpace(row.Line.SkuSnapshot) ? row.ProductSku : row.Line.SkuSnapshot,
-                Name = string.IsNullOrWhiteSpace(row.Line.ProductNameSnapshot) ? row.ProductName : row.Line.ProductNameSnapshot,
-                Quantity = approved?.Quantity ?? row.Line.OrderedQuantity,
-                LineNet = approved?.Amount ?? row.Line.NetAmount,
-                AdjustedOrderAmount = row.Payment?.AdjustedAmount ?? row.Order.FinalAmount
-            };
+            row.Order.Id,
+            row.Line.ProductId,
+            Sku = string.IsNullOrWhiteSpace(row.Line.SkuSnapshot) ? row.ProductSku : row.Line.SkuSnapshot,
+            Name = string.IsNullOrWhiteSpace(row.Line.ProductNameSnapshot) ? row.ProductName : row.Line.ProductNameSnapshot,
+            Quantity = row.Line.OrderedQuantity,
+            LineNet = row.Line.NetAmount,
+            AdjustedOrderAmount = row.Payment?.AdjustedAmount ?? row.Order.FinalAmount
         }).ToArray();
 
         var allocated = normalized.GroupBy(row => row.Id).SelectMany(orderGroup =>

@@ -20,6 +20,13 @@ public sealed class MobileSnapshotStore(AppDbContext dbContext) : IMobileSnapsho
             where assignment.IsActive && member.IsActive && member.UserAccountId == salesUserId
             select assignment.RetailerId).Distinct().ToArrayAsync(cancellationToken);
 
+        var ownRetailerIds = await dbContext.RetailerRecords.AsNoTracking()
+            .Where(item => item.UserAccountId == salesUserId && item.Status == "Active")
+            .Select(item => item.Id).ToArrayAsync(cancellationToken);
+        var isRetailer = await dbContext.UserAccountRecords.AsNoTracking()
+            .AnyAsync(item => item.Id == salesUserId && item.Role == "Retailer", cancellationToken);
+        if (isRetailer) retailerIds = ownRetailerIds;
+
         var retailerQuery = dbContext.RetailerRecords.AsNoTracking().Where(x => retailerIds.Contains(x.Id));
         var categoryQuery = dbContext.ProductCategoryRecords.AsNoTracking().Where(x => x.IsActive);
         var productQuery = dbContext.ProductRecords.AsNoTracking()
@@ -36,9 +43,10 @@ public sealed class MobileSnapshotStore(AppDbContext dbContext) : IMobileSnapsho
                 (!x.EffectiveTo.HasValue || x.EffectiveTo.Value > effectiveAt));
 
         var retailers = await retailerQuery.OrderBy(x => x.Code).Select(x => new MobileSnapshotRetailer(
-            x.Id, x.Code, x.Name, x.Address, x.Status, x.CreditTermDays, x.UpdatedAt)).ToArrayAsync(cancellationToken);
+            x.Id, x.Code, x.Name, x.Address, x.Status, x.CreditTermDays, x.UpdatedAt, x.CreditLimit)).ToArrayAsync(cancellationToken);
         var categories = await categoryQuery.OrderBy(x => x.Code).Select(x => new MobileSnapshotCategory(
-            x.Id, x.ParentCategoryId, x.Code, x.Name, x.IsActive, x.UpdatedAt)).ToArrayAsync(cancellationToken);
+            x.Id, x.ParentCategoryId, x.Code, x.Name, x.IsActive, x.UpdatedAt,
+            x.DefaultMlorRatio, x.DefaultMlorVersion)).ToArrayAsync(cancellationToken);
         var products = await productQuery.OrderBy(x => x.Sku).Select(x => new MobileSnapshotProduct(
             x.Id, x.ProductCategoryId, x.Sku, x.Name, x.Unit, x.ShelfLifeHours, x.Status, x.UpdatedAt))
             .ToArrayAsync(cancellationToken);
@@ -79,9 +87,15 @@ public sealed class MobileSnapshotStore(AppDbContext dbContext) : IMobileSnapsho
                          where warehouse.IsActive && product.Status == ProductStatuses.Published &&
                                batch.ExpiryStatus != BatchExpiryStatuses.Expired
                          select new { batch.ProductId, balance.AvailableQuantity, balance.UpdatedAt };
-        var stocks = await stockQuery.GroupBy(x => x.ProductId).Select(group => new MobileSnapshotStock(
-            group.Key, group.Sum(x => x.AvailableQuantity), group.Max(x => x.UpdatedAt)))
+        var stockTotals = await stockQuery.GroupBy(x => x.ProductId)
+            .Select(group => new {
+                ProductId = group.Key,
+                AvailableQuantity = group.Sum(x => x.AvailableQuantity),
+                UpdatedAt = group.Max(x => x.UpdatedAt)
+            })
             .OrderBy(x => x.ProductId).ToArrayAsync(cancellationToken);
+        var stocks = stockTotals.Select(item => new MobileSnapshotStock(
+            item.ProductId, item.AvailableQuantity, item.UpdatedAt)).ToArray();
 
         var defaultMlorEntity = await dbContext.SystemConfigurationRecords.AsNoTracking()
             .Where(x => x.ConfigKey == "mlor.default_ratio" && x.IsActive && x.EffectiveFrom <= effectiveAt)

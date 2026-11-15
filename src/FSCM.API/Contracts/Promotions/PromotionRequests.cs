@@ -1,5 +1,12 @@
 namespace FSCM.API.Contracts.Promotions;
 
+public sealed record CampaignProductRuleRequest(Guid ProductId, decimal MinimumQuantity, decimal DiscountPercent);
+public sealed record CreateCampaignGroupRequest(
+    Guid RequestId, string CampaignMode, string Name, decimal MinimumQuantity, decimal DiscountPercent,
+    DateTimeOffset StartAt, DateTimeOffset EndAt, IReadOnlyCollection<Guid> ProductIds,
+    IReadOnlyCollection<Guid> CategoryIds, IReadOnlyCollection<Guid> RetailerIds,
+    IReadOnlyCollection<CampaignProductRuleRequest> ProductRules, bool ActivateOnSave);
+
 public sealed record CreatePromotionRequest(
     string Name, decimal MinimumQuantity, decimal DiscountPercent,
     DateTimeOffset StartAt, DateTimeOffset EndAt,

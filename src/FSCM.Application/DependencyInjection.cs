@@ -41,6 +41,8 @@ public static class DependencyInjection
         services.AddValidatorsFromAssembly(typeof(DependencyInjection).Assembly);
         services.AddSingleton(TimeProvider.System);
         services.AddSingleton<AllocationEngine>();
+        services.AddScoped<AllocationPolicyService>();
+        services.AddScoped<AllocationDeliveryGuard>();
         services.AddScoped<AllocationPlanner>();
         services.AddScoped<AllocationPricingService>();
         services.AddScoped<IRealTimeAllocationService, RealTimeAllocationService>();
@@ -50,6 +52,7 @@ public static class DependencyInjection
         services.AddScoped<DeliveryService>();
         services.AddScoped<ShipmentService>();
         services.AddScoped<ReportService>();
+        services.AddScoped<FSCM.Application.Features.Dashboard.DashboardService>();
         services.AddScoped<IdentityService>();
         services.AddScoped<RetailerActivationService>();
         services.AddScoped<InventoryService>();
@@ -70,13 +73,16 @@ public static class DependencyInjection
         services.AddScoped<NotificationService>();
         services.AddScoped<OrderNotificationService>();
         services.AddScoped<OrderService>();
+        services.AddScoped<OrderAvailabilityService>();
         services.AddScoped<OrderReleaseService>();
         services.AddScoped<OrderDeadlineService>();
         services.AddScoped<PurchaseOrderGateService>();
         services.AddScoped<IOrderPricingService, OrderPricingService>();
         services.AddScoped<PaymentService>();
+        services.AddScoped<RetailerCreditPolicy>();
         services.AddScoped<PaymentReceiptService>();
         services.AddScoped<RetailerReceivableService>();
+        services.AddScoped<RetailerDebtPayOsService>();
         services.AddScoped<PaymentPlanService>();
         services.AddScoped<QuoteService>();
         services.AddScoped<IPaymentPlanService>(provider => provider.GetRequiredService<PaymentPlanService>());

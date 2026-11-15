@@ -13,6 +13,53 @@ public sealed class PaymentServiceTests
     private static readonly DateTimeOffset Now = new(2026, 10, 15, 3, 0, 0, TimeSpan.Zero);
 
     [Fact]
+    public async Task Retailer_switches_unpaid_prepaid_to_approved_credit_idempotently()
+    {
+        var fixture = new Fixture(OrderPaymentMethods.Prepaid);
+        fixture.Order.Status = OrderStatuses.PaymentPending;
+        fixture.Retailer.CreditTermDays = 14;
+        var first = await fixture.Service.SwitchToCreditAsync(
+            fixture.Order.Id, 0, fixture.RetailerUserId, SystemRoles.Retailer, default);
+        var replay = await fixture.Service.SwitchToCreditAsync(
+            fixture.Order.Id, 0, fixture.RetailerUserId, SystemRoles.Retailer, default);
+        Assert.Equal(OrderPaymentMethods.Credit, fixture.Payment!.Method);
+        Assert.Equal(14, fixture.Order.CreditTermDays);
+        Assert.Equal(0m, fixture.Payment.ConfirmedAmount);
+        Assert.Equal(first.Version, replay.Version);
+        Assert.Single(fixture.Store.Audits);
+    }
+
+    [Theory]
+    [InlineData(false, 0, 0)]
+    [InlineData(true, 0, 14)]
+    [InlineData(false, 1, 14)]
+    public async Task Credit_switch_rejects_ineligible_or_exposed_payments(
+        bool linkedCheckout, int confirmedAmount, int creditDays)
+    {
+        var fixture = new Fixture(OrderPaymentMethods.Prepaid);
+        fixture.Order.Status = OrderStatuses.PaymentPending;
+        fixture.Retailer.CreditTermDays = creditDays;
+        fixture.Payment!.ConfirmedAmount = confirmedAmount;
+        fixture.Payment.PayOsPaymentLinkId = linkedCheckout ? "active-link" : null;
+        await Assert.ThrowsAsync<PaymentOperationException>(() =>
+            fixture.Service.SwitchToCreditAsync(fixture.Order.Id, 0,
+                fixture.RetailerUserId, SystemRoles.Retailer, default));
+        Assert.Equal(OrderPaymentMethods.Prepaid, fixture.Payment.Method);
+    }
+
+    [Fact]
+    public async Task Credit_switch_rejects_another_retailer()
+    {
+        var fixture = new Fixture(OrderPaymentMethods.Prepaid);
+        fixture.Order.Status = OrderStatuses.PaymentPending;
+        fixture.Retailer.CreditTermDays = 14;
+        await Assert.ThrowsAsync<PaymentOperationException>(() =>
+            fixture.Service.SwitchToCreditAsync(fixture.Order.Id, 0,
+                Guid.NewGuid(), SystemRoles.Retailer, default));
+        Assert.Equal(OrderPaymentMethods.Prepaid, fixture.Payment!.Method);
+    }
+
+    [Fact]
     public async Task Final_approval_creates_ledger_and_delivery_sets_credit_due_date()
     {
         var fixture = new Fixture(OrderPaymentMethods.Credit, creditTermDays: 14, withPayment: false);
@@ -210,6 +257,23 @@ public sealed class PaymentServiceTests
         Assert.Equal(2, fixture.Payment.Version);
         Assert.Equal(2, fixture.Store.Audits.Count);
         Assert.Equal("PayOsPaymentConfirmed", fixture.Store.Audits[1].Action);
+    }
+
+    [Fact]
+    public async Task Reading_prepaid_payment_reconciles_paid_link_when_webhook_is_delayed()
+    {
+        var fixture = new Fixture(OrderPaymentMethods.Prepaid);
+        await fixture.Service.CreatePayOsCheckoutAsync(
+            fixture.Order.Id, new(0), fixture.RetailerUserId, SystemRoles.Retailer, default);
+        fixture.Gateway.LinkStatus = "PAID";
+
+        var result = await fixture.Service.GetByOrderAsync(
+            fixture.Order.Id, fixture.RetailerUserId, SystemRoles.Retailer, default);
+
+        Assert.Equal(PaymentStatuses.Paid, result.Status);
+        Assert.Equal(result.Amount, result.ConfirmedAmount);
+        Assert.Equal("PAID", result.PayOsLinkStatus);
+        Assert.Equal("PAYOS-STATUS-" + result.PayOsOrderCode, result.PayOsReference);
     }
 
     [Fact]
@@ -425,6 +489,9 @@ public sealed class PaymentServiceTests
             actorRole == SystemRoles.Retailer && view.Retailer.UserAccountId == actorUserId);
 
         public void Add(Payment payment) => Payments.Add(payment);
+        public List<PaymentReceipt> Receipts { get; } = [];
+        public List<PaymentReceiptAllocation> ReceiptAllocations { get; } = [];
+        public void AddReceipt(PaymentReceipt receipt, PaymentReceiptAllocation allocation) { Receipts.Add(receipt); ReceiptAllocations.Add(allocation); }
         public void AddAuditLog(AuditLog auditLog) => Audits.Add(auditLog);
         public Task SaveChangesAsync(CancellationToken cancellationToken) => Task.CompletedTask;
         public Task ExecuteInTransactionAsync(Func<CancellationToken, Task> operation,
@@ -439,6 +506,7 @@ public sealed class PaymentServiceTests
 
     private sealed class FakePayOsGateway : IPayOsGateway
     {
+        public string LinkStatus { get; set; } = "PENDING";
         public Task<PayOsLinkData> CreatePaymentLinkAsync(
             PayOsCreateLinkData data,
             CancellationToken cancellationToken) => Task.FromResult(new PayOsLinkData(
@@ -449,6 +517,11 @@ public sealed class PaymentServiceTests
             PayOsWebhookEnvelope webhook,
             CancellationToken cancellationToken) => Task.FromResult(
                 new PayOsVerifiedWebhook(webhook.Code, webhook.Success, webhook.Data));
+
+        public Task<PayOsPaymentLinkStatus> GetPaymentLinkStatusAsync(
+            long orderCode,
+            CancellationToken cancellationToken) => Task.FromResult(
+                new PayOsPaymentLinkStatus(orderCode, "test-link", LinkStatus, null));
 
         public PayOsWebhookEnvelope CreateWebhook(PayOsCheckoutResult checkout) => new(
             "00", "success", true,

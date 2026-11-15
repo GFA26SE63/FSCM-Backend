@@ -1,4 +1,4 @@
-using FSCM.Domain.Entities;
+﻿using FSCM.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 
@@ -32,6 +32,15 @@ public sealed class AllocationConfiguration : IEntityTypeConfiguration<Allocatio
         builder.Property(entity => entity.DiscountSourceType).HasMaxLength(30).IsRequired(false);
         builder.Property(entity => entity.DiscountSourceCode).HasMaxLength(40).IsRequired(false);
         builder.Property(entity => entity.Status).HasMaxLength(30).IsRequired();
+        builder.Property(entity => entity.PostPromotionUnitPrice).HasPrecision(18, 2).IsRequired(false);
+        builder.Property(entity => entity.ShelfLifeDiscountPerUnit).HasPrecision(18, 2).IsRequired(false);
+        builder.Property(entity => entity.RemainingShelfLifePercent).HasPrecision(5, 2).IsRequired(false);
+        builder.Property(entity => entity.ShelfLifeDiscountTierId).HasColumnType("uuid").IsRequired(false);
+        builder.Property(entity => entity.ShelfLifeDiscountType).HasMaxLength(20).IsRequired(false);
+        builder.Property(entity => entity.ShelfLifeDiscountValue).HasPrecision(18, 4).IsRequired(false);
+        builder.Property(entity => entity.ShelfLifeDiscountTableVersion).IsRequired(false);
+        builder.Property(entity => entity.PricingExplanation).HasMaxLength(500).IsRequired(false);
+        builder.Property(entity => entity.PricedAt).HasColumnType("timestamp with time zone").IsRequired(false);
         builder.Property(entity => entity.CreatedAt).HasColumnType("timestamp with time zone").IsRequired();
         builder.HasOne<SalesOrderLine>()
             .WithMany()
@@ -52,3 +61,4 @@ public sealed class AllocationConfiguration : IEntityTypeConfiguration<Allocatio
         builder.HasIndex(entity => new { entity.SalesOrderLineId, entity.AllocationSequence }).IsUnique();
     }
 }
+

@@ -11,6 +11,12 @@ public sealed class RewardRedemption
     public Guid? SalesOrderId { get; set; }
     public string ClientRequestId { get; set; } = string.Empty;
     public int RedeemedPoints { get; set; }
+    public int? Quantity { get; set; }
+    public int? RequiredPointsSnapshot { get; set; }
+    public Guid? ApprovedByUserId { get; set; }
+    public DateTimeOffset? ApprovedAt { get; set; }
+    public Guid? DeliveredByUserId { get; set; }
+    public DateTimeOffset? DeliveredAt { get; set; }
     public string Status { get; set; } = string.Empty;
     public Guid RedeemedByUserId { get; set; }
     public DateTimeOffset RedeemedAt { get; set; }

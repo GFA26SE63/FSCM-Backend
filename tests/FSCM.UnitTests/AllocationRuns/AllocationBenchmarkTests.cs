@@ -5,6 +5,25 @@ namespace FSCM.UnitTests.AllocationRuns;
 public sealed class AllocationBenchmarkTests
 {
     [Fact]
+    public void A_short_FEFO_order_has_no_committed_quantity_or_expiry_benefit()
+    {
+        var now=DateTimeOffset.Parse("2026-11-11T00:00:00Z");
+        var result=AllocationBenchmark.Compare(new("SKU-1",30,720,0.25m,null),
+            [Candidate("B-SHORT",now.AddHours(200),now,12,1000)]);
+        Assert.False(result.FefoFullyAllocated);Assert.Equal(18,result.FefoShortageQuantity);
+        Assert.Equal(0,result.FefoAllocatedQuantity);Assert.Empty(result.FefoBatchOrder);Assert.Empty(result.FefoAllocations);
+        Assert.Equal(0,result.FefoNearExpiryQuantity);Assert.Equal(0,result.WeightedNearExpiryQuantity);
+    }
+
+    [Fact]
+    public void Near_expiry_measurement_can_use_the_SKU_threshold_instead_of_half_the_shelf_life()
+    {
+        var now=DateTimeOffset.Parse("2026-11-11T00:00:00Z");
+        var result=AllocationBenchmark.Compare(new("SKU-1",10,720,0.25m,null),
+            [Candidate("B-VALID",now.AddHours(200),now,10,1000)],nearExpiryHours:192);
+        Assert.Equal(0,result.FefoNearExpiryQuantity);Assert.Equal(0,result.WeightedNearExpiryQuantity);
+    }
+    [Fact]
     public void Compares_both_algorithms_on_the_same_filtered_pool_without_partial_delivery()
     {
         var now = new DateTimeOffset(2026, 11, 2, 5, 0, 0, TimeSpan.Zero);

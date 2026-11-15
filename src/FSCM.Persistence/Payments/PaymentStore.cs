@@ -1,4 +1,5 @@
 using FSCM.Application.Features.Payments;
+using FSCM.Application.Features.Orders;
 using FSCM.Application.Features.Refunds;
 using FSCM.Domain.Authorization;
 using FSCM.Domain.Entities;
@@ -69,6 +70,24 @@ public sealed class PaymentStore(AppDbContext dbContext) : IPaymentStore
         return results;
     }
 
+    public async Task<IReadOnlyCollection<PaymentView>> ListCreditForRetailerAsync(
+        Guid retailerId, CancellationToken cancellationToken)
+    {
+        var orderIds = await (from payment in dbContext.PaymentRecords.AsNoTracking()
+                              join order in dbContext.SalesOrderRecords.AsNoTracking()
+                                  on payment.SalesOrderId equals order.Id
+                              where order.RetailerId == retailerId && payment.Method == OrderPaymentMethods.Credit
+                              select payment.SalesOrderId)
+            .ToArrayAsync(cancellationToken);
+        var results = new List<PaymentView>(orderIds.Length);
+        foreach (var orderId in orderIds)
+        {
+            var view = await FindByOrderAsync(orderId, false, cancellationToken);
+            if (view is not null) results.Add(view);
+        }
+        return results;
+    }
+
     public Task<bool> CanViewAsync(
         PaymentView view,
         Guid actorUserId,
@@ -85,6 +104,11 @@ public sealed class PaymentStore(AppDbContext dbContext) : IPaymentStore
         };
 
     public void Add(Payment payment) => dbContext.PaymentRecords.Add(payment);
+    public void AddReceipt(PaymentReceipt receipt, PaymentReceiptAllocation allocation)
+    {
+        dbContext.PaymentReceiptRecords.Add(receipt);
+        dbContext.PaymentReceiptAllocationRecords.Add(allocation);
+    }
 
     public void AddAuditLog(AuditLog auditLog) => dbContext.AuditLogRecords.Add(auditLog);
 
@@ -111,6 +135,11 @@ public sealed class PaymentStore(AppDbContext dbContext) : IPaymentStore
         Func<CancellationToken, Task> operation,
         CancellationToken cancellationToken)
     {
+        if (dbContext.Database.CurrentTransaction is not null)
+        {
+            await operation(cancellationToken);
+            return;
+        }
         var strategy = dbContext.Database.CreateExecutionStrategy();
         await strategy.ExecuteAsync(async () =>
         {
@@ -141,14 +170,15 @@ public sealed class PaymentStore(AppDbContext dbContext) : IPaymentStore
             .SingleAsync(item => item.Id == order.RetailerId, cancellationToken);
         var pendingRefundAmount = await dbContext.ManualRefundRecords.AsNoTracking()
             .Where(item => item.PaymentId == payment.Id &&
-                (item.Status == RefundStatuses.PendingRefund || item.Status == RefundStatuses.AwaitingVerification))
+                RefundStatuses.Open.Contains(item.Status))
             .SumAsync(item => (decimal?)item.Amount, cancellationToken) ?? 0;
         var refundedAmount = await dbContext.ManualRefundRecords.AsNoTracking()
             .Where(item => item.PaymentId == payment.Id && item.Status == RefundStatuses.Refunded)
             .SumAsync(item => (decimal?)item.Amount, cancellationToken) ?? 0;
         var hasOpenDispute = await dbContext.ReceiptDiscrepancyRecords.AsNoTracking()
-            .AnyAsync(item => item.SalesOrderId == payment.SalesOrderId && item.Status != "Resolved",
+            .AnyAsync(item => item.SalesOrderId == payment.SalesOrderId && item.ResolvedAt == null,
                 cancellationToken);
         return new(payment, order, retailer, pendingRefundAmount, refundedAmount, hasOpenDispute);
     }
 }
+

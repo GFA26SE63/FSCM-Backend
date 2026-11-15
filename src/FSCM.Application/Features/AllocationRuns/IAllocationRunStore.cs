@@ -84,7 +84,11 @@ public sealed record EligibleOrderLineView(
     SalesOrderLine Line,
     Product Product);
 
-/// <summary>Available stock for one batch at snapshot time, with the version used to detect drift later.</summary>
+/// <summary>
+/// Available stock for one batch at snapshot time, with the version used to detect drift later.
+/// AvailableQuantity is already net of active inventory locks (F100): locked quantity is held out
+/// of the issuable pool so allocation never offers it.
+/// </summary>
 public sealed record AvailableBatchView(
     Batch Batch,
     Guid WarehouseId,

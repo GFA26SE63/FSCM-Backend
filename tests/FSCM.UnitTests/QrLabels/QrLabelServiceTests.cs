@@ -55,20 +55,59 @@ public sealed class QrLabelServiceTests
     }
 
     [Fact]
-    public async Task Split_reduces_parent_and_links_child_to_root()
+    public async Task Capacity_counts_unissued_picked_labels_and_generation_uses_physical_not_available_stock()
     {
         var fixture = new Fixture();
-        var parent = fixture.CreateLabel("TEM-000204", 80m);
+        fixture.Store.PhysicalQuantity = 20;
+        fixture.Store.ReservedQuantity = 14;
+        var first = await fixture.Service.GenerateAsync(new(fixture.SourceBatch.Id, 5, null),
+            "remaining-five", fixture.UserId, SystemRoles.WarehouseKeeper, default);
+        fixture.Store.Labels.Single(l => l.Id == first.Id).Status = QrLabelStatuses.Picked;
+        await fixture.Service.GenerateAsync(new(fixture.SourceBatch.Id, 6, null),
+            "remaining-six", fixture.UserId, SystemRoles.WarehouseKeeper, default);
+        var capacity = await fixture.Service.GetGenerationCapacityAsync(
+            fixture.SourceBatch.Id, fixture.UserId, SystemRoles.WarehouseKeeper, default);
+        Assert.Equal(20, capacity.PhysicalQuantity);
+        Assert.Equal(11, capacity.LabelledQuantity);
+        Assert.Equal(9, capacity.UnlabelledQuantity);
+        await Assert.ThrowsAsync<QrLabelOperationException>(() => fixture.Service.GenerateAsync(
+            new(fixture.SourceBatch.Id, 10, null), "too-many-remaining", fixture.UserId, SystemRoles.WarehouseKeeper, default));
+        Assert.Equal(14, fixture.Store.ReservedQuantity);
+        await Assert.ThrowsAsync<QrLabelOperationException>(() => fixture.Service.GetGenerationCapacityAsync(
+            fixture.SourceBatch.Id, Guid.NewGuid(), SystemRoles.WarehouseKeeper, default));
+    }
+
+    [Fact]
+    public async Task Split_retires_immutable_parent_and_creates_taken_and_replacement_labels()
+    {
+        var fixture = new Fixture();
+        var parent = fixture.CreateLabel("TEM-000204", 50m);
         fixture.Store.Labels.Add(parent);
 
-        var child = await fixture.Service.SplitAsync(parent.QrCode, new(30m, 1), "tach-tem-01",
+        var child = await fixture.Service.SplitAsync(parent.QrCode, new(25m, 1), "tach-tem-01",
             fixture.UserId, SystemRoles.WarehouseKeeper, default);
 
         Assert.Equal(50m, parent.Quantity);
-        Assert.Equal(30m, child.Quantity);
+        Assert.Equal(QrLabelStatuses.Split, parent.Status);
+        Assert.Equal(Now, parent.InvalidatedAt);
+        Assert.Equal(25m, child.Quantity);
         Assert.Equal(parent.Id, child.ParentLabelId);
         Assert.Equal(parent.Id, child.RootLabelId);
-        Assert.Equal(80m, fixture.Store.Labels.Sum(item => item.Quantity));
+        var replacement = Assert.Single(fixture.Store.Labels, item => item.Id != parent.Id && item.Id != child.Id);
+        Assert.Equal(25m, replacement.Quantity);
+        Assert.Equal(parent.Id, replacement.ParentLabelId);
+        Assert.Equal(parent.Id, replacement.RootLabelId);
+        Assert.Equal(50m, fixture.Store.Labels.Where(item => item.Status == QrLabelStatuses.Available).Sum(item => item.Quantity));
+        var replay = await fixture.Service.SplitAsync(parent.QrCode, new(25m, 1), "tach-tem-01",
+            fixture.UserId, SystemRoles.WarehouseKeeper, default);
+        Assert.Equal(child.Id, replay.Id);
+        Assert.Equal(3, fixture.Store.Labels.Count);
+        await Assert.ThrowsAsync<QrLabelOperationException>(() => fixture.Service.RenderPrintableAsync(
+            parent.QrCode, fixture.UserId, SystemRoles.WarehouseKeeper, default));
+        var printable = await fixture.Service.RenderBatchPrintableAsync(
+            parent.BatchId, fixture.UserId, SystemRoles.WarehouseKeeper, default);
+        Assert.Equal(2, printable.Labels.Count);
+        Assert.DoesNotContain(printable.Labels, item => item.QrCode == parent.QrCode);
     }
 
     [Fact]
@@ -196,6 +235,8 @@ public sealed class QrLabelServiceTests
         private readonly Batch[] _batches = [sourceBatch, destinationBatch];
         private readonly Warehouse[] _warehouses = [sourceWarehouse, destinationWarehouse];
         private int _nextCode = 1000;
+        public decimal PhysicalQuantity { get; set; } = 100;
+        public decimal ReservedQuantity { get; set; }
 
         public Task<bool> CanAccessWarehouseAsync(Guid actorId, string role, Guid warehouseId, CancellationToken cancellationToken) =>
             Task.FromResult(actorId == userId && _warehouses.Any(item => item.Id == warehouseId));
@@ -217,7 +258,7 @@ public sealed class QrLabelServiceTests
             Task.FromResult(Events.Where(item => item.BatchQrLabelId == labelId).OrderByDescending(item => item.OccurredAt).FirstOrDefault());
         public Task<Batch?> FindBatchAsync(Guid batchId, CancellationToken cancellationToken) => Task.FromResult(_batches.SingleOrDefault(item => item.Id == batchId));
         public Task<Guid?> FindGoodsReceiptIdForBatchAsync(Guid batchId, CancellationToken cancellationToken) => Task.FromResult<Guid?>(null);
-        public Task<InventoryBalance?> FindBalanceAsync(Guid batchId, CancellationToken cancellationToken) => Task.FromResult<InventoryBalance?>(new() { BatchId = batchId, PhysicalQuantity = 100m });
+        public Task<InventoryBalance?> FindBalanceAsync(Guid batchId, CancellationToken cancellationToken) => Task.FromResult<InventoryBalance?>(new() { BatchId = batchId, PhysicalQuantity = PhysicalQuantity, ReservedQuantity = ReservedQuantity, AvailableQuantity = PhysicalQuantity - ReservedQuantity });
         public Task<decimal> SumActiveQuantityAsync(Guid batchId, CancellationToken cancellationToken) =>
             Task.FromResult(Labels.Where(item => item.BatchId == batchId &&
                 item.Status is QrLabelStatuses.Available or QrLabelStatuses.Picked).Sum(item => item.Quantity));

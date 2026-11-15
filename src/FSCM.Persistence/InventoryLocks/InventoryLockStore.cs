@@ -12,8 +12,7 @@ public sealed class InventoryLockStore(AppDbContext dbContext) : IInventoryLockS
     public Task<bool> CanAccessWarehouseAsync(Guid userId, string role, Guid warehouseId, CancellationToken cancellationToken) =>
         role is SystemRoles.Admin or SystemRoles.Operator
             ? Task.FromResult(true)
-            : dbContext.UserWarehouseAssignmentRecords.AsNoTracking().AnyAsync(item =>
-                item.UserAccountId == userId && item.WarehouseId == warehouseId && item.IsActive, cancellationToken);
+            : ReportingScopeQueries.ManagedWarehouses(dbContext, userId).AnyAsync(item => item.Id == warehouseId, cancellationToken);
 
     public async Task<BatchLockContext?> FindBatchContextAsync(Guid batchId, CancellationToken cancellationToken)
     {
@@ -56,8 +55,7 @@ public sealed class InventoryLockStore(AppDbContext dbContext) : IInventoryLockS
         if (batchId.HasValue) locks = locks.Where(item => item.BatchId == batchId.Value);
         if (!string.IsNullOrWhiteSpace(status)) locks = locks.Where(item => item.Status == status);
         if (actorRole == SystemRoles.WarehouseKeeper)
-            locks = locks.Where(item => dbContext.UserWarehouseAssignmentRecords.Any(assignment =>
-                assignment.UserAccountId == actorUserId && assignment.WarehouseId == item.WarehouseId && assignment.IsActive));
+            locks = locks.Where(item => ReportingScopeQueries.ManagedWarehouses(dbContext, actorUserId).Select(w => w.Id).Contains(item.WarehouseId));
         return await CreateViewQuery(locks.OrderByDescending(item => item.CreatedAt)).ToArrayAsync(cancellationToken);
     }
 

@@ -1,4 +1,5 @@
 using FSCM.Application.Features.Orders;
+using FSCM.Application.Features.Inventory;
 using FSCM.Application.Features.QrLabels;
 using FSCM.Application.Features.Shipments;
 using FSCM.Domain.Authorization;
@@ -48,7 +49,19 @@ public sealed class CurrentPickingService(IPickingStore store, TimeProvider time
         operationKey = Required(operationKey, "Idempotency-Key");
         var qrCode = Required(data.QrCode, "QR code");
         var prior = await store.FindOperationAsync(operationKey, ct);
-        if (prior is not null) return await GetAsync(code, actorId, role, ct);
+        if (prior is not null)
+        {
+            var picked = await store.FindLabelByIdAsync(prior.BatchQrLabelId, ct)
+                ?? throw PickingOperationException.Conflict("Prior picking label is missing.");
+            var source = picked.ParentLabelId.HasValue
+                ? await store.FindLabelByIdAsync(picked.ParentLabelId.Value, ct) : null;
+            if (prior.EventType != QrLabelEventTypes.Picked || prior.ReferenceCode != code ||
+                prior.PerformedByUserId != actorId ||
+                (picked.QrCode != qrCode && source?.QrCode != qrCode) ||
+                data.Quantity.HasValue && data.Quantity.Value != prior.Quantity)
+                throw PickingOperationException.Conflict("Idempotency-Key was already used for a different picking request.");
+            return await GetAsync(code, actorId, role, ct);
+        }
 
         await store.ExecuteInTransactionAsync(async token =>
         {
@@ -69,6 +82,21 @@ public sealed class CurrentPickingService(IPickingStore store, TimeProvider time
             if (label.Status != QrLabelStatuses.Available || label.CurrentWarehouseId != view.List.WarehouseId)
                 throw PickingOperationException.Conflict(
                     "QR label must be available in the picking warehouse.");
+
+            // F4 step 10 / F100: never pick an expired batch or one whose active lock eats into
+            // stock already reserved for orders, even if it was valid when the sheet was issued.
+            var batchState = await store.FindBatchPickStateAsync(label.BatchId, token)
+                ?? throw PickingOperationException.Conflict("Batch inventory state was not found.");
+            var today = DateOnly.FromDateTime(timeProvider.GetUtcNow().UtcDateTime);
+            if (batchState.ExpiryStatus == BatchExpiryStatuses.Expired ||
+                batchState.ExpirationDate < today)
+                throw PickingOperationException.Conflict(
+                    $"Batch {batchState.BatchCode} has expired and cannot be picked.");
+            if (batchState.HasLockRequiringResolution ||
+                batchState.PhysicalQuantity - batchState.ActiveLockedQuantity < batchState.ReservedQuantity)
+                throw PickingOperationException.Conflict(
+                    $"Batch {batchState.BatchCode} has {batchState.ActiveLockedQuantity:0.###} cartons locked " +
+                    "that overlap reserved stock; resolve the lock before picking.");
 
             var requested = data.Splits?.ToDictionary(item => item.AllocationRunAllocationId,
                 item => item.Quantity) ?? [];
@@ -109,20 +137,29 @@ public sealed class CurrentPickingService(IPickingStore store, TimeProvider time
             BatchQrLabel pickedLabel;
             if (quantity < label.Quantity)
             {
-                label.Quantity -= quantity;
-                label.Version++;
-                label.UpdatedAt = now;
-                pickedLabel = new BatchQrLabel
-                {
-                    Id = Guid.NewGuid(), BatchId = label.BatchId,
-                    CurrentWarehouseId = label.CurrentWarehouseId,
-                    GoodsReceiptId = label.GoodsReceiptId,
-                    ParentLabelId = label.Id, RootLabelId = label.RootLabelId ?? label.Id,
-                    QrCode = await store.NextQrCodeAsync(token), Quantity = quantity,
-                    Status = QrLabelStatuses.Picked, Version = 1,
-                    GeneratedAt = now, UpdatedAt = now
-                };
+                var split = QrLabelSplit.Create(label, quantity,
+                    await store.NextQrCodeAsync(token), await store.NextQrCodeAsync(token), QrLabelStatuses.Picked, now);
+                pickedLabel = split.Taken;
                 store.AddLabel(pickedLabel);
+                store.AddLabel(split.Replacement);
+                store.AddLabelEvent(new QrLabelEvent
+                {
+                    Id = Guid.NewGuid(), BatchQrLabelId = label.Id,
+                    WarehouseId = view.List.WarehouseId, PerformedByUserId = actorId,
+                    OperationKey = $"{operationKey}:source", EventType = QrLabelEventTypes.Split,
+                    FromStatus = QrLabelStatuses.Available, ToStatus = QrLabelStatuses.Split,
+                    Quantity = label.Quantity, ReferenceCode = pickedLabel.QrCode,
+                    Note = $"Replaced by {pickedLabel.QrCode} and {split.Replacement.QrCode}", OccurredAt = now
+                });
+                store.AddLabelEvent(new QrLabelEvent
+                {
+                    Id = Guid.NewGuid(), BatchQrLabelId = split.Replacement.Id,
+                    WarehouseId = view.List.WarehouseId, PerformedByUserId = actorId,
+                    OperationKey = $"{operationKey}:replacement", EventType = QrLabelEventTypes.Split,
+                    FromStatus = QrLabelStatuses.Available, ToStatus = QrLabelStatuses.Available,
+                    Quantity = split.Replacement.Quantity, ReferenceCode = label.QrCode,
+                    Note = $"Replacement for source label {label.QrCode}", OccurredAt = now
+                });
                 store.AddLabelEvent(new QrLabelEvent
                 {
                     Id = Guid.NewGuid(), BatchQrLabelId = pickedLabel.Id,
@@ -244,7 +281,8 @@ public sealed class CurrentPickingService(IPickingStore store, TimeProvider time
             item.Item.RequestedQuantity - item.Item.PickedQuantity, item.Item.Status)).ToArray(),
         view.Scans.Select(item => new PickingScanResult(
             item.Event.OperationKey, item.QrCode, item.Event.Quantity,
-            item.Event.PerformedByUserId, item.Event.OccurredAt)).ToArray());
+            item.Event.PerformedByUserId, item.Event.OccurredAt,
+            item.SourceQrCode, item.ReplacementQrCode, item.ReplacementQuantity)).ToArray());
 
     private static string Required(string? value, string name) =>
         string.IsNullOrWhiteSpace(value)
@@ -257,7 +295,7 @@ public sealed class CurrentPickingService(IPickingStore store, TimeProvider time
     }
     private static void EnsureWarehouseKeeper(string role)
     {
-        if (role != SystemRoles.WarehouseKeeper)
-            throw PickingOperationException.Forbidden("Only Warehouse Keeper can change picking work.");
+        if (role is not (SystemRoles.Admin or SystemRoles.WarehouseKeeper))
+            throw PickingOperationException.Forbidden("Only Warehouse Keeper or Admin can change picking work.");
     }
 }

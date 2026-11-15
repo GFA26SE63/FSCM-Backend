@@ -143,7 +143,7 @@ public sealed class AllocationPricingServiceTests
             var store = new FakeStore();
             var discounts = new ShelfLifeDiscountService(store, new FixedClock());
             await discounts.PublishAsync(
-                new PublishShelfLifeDiscountTableData(PricedAt.AddDays(-30), "Bậc giảm HSD", tiers),
+                new PublishShelfLifeDiscountTableData(PricedAt, "Bậc giảm HSD", tiers),
                 Actor, CancellationToken.None);
             return new Fixture(new AllocationPricingService(discounts));
         }
@@ -157,11 +157,12 @@ public sealed class AllocationPricingServiceTests
 
     private sealed class FixedClock : TimeProvider
     {
-        public override DateTimeOffset GetUtcNow() => PricedAt;
+        public override DateTimeOffset GetUtcNow() => PricedAt.AddDays(-1);
     }
 
     private sealed class FakeStore : IShelfLifeDiscountStore
     {
+        public Task<bool> ScopeIsUsableAsync(string scope, Guid id, CancellationToken cancellationToken) => Task.FromResult(true);
         private readonly List<ShelfLifeDiscountTable> _tables = [];
         private readonly List<ShelfLifeDiscountTier> _tiers = [];
 

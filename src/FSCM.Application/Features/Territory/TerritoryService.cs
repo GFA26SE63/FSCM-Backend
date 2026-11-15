@@ -52,8 +52,9 @@ public sealed partial class TerritoryService(ITerritoryStore store, TimeProvider
     public async Task SetRegionStatusAsync(Guid regionId, bool isActive, CancellationToken cancellationToken)
     {
         var region = await RequireRegionAsync(regionId, cancellationToken);
-        if (!isActive && await store.RegionHasActiveGroupsAsync(regionId, cancellationToken))
-            throw TerritoryOperationException.Conflict("A region with active sales groups cannot be inactivated.");
+        if (!isActive && (await store.RegionHasActiveGroupsAsync(regionId, cancellationToken) ||
+            await store.RegionHasActiveWarehousesAsync(regionId, cancellationToken)))
+            throw TerritoryOperationException.Conflict("A region with active sales groups or warehouses cannot be inactivated.");
         region.IsActive = isActive;
         region.UpdatedAt = timeProvider.GetUtcNow();
         await store.SaveChangesAsync(cancellationToken);

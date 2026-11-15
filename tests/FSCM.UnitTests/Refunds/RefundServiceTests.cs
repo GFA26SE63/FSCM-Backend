@@ -79,10 +79,14 @@ public sealed class RefundServiceTests
             new(rejected.Version, fixture.Now.AddMinutes(-1), "TXN-CORRECT", "private://refunds/correct"),
             "refund-evidence-6b", fixture.OperatorId, SystemRoles.Operator, default);
 
-        Assert.Equal(RefundStatuses.PendingRefund, rejected.Status);
-        Assert.Null(rejected.TransactionReference);
+        // F5 step 18: rejection moves to EvidenceRejected and KEEPS the prior evidence for history
+        // (the obligation is not destroyed); the Operator then resubmits corrected evidence.
+        Assert.Equal(RefundStatuses.EvidenceRejected, rejected.Status);
+        Assert.Equal("TXN-WRONG", rejected.TransactionReference);
+        Assert.Equal("Sai số tham chiếu ngân hàng", rejected.VerificationNote);
         Assert.Equal(RefundStatuses.AwaitingVerification, resubmitted.Status);
         Assert.Equal("TXN-CORRECT", resubmitted.TransactionReference);
+        Assert.Null(resubmitted.VerificationNote);
     }
 
     private sealed class Fixture
@@ -151,8 +155,20 @@ public sealed class RefundServiceTests
         }
         public Task<IReadOnlyCollection<RefundView>> ListAsync(Guid? orderId, string? status, Guid actor, string role, CancellationToken ct) =>
             Task.FromResult<IReadOnlyCollection<RefundView>>(Refunds.Where(x => (!orderId.HasValue || x.SalesOrderId == orderId) && (status is null || x.Status == status)).Select(View).ToArray());
+        public Dictionary<Guid, RefundClaimSource> Claims { get; } = [];
+
+        public Task<RefundClaimSource?> FindClaimSourceAsync(Guid claimId, CancellationToken ct)
+        {
+            if (!Claims.TryGetValue(claimId, out var claim)) return Task.FromResult<RefundClaimSource?>(null);
+            var linked = Refunds.Where(x => x.ReceiptDiscrepancyId == claimId).Sum(x => x.Amount);
+            return Task.FromResult<RefundClaimSource?>(claim with { AlreadyLinkedAmount = linked });
+        }
+
+        public Task<IReadOnlyCollection<RefundObligationResult>> ListObligationsAsync(CancellationToken ct) =>
+            Task.FromResult<IReadOnlyCollection<RefundObligationResult>>([]);
+
         public Task<(decimal Pending, decimal Refunded)> TotalsAsync(Guid paymentId, CancellationToken ct) =>
-            Task.FromResult((Refunds.Where(x => x.Status is RefundStatuses.PendingRefund or RefundStatuses.AwaitingVerification).Sum(x => x.Amount),
+            Task.FromResult((Refunds.Where(x => x.Status is RefundStatuses.PendingRefund or RefundStatuses.AwaitingVerification or RefundStatuses.EvidenceRejected).Sum(x => x.Amount),
                 Refunds.Where(x => x.Status == RefundStatuses.Refunded).Sum(x => x.Amount)));
         public void Add(ManualRefund refund) => Refunds.Add(refund);
         public void AddAuditLog(AuditLog audit) => Audits.Add(audit);
@@ -165,6 +181,7 @@ public sealed class RefundServiceTests
         public Task<IReadOnlyCollection<PaymentView>> ListAsync(Guid actor, string role, CancellationToken ct) => Task.FromResult<IReadOnlyCollection<PaymentView>>([]);
         public Task<bool> CanViewAsync(PaymentView view, Guid actor, string role, CancellationToken ct) => Task.FromResult(true);
         public void Add(Payment payment) { }
+        public void AddReceipt(PaymentReceipt receipt, PaymentReceiptAllocation allocation) { }
         public Task ExecuteInTransactionAsync(Func<CancellationToken, Task> action, CancellationToken ct) => action(ct);
         public void ClearTracking() { }
 

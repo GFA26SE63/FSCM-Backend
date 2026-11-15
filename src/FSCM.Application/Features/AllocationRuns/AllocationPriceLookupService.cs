@@ -163,7 +163,7 @@ public sealed class AllocationPriceLookupService(IAllocationRunStore store)
 
             foreach (var part in line.Parts)
             {
-                var expectedUnitPrice = part.BaseNetUnitPrice - part.ShelfLifeDiscountPerUnit;
+                var expectedUnitPrice = Round(part.BaseNetUnitPrice - part.ShelfLifeDiscountPerUnit);
                 if (part.FinalNetUnitPrice != expectedUnitPrice)
                 {
                     throw AllocationRunOperationException.Conflict(
@@ -182,5 +182,5 @@ public sealed class AllocationPriceLookupService(IAllocationRunStore store)
         }
     }
 
-    private static decimal Round(decimal value) => Math.Round(value, 2, MidpointRounding.AwayFromZero);
+    private static decimal Round(decimal value) => Math.Round(value, 0, MidpointRounding.AwayFromZero);
 }

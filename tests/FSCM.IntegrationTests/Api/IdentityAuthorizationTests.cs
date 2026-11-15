@@ -369,6 +369,7 @@ public sealed class IdentityAuthorizationTests : IClassFixture<IdentityAuthoriza
             builder.UseSetting("Jwt:AccessTokenExpiryMinutes", "10");
             builder.UseSetting("Jwt:RefreshTokenExpiryDays", "1");
             builder.UseSetting("BackgroundJobs:DateTracker:Enabled", "false");
+            builder.UseSetting("BackgroundJobs:AllocationRecovery:Enabled", "false");
             builder.UseSetting("BackgroundJobs:InventoryOutbox:Enabled", "false");
             builder.ConfigureTestServices(services =>
             {

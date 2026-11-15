@@ -75,6 +75,9 @@ public sealed class RetailerStore(AppDbContext dbContext) : IRetailerStore
     public Task<Retailer?> FindForUpdateAsync(Guid retailerId, CancellationToken cancellationToken) =>
         dbContext.RetailerRecords.SingleOrDefaultAsync(item => item.Id == retailerId, cancellationToken);
 
+    public Task<UserAccount?> FindContactAccountForUpdateAsync(Guid accountId, CancellationToken cancellationToken) =>
+        dbContext.UserAccountRecords.SingleOrDefaultAsync(item => item.Id == accountId, cancellationToken);
+
     public Task<RetailerDeclarationContact?> FindDeclarationContactForUpdateAsync(
         Guid retailerId, CancellationToken cancellationToken) =>
         dbContext.RetailerDeclarationContactRecords.SingleOrDefaultAsync(

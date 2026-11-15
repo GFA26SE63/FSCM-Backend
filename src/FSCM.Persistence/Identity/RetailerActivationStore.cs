@@ -7,6 +7,8 @@ namespace FSCM.Persistence.Identity;
 
 public sealed class RetailerActivationStore(AppDbContext dbContext) : IRetailerActivationStore
 {
+    public Task<UserAccount?> FindUserByEmailAsync(string email, CancellationToken token) =>
+        dbContext.UserAccountRecords.SingleOrDefaultAsync(item => item.Email == email, token);
     public Task<UserAccount?> FindUserByPhoneAsync(string phone, CancellationToken token) =>
         dbContext.UserAccountRecords.SingleOrDefaultAsync(item => item.Phone == phone, token);
     public Task<UserAccount?> FindUserByIdAsync(Guid id, CancellationToken token) =>

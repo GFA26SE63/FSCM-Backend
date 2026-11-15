@@ -14,8 +14,7 @@ public sealed class InternalTransferStore(AppDbContext dbContext) : IInternalTra
     public Task<bool> CanAccessWarehouseAsync(Guid userId, string role, Guid warehouseId, CancellationToken cancellationToken) =>
         role is SystemRoles.Admin or SystemRoles.Operator
             ? Task.FromResult(true)
-            : dbContext.UserWarehouseAssignmentRecords.AsNoTracking().AnyAsync(item =>
-                item.UserAccountId == userId && item.WarehouseId == warehouseId && item.IsActive, cancellationToken);
+            : ReportingScopeQueries.ManagedWarehouses(dbContext, userId).AnyAsync(item => item.Id == warehouseId, cancellationToken);
 
     public Task<Warehouse?> FindWarehouseAsync(Guid id, CancellationToken cancellationToken) =>
         dbContext.WarehouseRecords.AsNoTracking().SingleOrDefaultAsync(item => item.Id == id, cancellationToken);
@@ -102,9 +101,8 @@ public sealed class InternalTransferStore(AppDbContext dbContext) : IInternalTra
             query = query.Where(item => item.SourceWarehouseId == warehouseId || item.DestinationWarehouseId == warehouseId);
         if (status is not null) query = query.Where(item => item.Status == status);
         if (role == SystemRoles.WarehouseKeeper)
-            query = query.Where(item => dbContext.UserWarehouseAssignmentRecords.Any(assignment =>
-                assignment.UserAccountId == userId && assignment.IsActive &&
-                (assignment.WarehouseId == item.SourceWarehouseId || assignment.WarehouseId == item.DestinationWarehouseId)));
+            query = query.Where(item => ReportingScopeQueries.ManagedWarehouses(dbContext, userId)
+                .Any(w => w.Id == item.SourceWarehouseId || w.Id == item.DestinationWarehouseId));
         var ids = await query.OrderByDescending(item => item.RequestedAt).Select(item => item.Id).ToArrayAsync(cancellationToken);
         var results = new List<TransferView>(ids.Length);
         foreach (var id in ids)

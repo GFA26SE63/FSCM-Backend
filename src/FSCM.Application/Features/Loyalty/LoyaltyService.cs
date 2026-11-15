@@ -1,4 +1,5 @@
 using FSCM.Domain.Entities;
+using FSCM.Application.Common;
 
 namespace FSCM.Application.Features.Loyalty;
 
@@ -19,6 +20,7 @@ public sealed class LoyaltyService(ILoyaltyStore store, TimeProvider timeProvide
         var retailerIds = await ValidateAsync(data.Name, data.SpendAmountPerPoint, data.MinimumRedeemPoints,
             data.StartAt, data.EndAt, data.PointsExpireAt, data.RetailerIds, cancellationToken);
         var now = timeProvider.GetUtcNow();
+        var startAt = ValidateNewStart(data.StartAt, data.EndAt, now);
         var program = new LoyaltyProgram
         {
             Id = Guid.NewGuid(),
@@ -27,7 +29,7 @@ public sealed class LoyaltyService(ILoyaltyStore store, TimeProvider timeProvide
             Description = NormalizeDescription(data.Description),
             SpendAmountPerPoint = data.SpendAmountPerPoint,
             MinimumRedeemPoints = data.MinimumRedeemPoints,
-            StartAt = data.StartAt.ToUniversalTime(),
+            StartAt = startAt,
             EndAt = data.EndAt.ToUniversalTime(),
             PointsExpireAt = data.PointsExpireAt?.ToUniversalTime(),
             IsActive = false,
@@ -51,11 +53,21 @@ public sealed class LoyaltyService(ILoyaltyStore store, TimeProvider timeProvide
             data.StartAt, data.EndAt, data.PointsExpireAt, data.RetailerIds, cancellationToken);
         var program = await store.FindProgramAsync(id, cancellationToken)
             ?? throw LoyaltyOperationException.NotFound("Loyalty program was not found.");
+        var now = timeProvider.GetUtcNow();
+        var startAt = program.StartAt;
+        if (data.StartAt != program.StartAt)
+        {
+            if (program.StartAt <= now)
+                throw LoyaltyOperationException.Conflict("The start of an already begun loyalty program cannot be changed.");
+            startAt = ValidateNewStart(data.StartAt, data.EndAt, now);
+        }
+        if (data.EndAt <= now)
+            throw LoyaltyOperationException.Validation("Validity end must be in the future.");
         program.Name = data.Name.Trim();
         program.Description = NormalizeDescription(data.Description);
         program.SpendAmountPerPoint = data.SpendAmountPerPoint;
         program.MinimumRedeemPoints = data.MinimumRedeemPoints;
-        program.StartAt = data.StartAt.ToUniversalTime();
+        program.StartAt = startAt;
         program.EndAt = data.EndAt.ToUniversalTime();
         program.PointsExpireAt = data.PointsExpireAt?.ToUniversalTime();
         program.UpdatedAt = timeProvider.GetUtcNow();
@@ -80,10 +92,13 @@ public sealed class LoyaltyService(ILoyaltyStore store, TimeProvider timeProvide
     {
         var program = await store.FindProgramAsync(id, cancellationToken)
             ?? throw LoyaltyOperationException.NotFound("Loyalty program was not found.");
-        if (active && program.EndAt < timeProvider.GetUtcNow())
+        var now = timeProvider.GetUtcNow();
+        if (active && program.EndAt <= now)
             throw LoyaltyOperationException.Conflict("An expired loyalty program cannot be activated.");
         if (program.IsActive != active)
         {
+            if (active)
+                program.StartAt = EffectiveDates.StartFromNow(program.StartAt, now);
             program.IsActive = active;
             program.UpdatedAt = timeProvider.GetUtcNow();
             await store.SaveChangesAsync(cancellationToken);
@@ -93,6 +108,16 @@ public sealed class LoyaltyService(ILoyaltyStore store, TimeProvider timeProvide
 
     private static string? NormalizeDescription(string? value) =>
         string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+    private static DateTimeOffset ValidateNewStart(DateTimeOffset startAt, DateTimeOffset endAt, DateTimeOffset now)
+    {
+        if (EffectiveDates.IsBeforeToday(startAt, now))
+            throw LoyaltyOperationException.Validation("Validity start cannot be before today (Vietnam time).");
+        var start = EffectiveDates.StartFromNow(startAt, now);
+        if (endAt <= start)
+            throw LoyaltyOperationException.Validation("Validity end must be later than validity start and in the future.");
+        return start;
+    }
 
     private async Task<Guid[]> ValidateAsync(string name, decimal spendAmountPerPoint,
         int minimumRedeemPoints, DateTimeOffset startAt, DateTimeOffset endAt,
@@ -115,7 +140,7 @@ public sealed class LoyaltyService(ILoyaltyStore store, TimeProvider timeProvide
     {
         if (name.Trim().Length is < 3 or > 200)
             throw LoyaltyOperationException.Validation("Loyalty program name must contain between 3 and 200 characters.");
-        if (spendAmountPerPoint <= 0)
+        if (spendAmountPerPoint <= 0 || spendAmountPerPoint > 9999999999999999.99m || decimal.Round(spendAmountPerPoint, 2) != spendAmountPerPoint)
             throw LoyaltyOperationException.Validation("Spend amount per point must be greater than zero.");
         if (minimumRedeemPoints < 0)
             throw LoyaltyOperationException.Validation("Minimum redeem points cannot be negative.");

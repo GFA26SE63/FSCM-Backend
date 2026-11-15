@@ -11,6 +11,7 @@ using FSCM.Application.Features.Picking;
 using FSCM.Application.Features.QrLabels;
 using FSCM.Domain.Authorization;
 using FSCM.Domain.Entities;
+using FSCM.Application.Features.AllocationRuns;
 
 namespace FSCM.Application.Features.Shipments;
 
@@ -27,7 +28,8 @@ public sealed class ShipmentService(
     IPaymentPlanService paymentPlanService,
     OrderCompletionService completion,
     TimeProvider timeProvider,
-    OrderNotificationService? notifications = null)
+    OrderNotificationService? notifications = null,
+    AllocationDeliveryGuard? deliveryGuard = null)
 {
     private static readonly TimeSpan VietnamOffset = TimeSpan.FromHours(7);
 
@@ -38,7 +40,6 @@ public sealed class ShipmentService(
         ValidateReadRole(actorRole);
         if (!string.IsNullOrWhiteSpace(status) && !ShipmentStatusSet.Contains(status))
             throw ShipmentOperationException.Validation("Shipment status filter is invalid.");
-        await ReconcileAsync(orderId, cancellationToken);
         var views = await store.ListAsync(actorUserId, actorRole, orderId, warehouseId, status, cancellationToken);
         return views.Select(ToResult).ToArray();
     }
@@ -67,7 +68,6 @@ public sealed class ShipmentService(
             throw ShipmentOperationException.Validation("Order id is required.");
         if (!await store.CanViewOrderAsync(orderId, actorUserId, actorRole, cancellationToken))
             throw ShipmentOperationException.Forbidden("You cannot view this order's deliveries.");
-        await ReconcileAsync(orderId, cancellationToken);
         var views = await store.ListAsync(actorUserId, actorRole, orderId, null, null, cancellationToken);
         var shipments = views.Select(ToResult).ToArray();
         var orderCode = shipments.FirstOrDefault()?.OrderCode ?? string.Empty;
@@ -95,8 +95,10 @@ public sealed class ShipmentService(
     }
 
     /// <summary>
-    /// Creates any missing shipment parts for completed picking lists (idempotent). Invoked
-    /// implicitly before reads and exposed so an Operator can force reconciliation for an order.
+    /// S3-92-3: creates any missing shipment parts for completed picking lists (idempotent). This
+    /// is the only place reads used to write — <see cref="CurrentPickingService.CompleteAsync"/> now
+    /// creates the part the moment a warehouse's sheet closes, so GET endpoints no longer mutate
+    /// data. This stays as an explicit Operator-triggered repair for a part that failed to appear.
     /// </summary>
     public async Task<IReadOnlyCollection<ShipmentResult>> SyncOrderAsync(
         Guid orderId, string actorRole, CancellationToken cancellationToken)
@@ -132,6 +134,70 @@ public sealed class ShipmentService(
     }
 
     /// <summary>
+    /// F92 / F4 step 17: an exception that has been dealt with (damaged or missing goods settled
+    /// through a claim, or an operator flag that no longer applies) leaves the Exception state.
+    ///
+    /// A part that was received (it has a receipt) becomes Received with its actual quantities
+    /// untouched - the shortage itself is never rewritten as full. A part flagged before receipt
+    /// returns to the stage it had reached. When this settles the last open part the order moves
+    /// to Delivered and its payment ledger gets the delivered date, exactly as a clean receipt does.
+    /// </summary>
+    public async Task<ShipmentResult> ResolveExceptionAsync(
+        Guid id, ResolveShipmentExceptionData data, Guid actorUserId, string actorRole,
+        CancellationToken cancellationToken)
+    {
+        EnsureOperator(actorRole);
+        var reason = NormalizeReason(data.Reason);
+        Guid? deliveredOrderId = null;
+        await store.ExecuteInTransactionAsync(async token =>
+        {
+            var view = await store.FindByIdAsync(id, true, token)
+                ?? throw ShipmentOperationException.NotFound("Shipment was not found.");
+            if (view.Shipment.Status != ShipmentStatuses.Exception)
+                throw ShipmentOperationException.Conflict("Only a shipment in Exception can be resolved.");
+            if (view.Shipment.Version != data.ExpectedVersion)
+                throw ShipmentOperationException.Conflict(
+                    $"Shipment version is {view.Shipment.Version}; refresh and retry.");
+
+            var now = timeProvider.GetUtcNow();
+            view.Shipment.Status = view.Receipt is not null ? ShipmentStatuses.Received
+                : view.Shipment.DispatchedAt.HasValue ? ShipmentStatuses.Delivering
+                : view.Shipment.IssuedAt.HasValue ? ShipmentStatuses.Issued
+                : ShipmentStatuses.Ready;
+            view.Shipment.ExceptionReason = null;
+            view.Shipment.Version++;
+            view.Shipment.UpdatedAt = now;
+
+            var siblings = await store.ListByOrderAsync(view.Order.Id, token);
+            var allReceived = siblings.All(item => item.Id == view.Shipment.Id
+                ? view.Shipment.Status == ShipmentStatuses.Received
+                : item.Status == ShipmentStatuses.Received);
+            var order = await store.FindOrderForUpdateAsync(view.Order.Id, token)
+                ?? throw ShipmentOperationException.NotFound("Order was not found.");
+            if (allReceived && order.Status == OrderStatuses.Delivering)
+            {
+                var fromStatus = order.Status;
+                order.Status = OrderStatuses.Delivered;
+                order.Version++;
+                order.UpdatedAt = now;
+                await paymentPlanService.CreateForDeliveredOrderAsync(order, actorUserId, now, token);
+                store.AddOrderHistory(new OrderStatusHistory
+                {
+                    Id = Guid.NewGuid(), SalesOrderId = order.Id, FromStatus = fromStatus,
+                    ToStatus = OrderStatuses.Delivered, ChangedByUserId = actorUserId,
+                    Reason = $"Ngoại lệ giao hàng đã xử lý: {reason}", ChangedAt = now
+                });
+                deliveredOrderId = order.Id;
+            }
+            await store.SaveChangesAsync(token);
+        }, cancellationToken);
+        store.ClearTracking();
+        if (deliveredOrderId is { } orderId)
+            await completion.EvaluateAsync(orderId, actorUserId, cancellationToken);
+        return ToResult((await store.FindByIdAsync(id, false, cancellationToken))!);
+    }
+
+    /// <summary>
     /// F93: whether an order may leave the warehouses at all, and what is holding it if not.
     ///
     /// The run already refuses to split an order across days; the door refuses to split it across
@@ -147,7 +213,6 @@ public sealed class ShipmentService(
     {
         if (!await store.CanViewOrderAsync(orderId, actorUserId, actorRole, cancellationToken))
             throw ShipmentOperationException.Forbidden("You cannot view this order deliveries.");
-        await ReconcileAsync(orderId, cancellationToken);
         var views = await store.ListAsync(actorUserId, actorRole, orderId, null, null, cancellationToken);
         if (views.Count == 0)
             throw ShipmentOperationException.NotFound("This order has no delivery parts yet.");
@@ -299,6 +364,7 @@ public sealed class ShipmentService(
 
             var now = timeProvider.GetUtcNow();
             var rows = await store.ListIssuableAsync(id, transactionCancellationToken);
+            if (deliveryGuard is not null) await deliveryGuard.ValidateAsync(view.Order.Id, transactionCancellationToken);
             if (rows.Count == 0)
             {
                 throw ShipmentOperationException.Conflict(
@@ -436,6 +502,10 @@ public sealed class ShipmentService(
         if (driver.WarehouseId != view.Shipment.WarehouseId || vehicle.WarehouseId != view.Shipment.WarehouseId)
             throw ShipmentOperationException.Conflict(
                 "Driver and vehicle must belong to the shipment's warehouse.");
+        if (vehicle.Capacity < view.Shipment.TotalQuantity)
+            throw ShipmentOperationException.Conflict(
+                $"Vehicle capacity is {vehicle.Capacity:0.###} cartons but the part requires " +
+                $"{view.Shipment.TotalQuantity:0.###}.");
 
         var now = timeProvider.GetUtcNow();
         view.Shipment.DriverId = driver.Id;
@@ -477,6 +547,7 @@ public sealed class ShipmentService(
                 throw ShipmentOperationException.Conflict(
                     "Assign a driver and vehicle before dispatching the shipment.");
 
+            if (deliveryGuard is not null) await deliveryGuard.ValidateAsync(view.Order.Id, token);
             var labels = await store.ListLabelsAsync(id, true, token);
             if (labels.Count == 0 || labels.Any(item => item.Label.Status != QrLabelStatuses.Picked))
                 throw ShipmentOperationException.Conflict(
@@ -552,8 +623,8 @@ public sealed class ShipmentService(
         string actorRole,
         CancellationToken cancellationToken)
     {
-        if (actorRole != SystemRoles.Retailer)
-            throw ShipmentOperationException.Forbidden("Only the order Retailer can confirm a shipment receipt.");
+        if (actorRole is not (SystemRoles.Admin or SystemRoles.Retailer))
+            throw ShipmentOperationException.Forbidden("Only the order Retailer or Admin can confirm a shipment receipt.");
         operationKey = NormalizeOperationKey(operationKey);
         var note = NormalizeNote(data.Note);
         var qrCodes = NormalizeQrCodes(data.QrCodes);

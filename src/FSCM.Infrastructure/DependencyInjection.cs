@@ -38,8 +38,8 @@ public static class DependencyInjection
         });
         services.AddSingleton(configuration.GetSection(RetailerActivationOptions.SectionName)
             .Get<RetailerActivationOptions>() ?? new RetailerActivationOptions());
-        services.AddHttpClient("GoogleMaps", client => client.Timeout = TimeSpan.FromSeconds(10));
-        services.AddSingleton<IMapProvider, GoogleMapsProvider>();
+        services.AddHttpClient("VietMap", client => client.Timeout = TimeSpan.FromSeconds(10));
+        services.AddSingleton<IMapProvider, VietMapProvider>();
         services.AddSingleton<IPasswordHasher, BcryptPasswordHasher>();
         services.AddSingleton<IIdentityTokenProvider, JwtIdentityTokenProvider>();
         services.AddSingleton<IQrCodeRenderer, QrCoderQrCodeRenderer>();
@@ -56,6 +56,8 @@ public static class DependencyInjection
         services.AddHostedService<InventoryOutboxHostedService>();
         services.Configure<OrderDeadlineOptions>(configuration.GetSection(OrderDeadlineOptions.SectionName));
         services.AddHostedService<OrderDeadlineHostedService>();
+        services.AddHostedService<AllocationRecoveryHostedService>();
+        services.Configure<AllocationRecoveryOptions>(configuration.GetSection("BackgroundJobs:AllocationRecovery"));
         services.AddSingleton<IPayOsGateway>(_ => new PayOsGateway(configuration));
 
         services.AddHttpClient("OpenAI", client =>

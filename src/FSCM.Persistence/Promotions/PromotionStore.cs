@@ -4,11 +4,30 @@ using FSCM.Persistence.DbContexts;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
 using System.Data;
+using System.Text.Json;
 
 namespace FSCM.Persistence.Promotions;
 
 public sealed class PromotionStore(AppDbContext dbContext) : IPromotionStore
 {
+    public async Task<CampaignSubmission?> FindCampaignSubmissionAsync(Guid requestId, CancellationToken cancellationToken)
+    {
+        // The audit receipt outlives request-key cleanup, so a delayed retry still replays safely.
+        var json = await dbContext.AuditLogRecords.AsNoTracking().Where(item => item.EntityName == "CampaignSubmission" && item.EntityId == requestId)
+            .Select(item => item.NewValues).SingleOrDefaultAsync(cancellationToken);
+        if (json is null) return null;
+        return JsonSerializer.Deserialize<CampaignSubmission>(json)
+            ?? throw PromotionOperationException.Conflict("Stored campaign submission could not be read.");
+    }
+
+    public void AddCampaignSubmission(Guid requestId, CampaignSubmission submission, DateTimeOffset now)
+    {
+        dbContext.IdempotencyKeyRecords.Add(new IdempotencyKey { Id = Guid.NewGuid(), Key = $"campaign:{requestId:N}",
+            Scope = "CampaignSubmission", UserAccountId = submission.ActorUserId, Status = "Completed", CreatedAt = now, ExpiresAt = now.AddDays(7) });
+        dbContext.AuditLogRecords.Add(new AuditLog { Id = Guid.NewGuid(), UserAccountId = submission.ActorUserId,
+            EntityName = "CampaignSubmission", EntityId = requestId, Action = "Created", NewValues = JsonSerializer.Serialize(submission), CreatedAt = now });
+    }
+
     public async Task<IReadOnlyCollection<PromotionView>> ListPromotionsAsync(
         bool includeInactive, CancellationToken cancellationToken)
     {
@@ -213,6 +232,7 @@ public sealed class PromotionStore(AppDbContext dbContext) : IPromotionStore
         catch (DbUpdateException exception) when (
             exception.InnerException is PostgresException { SqlState: PostgresErrorCodes.UniqueViolation })
         {
+            dbContext.ChangeTracker.Clear();
             throw PromotionOperationException.Conflict(
                 "A concurrent request created the same promotion assignment. Refresh and retry.");
         }

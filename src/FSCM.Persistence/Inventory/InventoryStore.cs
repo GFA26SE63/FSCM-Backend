@@ -13,8 +13,7 @@ public sealed class InventoryStore(AppDbContext dbContext) : IInventoryStore, II
     public Task<bool> CanAccessWarehouseAsync(Guid userId, string role, Guid warehouseId, CancellationToken cancellationToken) =>
         role is SystemRoles.Admin or SystemRoles.Operator
             ? Task.FromResult(true)
-            : dbContext.UserWarehouseAssignmentRecords.AsNoTracking().AnyAsync(item =>
-                item.UserAccountId == userId && item.WarehouseId == warehouseId && item.IsActive, cancellationToken);
+            : ReportingScopeQueries.ManagedWarehouses(dbContext, userId).AnyAsync(item => item.Id == warehouseId, cancellationToken);
 
     public Task<Warehouse?> FindWarehouseAsync(Guid warehouseId, CancellationToken cancellationToken) =>
         dbContext.WarehouseRecords.AsNoTracking().SingleOrDefaultAsync(item => item.Id == warehouseId, cancellationToken);
@@ -67,8 +66,7 @@ public sealed class InventoryStore(AppDbContext dbContext) : IInventoryStore, II
         var receipts = dbContext.GoodsReceiptRecords.AsNoTracking().AsQueryable();
         if (warehouseId.HasValue) receipts = receipts.Where(item => item.WarehouseId == warehouseId.Value);
         if (actorRole == SystemRoles.WarehouseKeeper)
-            receipts = receipts.Where(item => dbContext.UserWarehouseAssignmentRecords.Any(assignment =>
-                assignment.UserAccountId == actorUserId && assignment.WarehouseId == item.WarehouseId && assignment.IsActive));
+            receipts = receipts.Where(item => ReportingScopeQueries.ManagedWarehouses(dbContext, actorUserId).Select(w => w.Id).Contains(item.WarehouseId));
         var ids = await receipts.OrderByDescending(item => item.CreatedAt).Select(item => item.Id).ToArrayAsync(cancellationToken);
         var results = new List<GoodsReceiptView>(ids.Length);
         foreach (var id in ids)
@@ -113,8 +111,7 @@ public sealed class InventoryStore(AppDbContext dbContext) : IInventoryStore, II
         if (warehouseId.HasValue) batches = batches.Where(item => item.WarehouseId == warehouseId.Value);
         if (productId.HasValue) batches = batches.Where(item => item.ProductId == productId.Value);
         if (actorRole == SystemRoles.WarehouseKeeper)
-            batches = batches.Where(item => dbContext.UserWarehouseAssignmentRecords.Any(assignment =>
-                assignment.UserAccountId == actorUserId && assignment.WarehouseId == item.WarehouseId && assignment.IsActive));
+            batches = batches.Where(item => ReportingScopeQueries.ManagedWarehouses(dbContext, actorUserId).Select(w => w.Id).Contains(item.WarehouseId));
         return await CreateInventoryQuery(batches).ToArrayAsync(cancellationToken);
     }
 
@@ -129,8 +126,7 @@ public sealed class InventoryStore(AppDbContext dbContext) : IInventoryStore, II
         if (warehouseId.HasValue) history = history.Where(item => item.WarehouseId == warehouseId.Value);
         if (batchId.HasValue) history = history.Where(item => item.BatchId == batchId.Value);
         if (actorRole == SystemRoles.WarehouseKeeper)
-            history = history.Where(item => dbContext.UserWarehouseAssignmentRecords.Any(assignment =>
-                assignment.UserAccountId == actorUserId && assignment.WarehouseId == item.WarehouseId && assignment.IsActive));
+            history = history.Where(item => ReportingScopeQueries.ManagedWarehouses(dbContext, actorUserId).Select(w => w.Id).Contains(item.WarehouseId));
         return await (
             from transaction in history
             join batch in dbContext.BatchRecords.AsNoTracking() on transaction.BatchId equals batch.Id
@@ -201,6 +197,31 @@ public sealed class InventoryStore(AppDbContext dbContext) : IInventoryStore, II
     public void AddBatch(Batch batch) => dbContext.BatchRecords.Add(batch);
     public void AddBalance(InventoryBalance balance) => dbContext.InventoryBalanceRecords.Add(balance);
     public void AddTransaction(InventoryTransaction transaction) => dbContext.InventoryTransactionRecords.Add(transaction);
+
+    public async Task<string> NextQrLabelCodeAsync(CancellationToken cancellationToken)
+    {
+        // Same sequence and format as QrLabelStore, so codes stay unique across both paths.
+        var connection = dbContext.Database.GetDbConnection();
+        var openedHere = connection.State != System.Data.ConnectionState.Open;
+        if (openedHere) await connection.OpenAsync(cancellationToken);
+        try
+        {
+            await using var command = connection.CreateCommand();
+            command.CommandText = "SELECT nextval('\"QrLabelCodeSequence\"');";
+            var number = Convert.ToInt64(await command.ExecuteScalarAsync(cancellationToken));
+            return $"TEM-{number:000000}";
+        }
+        finally
+        {
+            if (openedHere) await connection.CloseAsync();
+        }
+    }
+
+    public void AddQrLabel(BatchQrLabel label, QrLabelEvent generatedEvent)
+    {
+        dbContext.BatchQrLabelRecords.Add(label);
+        dbContext.QrLabelEventRecords.Add(generatedEvent);
+    }
     public void AddReservation(Reservation reservation) => dbContext.ReservationRecords.Add(reservation);
     public void ClearTracking() => dbContext.ChangeTracker.Clear();
 

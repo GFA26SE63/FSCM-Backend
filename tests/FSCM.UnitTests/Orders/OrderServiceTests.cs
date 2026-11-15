@@ -5,13 +5,202 @@ using FSCM.Application.Features.Picking;
 using FSCM.Application.Features.WarehouseConfiguration;
 using FSCM.Domain.Authorization;
 using FSCM.Domain.Entities;
+using FSCM.Domain.Allocation;
 using DomainAllocation = FSCM.Domain.Entities.Allocation;
 
 namespace FSCM.UnitTests.Orders;
 
 public sealed class OrderServiceTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Replaying_a_captured_order_resumes_allocation_without_duplicate_SO(bool offline)
+    {
+        var allocator = new InterruptOnceAllocator();
+        var fixture = new Fixture(allocator: allocator);
+        if (offline)
+        {
+            await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.SubmitOfflineAsync(10, 900m));
+            var result = await fixture.SubmitOfflineAsync(10, 900m);
+            Assert.Equal(fixture.Store.Orders.Single().Id, result.Id);
+        }
+        else
+        {
+            await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.CreateAsync(10));
+            var result = await fixture.CreateAsync(10);
+            Assert.Equal(fixture.Store.Orders.Single().Id, result.Id);
+        }
+        Assert.Equal(2, allocator.Calls);
+        Assert.Single(fixture.Store.Orders);
+    }
+
+    private sealed class InterruptOnceAllocator : IRealTimeAllocationService
+    {
+        public int Calls { get; private set; }
+        public Task AllocateAsync(Guid id, Guid actor, CancellationToken ct)
+        {
+            if (++Calls == 1) throw new InvalidOperationException("Simulated failure after SO commit");
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class StubAvailabilityPolicy(IOrderStore store) : AllocationPolicyService(null!, null!)
+    {
+        public override Task<AllocationWeights> WeightsAsync(CancellationToken ct) => Task.FromResult(new AllocationWeights());
+        public override async Task<BatchCandidate[]> CandidatesAsync(Guid retailerId,
+            IReadOnlyCollection<RealTimeInventoryCandidate> positions, DateTimeOffset at, CancellationToken ct)
+        {
+            var location = await store.FindRetailerLocationAsync(retailerId, ct);
+            return positions.Select(p => new BatchCandidate(p.Batch.Id, p.Batch.BatchCode, p.Warehouse.Id, p.Warehouse.Code,
+                new DateTimeOffset(p.Batch.ExpirationDate.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero), p.IssuableQuantity,
+                location is null || Math.Abs(location.Latitude - (p.WarehouseLatitude ?? 0)) > .1m ? 25000 : 5000,
+                at.AddDays(1), DateOnly.FromDateTime(at.AddDays(1).UtcDateTime))).ToArray();
+        }
+    }
+
     private static readonly DateTimeOffset Now = new(2026, 10, 14, 3, 0, 0, TimeSpan.Zero);
+
+    [Fact]
+    public async Task Price_contract_separates_quantity_promotion_from_final_shelf_life_discount()
+    {
+        var captured = await new Fixture().CreateAsync(quantity: 10);
+        Assert.Null(captured.OfficialAmount);
+        Assert.Null(Assert.Single(captured.Lines).OfficialNetAmount);
+        var pricedLine = Assert.Single(captured.Lines) with
+        {
+            DiscountAmount = 145m, NetAmount = 855m, FinalPricePendingAllocation = false
+        };
+        var priced = captured with
+        {
+            FinalAmount = 855m, DiscountAmount = 145m,
+            FinalPricePendingAllocation = false, Lines = [pricedLine]
+        };
+        Assert.Equal(100m, pricedLine.OrdinaryPromotionDiscountAmount);
+        Assert.Equal(900m, pricedLine.IndicativeNetAmount);
+        Assert.Equal(855m, pricedLine.OfficialNetAmount);
+        Assert.Equal(900m, priced.IndicativeAmount);
+        Assert.Equal(855m, priced.OfficialAmount);
+        Assert.Equal(0m, (pricedLine with { OrdinaryPromotion = null }).OrdinaryPromotionDiscountAmount);
+    }
+
+    [Fact]
+    public async Task Availability_preserves_each_warehouse_and_does_not_subtract_a_safety_buffer()
+    {
+        var f = new Fixture();
+        f.Store.Balance.AvailableQuantity = 10;
+        var second = new Warehouse { Id = Guid.NewGuid(), Code = "WH-Q7", Name = "Kho Quận 7", IsActive = true };
+        var batch = new Batch { Id = Guid.NewGuid(), WarehouseId = second.Id, ProductId = f.Store.Product.Id,
+            BatchCode = "WH-Q7-DEMO", ExpirationDate = f.Store.Batch.ExpirationDate };
+        f.Store.AdditionalCandidates.Add(new(batch, new InventoryBalance { AvailableQuantity = 80 }, second, 10.802m,106.743m,5));
+        var service = new OrderAvailabilityService(f.Store,f.Service,new StubAvailabilityPolicy(f.Store),new FixedTimeProvider(Now));
+        var result = await service.CheckAsync(f.Store.Retailer.Id,[f.Store.Product.Id],f.SalesUserId,SystemRoles.Sales,default);
+        var product = Assert.Single(result.Items);
+        Assert.Equal(85m,product.EligibleQuantity);
+        Assert.Equal(10m,product.Warehouses.Single(w=>w.WarehouseCode=="WH-TD").EligibleQuantity);
+        Assert.Equal(75m,product.Warehouses.Single(w=>w.WarehouseCode=="WH-Q7").EligibleQuantity);
+        Assert.Equal(2,product.Warehouses.Count);
+        Assert.Empty(f.Store.Orders);
+        Assert.Equal(0m,f.Store.Balance.ReservedQuantity);
+    }
+
+    [Fact]
+    public async Task Retailer_availability_returns_only_the_eligible_total()
+    {
+        var fixture = new Fixture();
+        fixture.Store.Retailer.UserAccountId = fixture.SalesUserId;
+        var service = new OrderAvailabilityService(fixture.Store, fixture.Service,
+            new StubAvailabilityPolicy(fixture.Store), new FixedTimeProvider(Now));
+        var result = await service.CheckAsync(fixture.Store.Retailer.Id,
+            [fixture.Store.Product.Id], fixture.SalesUserId, SystemRoles.Retailer, default);
+        var item = Assert.Single(result.Items);
+        Assert.Equal(50m, item.EligibleQuantity);
+        Assert.Empty(item.Warehouses);
+        Assert.Equal(0m, fixture.Store.Balance.ReservedQuantity);
+    }
+
+    [Theory]
+    [InlineData(2, 0, 0)]
+    [InlineData(30, 0, 50)]
+    [InlineData(30, 20, 30)]
+    [InlineData(30, 60, 0)]
+    public async Task Availability_uses_delivery_mlor_and_locked_stock_without_reserving(
+        int daysUntilExpiry, int lockedQuantity, int expected)
+    {
+        var fixture = new Fixture();
+        fixture.Store.Batch.ExpirationDate = DateOnly.FromDateTime(Now.AddDays(daysUntilExpiry).UtcDateTime);
+        fixture.Store.ActiveLockedQuantity = lockedQuantity;
+        var service = new OrderAvailabilityService(fixture.Store, fixture.Service,
+            new StubAvailabilityPolicy(fixture.Store), new FixedTimeProvider(Now));
+        var result = await service.CheckAsync(fixture.Store.Retailer.Id,
+            [fixture.Store.Product.Id], fixture.SalesUserId, SystemRoles.Sales, default);
+        Assert.Equal(expected, Assert.Single(result.Items).EligibleQuantity);
+        Assert.Equal(expected, Assert.Single(Assert.Single(result.Items).Warehouses).EligibleQuantity);
+        Assert.Equal(0m, fixture.Store.Balance.ReservedQuantity);
+        Assert.Empty(fixture.Store.Orders);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(50)]
+    public async Task Availability_excludes_stock_outside_the_store_service_radius(int available)
+    {
+        var fixture = new Fixture();
+        fixture.Store.RetailerLocation.Latitude = 0;
+        fixture.Store.Balance.AvailableQuantity = available;
+        var service = new OrderAvailabilityService(fixture.Store, fixture.Service,
+            new StubAvailabilityPolicy(fixture.Store), new FixedTimeProvider(Now));
+        var result = await service.CheckAsync(fixture.Store.Retailer.Id,
+            [fixture.Store.Product.Id], fixture.SalesUserId, SystemRoles.Sales, default);
+        Assert.Equal(0, Assert.Single(result.Items).EligibleQuantity);
+        Assert.Equal("OutsideServiceRadius", Assert.Single(Assert.Single(result.Items).Warehouses).UnavailableReason);
+    }
+
+    [Theory]
+    [InlineData(false, "MissingMlor")]
+    [InlineData(true, "OutsideServiceRadius")]
+    public async Task Availability_keeps_warehouse_details_when_mlor_is_missing(bool outside, string reason)
+    {
+        var fixture = new Fixture();
+        fixture.Store.MlorConfigured = false;
+        if (outside) fixture.Store.RetailerLocation.Latitude = 0;
+        var service = new OrderAvailabilityService(fixture.Store, fixture.Service,
+            new StubAvailabilityPolicy(fixture.Store), new FixedTimeProvider(Now));
+        var result = await service.CheckAsync(fixture.Store.Retailer.Id,
+            [fixture.Store.Product.Id], fixture.SalesUserId, SystemRoles.Sales, default);
+        var item = Assert.Single(result.Items);
+        var warehouse = Assert.Single(item.Warehouses);
+        Assert.Equal(0m, item.EligibleQuantity);
+        Assert.Equal(fixture.Store.Warehouse.Id, warehouse.WarehouseId);
+        Assert.Equal(fixture.Store.Warehouse.Name, warehouse.WarehouseName);
+        Assert.Equal(reason, warehouse.UnavailableReason);
+        Assert.NotNull(warehouse.DistanceMeters);
+        Assert.Equal(0m, fixture.Store.Balance.ReservedQuantity);
+    }
+
+    [Fact]
+    public async Task Retailer_creates_own_order_with_promotions_and_replays_without_duplicates()
+    {
+        var fixture = new Fixture();
+        fixture.Store.Retailer.UserAccountId = fixture.SalesUserId;
+        var request = fixture.Request(10);
+        var result = await fixture.Service.CreateAsync(request, fixture.SalesUserId, default, SystemRoles.Retailer);
+        var replay = await fixture.Service.CreateAsync(request, fixture.SalesUserId, default, SystemRoles.Retailer);
+        Assert.Equal(result.Id, replay.Id);
+        Assert.Equal(100m, result.DiscountAmount);
+        Assert.Single(fixture.Store.Orders);
+    }
+
+    [Fact]
+    public async Task Retailer_cannot_order_or_price_an_unlinked_store_even_with_sales_membership()
+    {
+        var fixture = new Fixture();
+        await Assert.ThrowsAsync<OrderOperationException>(() =>
+            fixture.Service.CreateAsync(fixture.Request(10), fixture.SalesUserId, default, SystemRoles.Retailer));
+        await Assert.ThrowsAsync<OrderOperationException>(() =>
+            fixture.Service.EnsurePricingScopeAsync(fixture.Store.Retailer.Id, fixture.SalesUserId, SystemRoles.Retailer, default));
+        Assert.Empty(fixture.Store.Orders);
+    }
 
     [Fact]
     public async Task Sales_captures_indicative_order_without_selecting_batch_or_changing_inventory()
@@ -20,7 +209,7 @@ public sealed class OrderServiceTests
 
         var result = await fixture.CreateAsync(quantity: 10);
 
-        Assert.Equal(OrderStatuses.PendingApproval, result.Status);
+        Assert.Equal(OrderStatuses.Allocating, result.Status);
         Assert.Equal(1_000m, result.SubtotalAmount);
         Assert.Equal(100m, result.DiscountAmount);
         Assert.Equal(900m, result.FinalAmount);
@@ -134,7 +323,7 @@ public sealed class OrderServiceTests
 
         var result = await fixture.CreateAsync(10);
 
-        Assert.Equal(OrderStatuses.PendingApproval, result.Status);
+        Assert.Equal(OrderStatuses.Allocating, result.Status);
         Assert.Single(fixture.Store.Orders);
         Assert.Empty(fixture.Store.Allocations);
         Assert.Equal(5m, fixture.Store.Balance.AvailableQuantity);
@@ -152,93 +341,48 @@ public sealed class OrderServiceTests
         Assert.Empty(fixture.Store.Orders);
     }
 
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task Reject_or_cancel_has_no_inventory_side_effect_before_allocation(bool cancel)
+    // Review 2: there is no SO approval/rejection. The only pre-allocation exit is Withdraw while
+    // the order is still Allocating; after Quoted the retailer rejects the quote instead.
+    [Fact]
+    public async Task Sales_can_withdraw_their_own_order_before_allocation_without_inventory_side_effect()
     {
         var fixture = new Fixture();
         var created = await fixture.CreateAsync(10);
 
-        var result = cancel
-            ? await fixture.Service.CancelAsync(created.Id, created.Version, fixture.SalesUserId,
-                SystemRoles.Sales, "Khách hàng đổi kế hoạch", default)
-            : await fixture.Service.RejectAsync(created.Id, created.Version,
-                "Không đáp ứng lịch giao", fixture.OperatorUserId, SystemRoles.Operator, default);
+        var result = await fixture.Service.CancelAsync(created.Id, created.Version, fixture.SalesUserId,
+            SystemRoles.Sales, "Khách hàng đổi kế hoạch", default);
 
-        Assert.Equal(cancel ? OrderStatuses.Cancelled : OrderStatuses.Rejected, result.Status);
+        Assert.Equal(OrderStatuses.Withdrawn, result.Status);
         Assert.Equal(50m, fixture.Store.Balance.AvailableQuantity);
         Assert.Equal(0, fixture.Inventory.ReleaseCalls);
-        Assert.Equal(cancel ? 1 : 0, fixture.PickingPlan.CancelCalls);
+        Assert.Equal(1, fixture.PickingPlan.CancelCalls);
     }
 
     [Fact]
-    public async Task Admin_can_review_an_order_not_only_Operator()
+    public async Task Operator_can_withdraw_an_order_still_awaiting_allocation()
     {
         var fixture = new Fixture();
         var created = await fixture.CreateAsync(10);
 
-        var approved = await fixture.Service.ApproveAsync(
-            created.Id, created.Version, fixture.OperatorUserId, SystemRoles.Admin, default);
-
-        Assert.Equal(OrderStatuses.PendingAllocation, approved.Status);
-    }
-
-    [Fact]
-    public async Task Warehouse_keeper_cannot_review_an_order()
-    {
-        var fixture = new Fixture();
-        var created = await fixture.CreateAsync(10);
-
-        var exception = await Assert.ThrowsAsync<OrderOperationException>(() =>
-            fixture.Service.ApproveAsync(created.Id, created.Version, fixture.OperatorUserId,
-                SystemRoles.WarehouseKeeper, default));
-
-        Assert.Equal("forbidden", exception.Code);
-    }
-
-    [Fact]
-    public async Task Reviewing_twice_is_a_no_op_rather_than_a_second_decision()
-    {
-        var fixture = new Fixture();
-        var created = await fixture.CreateAsync(10);
-        var approved = await fixture.Service.ApproveAsync(
-            created.Id, created.Version, fixture.OperatorUserId, SystemRoles.Operator, default);
-
-        var again = await fixture.Service.ApproveAsync(
-            approved.Id, approved.Version, fixture.OperatorUserId, SystemRoles.Operator, default);
-
-        Assert.Equal(approved.Version, again.Version);
-        Assert.Equal(0, fixture.Inventory.ReserveCalls);
-        Assert.Equal(0, fixture.PickingPlan.Calls);
-    }
-
-    [Fact]
-    public async Task An_order_waiting_for_the_run_can_still_be_cancelled()
-    {
-        var fixture = new Fixture();
-        var created = await fixture.CreateAsync(10);
-        var approved = await fixture.Service.ApproveAsync(
-            created.Id, created.Version, fixture.OperatorUserId, SystemRoles.Operator, default);
-
-        var cancelled = await fixture.Service.CancelAsync(approved.Id, approved.Version,
+        var withdrawn = await fixture.Service.CancelAsync(created.Id, created.Version,
             fixture.OperatorUserId, SystemRoles.Operator, "Retailer đóng cửa", default);
 
-        Assert.Equal(OrderStatuses.Cancelled, cancelled.Status);
+        Assert.Equal(OrderStatuses.Withdrawn, withdrawn.Status);
     }
 
     [Fact]
-    public async Task Rejecting_without_a_reason_is_refused()
+    public async Task Withdrawing_twice_is_idempotent()
     {
         var fixture = new Fixture();
         var created = await fixture.CreateAsync(10);
+        var withdrawn = await fixture.Service.CancelAsync(created.Id, created.Version,
+            fixture.OperatorUserId, SystemRoles.Operator, "Retailer đóng cửa", default);
 
-        var exception = await Assert.ThrowsAsync<OrderOperationException>(() =>
-            fixture.Service.RejectAsync(created.Id, created.Version, "   ",
-                fixture.OperatorUserId, SystemRoles.Operator, default));
+        var again = await fixture.Service.CancelAsync(withdrawn.Id, withdrawn.Version,
+            fixture.OperatorUserId, SystemRoles.Operator, "Retailer đóng cửa", default);
 
-        Assert.Equal("validation_error", exception.Code);
-        Assert.Equal(OrderStatuses.PendingApproval, fixture.Store.Orders.Single().Status);
+        Assert.Equal(OrderStatuses.Withdrawn, again.Status);
+        Assert.Equal(withdrawn.Version, again.Version);
     }
 
     [Fact]
@@ -249,7 +393,7 @@ public sealed class OrderServiceTests
         var result = await fixture.SubmitOfflineAsync(quantity: 10, estimate: 900m);
 
         Assert.Equal(OrderSources.Offline, result.Source);
-        Assert.Equal(OrderStatuses.PendingApproval, result.Status);
+        Assert.Equal(OrderStatuses.Allocating, result.Status);
         Assert.Equal(900m, result.FinalAmount);
         Assert.Equal(900m, result.OfflineEstimatedAmount);
         Assert.False(result.HasOfflineDifference);
@@ -321,7 +465,7 @@ public sealed class OrderServiceTests
     }
 
     [Fact]
-    public async Task Approved_run_read_preserves_each_batch_price_and_warehouse_progress()
+    public async Task Allocation_read_preserves_each_batch_price_and_warehouse_progress()
     {
         var fixture = new Fixture();
         var created = await fixture.CreateAsync(10);
@@ -340,13 +484,12 @@ public sealed class OrderServiceTests
 
         var result = await fixture.Service.GetAsync(created.Id, fixture.SalesUserId, SystemRoles.Sales, default);
 
-        Assert.Equal(740m, result.OfficialAmount);
         Assert.Equal("RUN-20261020", result.AllocationRunCode);
-        Assert.Equal(3, result.AllocationPlanVersion);
+        // The order is still Allocating (it has not reached Quoted), so the state follows its status.
+        Assert.Equal("Allocating", result.AllocationState);
         var fragments = Assert.Single(result.Lines).AllocationFragments.OrderBy(item => item.Sequence).ToArray();
         Assert.Equal([80m, 70m], fragments.Select(item => item.FinalUnitPrice));
         Assert.Equal([320m, 420m], fragments.Select(item => item.NetAmount));
-        Assert.Equal(740m, result.Lines.Single().OfficialNetAmount);
         Assert.Equal("SHP-001", Assert.Single(result.WarehouseProgress).ShipmentCode);
     }
 
@@ -370,7 +513,7 @@ public sealed class OrderServiceTests
 
         public FakeOrderReleaseStore Release { get; }
 
-        public Fixture(decimal physicalQuantity = 50)
+        public Fixture(decimal physicalQuantity = 50, IRealTimeAllocationService? allocator = null)
         {
             Store = new FakeStore(SalesUserId, physicalQuantity);
             Inventory = new FakeInventoryLifecycle(Store);
@@ -380,7 +523,7 @@ public sealed class OrderServiceTests
             // holds nothing, so cancelling reports zero released and these tests stay about the
             // order's own state machine.
             Service = new OrderService(Store, new FakePricing(), Inventory, PickingPlan,
-                new OrderReleaseService(Release, new FixedTimeProvider(Now)), new FixedTimeProvider(Now));
+                new OrderReleaseService(Release, new FixedTimeProvider(Now)), new FixedTimeProvider(Now), allocator);
         }
 
         public CreateAssistedOrderData Request(int quantity) => new(
@@ -442,6 +585,9 @@ public sealed class OrderServiceTests
         public InventoryBalance Balance { get; }
         public MapLocation RetailerLocation { get; }
         public bool TerritoryAllowed { get; set; } = true;
+        public List<OrderInventoryCandidate> AdditionalCandidates { get; } = [];
+        public decimal ActiveLockedQuantity { get; set; }
+        public bool MlorConfigured { get; set; } = true;
         public Dictionary<string, string> Configurations { get; } = new(StringComparer.Ordinal)
         {
             [BusinessConfigurationKeys.AllocationWeights] = "{\"expiry\":0.5,\"distance\":0.3,\"coverage\":0.2}",
@@ -506,6 +652,9 @@ public sealed class OrderServiceTests
 
         public Task<SalesOrder?> FindByClientOrderKeyAsync(Guid clientOrderKey, CancellationToken cancellationToken) =>
             Task.FromResult(Orders.SingleOrDefault(item => item.ClientOrderKey == clientOrderKey));
+        public Task<OrderRetailerContext?> FindLinkedRetailerContextAsync(Guid userId, Guid retailerId, CancellationToken cancellationToken) =>
+            Task.FromResult<OrderRetailerContext?>(Retailer.UserAccountId == userId && retailerId == Retailer.Id
+                ? new(Retailer, Guid.Parse("20000000-0000-0000-0000-000000000001")) : null);
         public Task<OrderRetailerContext?> FindRetailerContextAsync(Guid userId, Guid retailerId, CancellationToken cancellationToken) =>
             Task.FromResult<OrderRetailerContext?>(TerritoryAllowed && userId == salesUserId && retailerId == Retailer.Id
                 ? new(Retailer, Guid.Parse("20000000-0000-0000-0000-000000000001")) : null);
@@ -513,14 +662,14 @@ public sealed class OrderServiceTests
             Task.FromResult<Product?>(productId == Product.Id ? Product : null);
         public Task<IReadOnlyCollection<OrderInventoryCandidate>> ListCandidatesAsync(Guid productId, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyCollection<OrderInventoryCandidate>>(
-                [new(Batch, Balance, Warehouse, 10.802m, 106.743m)]);
+                [new(Batch, Balance, Warehouse, 10.802m, 106.743m, ActiveLockedQuantity), .. AdditionalCandidates]);
         public Task<MapLocation?> FindRetailerLocationAsync(Guid retailerId, CancellationToken cancellationToken) =>
             Task.FromResult<MapLocation?>(retailerId == Retailer.Id ? RetailerLocation : null);
         public Task<OrderMlorSnapshot?> ResolveMlorAsync(
             Guid retailerId, Guid productId, DateTimeOffset at, CancellationToken cancellationToken) =>
-            Task.FromResult<OrderMlorSnapshot?>(new(
+            Task.FromResult<OrderMlorSnapshot?>(MlorConfigured ? new(
                 "Sku", Guid.Parse("30000000-0000-0000-0000-000000000001"), 2,
-                null, 0.25m, null, at));
+                null, 0.25m, null, at) : null);
         public Task<string?> FindConfigurationAsync(string key, CancellationToken cancellationToken) =>
             Task.FromResult(Configurations.GetValueOrDefault(key));
         public Task<string> NextOrderCodeAsync(CancellationToken cancellationToken) => Task.FromResult("DH-001030");
