@@ -5,14 +5,23 @@ using FSCM.Infrastructure.BackgroundJobs;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
+using FSCM.Persistence.WarehouseWork;
 
 namespace FSCM.API.Controllers;
 
 [ApiController]
 [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator},{SystemRoles.WarehouseKeeper}")]
 [Route("api/v1/inventory")]
-public sealed class InventoryController(InventoryService service, IOptions<DateTrackerOptions> dateTrackerOptions) : ControllerBase
+public sealed class InventoryController(InventoryService service, IOptions<DateTrackerOptions> dateTrackerOptions,
+    FactoryQrInventoryService factoryQrInventory) : ControllerBase
 {
+    [HttpGet("qr-codes")]
+    public Task<FactoryQrInventoryPage> QrCodes([FromQuery] Guid? warehouseId, [FromQuery] string? search,
+        [FromQuery] string? status, [FromQuery] string? syncStatus, [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 50, CancellationToken cancellationToken = default) =>
+        factoryQrInventory.ListAsync(GetActorUserId(), GetActorRole(), warehouseId, search, status,
+            syncStatus, page, pageSize, cancellationToken);
+
     [HttpGet]
     public Task<IReadOnlyCollection<BatchInventoryResult>> List(
         [FromQuery] Guid? warehouseId, [FromQuery] Guid? productId,

@@ -40,6 +40,7 @@ public interface IPickingPlanService
 
 public interface IPickingStore
 {
+    Task<bool> IsDocumentControlledAsync(Guid pickingListId, CancellationToken ct) => Task.FromResult(false);
     Task<bool> CanAccessWarehouseAsync(Guid userId, string role, Guid warehouseId, CancellationToken cancellationToken);
     Task<IReadOnlyCollection<PickingView>> ListAsync(
         Guid userId, string role, Guid? warehouseId, string? status, CancellationToken cancellationToken);

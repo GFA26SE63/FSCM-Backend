@@ -42,3 +42,7 @@ logs/
 
 # Local allocation snapshots and benchmark results
 /artifacts/allocation-benchmark/
+
+# Legacy local runtime retained while old factory process is running; source is in sibling repo.
+/standalone/FSCM.Traceability/
+/.ci/traceability/

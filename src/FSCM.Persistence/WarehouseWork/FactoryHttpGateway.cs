@@ -1,0 +1,45 @@
+using System.Net.Http.Json;
+using FSCM.Application.Features.Picking;
+using FSCM.Domain.Entities;
+
+namespace FSCM.Persistence.WarehouseWork;
+
+public sealed record FactorySourceTrace(FactoryProductionBatch Batch, string Sku, FactoryPallet? Pallet, FactoryCarton? Carton,
+    FactoryProductUnit? Unit, FactoryProductUnit[] Units, string[] CartonCodes, Guid[] DestinationWarehouseIds);
+
+public interface IFactoryGateway
+{
+    Task<PalletManifest> ManifestAsync(string code, CancellationToken ct);
+    Task<FactorySourceTrace> TraceAsync(string code, CancellationToken ct);
+    Task<Guid> AcknowledgeReceiptAsync(FactoryReceiptSync receipt, CancellationToken ct);
+}
+
+public sealed class FactoryHttpGateway(HttpClient http) : IFactoryGateway
+{
+    private async Task<T> Send<T>(HttpMethod method, string path, object? body, CancellationToken ct)
+    {
+        using var request = new HttpRequestMessage(method, path);
+        if (body is not null) request.Content = JsonContent.Create(body);
+        try
+        {
+            using var response = await http.SendAsync(request, ct);
+            if (response.StatusCode == System.Net.HttpStatusCode.NotFound) throw PickingOperationException.NotFound("Không tìm thấy mã trong hệ thống traceability.");
+            if (!response.IsSuccessStatusCode) throw PickingOperationException.Conflict("Traceability từ chối yêu cầu. Kiểm tra dịch vụ và khóa tích hợp.");
+            return await response.Content.ReadFromJsonAsync<T>(ct) ?? throw PickingOperationException.Conflict("Manifest traceability không hợp lệ.");
+        }
+        catch (HttpRequestException) { throw PickingOperationException.Conflict("Không kết nối được API traceability. Thử lại sau."); }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested) { throw PickingOperationException.Conflict("API traceability phản hồi quá thời gian chờ."); }
+    }
+    public Task<PalletManifest> ManifestAsync(string code, CancellationToken ct) => Send<PalletManifest>(HttpMethod.Get, $"api/integration/pallets/{Uri.EscapeDataString(code)}/manifest", null, ct);
+    public Task<FactorySourceTrace> TraceAsync(string code, CancellationToken ct) => Send<FactorySourceTrace>(HttpMethod.Get, $"api/integration/trace?code={Uri.EscapeDataString(code)}", null, ct);
+    public async Task<Guid> AcknowledgeReceiptAsync(FactoryReceiptSync receipt, CancellationToken ct)
+    {
+        var response = await Send<Acknowledgement>(HttpMethod.Post, "api/integration/receipts", new {
+            receipt.PalletId, receipt.ReceiptDocumentId, receipt.WarehouseId, receipt.ReceivedAt, receipt.ReceiptInspectionJson
+        }, ct);
+        if (response.ReceiptInspectionJson != receipt.ReceiptInspectionJson)
+            throw PickingOperationException.Conflict("Traceability chưa xác nhận chi tiết kiểm đếm; cần cập nhật dịch vụ nguồn.");
+        return response.Id;
+    }
+    private sealed record Acknowledgement(Guid Id, string? ReceiptInspectionJson);
+}

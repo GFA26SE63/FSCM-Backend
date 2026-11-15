@@ -5,6 +5,8 @@ namespace FSCM.Domain.Entities;
 public sealed class Batch
 {
     public Guid Id { get; set; }
+    public Guid? FactoryProductionBatchId { get; set; }
+    public DateOnly? WarehouseReceiptDate { get; set; }
     public Guid? ParentBatchId { get; set; }
     public Guid? RootBatchId { get; set; }
     public Guid WarehouseId { get; set; }

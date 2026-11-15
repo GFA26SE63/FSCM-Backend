@@ -5,6 +5,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
+    <TraceabilityProjectPath Condition="'$(TraceabilityProjectPath)' == ''">../../../FSCM-Traceability/FSCM.Traceability.csproj</TraceabilityProjectPath>
   </PropertyGroup>
 
   <ItemGroup>
@@ -20,7 +21,9 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\FSCM.API\FSCM.API.csproj" />
+    <ProjectReference Include="..\..\src\FSCM.API\FSCM.API.csproj" Aliases="global,WarehouseApi" />
+    <ProjectReference Include="$(TraceabilityProjectPath)" />
   </ItemGroup>
 
 </Project>
+

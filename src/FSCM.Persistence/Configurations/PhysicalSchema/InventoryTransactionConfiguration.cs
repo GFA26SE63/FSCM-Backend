@@ -30,6 +30,6 @@ public sealed class InventoryTransactionConfiguration : IEntityTypeConfiguration
         builder.HasOne<GoodsReceipt>().WithMany().HasForeignKey(entity => entity.GoodsReceiptId).OnDelete(DeleteBehavior.Restrict);
         builder.HasOne<GoodsReceiptLine>().WithMany().HasForeignKey(entity => entity.GoodsReceiptLineId).OnDelete(DeleteBehavior.Restrict);
         builder.HasOne<UserAccount>().WithMany().HasForeignKey(entity => entity.CreatedByUserId).OnDelete(DeleteBehavior.Restrict);
-        builder.ToTable(table => table.HasCheckConstraint("CK_INVENTORY_TRANSACTION_TransactionType", "\"TransactionType\" BETWEEN 0 AND 8"));
+        builder.ToTable(table => table.HasCheckConstraint("CK_INVENTORY_TRANSACTION_TransactionType", "\"TransactionType\" BETWEEN 0 AND 10"));
     }
 }

@@ -1,3 +1,6 @@
+extern alias WarehouseApi;
+using WarehouseProgram = WarehouseApi::Program;
+
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
@@ -85,7 +88,7 @@ public sealed class ProductCloneApiTests : IClassFixture<IdentityAuthorizationTe
         Assert.Equal(ProductStatuses.Published, store.Source.Status);
     }
 
-    private WebApplicationFactory<Program> CreateFactory(CloneCatalogStore store) =>
+    private WebApplicationFactory<WarehouseProgram> CreateFactory(CloneCatalogStore store) =>
         identityFactory.WithWebHostBuilder(builder => builder.ConfigureTestServices(services =>
         {
             services.RemoveAll<ICatalogStore>();
