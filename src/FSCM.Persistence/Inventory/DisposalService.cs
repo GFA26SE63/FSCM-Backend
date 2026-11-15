@@ -173,13 +173,19 @@ public sealed class DisposalService(AppDbContext db, TimeProvider clock)
             var all = await ListAsync(actor, role, null, ct);
             return all.Where(r => documents.Any(w => w.WriteOffCode == r.Code)).ToArray();
         }
-        catch (Exception ex) when (ex is DbUpdateConcurrencyException
-            || ex is PostgresException { SqlState: "40001" or "40P01" }
-            || ex is DbUpdateException { InnerException: PostgresException { SqlState: "23505" or "40001" } })
+        catch (Exception ex) when (IsStorageConflict(ex))
         {
             throw InventoryOperationException.Conflict("Tồn kho vừa thay đổi. Tải lại và thử lại cùng mã thao tác.");
         }
     }
+
+    private static bool IsStorageConflict(Exception exception) => exception switch
+    {
+        DbUpdateConcurrencyException => true,
+        PostgresException { SqlState: "40001" or "40P01" or "23505" } => true,
+        _ when exception.InnerException is not null => IsStorageConflict(exception.InnerException),
+        _ => false
+    };
 
     private static Guid DocumentId(Guid operation, Guid actor, Guid warehouse) =>
         new(SHA256.HashData(Encoding.UTF8.GetBytes($"{operation:N}:{actor:N}:{warehouse:N}"))[..16]);
