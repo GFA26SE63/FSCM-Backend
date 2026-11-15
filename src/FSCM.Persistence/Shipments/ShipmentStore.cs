@@ -13,6 +13,9 @@ namespace FSCM.Persistence.Shipments;
 
 public sealed class ShipmentStore(AppDbContext dbContext) : IShipmentStore
 {
+    public Task<bool> IsDocumentControlledPickingAsync(Guid pickingListId, CancellationToken ct) =>
+        dbContext.WarehouseDocumentLines.AnyAsync(l => l.PickingListId == pickingListId &&
+            dbContext.WarehouseDocuments.Any(d => d.Id == l.DocumentId && d.Kind == "Request" && d.Status != "Cancelled"), ct);
     public Task<bool> CanAccessWarehouseAsync(Guid userId, string role, Guid warehouseId, CancellationToken cancellationToken) =>
         role is SystemRoles.Admin or SystemRoles.Operator
             ? Task.FromResult(true)
@@ -88,10 +91,23 @@ public sealed class ShipmentStore(AppDbContext dbContext) : IShipmentStore
             join order in dbContext.SalesOrderRecords.AsNoTracking()
                 on shipment.SalesOrderId equals order.Id
             where shipment.Id == shipmentId
-            select new { list.PickingCode, order.OrderCode, shipment.WarehouseId })
+            select new { list.PickingCode, PickingListId = list.Id, order.OrderCode, shipment.WarehouseId })
             .SingleOrDefaultAsync(cancellationToken);
         if (shipmentInfo is null) return [];
 
+        if (await IsDocumentControlledPickingAsync(shipmentInfo.PickingListId, cancellationToken))
+        {
+            var activeIds = from c in dbContext.WarehouseDocumentCartons
+                            join l in dbContext.WarehouseDocumentLines on c.LineId equals l.Id
+                            join d in dbContext.WarehouseDocuments on c.DocumentId equals d.Id
+                            where l.PickingListId == shipmentInfo.PickingListId && c.ScannedAt != null &&
+                                (d.Kind == "Picking" || d.Kind == "Issue") && d.Status != "Cancelled"
+                            select c.LabelId;
+            var activeLabels = dbContext.BatchQrLabelRecords.Where(l => activeIds.Contains(l.Id));
+            if (!forUpdate) activeLabels = activeLabels.AsNoTracking();
+            return (await activeLabels.OrderBy(l => l.QrCode).ToArrayAsync(cancellationToken))
+                .Select(l => new ShipmentLabelView(l, l.BatchId)).ToArray();
+        }
         var ids = await (
             from labelEvent in dbContext.QrLabelEventRecords.AsNoTracking()
             join label in dbContext.BatchQrLabelRecords.AsNoTracking()
@@ -279,6 +295,11 @@ public sealed class ShipmentStore(AppDbContext dbContext) : IShipmentStore
     public async Task ExecuteInTransactionAsync(
         Func<CancellationToken, Task> operation, CancellationToken cancellationToken)
     {
+        if (dbContext.Database.CurrentTransaction is not null)
+        {
+            await operation(cancellationToken);
+            return;
+        }
         var strategy = dbContext.Database.CreateExecutionStrategy();
         await strategy.ExecuteAsync(async () =>
         {

@@ -15,7 +15,7 @@ public sealed class AllocationTraceScoreConfiguration : IEntityTypeConfiguration
         builder.Property(entity => entity.Iteration).IsRequired();
         builder.Property(entity => entity.Rank).IsRequired();
         builder.Property(entity => entity.BatchId).HasColumnType("uuid").IsRequired();
-        builder.Property(entity => entity.BatchCodeSnapshot).HasMaxLength(50).IsRequired();
+        builder.Property(entity => entity.BatchCodeSnapshot).HasMaxLength(240).IsRequired();
         builder.Property(entity => entity.WarehouseId).HasColumnType("uuid").IsRequired();
         builder.Property(entity => entity.WarehouseCodeSnapshot).HasMaxLength(50).IsRequired();
         builder.Property(entity => entity.RemainingDemand).HasPrecision(18, 3).IsRequired();

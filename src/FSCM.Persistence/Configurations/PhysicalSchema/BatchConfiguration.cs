@@ -16,7 +16,7 @@ public sealed class BatchConfiguration : IEntityTypeConfiguration<Batch>
         builder.Property(entity => entity.WarehouseId).HasColumnType("uuid").IsRequired();
         builder.Property(entity => entity.ProductId).HasColumnType("uuid").IsRequired();
         builder.Property(entity => entity.GoodsReceiptLineId).HasColumnType("uuid").IsRequired(false);
-        builder.Property(entity => entity.BatchCode).HasMaxLength(80).IsRequired();
+        builder.Property(entity => entity.BatchCode).HasMaxLength(240).IsRequired();
         builder.Property(entity => entity.Quantity).HasPrecision(18, 3).IsRequired();
         builder.Property(entity => entity.ProductionDate).HasColumnType("date").IsRequired();
         builder.Property(entity => entity.ExpirationDate).HasColumnType("date").IsRequired();
@@ -27,7 +27,9 @@ public sealed class BatchConfiguration : IEntityTypeConfiguration<Batch>
         builder.Property(entity => entity.UpdatedAt).HasColumnType("timestamp with time zone").IsRequired();
         builder.HasIndex(entity => entity.BatchCode).IsUnique();
         builder.HasIndex(entity => new
-            { entity.WarehouseId, entity.ProductId, entity.ProductionDate, entity.ExpirationDate }).IsUnique();
+            { entity.WarehouseId, entity.ProductId, entity.ProductionDate, entity.ExpirationDate }).IsUnique().HasFilter("\"FactoryProductionBatchId\" IS NULL");
+        builder.HasIndex(x => new { x.WarehouseId, x.FactoryProductionBatchId, x.WarehouseReceiptDate }).IsUnique().HasFilter("\"FactoryProductionBatchId\" IS NOT NULL");
+        builder.HasOne<FactoryProductionBatch>().WithMany().HasForeignKey(x => x.FactoryProductionBatchId).OnDelete(DeleteBehavior.Restrict);
         builder.ToTable(table => table.HasCheckConstraint(
             "CK_BATCH_Quantity", "\"Quantity\" >= 0 AND TRUNC(\"Quantity\") = \"Quantity\""));
         builder.ToTable(table => table.HasCheckConstraint(

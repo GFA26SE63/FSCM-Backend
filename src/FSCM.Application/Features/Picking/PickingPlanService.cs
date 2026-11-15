@@ -12,6 +12,9 @@ public sealed class PickingPlanService(IPickingStore store) : IPickingPlanServic
         CancellationToken cancellationToken)
     {
         var lists = await store.ListByOrderAsync(orderId, cancellationToken);
+        foreach (var list in lists)
+            if (await store.IsDocumentControlledAsync(list.Id, cancellationToken))
+                throw PickingOperationException.Conflict("Hủy yêu cầu kho của admin trước khi hủy đơn.");
         if (lists.Any(item => item.Status != PickingListStatuses.Open))
             throw PickingOperationException.Conflict(
                 "Order cannot be cancelled after warehouse picking has started.");

@@ -82,6 +82,15 @@ public static class DependencyInjection
             });
         }
 
+        services.AddHttpClient<FSCM.Persistence.WarehouseWork.IFactoryGateway, FSCM.Persistence.WarehouseWork.FactoryHttpGateway>((sp, http) => {
+            var settings = sp.GetRequiredService<IConfiguration>();
+            http.BaseAddress = new Uri(settings["Traceability:BaseUrl"] ?? "http://localhost:5250/");
+            http.Timeout = TimeSpan.FromSeconds(20);
+            var apiKey = settings["Traceability:ApiKey"];
+            if (!string.IsNullOrWhiteSpace(apiKey)) http.DefaultRequestHeaders.Add("X-Traceability-Key", apiKey);
+        });
+        services.AddScoped<FSCM.Persistence.WarehouseWork.FactoryReceiptSyncDispatcher>();
+
         services.AddScoped<IEntityQueryService, EntityQueryService>();
         services.AddScoped<IRealTimeAllocationStore, RealTimeAllocationStore>();
         services.AddScoped<ICatalogStore, CatalogStore>();
@@ -118,6 +127,9 @@ public static class DependencyInjection
         services.AddScoped<IRetailerReceivableStore, RetailerReceivableStore>();
         services.AddScoped<IRetailerDebtPayOsStore, RetailerDebtPayOsStore>();
         services.AddScoped<IPickingStore, PickingStore>();
+        services.AddScoped<FSCM.Persistence.WarehouseWork.WarehouseWorkService>();
+        services.AddScoped<FSCM.Persistence.WarehouseWork.FactoryTraceabilityService>();
+        services.AddScoped<FSCM.Persistence.WarehouseWork.FactoryQrInventoryService>();
         services.AddScoped<IQrLabelStore, QrLabelStore>();
         services.AddScoped<IPromotionStore, PromotionStore>();
         services.AddScoped<IRetailerStore, RetailerStore>();
