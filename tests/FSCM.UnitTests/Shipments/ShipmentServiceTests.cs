@@ -475,6 +475,21 @@ public sealed class ShipmentServiceTests
     }
 
     [Fact]
+    public async Task An_order_with_only_open_picking_lists_reports_waiting_instead_of_not_found()
+    {
+        var fixture = new Fixture();
+        fixture.AddOpenPickingList(fixture.WarehouseA, "WH-A");
+
+        var readiness = await fixture.Service.GetOrderReadinessAsync(
+            fixture.Order.Id, Guid.NewGuid(), SystemRoles.Operator, CancellationToken.None);
+
+        Assert.False(readiness.IsReady);
+        var pending = Assert.Single(readiness.Parts);
+        Assert.Equal("WH-A", pending.WarehouseCode);
+        Assert.Equal(ShipmentStatuses.WaitingToPick, pending.Status);
+    }
+
+    [Fact]
     public async Task A_sheet_closed_with_an_exception_holds_the_order_before_any_part_exists()
     {
         var fixture = new Fixture();
