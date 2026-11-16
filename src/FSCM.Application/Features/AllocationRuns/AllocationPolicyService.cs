@@ -43,9 +43,34 @@ public class AllocationPolicyService(IOrderStore store, DeliveryEtaService eta, 
                         await maps.RefreshDistanceAsync(warehouseId, retailerId, ct);
                         routes[warehouseId] = await eta.EstimateAsync(new(warehouseId, retailerId, at), ct);
                     }
-                    catch (MapOperationException) { /* No verified route: never substitute a straight-line estimate. */ }
-                    catch (DeliveryEtaOperationException retry) when (retry.Code is "not_found" or "conflict") { }
+                    catch (MapOperationException)
+                    {
+                        // External map provider is unavailable or quota exhausted (e.g. 503 from VietMap).
+                        // Fall back to existing cached route distance if available.
+                        try
+                        {
+                            routes[warehouseId] = await eta.EstimateAsync(new(warehouseId, retailerId, at, AllowStaleDistance: true), ct);
+                        }
+                        catch (Exception) { /* No verified route: never substitute a straight-line estimate. */ }
+                    }
+                    catch (DeliveryEtaOperationException retry) when (retry.Code is "not_found" or "conflict")
+                    {
+                        try
+                        {
+                            routes[warehouseId] = await eta.EstimateAsync(new(warehouseId, retailerId, at, AllowStaleDistance: true), ct);
+                        }
+                        catch (Exception) { }
+                    }
                     catch (TransitTableOperationException retry) when (retry.Code == "not_found") { }
+                }
+                else if (e.Code == "conflict")
+                {
+                    // Map service is not configured or cannot refresh, but a cached route exists.
+                    try
+                    {
+                        routes[warehouseId] = await eta.EstimateAsync(new(warehouseId, retailerId, at, AllowStaleDistance: true), ct);
+                    }
+                    catch (Exception) { }
                 }
             }
             catch (TransitTableOperationException e) when (e.Code == "not_found") { routes[warehouseId] = null; }

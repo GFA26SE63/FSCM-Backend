@@ -61,11 +61,14 @@ public sealed class DeliveryEtaService(
         var distance = await store.FindDistanceAsync(request.WarehouseId, request.RetailerId, cancellationToken)
             ?? throw DeliveryEtaOperationException.MissingDistance(
                 "No cached distance exists for this warehouse and Retailer.");
-        if (distance.ExpiresAt <= now)
+        if (!request.AllowStaleDistance && distance.ExpiresAt <= now)
             throw DeliveryEtaOperationException.StaleDistance("The cached route has expired and must be refreshed.");
 
-        await EnsureDistanceIsCurrentAsync(distance.OriginLocationVersion, "warehouse", request.WarehouseId, cancellationToken);
-        await EnsureDistanceIsCurrentAsync(distance.DestinationLocationVersion, "retailer", request.RetailerId, cancellationToken);
+        if (!request.AllowStaleDistance)
+        {
+            await EnsureDistanceIsCurrentAsync(distance.OriginLocationVersion, "warehouse", request.WarehouseId, cancellationToken);
+            await EnsureDistanceIsCurrentAsync(distance.DestinationLocationVersion, "retailer", request.RetailerId, cancellationToken);
+        }
 
         // The transit band is read as of the reference moment, so a re-check of an older run still
         // reads the table version that run actually used.

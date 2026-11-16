@@ -52,7 +52,8 @@ public sealed record AllocationScheduleResult(
 public sealed record EtaRequest(
     Guid WarehouseId,
     Guid RetailerId,
-    DateTimeOffset? ReferenceAt);
+    DateTimeOffset? ReferenceAt = null,
+    bool AllowStaleDistance = false);
 
 /// <summary>
 /// Every stage between accepting an order and the customer receiving it. Kept separate so an
