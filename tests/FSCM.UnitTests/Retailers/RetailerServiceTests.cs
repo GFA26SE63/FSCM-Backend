@@ -226,6 +226,31 @@ public sealed class RetailerServiceTests
     }
 
     [Fact]
+    public async Task Admin_created_retailer_enters_the_review_queue_like_a_sales_declaration()
+    {
+        var fixture = new Fixture();
+        var adminId = Guid.NewGuid();
+        var created = await fixture.Service.CreateByAdminAsync(adminId, fixture.RegionId, fixture.GroupId,
+            "Cửa hàng Admin tạo", "Trần Thị Bình", "0909111222", "admin.created@fscm.local", "Quận 1",
+            RetailerTypes.GroceryStore, 40_000_000, 30, 80, 4, null, 10.776m, 106.700m, null, null,
+            CancellationToken.None);
+
+        var stored = Assert.Single(fixture.Store.Retailers);
+        Assert.Equal(RetailerStatuses.PendingApproval, stored.Status);
+        Assert.Equal(created.Code, stored.Code);
+        Assert.Equal(adminId, stored.DeclaredByUserId);
+        Assert.Null(stored.UserAccountId); // The account is created on approval, as for Sales.
+        Assert.Equal(fixture.GroupId, Assert.Single(fixture.Store.Assignments).SalesGroupId);
+
+        fixture.Store.GroupInRegion = false;
+        var invalid = await Assert.ThrowsAsync<RetailerOperationException>(() =>
+            fixture.Service.CreateByAdminAsync(adminId, fixture.RegionId, Guid.NewGuid(),
+                "Cửa hàng khác", "Lê Văn C", "0909333444", "other@fscm.local", "Quận 3",
+                RetailerTypes.GroceryStore, 1, 1, 1, 1, null, null, null, null, null, CancellationToken.None));
+        Assert.Equal("validation_error", invalid.Code);
+    }
+
+    [Fact]
     public async Task Duplicate_retailer_declaration_is_rejected()
     {
         var fixture = new Fixture();
@@ -235,6 +260,9 @@ public sealed class RetailerServiceTests
             fixture.DeclareAsync(20_000_000, 30, 40));
 
         Assert.Equal("conflict", exception.Code);
+        // Same phone: the error names the field and is worded in Vietnamese for the form.
+        Assert.Equal("phone", exception.Field);
+        Assert.StartsWith("Số điện thoại", exception.Message);
         Assert.Single(fixture.Store.Retailers);
     }
 
@@ -541,6 +569,8 @@ public sealed class RetailerServiceTests
         public Task<SystemConfiguration?> FindCurrentConfigurationAsync(string key, CancellationToken cancellationToken) =>
             Task.FromResult(Configurations.SingleOrDefault(item => item.ConfigKey == key && item.IsActive));
         public Task<bool> CanDeclareForGroupAsync(Guid userId, Guid regionId, Guid salesGroupId, CancellationToken cancellationToken) => Task.FromResult(true);
+        public bool GroupInRegion { get; set; } = true;
+        public Task<bool> IsActiveSalesGroupInRegionAsync(Guid regionId, Guid salesGroupId, CancellationToken cancellationToken) => Task.FromResult(GroupInRegion);
         public Task<RetailerTerritoryAccess?> FindTerritoryAccessAsync(Guid userId, Guid retailerId, CancellationToken cancellationToken) =>
             Task.FromResult(HasTerritoryAccess ? new RetailerTerritoryAccess(Assignments.Single(item => item.RetailerId == retailerId).SalesGroupId, "HCM-A") : null);
         public Task<bool> IsActiveSalesUserAsync(Guid userId, CancellationToken cancellationToken) => Task.FromResult(true);
