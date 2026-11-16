@@ -214,9 +214,10 @@ public sealed class ShipmentService(
         if (!await store.CanViewOrderAsync(orderId, actorUserId, actorRole, cancellationToken))
             throw ShipmentOperationException.Forbidden("You cannot view this order deliveries.");
         var views = await store.ListAsync(actorUserId, actorRole, orderId, null, null, cancellationToken);
-        if (views.Count == 0)
-            throw ShipmentOperationException.NotFound("This order has no delivery parts yet.");
-        return await BuildReadinessAsync(views, cancellationToken);
+        var order = views.FirstOrDefault()?.Order
+            ?? await store.FindOrderForUpdateAsync(orderId, cancellationToken)
+            ?? throw ShipmentOperationException.NotFound("Order was not found.");
+        return await BuildReadinessAsync(order, views, cancellationToken);
     }
 
     /// <summary>
@@ -231,9 +232,8 @@ public sealed class ShipmentService(
     /// sheets the approved plan produced, and a missing one holds the order.
     /// </summary>
     private async Task<OrderShipmentReadinessResult> BuildReadinessAsync(
-        IReadOnlyCollection<ShipmentView> views, CancellationToken cancellationToken)
+        SalesOrder order, IReadOnlyCollection<ShipmentView> views, CancellationToken cancellationToken)
     {
-        var order = views.First().Order;
         var existing = views
             .Select(item => new ShipmentReadinessPartResult(
                 item.Shipment.Id, item.Shipment.ShipmentCode, item.Warehouse.Id, item.Warehouse.Code,
@@ -319,7 +319,7 @@ public sealed class ShipmentService(
     /// </summary>
     public async Task<ShipmentResult> ConfirmIssueAsync(
         Guid id, ConfirmShipmentIssueData data, Guid actorUserId, string actorRole,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, bool documentWorkflow = false)
     {
         if (actorRole is not (SystemRoles.Admin or SystemRoles.Operator or SystemRoles.WarehouseKeeper))
             throw ShipmentOperationException.Forbidden(
@@ -348,6 +348,10 @@ public sealed class ShipmentService(
                     $"Shipment is {view.Shipment.Status}; only a ready part can be issued.");
             }
 
+            if (!documentWorkflow && view.Shipment.PickingListId.HasValue &&
+                await store.IsDocumentControlledPickingAsync(view.Shipment.PickingListId.Value, transactionCancellationToken))
+                throw ShipmentOperationException.Conflict("Xác nhận xuất trên phiếu xuất tổng thay vì từng đơn hàng.");
+
             if (view.Shipment.Version != data.ExpectedVersion)
             {
                 throw ShipmentOperationException.Conflict(
@@ -356,7 +360,7 @@ public sealed class ShipmentService(
 
             var siblings = await store.ListAsync(
                 actorUserId, SystemRoles.Admin, view.Order.Id, null, null, transactionCancellationToken);
-            var readiness = await BuildReadinessAsync(siblings, transactionCancellationToken);
+            var readiness = await BuildReadinessAsync(view.Order, siblings, transactionCancellationToken);
             if (!readiness.IsReady)
             {
                 throw ShipmentOperationException.Conflict(string.Join(" ", readiness.BlockingReasons));
@@ -623,8 +627,8 @@ public sealed class ShipmentService(
         string actorRole,
         CancellationToken cancellationToken)
     {
-        if (actorRole != SystemRoles.Retailer)
-            throw ShipmentOperationException.Forbidden("Only the order Retailer can confirm a shipment receipt.");
+        if (actorRole is not (SystemRoles.Admin or SystemRoles.Retailer))
+            throw ShipmentOperationException.Forbidden("Only the order Retailer or Admin can confirm a shipment receipt.");
         operationKey = NormalizeOperationKey(operationKey);
         var note = NormalizeNote(data.Note);
         var qrCodes = NormalizeQrCodes(data.QrCodes);

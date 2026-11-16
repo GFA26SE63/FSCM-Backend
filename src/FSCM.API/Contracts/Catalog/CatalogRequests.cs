@@ -13,6 +13,9 @@ public sealed record UpdateCategoryRequest(
 
 public sealed record UpdateCategoryStatusRequest(bool IsActive);
 
+/// <summary>Null clears the category default so it falls back to the parent / system default.</summary>
+public sealed record UpdateCategoryDefaultMlorRequest(decimal? MinimumLifeRatio);
+
 public sealed record CreateProductRequest(
     Guid ProductCategoryId,
     string Sku,

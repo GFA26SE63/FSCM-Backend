@@ -23,6 +23,7 @@ public interface IRetailerStore
     Task<IReadOnlyCollection<RetailerView>> ListAsync(Guid actorUserId, string actorRole, string? status, CancellationToken cancellationToken);
     Task<RetailerView?> FindViewAsync(Guid retailerId, CancellationToken cancellationToken);
     Task<Retailer?> FindForUpdateAsync(Guid retailerId, CancellationToken cancellationToken);
+    Task<UserAccount?> FindContactAccountForUpdateAsync(Guid accountId, CancellationToken cancellationToken);
     Task<RetailerDeclarationContact?> FindDeclarationContactForUpdateAsync(Guid retailerId, CancellationToken cancellationToken);
     /// <summary>
     /// Returns every inactive Retailer account not yet linked to a Retailer whose email or phone
@@ -44,6 +45,8 @@ public interface IRetailerStore
     Task<SystemConfiguration?> FindCurrentConfigurationAsync(string key, CancellationToken cancellationToken);
     Task<MapLocation?> FindLocationForUpdateAsync(Guid retailerId, CancellationToken cancellationToken);
     Task<bool> CanDeclareForGroupAsync(Guid userId, Guid regionId, Guid salesGroupId, CancellationToken cancellationToken);
+    /// <summary>The Sales group is active and belongs to the region (Admin-created retailers).</summary>
+    Task<bool> IsActiveSalesGroupInRegionAsync(Guid regionId, Guid salesGroupId, CancellationToken cancellationToken);
     Task<RetailerTerritoryAccess?> FindTerritoryAccessAsync(Guid userId, Guid retailerId, CancellationToken cancellationToken);
     Task<bool> IsActiveSalesUserAsync(Guid userId, CancellationToken cancellationToken);
     Task<string> NextDeclarationCodeAsync(CancellationToken cancellationToken);

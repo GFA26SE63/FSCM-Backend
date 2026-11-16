@@ -10,7 +10,8 @@ public static class RetailerDebtCheckoutModes
 
 public sealed record CreateRetailerDebtPayOsCheckoutData(
     string Mode,
-    IReadOnlyCollection<Guid> PaymentIds);
+    IReadOnlyCollection<Guid> PaymentIds,
+    Guid? RetailerId = null);
 
 public sealed record RetailerDebtCheckoutAllocationResult(
     Guid PaymentId,
@@ -43,6 +44,7 @@ public sealed record RetailerDebtCheckoutView(
 public interface IRetailerDebtPayOsStore
 {
     Task<Retailer?> FindRetailerByUserAsync(Guid userId, CancellationToken cancellationToken);
+    Task<Retailer?> FindRetailerByIdAsync(Guid retailerId, CancellationToken cancellationToken);
     Task<IReadOnlyCollection<ReceiptPaymentView>> ListCollectibleForUpdateAsync(
         Guid retailerId, IReadOnlyCollection<Guid>? paymentIds, CancellationToken cancellationToken);
     Task<IReadOnlyCollection<RetailerDebtPayOsCheckout>> ListPendingForPaymentsAsync(
@@ -53,6 +55,8 @@ public interface IRetailerDebtPayOsStore
         long payOsOrderCode, bool forUpdate, CancellationToken cancellationToken);
     Task<RetailerDebtCheckoutView?> FindByIdForRetailerAsync(
         Guid checkoutId, Guid retailerId, CancellationToken cancellationToken);
+    Task<RetailerDebtCheckoutView?> FindByIdAsync(
+        Guid checkoutId, CancellationToken cancellationToken);
     void AddCheckout(RetailerDebtPayOsCheckout checkout);
     void AddAllocations(IEnumerable<RetailerDebtPayOsAllocation> allocations);
     void AddReceipt(PaymentReceipt receipt, IEnumerable<PaymentReceiptAllocation> allocations);

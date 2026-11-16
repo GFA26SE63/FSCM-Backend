@@ -3,6 +3,7 @@ using FSCM.Application.Features.Reports;
 using FSCM.Application.Features.AllocationRuns;
 using FSCM.Persistence.DbContexts;
 using FSCM.Application.Features.WarehouseConfiguration;
+using FSCM.Domain.Authorization;
 using Microsoft.EntityFrameworkCore;
 
 namespace FSCM.Persistence.Reports;
@@ -60,6 +61,7 @@ public sealed class ReportStore(AppDbContext dbContext) : IReportStore
             from payment in payments.DefaultIfEmpty()
             join user in dbContext.UserAccountRecords.AsNoTracking()
                 on order.CreatedByUserId equals user.Id
+            where user.Role == SystemRoles.Sales
             join salesGroup in dbContext.SalesGroupRecords.AsNoTracking()
                 on order.SalesGroupId equals salesGroup.Id
             select new
@@ -120,6 +122,7 @@ public sealed class ReportStore(AppDbContext dbContext) : IReportStore
             from payment in payments.DefaultIfEmpty()
             join user in dbContext.UserAccountRecords.AsNoTracking()
                 on order.CreatedByUserId equals user.Id
+            where user.Role == SystemRoles.Sales
             join salesGroup in dbContext.SalesGroupRecords.AsNoTracking()
                 on order.SalesGroupId equals salesGroup.Id
             join retailer in dbContext.RetailerRecords.AsNoTracking()

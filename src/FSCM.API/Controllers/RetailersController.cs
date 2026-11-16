@@ -28,14 +28,29 @@ public sealed class RetailersController(RetailerService service) : ControllerBas
     public Task<RetailerDetails> Get(Guid retailerId, CancellationToken cancellationToken) =>
         service.GetAsync(retailerId, GetActorUserId(), GetActorRole(), cancellationToken);
 
-    [Authorize(Roles = SystemRoles.Sales)]
+    /// <summary>
+    /// Sales declares a retailer (draft or submitted). Admin creates one from the Portal, which
+    /// always lands in the review queue (PendingApproval) like a submitted Sales declaration.
+    /// </summary>
+    [Authorize(Roles = $"{SystemRoles.Sales},{SystemRoles.Admin}")]
     [HttpPost]
     public async Task<IActionResult> Declare(DeclareRetailerRequest request, CancellationToken cancellationToken)
     {
+        if (GetActorRole() == SystemRoles.Admin)
+        {
+            var created = await service.CreateByAdminAsync(GetActorUserId(), request.RegionId, request.SalesGroupId,
+                request.Name, request.ContactName, request.Phone, request.Email, request.Address,
+                request.RetailerType, request.ForecastRevenue, request.StoreSizeSquareMeters,
+                request.PurchasingCapacity, request.PurchaseFrequencyPerMonth, request.AssessmentNote,
+                request.Latitude, request.Longitude, request.ProviderPlaceId,
+                request.MlorDeclarations?.Select(ToMlorData).ToArray(), cancellationToken);
+            return CreatedAtAction(nameof(Get), new { retailerId = created.Id }, created);
+        }
+
         var result = await service.DeclareAsync(GetActorUserId(), request.RegionId, request.SalesGroupId,
             request.Name, request.ContactName, request.Phone, request.Email, request.Address,
             request.RetailerType, request.ForecastRevenue, request.StoreSizeSquareMeters,
-            request.PurchasingCapacity, request.PurchaseFrequencyPerMonth, request.RequestedCreditTermDays,
+            request.PurchasingCapacity, request.PurchaseFrequencyPerMonth, 0,
             request.AssessmentNote, request.Latitude, request.Longitude, request.ProviderPlaceId,
             request.MlorDeclarations?.Select(ToMlorData).ToArray(), request.SubmitForReview, cancellationToken);
         return CreatedAtAction(nameof(Get), new { retailerId = result.Id }, result);
@@ -48,9 +63,21 @@ public sealed class RetailersController(RetailerService service) : ControllerBas
         service.UpdateDeclarationAsync(retailerId, GetActorUserId(), request.Name, request.ContactName,
             request.Phone, request.Email, request.Address, request.RetailerType, request.ForecastRevenue,
             request.StoreSizeSquareMeters, request.PurchasingCapacity, request.PurchaseFrequencyPerMonth,
-            request.RequestedCreditTermDays, request.AssessmentNote,
+            0, request.AssessmentNote,
             request.Latitude, request.Longitude, request.ProviderPlaceId,
             request.MlorDeclarations?.Select(ToMlorData).ToArray(), request.SubmitForReview, cancellationToken);
+
+    /// <summary>Admin edits profile/contact/location without resubmitting the Sales declaration.</summary>
+    [Authorize(Roles = SystemRoles.Admin)]
+    [HttpPut("{retailerId:guid}/profile")]
+    public Task<RetailerDetails> UpdateProfile(
+        Guid retailerId, UpdateRetailerProfileRequest request, CancellationToken cancellationToken) =>
+        service.UpdateProfileAsync(retailerId, GetActorUserId(), GetActorRole(),
+            new(request.Name, request.ContactName, request.Phone, request.Email, request.Address,
+                request.RetailerType, request.ForecastRevenue, request.StoreSizeSquareMeters,
+                request.PurchasingCapacity, request.PurchaseFrequencyPerMonth, 0,
+                request.AssessmentNote, request.Latitude, request.Longitude, request.ProviderPlaceId),
+            cancellationToken);
 
     [Authorize(Roles = SystemRoles.Sales)]
     [HttpPost("{retailerId:guid}/submit-review")]
@@ -62,7 +89,7 @@ public sealed class RetailersController(RetailerService service) : ControllerBas
     public Task<RetailerDetails> Review(
         Guid retailerId, ReviewRetailerRequest request, CancellationToken cancellationToken) =>
         service.ReviewAsync(retailerId, GetActorUserId(), request.Approve,
-            request.CreditTermDays, request.Reason, cancellationToken);
+            request.CreditTermDays, request.CreditLimit, request.Reason, cancellationToken);
 
     [Authorize(Roles = SystemRoles.Admin)]
     [HttpPatch("{retailerId:guid}/status")]

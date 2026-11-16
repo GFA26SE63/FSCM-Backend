@@ -1,4 +1,5 @@
 using System.Text.Json;
+using FSCM.Application.Features.Catalog;
 using FSCM.Application.Features.Identity;
 using FSCM.Application.Features.Storage;
 using FSCM.Application.Features.WarehouseConfiguration;
@@ -69,7 +70,45 @@ public sealed class RetailerService(
         if (!await store.CanDeclareForGroupAsync(actorUserId, regionId, salesGroupId, cancellationToken))
             throw RetailerOperationException.Forbidden(
                 "Sales can only declare a Retailer in their active Sales group's territory.");
+        return await CreateDeclarationAsync(actorUserId, regionId, salesGroupId, name, contactName, phone, email,
+            address, retailerType, forecastRevenue, storeSizeSquareMeters, purchasingCapacity,
+            purchaseFrequencyPerMonth, requestedCreditTermDays, assessmentNote, latitude, longitude,
+            providerPlaceId, mlorDeclarations, submitForReview ? ReviewSubmission.RequireMlor : ReviewSubmission.Draft,
+            cancellationToken);
+    }
 
+    /// <summary>
+    /// Admin creates a retailer on the Portal. It goes into the same review queue as a Sales
+    /// declaration (PendingApproval, system-issued code, account created on approval). MLOR may be
+    /// added afterwards on the retailer's MLOR tab; approval still requires at least one entry.
+    /// </summary>
+    public async Task<RetailerDetails> CreateByAdminAsync(
+        Guid actorUserId, Guid regionId, Guid salesGroupId, string name, string contactName,
+        string phone, string email, string? address, string retailerType,
+        decimal forecastRevenue, decimal storeSizeSquareMeters, decimal purchasingCapacity,
+        int purchaseFrequencyPerMonth, string? assessmentNote,
+        decimal? latitude, decimal? longitude, string? providerPlaceId,
+        IReadOnlyCollection<RetailerMlorData>? mlorDeclarations, CancellationToken cancellationToken)
+    {
+        if (!await store.IsActiveSalesGroupInRegionAsync(regionId, salesGroupId, cancellationToken))
+            throw RetailerOperationException.Validation("Nhóm Sales không hoạt động hoặc không thuộc khu vực đã chọn.");
+        return await CreateDeclarationAsync(actorUserId, regionId, salesGroupId, name, contactName, phone, email,
+            address, retailerType, forecastRevenue, storeSizeSquareMeters, purchasingCapacity,
+            purchaseFrequencyPerMonth, 0, assessmentNote, latitude, longitude, providerPlaceId,
+            mlorDeclarations, ReviewSubmission.PendingWithoutMlorCheck, cancellationToken);
+    }
+
+    private enum ReviewSubmission { Draft, RequireMlor, PendingWithoutMlorCheck }
+
+    private async Task<RetailerDetails> CreateDeclarationAsync(
+        Guid actorUserId, Guid regionId, Guid salesGroupId, string name, string contactName,
+        string phone, string email, string? address, string retailerType,
+        decimal forecastRevenue, decimal storeSizeSquareMeters, decimal purchasingCapacity,
+        int purchaseFrequencyPerMonth, int requestedCreditTermDays, string? assessmentNote,
+        decimal? latitude, decimal? longitude, string? providerPlaceId,
+        IReadOnlyCollection<RetailerMlorData>? mlorDeclarations, ReviewSubmission submission,
+        CancellationToken cancellationToken)
+    {
         var input = Validate(name, contactName, phone, email, address, retailerType, forecastRevenue,
             storeSizeSquareMeters, purchasingCapacity, purchaseFrequencyPerMonth, requestedCreditTermDays, assessmentNote);
         await EnsureNoDuplicateAsync(input, null, cancellationToken);
@@ -108,12 +147,13 @@ public sealed class RetailerService(
         var activeMlors = mlorDeclarations is null
             ? (await ActiveMlorAsync(retailer.Id, cancellationToken)).Select(item => item.Mlor).ToArray()
             : await ReplaceMlorDeclarationsAsync(retailer, actorUserId, mlorDeclarations, now, cancellationToken);
-        if (submitForReview)
+        if (submission != ReviewSubmission.Draft)
         {
-            EnsureMlorReadyForReview(activeMlors);
+            if (submission == ReviewSubmission.RequireMlor) EnsureMlorReadyForReview(activeMlors);
             retailer.Status = RetailerStatuses.PendingApproval;
         }
-        AddAudit(retailer.Id, actorUserId, "RetailerDeclarationSaved", null,
+        AddAudit(retailer.Id, actorUserId, submission == ReviewSubmission.PendingWithoutMlorCheck
+                ? "RetailerCreatedByAdmin" : "RetailerDeclarationSaved", null,
             GeneralInformationAuditJson(retailer, input.ContactName, input.Phone, input.Email), null, now);
         await store.SaveChangesAsync(cancellationToken);
         return await GetResultAsync(retailer.Id, cancellationToken);
@@ -166,6 +206,59 @@ public sealed class RetailerService(
         return await GetResultAsync(retailerId, cancellationToken);
     }
 
+    public async Task<RetailerDetails> UpdateProfileAsync(
+        Guid retailerId, Guid actorUserId, string actorRole, UpdateRetailerProfileData data,
+        CancellationToken cancellationToken)
+    {
+        if (actorRole != SystemRoles.Admin)
+            throw RetailerOperationException.Forbidden("Only Admin can update a retailer profile.");
+        var retailer = await store.FindForUpdateAsync(retailerId, cancellationToken)
+            ?? throw RetailerOperationException.NotFound("Retailer was not found.");
+        var input = Validate(data.Name, data.ContactName, data.Phone, data.Email, data.Address,
+            data.RetailerType, data.ForecastRevenue, data.StoreSizeSquareMeters, data.PurchasingCapacity,
+            data.PurchaseFrequencyPerMonth, data.RequestedCreditTermDays, data.AssessmentNote);
+        await EnsureNoDuplicateAsync(input, retailerId, cancellationToken);
+        UserAccount? account = null;
+        RetailerDeclarationContact? contact = null;
+        if (retailer.UserAccountId.HasValue)
+        {
+            account = await store.FindContactAccountForUpdateAsync(retailer.UserAccountId.Value, cancellationToken)
+                ?? throw RetailerOperationException.InvalidTransition("Linked retailer account was not found.");
+            if (account.Role != SystemRoles.Retailer)
+                throw RetailerOperationException.InvalidTransition("Linked account must have the Retailer role.");
+        }
+        else
+        {
+            contact = await store.FindDeclarationContactForUpdateAsync(retailerId, cancellationToken)
+                ?? throw RetailerOperationException.InvalidTransition("Retailer declaration contact was not found.");
+        }
+
+        var now = timeProvider.GetUtcNow();
+        var oldValues = GeneralInformationAuditJson(retailer, account?.FullName ?? contact!.ContactName,
+            account?.Phone ?? contact?.Phone ?? "", account?.Email ?? contact!.Email);
+        await ApplyLocationAsync(retailerId, data.Latitude, data.Longitude, data.ProviderPlaceId, now, cancellationToken);
+        Apply(retailer, input, actorUserId, now);
+        if (account is not null)
+        {
+            account.FullName = input.ContactName;
+            account.Phone = input.Phone;
+            account.Email = input.Email;
+            account.UpdatedAt = now;
+        }
+        else
+        {
+            contact!.ContactName = input.ContactName;
+            contact.Phone = input.Phone;
+            contact.Email = input.Email;
+            contact.UpdatedAt = now;
+        }
+        // Deliberately leave code, ownership, review/status, agreed credit terms and MLOR untouched.
+        AddAudit(retailerId, actorUserId, "RetailerProfileUpdated", oldValues,
+            GeneralInformationAuditJson(retailer, input.ContactName, input.Phone, input.Email), null, now);
+        await store.SaveChangesAsync(cancellationToken);
+        return await GetResultAsync(retailerId, cancellationToken);
+    }
+
     public async Task<RetailerDetails> SubmitForReviewAsync(
         Guid retailerId, Guid actorUserId, CancellationToken cancellationToken)
     {
@@ -188,7 +281,7 @@ public sealed class RetailerService(
     }
 
     public async Task<RetailerDetails> ReviewAsync(
-        Guid retailerId, Guid reviewerUserId, bool approve, int? creditTermDays,
+        Guid retailerId, Guid reviewerUserId, bool approve, int? creditTermDays, decimal? creditLimit,
         string? reason, CancellationToken cancellationToken)
     {
         var retailer = await store.FindForUpdateAsync(retailerId, cancellationToken)
@@ -201,6 +294,8 @@ public sealed class RetailerService(
             throw RetailerOperationException.Validation("A review reason is required for approval or rejection.");
         if (approve && (!creditTermDays.HasValue || !AllowedCreditTerms.Contains(creditTermDays.Value)))
             throw RetailerOperationException.Validation("Admin must select a payment term of 0, 7, 14, or 30 days when approving.");
+        if (approve && (!creditLimit.HasValue || creditLimit.Value < 0))
+            throw RetailerOperationException.Validation("Admin must set a non-negative credit limit when approving.");
 
         var reviewedAt = timeProvider.GetUtcNow();
         retailer.Status = approve ? RetailerStatuses.Active : RetailerStatuses.Rejected;
@@ -251,13 +346,14 @@ public sealed class RetailerService(
             }
             retailer.Code = await store.NextBusinessCodeAsync(cancellationToken);
             retailer.CreditTermDays = creditTermDays!.Value;
+            retailer.CreditLimit = creditLimit!.Value;
         }
         retailer.ReviewedByUserId = reviewerUserId;
         retailer.ReviewedAt = reviewedAt;
         retailer.ReviewReason = reason;
         retailer.UpdatedAt = retailer.ReviewedAt.Value;
         AddAudit(retailer.Id, reviewerUserId, approve ? "RetailerDeclarationApproved" : "RetailerDeclarationRejected",
-            null, JsonSerializer.Serialize(new { retailer.Status, retailer.CreditTermDays }), reason, retailer.UpdatedAt);
+            null, JsonSerializer.Serialize(new { retailer.Status, retailer.CreditTermDays, retailer.CreditLimit }), reason, retailer.UpdatedAt);
         // Retailer status, business code and the Retailer user account are committed in one
         // SaveChanges (single implicit transaction): either both records exist or neither does.
         await store.SaveChangesAsync(cancellationToken);
@@ -268,6 +364,13 @@ public sealed class RetailerService(
                 accountCreatedEmail with { RetailerCode = retailer.Code }, cancellationToken);
         return await GetResultAsync(retailerId, cancellationToken);
     }
+
+    // Preserves the internal call shape used by pre-credit-limit tests and integrations. HTTP
+    // review requests always use the overload above and must explicitly supply the limit.
+    public Task<RetailerDetails> ReviewAsync(
+        Guid retailerId, Guid reviewerUserId, bool approve, int? creditTermDays,
+        string? reason, CancellationToken cancellationToken) =>
+        ReviewAsync(retailerId, reviewerUserId, approve, creditTermDays, 0m, reason, cancellationToken);
 
     private async Task NotifyAccountCreatedAsync(
         Guid retailerId, Guid reviewerUserId, RetailerAccountCreatedEmail email,
@@ -362,6 +465,12 @@ public sealed class RetailerService(
             currentCategoryId = category.ParentCategoryId.Value;
         }
 
+        // Category-level default MLOR before the system default.
+        if (CategoryDefaultMlor.Resolve(product.ProductCategoryId, categories) is { } categoryDefault)
+            return new RetailerMlorResolutionResult(retailerId, productId, CategoryDefaultMlor.Scope, null,
+                categoryDefault.DefaultMlorVersion, categoryDefault.Id, categoryDefault.DefaultMlorRatio!.Value,
+                null, timeProvider.GetUtcNow());
+
         var defaultConfiguration = await store.FindCurrentConfigurationAsync(
             BusinessConfigurationKeys.DefaultMlorRatio, cancellationToken)
             ?? throw RetailerOperationException.InvalidTransition("No default MLOR configuration is active.");
@@ -379,20 +488,25 @@ public sealed class RetailerService(
     private async Task EnsureNoDuplicateAsync(
         RetailerInput input, Guid? excludedRetailerId, CancellationToken cancellationToken)
     {
-        var duplicate = await store.FindDuplicateAsync(
-            input.Name.ToLowerInvariant(),
-            input.Phone.ToLowerInvariant(),
-            input.Email.ToLowerInvariant(),
-            input.Address?.ToLowerInvariant(),
-            excludedRetailerId,
-            cancellationToken);
-        if (duplicate is not null)
-        {
-            throw RetailerOperationException.Conflict(
-                $"Retailer declaration duplicates existing record '{duplicate.Code}'.");
-        }
-        if (await store.ContactAccountExistsAsync(input.Phone, input.Email, excludedRetailerId, cancellationToken))
-            throw RetailerOperationException.Conflict("Phone or email is already assigned to another user account.");
+        // Checked one value at a time so the error names the field the user has to change.
+        // The unused contact argument is a value validation never lets through (not digits, no "@"),
+        // so it cannot match a stored phone or email - not even an account saved with an empty phone.
+        const string noMatch = "-";
+        var name = input.Name.ToLowerInvariant();
+        var phone = input.Phone.ToLowerInvariant();
+        var email = input.Email.ToLowerInvariant();
+        if (await store.FindDuplicateAsync(name, phone, null, null, excludedRetailerId, cancellationToken) is not null ||
+            await store.ContactAccountExistsAsync(input.Phone, noMatch, excludedRetailerId, cancellationToken))
+            throw RetailerOperationException.Duplicate("phone",
+                "Số điện thoại này đã được dùng cho một điểm bán hoặc tài khoản khác. Vui lòng nhập số điện thoại khác.");
+        if (await store.FindDuplicateAsync(name, null, email, null, excludedRetailerId, cancellationToken) is not null ||
+            await store.ContactAccountExistsAsync(noMatch, input.Email, excludedRetailerId, cancellationToken))
+            throw RetailerOperationException.Duplicate("email",
+                "Email này đã được dùng cho một điểm bán hoặc tài khoản khác. Vui lòng nhập email khác.");
+        if (input.Address is not null &&
+            await store.FindDuplicateAsync(name, null, null, input.Address.ToLowerInvariant(), excludedRetailerId, cancellationToken) is { } sameStore)
+            throw RetailerOperationException.Duplicate("name",
+                $"Đã có điểm bán cùng tên và địa chỉ trong hệ thống (mã {sameStore.Code}).");
     }
 
     private static RetailerInput Validate(
@@ -401,7 +515,8 @@ public sealed class RetailerService(
         decimal purchasingCapacity, int purchaseFrequencyPerMonth, int creditTermDays,
         string? assessmentNote)
     {
-        name = Clean(name, 200, "Retailer name")!;
+        name = Clean(name, 200, "Retailer name")
+            ?? throw RetailerOperationException.Validation("Retailer name is required.");
         if (name.Length < 2) throw RetailerOperationException.Validation("Retailer name must contain at least 2 characters.");
         contactName = Clean(contactName, 150, "Contact name")
             ?? throw RetailerOperationException.Validation("Contact name is required.");
@@ -482,7 +597,7 @@ public sealed class RetailerService(
             view.Location?.Latitude, view.Location?.Longitude, view.Location?.ProviderPlaceId,
             view.Location?.Version ?? 0, item.Status, item.RetailerType,
             item.ForecastRevenue ?? 0, item.StoreSizeSquareMeters ?? 0, item.StoreSizeCategory,
-            item.PurchasingCapacity ?? 0, item.PurchaseFrequencyPerMonth, item.CreditTermDays,
+            item.PurchasingCapacity ?? 0, item.PurchaseFrequencyPerMonth, item.CreditTermDays, item.CreditLimit,
             item.RequestedCreditTermDays,
             item.PotentialStatus ?? "C", item.AssessmentNote, item.DeclaredByUserId,
             item.ReviewedByUserId, item.ReviewedAt, item.ReviewReason, item.CreatedAt, item.UpdatedAt,

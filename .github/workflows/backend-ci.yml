@@ -18,10 +18,31 @@ jobs:
   validate:
     name: Restore, build, and test
     runs-on: ubuntu-24.04
+    services:
+      disposal-postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: disposal-ci-only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      TraceabilityProjectPath: ${{ github.workspace }}/.ci/traceability/FSCM.Traceability.csproj
+      FSCM_DISPOSAL_TEST_POSTGRES: Host=127.0.0.1;Port=5432;Database=postgres;Username=postgres;Password=disposal-ci-only
 
     steps:
       - name: Check out source
         uses: actions/checkout@v7
+
+      - name: Check out factory integration test dependency
+        uses: actions/checkout@v7
+        with:
+          repository: GFA26SE63/FSCM-Traceability
+          ref: be7070e0f353a6e7f8be5889c5c97d883f1fda87
+          path: .ci/traceability
+          persist-credentials: false
 
       - name: Set up .NET
         uses: actions/setup-dotnet@v6

@@ -42,7 +42,7 @@ public sealed class CurrentPickingService(IPickingStore store, TimeProvider time
 
     public async Task<CurrentPickingResult> ScanAsync(
         string code, ScanPickingLabelData data, string operationKey,
-        Guid actorId, string role, CancellationToken ct)
+        Guid actorId, string role, CancellationToken ct, bool documentWorkflow = false)
     {
         EnsureWarehouseKeeper(role);
         code = Required(code, "Picking code");
@@ -66,6 +66,8 @@ public sealed class CurrentPickingService(IPickingStore store, TimeProvider time
         await store.ExecuteInTransactionAsync(async token =>
         {
             var view = await FindAccessibleAsync(code, actorId, role, true, token);
+            if (!documentWorkflow && await store.IsDocumentControlledAsync(view.List.Id, token))
+                throw PickingOperationException.Conflict("Thực hiện quét trên phiếu xuất tổng của yêu cầu kho.");
             if (view.List.Status is PickingListStatuses.Completed or PickingListStatuses.Exception)
                 throw PickingOperationException.Conflict("Closed picking list cannot accept scans.");
             if (view.List.AssignedToUserId.HasValue && view.List.AssignedToUserId != actorId)
@@ -211,13 +213,15 @@ public sealed class CurrentPickingService(IPickingStore store, TimeProvider time
     }
 
     public async Task<CurrentPickingResult> CompleteAsync(
-        string code, CompleteRunPickingData data, Guid actorId, string role, CancellationToken ct)
+        string code, CompleteRunPickingData data, Guid actorId, string role, CancellationToken ct, bool documentWorkflow = false)
     {
         EnsureWarehouseKeeper(role);
         code = Required(code, "Picking code");
         await store.ExecuteInTransactionAsync(async token =>
         {
             var view = await FindAccessibleAsync(code, actorId, role, true, token);
+            if (!documentWorkflow && await store.IsDocumentControlledAsync(view.List.Id, token))
+                throw PickingOperationException.Conflict("Hoàn tất soạn trên phiếu xuất tổng của yêu cầu kho.");
             if (view.List.Status == PickingListStatuses.Completed) return;
             if (view.List.Version != data.ExpectedPickingVersion)
                 throw PickingOperationException.Conflict(
@@ -295,7 +299,7 @@ public sealed class CurrentPickingService(IPickingStore store, TimeProvider time
     }
     private static void EnsureWarehouseKeeper(string role)
     {
-        if (role != SystemRoles.WarehouseKeeper)
-            throw PickingOperationException.Forbidden("Only Warehouse Keeper can change picking work.");
+        if (role is not (SystemRoles.Admin or SystemRoles.WarehouseKeeper))
+            throw PickingOperationException.Forbidden("Only Warehouse Keeper or Admin can change picking work.");
     }
 }

@@ -4,6 +4,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using FSCM.Application.Features.Inventory;
 using FSCM.Domain.Entities;
+using FSCM.Domain.Authorization;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -13,7 +14,7 @@ namespace FSCM.IntegrationTests.Api;
 public sealed class GoodsReceiptApiTests
 {
     [Fact]
-    public async Task Receipt_create_and_approval_are_authorized_and_idempotent()
+    public async Task Legacy_creation_is_blocked_and_existing_receipt_approval_is_authorized_and_idempotent()
     {
         using var identityFactory = new IdentityAuthorizationTests.IdentityApiFactory();
         var store = new TestInventoryStore();
@@ -47,18 +48,40 @@ public sealed class GoodsReceiptApiTests
         var first = await client.PostAsJsonAsync("/api/v1/goods-receipts", request);
         var repeated = await client.PostAsJsonAsync("/api/v1/goods-receipts", request);
 
-        Assert.Equal(HttpStatusCode.Created, first.StatusCode);
-        Assert.Equal(HttpStatusCode.Created, repeated.StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict, first.StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict, repeated.StatusCode);
+        var conflict = await first.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("FACTORY_PALLET_REQUIRED", conflict.GetProperty("code").GetString());
+        client.DefaultRequestHeaders.Authorization = Bearer(identityFactory.WarehouseKeeper, identityFactory);
+        var blockedKeeper = await client.PostAsJsonAsync("/api/v1/goods-receipts", request);
+        Assert.Equal(HttpStatusCode.Conflict, blockedKeeper.StatusCode);
+        var keeperConflict = await blockedKeeper.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("FACTORY_PALLET_REQUIRED", keeperConflict.GetProperty("code").GetString());
+        Assert.Empty(store.Receipts);
+        Assert.Empty(store.Lines);
+        Assert.Empty(store.Batches);
+        Assert.Empty(store.Transactions);
+        Assert.Null(store.Balance);
+
+        // Existing legacy receipts remain approvable; new factory receipts use warehouse documents.
+        var inventoryService = new InventoryService(store, TimeProvider.System);
+        ReceiveGoodsLineData[] lines = [new(store.Product.Id, "LÔ-NHẬP-THỬ", 20,
+            new DateOnly(2026, 10, 1), new DateOnly(2027, 4, 30))];
+        var legacyReceipt = await inventoryService.CreateReceiptAsync(identityFactory.Admin.Id,
+            SystemRoles.Admin, store.Warehouse.Id, "receipt-api-test-0001", lines, CancellationToken.None);
+        var legacyRepeated = await inventoryService.CreateReceiptAsync(identityFactory.Admin.Id,
+            SystemRoles.Admin, store.Warehouse.Id, "receipt-api-test-0001", lines, CancellationToken.None);
+        Assert.Equal(legacyReceipt.Id, legacyRepeated.Id);
         Assert.Single(store.Receipts);
         Assert.Null(store.Balance);
         Assert.Empty(store.Transactions);
-
-        var pendingReceipt = JsonDocument.Parse(await first.Content.ReadAsStringAsync()).RootElement;
+        client.DefaultRequestHeaders.Authorization = Bearer(identityFactory.Admin, identityFactory);
+        var receiptId = legacyReceipt.Id;
+        var pendingReceipt = await client.GetFromJsonAsync<JsonElement>($"/api/v1/goods-receipts/{receiptId}");
         Assert.Equal(GoodsReceiptStatuses.Pending, pendingReceipt.GetProperty("status").GetString());
         Assert.Equal(JsonValueKind.Null, pendingReceipt.GetProperty("receivedAt").ValueKind);
         Assert.Equal(JsonValueKind.Null, pendingReceipt.GetProperty("lines")[0].GetProperty("batchId").ValueKind);
         Assert.Equal("2026-10-01", pendingReceipt.GetProperty("lines")[0].GetProperty("productionDate").GetString());
-        var receiptId = pendingReceipt.GetProperty("id").GetGuid();
 
         client.DefaultRequestHeaders.Authorization = Bearer(identityFactory.Sales, identityFactory);
         Assert.Equal(HttpStatusCode.Forbidden,
@@ -85,11 +108,10 @@ public sealed class GoodsReceiptApiTests
         client.DefaultRequestHeaders.Remove("Idempotency-Key");
         client.DefaultRequestHeaders.Authorization = Bearer(identityFactory.WarehouseKeeper, identityFactory);
         client.DefaultRequestHeaders.Add("Idempotency-Key", "receipt-api-test-keeper-0001");
-        var keeperReceipt = await client.PostAsJsonAsync("/api/v1/goods-receipts", request);
-        Assert.Equal(HttpStatusCode.Created, keeperReceipt.StatusCode);
+        var keeperReceipt = await inventoryService.CreateReceiptAsync(identityFactory.WarehouseKeeper.Id,
+            SystemRoles.WarehouseKeeper, store.Warehouse.Id, "receipt-api-test-keeper-0001", lines, CancellationToken.None);
         Assert.Equal(2, store.Receipts.Count);
-        var keeperReceiptId = JsonDocument.Parse(await keeperReceipt.Content.ReadAsStringAsync())
-            .RootElement.GetProperty("id").GetGuid();
+        var keeperReceiptId = keeperReceipt.Id;
         Assert.Equal(HttpStatusCode.OK,
             (await client.PostAsync($"/api/v1/goods-receipts/{keeperReceiptId}/approve", null)).StatusCode);
         Assert.Equal(40, store.Balance.PhysicalQuantity);
@@ -171,6 +193,11 @@ public sealed class GoodsReceiptApiTests
         public void AddBatch(Batch batch) => Batches.Add(batch);
         public void AddBalance(InventoryBalance balance) => Balance = balance;
         public void AddTransaction(InventoryTransaction transaction) => Transactions.Add(transaction);
+        public List<BatchQrLabel> QrLabels { get; } = [];
+        public List<QrLabelEvent> QrLabelEvents { get; } = [];
+        private int _qrSequence;
+        public Task<string> NextQrLabelCodeAsync(CancellationToken cancellationToken) => Task.FromResult($"TEM-{++_qrSequence:000000}");
+        public void AddQrLabel(BatchQrLabel label, QrLabelEvent generatedEvent) { QrLabels.Add(label); QrLabelEvents.Add(generatedEvent); }
         public void ClearTracking() { }
         public Task SaveChangesAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 

@@ -20,7 +20,8 @@ public sealed class PaymentService(
     OrderNotificationService? notifications = null,
     LoyaltyAccrualService? loyalty = null,
     AllocationDeliveryGuard? deliveryGuard = null,
-    RetailerDebtPayOsService? debtPayOsService = null)
+    RetailerDebtPayOsService? debtPayOsService = null,
+    RetailerCreditPolicy? creditPolicy = null)
 {
     private static readonly TimeSpan VietnamOffset = TimeSpan.FromHours(7);
 
@@ -52,6 +53,17 @@ public sealed class PaymentService(
             ?? throw PaymentOperationException.NotFound("Payment was not found.");
         if (!await store.CanViewAsync(view, actorUserId, actorRole, cancellationToken))
             throw PaymentOperationException.Forbidden("You cannot view this payment.");
+
+        if (view.Payment.Method == OrderPaymentMethods.Prepaid &&
+            view.Payment.Status != PaymentStatuses.Paid &&
+            view.Payment.PayOsOrderCode.HasValue &&
+            !string.IsNullOrWhiteSpace(view.Payment.PayOsPaymentLinkId))
+        {
+            await ReconcilePrepaidPayOsCheckoutAsync(view, cancellationToken);
+            store.ClearTracking();
+            view = await store.FindByOrderAsync(orderId, false, cancellationToken)
+                ?? throw PaymentOperationException.NotFound("Payment was not found.");
+        }
         return ToResult(view, Today());
     }
 
@@ -306,8 +318,8 @@ public sealed class PaymentService(
         Guid orderId, int expectedVersion, Guid actorUserId, string actorRole,
         CancellationToken cancellationToken)
     {
-        if (actorRole != SystemRoles.Retailer)
-            throw PaymentOperationException.Forbidden("Chỉ chủ cửa hàng được đổi phương thức thanh toán.");
+        if (actorRole is not (SystemRoles.Admin or SystemRoles.Retailer))
+            throw PaymentOperationException.Forbidden("Chỉ chủ cửa hàng hoặc Admin được đổi phương thức thanh toán.");
         await store.ExecuteInTransactionAsync(async token =>
         {
             var view = await store.FindByOrderAsync(orderId, true, token)
@@ -330,6 +342,8 @@ public sealed class PaymentService(
                 throw PaymentOperationException.Conflict("Thanh toán đã thay đổi. Hãy tải lại đơn.");
             if (view.Retailer.CreditTermDays is not (7 or 14 or 30))
                 throw PaymentOperationException.Conflict("Cửa hàng chưa được duyệt kỳ hạn công nợ.");
+            if (creditPolicy is not null)
+                await creditPolicy.EnsureEligibleAsync(view.Retailer, view.Payment.AdjustedAmount, token);
             if (view.Payment.PayOsPaymentLinkId is not null || view.Payment.PayOsOrderCode is not null)
                 throw PaymentOperationException.Conflict(
                     "Đơn đã có giao dịch PayOS. Cần xác nhận hủy giao dịch đó trước khi đổi phương thức.");
@@ -443,6 +457,13 @@ public sealed class PaymentService(
         if (debtPayOsService is not null &&
             await debtPayOsService.FindByPayOsOrderCodeAsync(verified.Data.OrderCode, cancellationToken) is not null)
             return await debtPayOsService.HandleVerifiedWebhookAsync(verified, cancellationToken);
+        return await HandleVerifiedPrepaidPayOsWebhookAsync(verified, cancellationToken);
+    }
+
+    private async Task<PayOsWebhookResult> HandleVerifiedPrepaidPayOsWebhookAsync(
+        PayOsVerifiedWebhook verified,
+        CancellationToken cancellationToken)
+    {
         if (!verified.Success || verified.Code != "00" || verified.Data.Code != "00")
             return new(false, "Webhook was verified but does not represent a successful payment.", null);
 
@@ -530,6 +551,79 @@ public sealed class PaymentService(
             if (paid is not null) await NotifyPaidAsync(paid, cancellationToken);
         }
         return result ?? throw PaymentOperationException.Conflict("Payment webhook could not be processed.");
+    }
+
+    private async Task ReconcilePrepaidPayOsCheckoutAsync(
+        PaymentView view,
+        CancellationToken cancellationToken)
+    {
+        PayOsPaymentLinkStatus link;
+        try
+        {
+            link = await payOsGateway.GetPaymentLinkStatusAsync(
+                view.Payment.PayOsOrderCode!.Value, cancellationToken);
+        }
+        catch (PaymentOperationException)
+        {
+            // The verified webhook remains authoritative. A temporary PayOS outage must not
+            // prevent the mobile client from reading the order; its next poll retries.
+            return;
+        }
+
+        if (link.OrderCode != view.Payment.PayOsOrderCode ||
+            !string.Equals(link.PaymentLinkId, view.Payment.PayOsPaymentLinkId,
+                StringComparison.Ordinal))
+            throw PaymentOperationException.Gateway("payOS returned a different payment link.");
+
+        var status = link.Status.ToUpperInvariant();
+        if (status == "PAID")
+        {
+            var now = timeProvider.GetUtcNow();
+            await HandleVerifiedPrepaidPayOsWebhookAsync(new PayOsVerifiedWebhook(
+                "00", true,
+                new PayOsWebhookPayload(
+                    link.OrderCode,
+                    ToPayOsAmount(view.Payment.Amount - view.Payment.ConfirmedAmount),
+                    $"FSCM {view.Order.OrderCode}",
+                    string.Empty,
+                    $"PAYOS-STATUS-{link.OrderCode}",
+                    now.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture),
+                    "VND",
+                    link.PaymentLinkId,
+                    "00",
+                    "paid",
+                    null, null, null, null, null, null)), cancellationToken);
+            return;
+        }
+
+        if (status is not ("CANCELLED" or "EXPIRED") ||
+            string.Equals(view.Payment.PayOsLinkStatus, status, StringComparison.OrdinalIgnoreCase))
+            return;
+
+        await store.ExecuteInTransactionAsync(async token =>
+        {
+            var current = await store.FindByOrderAsync(view.Order.Id, true, token);
+            if (current is null || current.Payment.Status == PaymentStatuses.Paid ||
+                current.Payment.PayOsOrderCode != link.OrderCode ||
+                !string.Equals(current.Payment.PayOsPaymentLinkId, link.PaymentLinkId,
+                    StringComparison.Ordinal))
+                return;
+            current.Payment.PayOsLinkStatus = status;
+            current.Payment.PayOsExpiredAt = link.ExpiredAt ?? current.Payment.PayOsExpiredAt;
+            current.Payment.Version++;
+            current.Payment.UpdatedAt = timeProvider.GetUtcNow();
+            store.AddAuditLog(new AuditLog
+            {
+                Id = Guid.NewGuid(),
+                EntityName = nameof(Payment),
+                EntityId = current.Payment.Id,
+                Action = $"PayOsCheckout{status}",
+                NewValues = JsonSerializer.Serialize(new { current.Payment.PayOsLinkStatus }),
+                Reason = "Đồng bộ trạng thái link thanh toán PayOS trả trước",
+                CreatedAt = current.Payment.UpdatedAt
+            });
+            await store.SaveChangesAsync(token);
+        }, cancellationToken);
     }
 
     private Task NotifyPaidAsync(PaymentView view, CancellationToken cancellationToken) =>

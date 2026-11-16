@@ -49,6 +49,23 @@ public sealed class RetailerServiceTests
     }
 
     [Fact]
+    public async Task Approval_requires_and_persists_a_non_negative_credit_limit()
+    {
+        var fixture = new Fixture();
+        var declared = await fixture.DeclareAsync(30_000_000, 20, 60);
+
+        var missing = await Assert.ThrowsAsync<RetailerOperationException>(() =>
+            fixture.Service.ReviewAsync(declared.Id, Guid.NewGuid(), true, 14, null, "Hồ sơ hợp lệ", CancellationToken.None));
+        Assert.Equal("validation_error", missing.Code);
+
+        var result = await fixture.Service.ReviewAsync(
+            declared.Id, Guid.NewGuid(), true, 14, 25_000_000m, "Hồ sơ hợp lệ", CancellationToken.None);
+
+        Assert.Equal(25_000_000m, result.CreditLimit);
+        Assert.Equal(25_000_000m, fixture.Store.Retailers[0].CreditLimit);
+    }
+
+    [Fact]
     public async Task Approval_creates_inactive_retailer_account_and_sends_account_created_email()
     {
         var fixture = new Fixture();
@@ -209,6 +226,31 @@ public sealed class RetailerServiceTests
     }
 
     [Fact]
+    public async Task Admin_created_retailer_enters_the_review_queue_like_a_sales_declaration()
+    {
+        var fixture = new Fixture();
+        var adminId = Guid.NewGuid();
+        var created = await fixture.Service.CreateByAdminAsync(adminId, fixture.RegionId, fixture.GroupId,
+            "Cửa hàng Admin tạo", "Trần Thị Bình", "0909111222", "admin.created@fscm.local", "Quận 1",
+            RetailerTypes.GroceryStore, 40_000_000, 30, 80, 4, null, 10.776m, 106.700m, null, null,
+            CancellationToken.None);
+
+        var stored = Assert.Single(fixture.Store.Retailers);
+        Assert.Equal(RetailerStatuses.PendingApproval, stored.Status);
+        Assert.Equal(created.Code, stored.Code);
+        Assert.Equal(adminId, stored.DeclaredByUserId);
+        Assert.Null(stored.UserAccountId); // The account is created on approval, as for Sales.
+        Assert.Equal(fixture.GroupId, Assert.Single(fixture.Store.Assignments).SalesGroupId);
+
+        fixture.Store.GroupInRegion = false;
+        var invalid = await Assert.ThrowsAsync<RetailerOperationException>(() =>
+            fixture.Service.CreateByAdminAsync(adminId, fixture.RegionId, Guid.NewGuid(),
+                "Cửa hàng khác", "Lê Văn C", "0909333444", "other@fscm.local", "Quận 3",
+                RetailerTypes.GroceryStore, 1, 1, 1, 1, null, null, null, null, null, CancellationToken.None));
+        Assert.Equal("validation_error", invalid.Code);
+    }
+
+    [Fact]
     public async Task Duplicate_retailer_declaration_is_rejected()
     {
         var fixture = new Fixture();
@@ -218,6 +260,9 @@ public sealed class RetailerServiceTests
             fixture.DeclareAsync(20_000_000, 30, 40));
 
         Assert.Equal("conflict", exception.Code);
+        // Same phone: the error names the field and is worded in Vietnamese for the form.
+        Assert.Equal("phone", exception.Field);
+        Assert.StartsWith("Số điện thoại", exception.Message);
         Assert.Single(fixture.Store.Retailers);
     }
 
@@ -291,6 +336,96 @@ public sealed class RetailerServiceTests
 
         Assert.False(pending.IsEligible);
         Assert.True(active.IsEligible);
+    }
+
+    private static UpdateRetailerProfileData ProfileData() => new(
+        "Updated store", "Updated contact", "0909888777", "updated@retailer.test", "Updated address",
+        RetailerTypes.GroceryStore, 40_000_000, 45, 80, 5, 30, "Updated assessment",
+        10.8m, 106.7m, null);
+
+    [Fact]
+    public async Task Admin_profile_edit_updates_linked_contact_without_reopening_approval_or_changing_credit_and_mlor()
+    {
+        var fixture = new Fixture();
+        var declared = await fixture.DeclareAsync(30_000_000, 20, 60);
+        var reviewer = Guid.NewGuid();
+        await fixture.Service.ReviewAsync(declared.Id, reviewer, true, 14, "Approved", default);
+        var retailer = Assert.Single(fixture.Store.Retailers);
+        var account = Assert.Single(fixture.Store.ContactAccounts);
+        var code = retailer.Code;
+        var accountId = retailer.UserAccountId;
+        var mlor = Assert.Single(fixture.Store.Mlors);
+        var mlorVersion = mlor.Version;
+        var region = retailer.RegionId;
+
+        var result = await fixture.Service.UpdateProfileAsync(declared.Id, Guid.NewGuid(), "Admin", ProfileData(), default);
+
+        Assert.Equal("Updated store", result.Name);
+        Assert.Equal("Updated contact", result.ContactName);
+        Assert.Equal("updated@retailer.test", account.Email);
+        Assert.Equal("0909888777", account.Phone);
+        Assert.Equal("Retailer", account.Role);
+        Assert.False(account.IsActive); // Profile editing must not bypass account activation.
+        Assert.Equal(accountId, retailer.UserAccountId);
+        Assert.Equal(code, retailer.Code);
+        Assert.Equal(region, retailer.RegionId);
+        Assert.Equal(RetailerStatuses.Active, retailer.Status);
+        Assert.Equal(reviewer, retailer.ReviewedByUserId);
+        Assert.Equal("Approved", retailer.ReviewReason);
+        Assert.Equal(14, retailer.CreditTermDays);
+        Assert.Equal(fixture.SalesUserId, retailer.DeclaredByUserId);
+        Assert.Single(fixture.Store.Assignments);
+        Assert.Same(mlor, Assert.Single(fixture.Store.Mlors));
+        Assert.Equal(mlorVersion, mlor.Version);
+        Assert.True(mlor.IsActive);
+        Assert.Equal(10.8m, result.Latitude);
+        Assert.Single(fixture.EmailSender.AccountCreatedEmails);
+        Assert.Contains(fixture.Store.AuditLogs, log => log.Action == "RetailerProfileUpdated");
+    }
+
+    [Fact]
+    public async Task Admin_profile_edit_updates_declaration_contact_and_keeps_pending_review()
+    {
+        var fixture = new Fixture();
+        var declared = await fixture.DeclareAsync(30_000_000, 20, 60);
+        var result = await fixture.Service.UpdateProfileAsync(declared.Id, Guid.NewGuid(), "Admin", ProfileData(), default);
+        Assert.Equal(RetailerStatuses.PendingApproval, result.Status);
+        Assert.Equal("updated@retailer.test", Assert.Single(fixture.Store.DeclarationContacts).Email);
+        Assert.Empty(fixture.Store.ContactAccounts);
+        Assert.Null(Assert.Single(fixture.Store.Retailers).UserAccountId);
+    }
+
+    [Theory]
+    [InlineData("Operator")]
+    [InlineData("Sales")]
+    [InlineData("SalesManager")]
+    [InlineData("Retailer")]
+    [InlineData("WarehouseKeeper")]
+    public async Task Profile_edit_is_admin_only_in_the_service_as_well_as_the_controller(string role)
+    {
+        var fixture = new Fixture();
+        var declared = await fixture.DeclareAsync(30_000_000, 20, 60);
+        var exception = await Assert.ThrowsAsync<RetailerOperationException>(() =>
+            fixture.Service.UpdateProfileAsync(declared.Id, fixture.SalesUserId, role, ProfileData(), default));
+        Assert.Equal("forbidden", exception.Code);
+        Assert.Equal(declared.Name, Assert.Single(fixture.Store.Retailers).Name);
+    }
+
+    [Fact]
+    public async Task Profile_edit_rejects_duplicate_contacts_and_invalid_coordinates_without_changing_profile()
+    {
+        var fixture = new Fixture();
+        var declared = await fixture.DeclareAsync(30_000_000, 20, 60);
+        fixture.Store.ContactAccounts.Add(UnassignedAccount("updated@retailer.test", "0909888777"));
+        await Assert.ThrowsAsync<RetailerOperationException>(() =>
+            fixture.Service.UpdateProfileAsync(declared.Id, Guid.NewGuid(), "Admin", ProfileData(), default));
+        fixture.Store.ContactAccounts.Clear();
+        await Assert.ThrowsAsync<RetailerOperationException>(() =>
+            fixture.Service.UpdateProfileAsync(declared.Id, Guid.NewGuid(), "Admin", ProfileData() with { Latitude = 91 }, default));
+        await Assert.ThrowsAsync<RetailerOperationException>(() =>
+            fixture.Service.UpdateProfileAsync(declared.Id, Guid.NewGuid(), "Admin", ProfileData() with { Name = " " }, default));
+        Assert.Equal(declared.Name, Assert.Single(fixture.Store.Retailers).Name);
+        Assert.Equal(declared.Email, Assert.Single(fixture.Store.DeclarationContacts).Email);
     }
 
     private sealed class Fixture
@@ -386,6 +521,8 @@ public sealed class RetailerServiceTests
             Task.FromResult(Retailers.Where(item => item.Id == retailerId).Select(ToView).SingleOrDefault());
         public Task<Retailer?> FindForUpdateAsync(Guid retailerId, CancellationToken cancellationToken) =>
             Task.FromResult(Retailers.SingleOrDefault(item => item.Id == retailerId));
+        public Task<UserAccount?> FindContactAccountForUpdateAsync(Guid accountId, CancellationToken cancellationToken) =>
+            Task.FromResult(ContactAccounts.SingleOrDefault(item => item.Id == accountId));
         public Task<RetailerDeclarationContact?> FindDeclarationContactForUpdateAsync(Guid retailerId, CancellationToken cancellationToken) =>
             Task.FromResult(DeclarationContacts.SingleOrDefault(item => item.RetailerId == retailerId));
         public Task<IReadOnlyList<UserAccount>> FindUnassignedRetailerAccountsAsync(
@@ -432,6 +569,8 @@ public sealed class RetailerServiceTests
         public Task<SystemConfiguration?> FindCurrentConfigurationAsync(string key, CancellationToken cancellationToken) =>
             Task.FromResult(Configurations.SingleOrDefault(item => item.ConfigKey == key && item.IsActive));
         public Task<bool> CanDeclareForGroupAsync(Guid userId, Guid regionId, Guid salesGroupId, CancellationToken cancellationToken) => Task.FromResult(true);
+        public bool GroupInRegion { get; set; } = true;
+        public Task<bool> IsActiveSalesGroupInRegionAsync(Guid regionId, Guid salesGroupId, CancellationToken cancellationToken) => Task.FromResult(GroupInRegion);
         public Task<RetailerTerritoryAccess?> FindTerritoryAccessAsync(Guid userId, Guid retailerId, CancellationToken cancellationToken) =>
             Task.FromResult(HasTerritoryAccess ? new RetailerTerritoryAccess(Assignments.Single(item => item.RetailerId == retailerId).SalesGroupId, "HCM-A") : null);
         public Task<bool> IsActiveSalesUserAsync(Guid userId, CancellationToken cancellationToken) => Task.FromResult(true);

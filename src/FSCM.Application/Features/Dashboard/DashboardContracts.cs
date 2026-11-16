@@ -6,7 +6,9 @@ public sealed record DashboardOption(Guid Id, string Code, string Name, Guid? Re
 public sealed record DashboardScope(bool IsGlobal, bool HasAssignments, string Description,
     IReadOnlyCollection<DashboardOption> Regions, IReadOnlyCollection<DashboardOption> Warehouses,
     IReadOnlyCollection<DashboardOption> SalesGroups);
-public sealed record DashboardCard(string Key, string Label, decimal Value, string Unit, string Note, string Tone = "neutral");
+/// <summary>A KPI tile. <paramref name="PreviousValue"/> is the same figure for the preceding period of equal length, when it is comparable.</summary>
+public sealed record DashboardCard(string Key, string Label, decimal Value, string Unit, string Note, string Tone = "neutral", string? Href = null,
+    decimal? PreviousValue = null);
 public sealed record DashboardStatus(string Status, int Count);
 public sealed record DashboardDay(DateOnly Date, decimal RecognizedRevenue, decimal CollectedAmount);
 public sealed record DashboardProduct(Guid Id, string Sku, string Name, decimal Quantity, decimal Revenue);
@@ -19,7 +21,16 @@ public sealed record DashboardExpiry(Guid Id, string BatchCode, string Warehouse
 public sealed record DashboardWorkItem(string Kind, Guid Id, string Code, string Title, string Status,
     string Reason, DateTimeOffset Since, int Priority, string? Href, decimal? Amount = null);
 public sealed record DashboardCustomer(Guid Id, string Code, string Name, string Status,
-    int PeriodOrders, DateTimeOffset? LastOrderAt, int ExpectedFrequencyPerMonth, decimal Outstanding, decimal Overdue);
+    int PeriodOrders, DateTimeOffset? LastOrderAt, int ExpectedFrequencyPerMonth, decimal Outstanding, decimal Overdue,
+    bool CycleOverdue = false);
+/// <summary>Credit receivables still open, grouped by how far past the due date they are.</summary>
+public sealed record DashboardAgingBucket(string Key, string Label, int Count, decimal Amount);
+/// <summary>
+/// One SKU in one region whose stock needs attention: below the regional minimum, not selling, or
+/// more than can be sold before its shelf life runs out at the recent sales pace.
+/// </summary>
+public sealed record DashboardStockCover(Guid ProductId, string Sku, string Name, Guid RegionId, string RegionCode,
+    decimal Available, decimal SoldLast30Days, decimal? DaysOfSupply, int ShelfLifeDays, decimal MinimumStock, string Flag);
 public sealed record DashboardHealth(DateTimeOffset? ExpiryLastRunAt, string? ExpiryStatus,
     int PendingEvents, int FailedEvents, int AbandonedAllocations);
 public sealed record DashboardResult(string Role, DateTimeOffset AsOf, DateOnly FromDate, DateOnly ToDate,
@@ -28,7 +39,10 @@ public sealed record DashboardResult(string Role, DateTimeOffset AsOf, DateOnly 
     IReadOnlyCollection<DashboardSalesPerson> SalesTeam, IReadOnlyCollection<DashboardWarehouse> Inventory,
     IReadOnlyCollection<DashboardExpiry> ExpiryRisks, IReadOnlyCollection<DashboardWorkItem> WorkItems,
     IReadOnlyCollection<DashboardCustomer> Customers, DashboardHealth? Health, decimal? UnattributedRevenue,
-    IReadOnlyCollection<string> Notes);
+    IReadOnlyCollection<string> Notes,
+    IReadOnlyCollection<DashboardAgingBucket>? DebtAging = null,
+    IReadOnlyCollection<DashboardStockCover>? StockCover = null,
+    int ExpiryRiskTotal = 0);
 
 public interface IDashboardStore
 {

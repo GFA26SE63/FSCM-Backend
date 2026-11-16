@@ -19,6 +19,7 @@ public sealed record InventoryHistoryView(
 
 public interface IInventoryStore
 {
+    Task<bool> IsDocumentControlledReceiptAsync(Guid receiptId, CancellationToken ct) => Task.FromResult(false);
     Task<bool> CanAccessWarehouseAsync(Guid userId, string role, Guid warehouseId, CancellationToken cancellationToken);
     Task<Warehouse?> FindWarehouseAsync(Guid warehouseId, CancellationToken cancellationToken);
     Task<Product?> FindProductAsync(Guid productId, CancellationToken cancellationToken);
@@ -40,6 +41,10 @@ public interface IInventoryStore
     void AddBatch(Batch batch);
     void AddBalance(InventoryBalance balance);
     void AddTransaction(InventoryTransaction transaction);
+    /// <summary>Next TEM-xxxxxx code from the shared QR label sequence.</summary>
+    Task<string> NextQrLabelCodeAsync(CancellationToken cancellationToken);
+    /// <summary>Adds a QR label and its Generated event (saved with the receipt approval).</summary>
+    void AddQrLabel(BatchQrLabel label, QrLabelEvent generatedEvent);
     void ClearTracking();
     Task SaveChangesAsync(CancellationToken cancellationToken);
 }

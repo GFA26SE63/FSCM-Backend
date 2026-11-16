@@ -79,6 +79,7 @@ public static class DependencyInjection
         services.AddScoped<PurchaseOrderGateService>();
         services.AddScoped<IOrderPricingService, OrderPricingService>();
         services.AddScoped<PaymentService>();
+        services.AddScoped<RetailerCreditPolicy>();
         services.AddScoped<PaymentReceiptService>();
         services.AddScoped<RetailerReceivableService>();
         services.AddScoped<RetailerDebtPayOsService>();

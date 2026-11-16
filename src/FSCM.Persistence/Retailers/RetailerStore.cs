@@ -75,6 +75,9 @@ public sealed class RetailerStore(AppDbContext dbContext) : IRetailerStore
     public Task<Retailer?> FindForUpdateAsync(Guid retailerId, CancellationToken cancellationToken) =>
         dbContext.RetailerRecords.SingleOrDefaultAsync(item => item.Id == retailerId, cancellationToken);
 
+    public Task<UserAccount?> FindContactAccountForUpdateAsync(Guid accountId, CancellationToken cancellationToken) =>
+        dbContext.UserAccountRecords.SingleOrDefaultAsync(item => item.Id == accountId, cancellationToken);
+
     public Task<RetailerDeclarationContact?> FindDeclarationContactForUpdateAsync(
         Guid retailerId, CancellationToken cancellationToken) =>
         dbContext.RetailerDeclarationContactRecords.SingleOrDefaultAsync(
@@ -178,6 +181,10 @@ public sealed class RetailerStore(AppDbContext dbContext) : IRetailerStore
          where member.UserAccountId == userId && member.SalesGroupId == salesGroupId && member.IsActive &&
              salesGroup.IsActive && salesGroup.RegionId == regionId && user.IsActive && user.Role == SystemRoles.Sales
          select member).AnyAsync(cancellationToken);
+
+    public Task<bool> IsActiveSalesGroupInRegionAsync(Guid regionId, Guid salesGroupId, CancellationToken cancellationToken) =>
+        dbContext.SalesGroupRecords.AsNoTracking().AnyAsync(group =>
+            group.Id == salesGroupId && group.IsActive && group.RegionId == regionId, cancellationToken);
 
     public Task<RetailerTerritoryAccess?> FindTerritoryAccessAsync(Guid userId, Guid retailerId, CancellationToken cancellationToken) =>
         (from member in dbContext.SalesGroupMemberRecords.AsNoTracking()

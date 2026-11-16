@@ -34,7 +34,7 @@ public sealed class OrderService(
         CancellationToken cancellationToken,
         string actorRole = SystemRoles.Sales)
     {
-        if (actorRole is not (SystemRoles.Sales or SystemRoles.Retailer))
+        if (actorRole is not (SystemRoles.Admin or SystemRoles.Sales or SystemRoles.Retailer))
             throw OrderOperationException.Forbidden("Role cannot create orders.");
         var normalized = Normalize(data);
         var requestHash = ComputeRequestHash(normalized, salesUserId);
@@ -50,9 +50,11 @@ public sealed class OrderService(
             return await GetAsync(existing.Id, salesUserId, actorRole, cancellationToken);
         }
 
-        var retailerContext = await (actorRole == SystemRoles.Retailer
-            ? store.FindLinkedRetailerContextAsync(salesUserId, normalized.RetailerId, cancellationToken)
-            : store.FindRetailerContextAsync(salesUserId, normalized.RetailerId, cancellationToken))
+        var retailerContext = await (actorRole == SystemRoles.Admin
+            ? store.FindAnyRetailerContextAsync(normalized.RetailerId, cancellationToken)
+            : actorRole == SystemRoles.Retailer
+                ? store.FindLinkedRetailerContextAsync(salesUserId, normalized.RetailerId, cancellationToken)
+                : store.FindRetailerContextAsync(salesUserId, normalized.RetailerId, cancellationToken))
             ?? throw OrderOperationException.Forbidden(
                 "Sales can only create orders for an active retailer in the assigned territory.");
         if (retailerContext.Retailer.Status != "Active")
@@ -106,7 +108,8 @@ public sealed class OrderService(
     public async Task<OrderDetailResult> SubmitOfflineAsync(
         SubmitOfflineOrderData data,
         Guid salesUserId,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string actorRole = SystemRoles.Sales)
     {
         if (data.OfflineEstimatedAmount < 0)
             throw OrderOperationException.Validation("Offline estimated amount cannot be negative.");
@@ -124,11 +127,12 @@ public sealed class OrderService(
                 !(existing.Source == OrderSources.Offline && existing.RequestHash == legacyOfflineHash))
                 throw OrderOperationException.Conflict("Client order key was already used for a different request.");
             await ResumeAllocationAsync(existing, salesUserId, cancellationToken);
-            return await GetAsync(existing.Id, salesUserId, SystemRoles.Sales, cancellationToken);
+            return await GetAsync(existing.Id, salesUserId, actorRole, cancellationToken);
         }
 
-        var retailerContext = await store.FindRetailerContextAsync(
-            salesUserId, normalized.RetailerId, cancellationToken)
+        var retailerContext = await (actorRole == SystemRoles.Admin
+            ? store.FindAnyRetailerContextAsync(normalized.RetailerId, cancellationToken)
+            : store.FindRetailerContextAsync(salesUserId, normalized.RetailerId, cancellationToken))
             ?? throw OrderOperationException.Forbidden(
                 "Sales can only create orders for an active retailer in the assigned territory.");
         if (retailerContext.Retailer.Status != "Active")

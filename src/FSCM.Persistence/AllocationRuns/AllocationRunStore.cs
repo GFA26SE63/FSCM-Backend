@@ -1,5 +1,6 @@
 using System.Text.Json;
 using FSCM.Application.Features.AllocationRuns;
+using FSCM.Application.Features.Catalog;
 using FSCM.Application.Features.Inventory;
 using FSCM.Application.Features.Orders;
 using FSCM.Application.Features.WarehouseConfiguration;
@@ -115,6 +116,8 @@ public sealed class AllocationRunStore(AppDbContext dbContext) : IAllocationRunS
             .ToArrayAsync(cancellationToken);
 
         var fallback = await ReadDefaultMlorRatioAsync(cancellationToken);
+        var categories = await dbContext.ProductCategoryRecords.AsNoTracking()
+            .ToDictionaryAsync(item => item.Id, cancellationToken);
         foreach (var pair in pairs)
         {
             var bySku = configured.FirstOrDefault(
@@ -129,8 +132,15 @@ public sealed class AllocationRunStore(AppDbContext dbContext) : IAllocationRunS
             var byCategory = configured.FirstOrDefault(item => item.RetailerId == pair.RetailerId
                 && item.ProductId == null
                 && item.ProductCategoryId == categoryId);
-            result[pair] = byCategory is not null
-                ? (byCategory.MinimumLifeRatio, MlorSources.RetailerCategory)
+            if (byCategory is not null)
+            {
+                result[pair] = (byCategory.MinimumLifeRatio, MlorSources.RetailerCategory);
+                continue;
+            }
+
+            // Category-level default MLOR before the system default.
+            result[pair] = CategoryDefaultMlor.Resolve(categoryId, categories) is { } categoryDefault
+                ? (categoryDefault.DefaultMlorRatio!.Value, MlorSources.CategoryDefault)
                 : (fallback, MlorSources.ProductDefault);
         }
 

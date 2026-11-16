@@ -2,7 +2,7 @@ namespace FSCM.Application.Features.MobileSnapshots;
 
 public sealed record MobileSnapshotRetailer(
     Guid Id, string Code, string Name, string? Address, string Status, int CreditTermDays,
-    DateTimeOffset UpdatedAt);
+    DateTimeOffset UpdatedAt, decimal CreditLimit = 0);
 
 public sealed record MobileSnapshotProduct(
     Guid Id, Guid CategoryId, string Sku, string Name, string Unit, int ShelfLifeHours,
@@ -10,7 +10,7 @@ public sealed record MobileSnapshotProduct(
 
 public sealed record MobileSnapshotCategory(
     Guid Id, Guid? ParentCategoryId, string Code, string Name, bool IsActive,
-    DateTimeOffset UpdatedAt);
+    DateTimeOffset UpdatedAt, decimal? DefaultMlorRatio = null, int DefaultMlorVersion = 0);
 
 public sealed record MobileSnapshotPrice(
     Guid Id, Guid ProductId, decimal UnitPrice, DateTimeOffset EffectiveFrom,
