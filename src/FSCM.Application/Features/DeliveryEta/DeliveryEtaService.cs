@@ -64,11 +64,9 @@ public sealed class DeliveryEtaService(
         if (!request.AllowStaleDistance && distance.ExpiresAt <= now)
             throw DeliveryEtaOperationException.StaleDistance("The cached route has expired and must be refreshed.");
 
-        if (!request.AllowStaleDistance)
-        {
-            await EnsureDistanceIsCurrentAsync(distance.OriginLocationVersion, "warehouse", request.WarehouseId, cancellationToken);
-            await EnsureDistanceIsCurrentAsync(distance.DestinationLocationVersion, "retailer", request.RetailerId, cancellationToken);
-        }
+        // Fallback permits an expired route, never a route for different coordinates.
+        await EnsureDistanceIsCurrentAsync(distance.OriginLocationVersion, "warehouse", request.WarehouseId, cancellationToken);
+        await EnsureDistanceIsCurrentAsync(distance.DestinationLocationVersion, "retailer", request.RetailerId, cancellationToken);
 
         // The transit band is read as of the reference moment, so a re-check of an older run still
         // reads the table version that run actually used.

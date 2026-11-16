@@ -26,6 +26,23 @@ public sealed class DeliveryEtaServiceTests
         Assert.NotNull(result);
         Assert.Equal(fixture.Store.Distance.DistanceMeters, result.DistanceMeters);
     }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Stale_fallback_rejects_changed_coordinates(bool warehouseMoved)
+    {
+        var fixture = await Fixture.CreateAsync();
+        fixture.Store.Distance.ExpiresAt = Now.AddMinutes(-1);
+        if (warehouseMoved) fixture.Store.WarehouseLocation.Version++;
+        else fixture.Store.RetailerLocation.Version++;
+
+        var error = await Assert.ThrowsAsync<DeliveryEtaOperationException>(() => fixture.Service.EstimateAsync(
+            new EtaRequest(fixture.WarehouseId, fixture.RetailerId, Now, AllowStaleDistance: true), default));
+
+        Assert.Equal("conflict", error.Code);
+        Assert.True(error.CanRefreshDistance);
+    }
     // 2026-10-21 03:00 UTC is 10:00 in Vietnam.
     private static readonly DateTimeOffset Now = new(2026, 10, 21, 3, 0, 0, TimeSpan.Zero);
     private static readonly Guid Actor = Guid.Parse("11111111-1111-1111-1111-111111111111");
