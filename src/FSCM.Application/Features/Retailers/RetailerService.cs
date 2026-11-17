@@ -70,7 +70,45 @@ public sealed class RetailerService(
         if (!await store.CanDeclareForGroupAsync(actorUserId, regionId, salesGroupId, cancellationToken))
             throw RetailerOperationException.Forbidden(
                 "Sales can only declare a Retailer in their active Sales group's territory.");
+        return await CreateDeclarationAsync(actorUserId, regionId, salesGroupId, name, contactName, phone, email,
+            address, retailerType, forecastRevenue, storeSizeSquareMeters, purchasingCapacity,
+            purchaseFrequencyPerMonth, requestedCreditTermDays, assessmentNote, latitude, longitude,
+            providerPlaceId, mlorDeclarations, submitForReview ? ReviewSubmission.RequireMlor : ReviewSubmission.Draft,
+            cancellationToken);
+    }
 
+    /// <summary>
+    /// Admin creates a retailer on the Portal. It goes into the same review queue as a Sales
+    /// declaration (PendingApproval, system-issued code, account created on approval). MLOR may be
+    /// added afterwards on the retailer's MLOR tab; approval still requires at least one entry.
+    /// </summary>
+    public async Task<RetailerDetails> CreateByAdminAsync(
+        Guid actorUserId, Guid regionId, Guid salesGroupId, string name, string contactName,
+        string phone, string email, string? address, string retailerType,
+        decimal forecastRevenue, decimal storeSizeSquareMeters, decimal purchasingCapacity,
+        int purchaseFrequencyPerMonth, string? assessmentNote,
+        decimal? latitude, decimal? longitude, string? providerPlaceId,
+        IReadOnlyCollection<RetailerMlorData>? mlorDeclarations, CancellationToken cancellationToken)
+    {
+        if (!await store.IsActiveSalesGroupInRegionAsync(regionId, salesGroupId, cancellationToken))
+            throw RetailerOperationException.Validation("Nhóm Sales không hoạt động hoặc không thuộc khu vực đã chọn.");
+        return await CreateDeclarationAsync(actorUserId, regionId, salesGroupId, name, contactName, phone, email,
+            address, retailerType, forecastRevenue, storeSizeSquareMeters, purchasingCapacity,
+            purchaseFrequencyPerMonth, 0, assessmentNote, latitude, longitude, providerPlaceId,
+            mlorDeclarations, ReviewSubmission.PendingWithoutMlorCheck, cancellationToken);
+    }
+
+    private enum ReviewSubmission { Draft, RequireMlor, PendingWithoutMlorCheck }
+
+    private async Task<RetailerDetails> CreateDeclarationAsync(
+        Guid actorUserId, Guid regionId, Guid salesGroupId, string name, string contactName,
+        string phone, string email, string? address, string retailerType,
+        decimal forecastRevenue, decimal storeSizeSquareMeters, decimal purchasingCapacity,
+        int purchaseFrequencyPerMonth, int requestedCreditTermDays, string? assessmentNote,
+        decimal? latitude, decimal? longitude, string? providerPlaceId,
+        IReadOnlyCollection<RetailerMlorData>? mlorDeclarations, ReviewSubmission submission,
+        CancellationToken cancellationToken)
+    {
         var input = Validate(name, contactName, phone, email, address, retailerType, forecastRevenue,
             storeSizeSquareMeters, purchasingCapacity, purchaseFrequencyPerMonth, requestedCreditTermDays, assessmentNote);
         await EnsureNoDuplicateAsync(input, null, cancellationToken);
@@ -109,12 +147,13 @@ public sealed class RetailerService(
         var activeMlors = mlorDeclarations is null
             ? (await ActiveMlorAsync(retailer.Id, cancellationToken)).Select(item => item.Mlor).ToArray()
             : await ReplaceMlorDeclarationsAsync(retailer, actorUserId, mlorDeclarations, now, cancellationToken);
-        if (submitForReview)
+        if (submission != ReviewSubmission.Draft)
         {
-            EnsureMlorReadyForReview(activeMlors);
+            if (submission == ReviewSubmission.RequireMlor) EnsureMlorReadyForReview(activeMlors);
             retailer.Status = RetailerStatuses.PendingApproval;
         }
-        AddAudit(retailer.Id, actorUserId, "RetailerDeclarationSaved", null,
+        AddAudit(retailer.Id, actorUserId, submission == ReviewSubmission.PendingWithoutMlorCheck
+                ? "RetailerCreatedByAdmin" : "RetailerDeclarationSaved", null,
             GeneralInformationAuditJson(retailer, input.ContactName, input.Phone, input.Email), null, now);
         await store.SaveChangesAsync(cancellationToken);
         return await GetResultAsync(retailer.Id, cancellationToken);
@@ -449,20 +488,25 @@ public sealed class RetailerService(
     private async Task EnsureNoDuplicateAsync(
         RetailerInput input, Guid? excludedRetailerId, CancellationToken cancellationToken)
     {
-        var duplicate = await store.FindDuplicateAsync(
-            input.Name.ToLowerInvariant(),
-            input.Phone.ToLowerInvariant(),
-            input.Email.ToLowerInvariant(),
-            input.Address?.ToLowerInvariant(),
-            excludedRetailerId,
-            cancellationToken);
-        if (duplicate is not null)
-        {
-            throw RetailerOperationException.Conflict(
-                $"Retailer declaration duplicates existing record '{duplicate.Code}'.");
-        }
-        if (await store.ContactAccountExistsAsync(input.Phone, input.Email, excludedRetailerId, cancellationToken))
-            throw RetailerOperationException.Conflict("Phone or email is already assigned to another user account.");
+        // Checked one value at a time so the error names the field the user has to change.
+        // The unused contact argument is a value validation never lets through (not digits, no "@"),
+        // so it cannot match a stored phone or email - not even an account saved with an empty phone.
+        const string noMatch = "-";
+        var name = input.Name.ToLowerInvariant();
+        var phone = input.Phone.ToLowerInvariant();
+        var email = input.Email.ToLowerInvariant();
+        if (await store.FindDuplicateAsync(name, phone, null, null, excludedRetailerId, cancellationToken) is not null ||
+            await store.ContactAccountExistsAsync(input.Phone, noMatch, excludedRetailerId, cancellationToken))
+            throw RetailerOperationException.Duplicate("phone",
+                "Số điện thoại này đã được dùng cho một điểm bán hoặc tài khoản khác. Vui lòng nhập số điện thoại khác.");
+        if (await store.FindDuplicateAsync(name, null, email, null, excludedRetailerId, cancellationToken) is not null ||
+            await store.ContactAccountExistsAsync(noMatch, input.Email, excludedRetailerId, cancellationToken))
+            throw RetailerOperationException.Duplicate("email",
+                "Email này đã được dùng cho một điểm bán hoặc tài khoản khác. Vui lòng nhập email khác.");
+        if (input.Address is not null &&
+            await store.FindDuplicateAsync(name, null, null, input.Address.ToLowerInvariant(), excludedRetailerId, cancellationToken) is { } sameStore)
+            throw RetailerOperationException.Duplicate("name",
+                $"Đã có điểm bán cùng tên và địa chỉ trong hệ thống (mã {sameStore.Code}).");
     }
 
     private static RetailerInput Validate(
