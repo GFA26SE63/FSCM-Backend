@@ -27,10 +27,7 @@ public static class ServiceCollectionExtensions
 
         services.AddControllers();
         services.AddEndpointsApiExplorer();
-        services.AddSwaggerGen(options =>
-        {
-            options.CustomSchemaIds(type => type.FullName!.Replace("+", "."));
-        });
+        services.AddSwaggerGen();
         services.AddOpenApi();
         services.AddHealthChecks();
         services.AddProblemDetails();
