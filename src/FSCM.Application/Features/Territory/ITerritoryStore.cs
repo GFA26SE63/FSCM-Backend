@@ -4,7 +4,12 @@ namespace FSCM.Application.Features.Territory;
 
 public sealed record SalesGroupView(SalesGroup Group, string RegionCode, string RegionName);
 public sealed record SalesGroupMembershipView(SalesGroupMember Membership, string GroupCode, UserAccount User);
-public sealed record RetailerTerritoryAssignmentView(RetailerSalesAssignment Assignment, Retailer Retailer, string GroupCode);
+public sealed record RetailerTerritoryAssignmentView(
+    RetailerSalesAssignment Assignment,
+    Retailer Retailer,
+    string GroupCode,
+    UserAccount? Contact = null,
+    RetailerDeclarationContact? DeclarationContact = null);
 public sealed record TerritoryAccessView(Guid SalesGroupId, string SalesGroupCode);
 
 public interface ITerritoryStore

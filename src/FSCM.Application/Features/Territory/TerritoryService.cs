@@ -229,6 +229,8 @@ public sealed partial class TerritoryService(ITerritoryStore store, TimeProvider
         store.AddRetailerAssignment(created);
         await store.SaveChangesAsync(cancellationToken);
         return new RetailerTerritoryAssignmentResult(created.Id, retailer.Id, retailer.Code, retailer.Name,
+            retailer.Address, null, null, retailer.RetailerType, retailer.StoreSizeSquareMeters,
+            retailer.StoreSizeCategory, retailer.PotentialStatus, retailer.PotentialScore,
             destination.Id, destination.Code, created.AssignedAt, null, true);
     }
 
@@ -313,6 +315,12 @@ public sealed partial class TerritoryService(ITerritoryStore store, TimeProvider
 
     private static RetailerTerritoryAssignmentResult ToRetailerAssignmentResult(RetailerTerritoryAssignmentView view) => new(
         view.Assignment.Id, view.Retailer.Id, view.Retailer.Code, view.Retailer.Name,
+        view.Retailer.Address,
+        view.Contact?.FullName ?? view.DeclarationContact?.ContactName,
+        view.Contact?.Phone ?? view.DeclarationContact?.Phone,
+        view.Retailer.RetailerType,
+        view.Retailer.StoreSizeSquareMeters, view.Retailer.StoreSizeCategory,
+        view.Retailer.PotentialStatus, view.Retailer.PotentialScore,
         view.Assignment.SalesGroupId, view.GroupCode, view.Assignment.AssignedAt,
         view.Assignment.UnassignedAt, view.Assignment.IsActive);
 
