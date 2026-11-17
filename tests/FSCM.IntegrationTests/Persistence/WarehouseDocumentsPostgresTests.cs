@@ -34,6 +34,7 @@ public sealed class WarehouseDocumentsPostgresTests
             "Remote tests require FSCM_TEST_POSTGRES_ALLOWED_HOST matching the test server.");
         Assert.StartsWith("fscm_e2e_", target.Database);
         Assert.Matches("^fscm_e2e_[a-z0-9_]+$", target.Database!);
+        target.Database += "_warehouse";
         var traceTarget = new Npgsql.NpgsqlConnectionStringBuilder(target.ConnectionString) { Database = target.Database + "_trace" };
         foreach (var database in new[] { target, traceTarget })
         {
@@ -244,6 +245,7 @@ public sealed class WarehouseDocumentsPostgresTests
             foreach (var b in await db.InventoryBalanceRecords.Where(b => db.BatchRecords.Any(x => x.Id == b.BatchId && x.ProductId == product)).ToArrayAsync())
             { b.PhysicalQuantity = b.BatchId == batchId ? 4 : 0; b.ReservedQuantity = 0; b.AvailableQuantity = b.PhysicalQuantity; b.Version++; }
             var retailer = await db.RetailerRecords.SingleAsync(r => r.Code == "10004127");
+            retailer.CreditLimit = 100_000_000m;
             var destinationMap = await db.MapLocationRecords.SingleAsync(l => l.RetailerId == retailer.Id);
             var sourceMap = await db.MapLocationRecords.SingleAsync(l => l.WarehouseId == source);
             sourceMap.Latitude = destinationMap.Latitude + 0.001m; sourceMap.Longitude = destinationMap.Longitude + 0.001m;
