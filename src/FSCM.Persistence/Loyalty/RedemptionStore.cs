@@ -12,6 +12,18 @@ public sealed class RedemptionStore(AppDbContext dbContext) : IRedemptionStore, 
     public async Task<RedemptionView> CreateAsync(Guid userAccountId, CreateRedemptionData data,
         DateTimeOffset now, CancellationToken cancellationToken)
     {
+        var retry = false;
+        return await dbContext.Database.CreateExecutionStrategy().ExecuteAsync(async () =>
+        {
+            if (retry) dbContext.ChangeTracker.Clear();
+            retry = true;
+            return await CreateCoreAsync(userAccountId, data, now, cancellationToken);
+        });
+    }
+
+    private async Task<RedemptionView> CreateCoreAsync(Guid userAccountId, CreateRedemptionData data,
+        DateTimeOffset now, CancellationToken cancellationToken)
+    {
         if (data.Quantity <= 0) throw LoyaltyOperationException.Validation("Quantity must be greater than zero.");
         if (string.IsNullOrWhiteSpace(data.ClientRequestId) || data.ClientRequestId.Length > 100)
             throw LoyaltyOperationException.Validation("Client request id is required and must be at most 100 characters.");
@@ -116,6 +128,18 @@ public sealed class RedemptionStore(AppDbContext dbContext) : IRedemptionStore, 
     }
 
     public async Task<RedemptionView> TransitionAsync(Guid redemptionId, string targetStatus,
+        Guid actorUserId, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        var retry = false;
+        return await dbContext.Database.CreateExecutionStrategy().ExecuteAsync(async () =>
+        {
+            if (retry) dbContext.ChangeTracker.Clear();
+            retry = true;
+            return await TransitionCoreAsync(redemptionId, targetStatus, actorUserId, now, cancellationToken);
+        });
+    }
+
+    private async Task<RedemptionView> TransitionCoreAsync(Guid redemptionId, string targetStatus,
         Guid actorUserId, DateTimeOffset now, CancellationToken cancellationToken)
     {
         await using var transaction = await dbContext.Database.BeginTransactionAsync(

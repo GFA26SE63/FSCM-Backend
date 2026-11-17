@@ -36,6 +36,7 @@ public sealed class FactoryTraceabilityService(AppDbContext db, IFactoryGateway 
     }
 
     public Task<PalletManifest> ManifestAsync(string code, CancellationToken ct) => gateway.ManifestAsync(code, ct);
+    public Task<FactoryInboundPallet[]> DispatchedAsync(Guid[] warehouseIds, CancellationToken ct) => gateway.DispatchedAsync(warehouseIds, ct);
     public Task<Guid> AcknowledgeReceiptAsync(FactoryReceiptSync receipt, CancellationToken ct) => gateway.AcknowledgeReceiptAsync(receipt, ct);
     public async Task<FactoryTraceResult> TraceAsync(string code, Guid actor, string role, CancellationToken ct)
     {

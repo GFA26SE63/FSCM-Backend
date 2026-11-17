@@ -82,6 +82,7 @@ public sealed class StandaloneTraceabilityTests
         Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/health")).StatusCode);
         Assert.Equal(HttpStatusCode.Unauthorized, (await client.GetAsync("/api/batches")).StatusCode);
         Assert.Equal(HttpStatusCode.Unauthorized, (await client.GetAsync("/api/integration/pallets/PID-test/manifest")).StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await client.GetAsync($"/api/integration/dispatches?warehouseIds={Guid.NewGuid()}")).StatusCode);
         client.DefaultRequestHeaders.Add("X-Traceability-Key", "wrong-key");
         Assert.Equal(HttpStatusCode.Unauthorized, (await client.GetAsync("/api/integration/trace?code=PID-test")).StatusCode);
     }
