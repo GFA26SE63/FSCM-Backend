@@ -180,7 +180,7 @@ public sealed partial class WarehouseWorkService(AppDbContext db, InventoryServi
             await Access(d.WarehouseId, actor, role, ct);
             cartonId = cartonId.Trim();
             if (d.Kind == "Receipt" && d.Reason == "Factory" && d.GoodsReceiptId is null)
-                return await ReceiveFactoryPallet(d, cartonId, version, actor, ct);
+                throw PickingOperationException.Conflict("Quét pallet trên phiếu nhập và xác nhận kết quả kiểm đếm trước khi cộng tồn.");
             var existing = await Cartons.SingleOrDefaultAsync(x => x.DocumentId == id && x.CartonId == cartonId, ct);
             // A repeated scanner delivery is an idempotent read, including after another scan changed the version.
             if (existing?.ScannedAt is not null) return id;
@@ -614,7 +614,7 @@ public sealed partial class WarehouseWorkService(AppDbContext db, InventoryServi
             SourceId = d.Id, ReferenceCode = d.Code, PhysicalQuantityDelta = physical, ReservedQuantityDelta = reserved,
             PhysicalQuantityAfter = balance.PhysicalQuantity, ReservedQuantityAfter = balance.ReservedQuantity,
             AvailableQuantityAfter = balance.AvailableQuantity, OccurredAt = clock.GetUtcNow() });
-    private async Task<Guid> Atomic(Func<Task<Guid>> operation, CancellationToken ct)
+    private async Task<T> Atomic<T>(Func<Task<T>> operation, CancellationToken ct)
     {
         try
         {
