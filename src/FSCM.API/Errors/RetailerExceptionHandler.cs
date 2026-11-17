@@ -21,16 +21,24 @@ public sealed class RetailerExceptionHandler(
         };
         logger.LogWarning("Retailer request failed with code {ErrorCode}: {ErrorMessage}", operationException.Code, operationException.Message);
         context.Response.StatusCode = statusCode;
+        var problem = new ProblemDetails
+        {
+            Status = statusCode,
+            Title = operationException.Message,
+            Type = $"https://fscm.dev/problems/{operationException.Code}",
+            Extensions = { ["code"] = operationException.Code }
+        };
+        if (operationException.Field is { } field)
+        {
+            // Field-level error, so forms can show the message under the input it is about.
+            problem.Detail = operationException.Message;
+            problem.Extensions["field"] = field;
+            problem.Extensions["errors"] = new Dictionary<string, string[]> { [field] = [operationException.Message] };
+        }
         return await problemDetailsService.TryWriteAsync(new ProblemDetailsContext
         {
             HttpContext = context,
-            ProblemDetails = new ProblemDetails
-            {
-                Status = statusCode,
-                Title = operationException.Message,
-                Type = $"https://fscm.dev/problems/{operationException.Code}",
-                Extensions = { ["code"] = operationException.Code }
-            },
+            ProblemDetails = problem,
             Exception = operationException
         });
     }
