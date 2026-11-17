@@ -61,9 +61,10 @@ public sealed class DeliveryEtaService(
         var distance = await store.FindDistanceAsync(request.WarehouseId, request.RetailerId, cancellationToken)
             ?? throw DeliveryEtaOperationException.MissingDistance(
                 "No cached distance exists for this warehouse and Retailer.");
-        if (distance.ExpiresAt <= now)
+        if (!request.AllowStaleDistance && distance.ExpiresAt <= now)
             throw DeliveryEtaOperationException.StaleDistance("The cached route has expired and must be refreshed.");
 
+        // Fallback permits an expired route, never a route for different coordinates.
         await EnsureDistanceIsCurrentAsync(distance.OriginLocationVersion, "warehouse", request.WarehouseId, cancellationToken);
         await EnsureDistanceIsCurrentAsync(distance.DestinationLocationVersion, "retailer", request.RetailerId, cancellationToken);
 

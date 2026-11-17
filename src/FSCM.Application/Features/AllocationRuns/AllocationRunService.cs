@@ -298,7 +298,7 @@ public sealed class AllocationRunService(
                 try
                 {
                     var eta = await deliveryEta.EstimateAsync(
-                        new EtaRequest(warehouseId, retailerId, null), cancellationToken);
+                        new EtaRequest(warehouseId, retailerId, null, AllowStaleDistance: true), cancellationToken);
                     routes[(warehouseId, retailerId)] = new PlannerRoute(
                         distanceMeters,
                         eta.EstimatedArrivalAt,
