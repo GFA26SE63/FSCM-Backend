@@ -105,6 +105,36 @@ public sealed class TerritoryServiceTests
         Assert.True(region.IsActive);
     }
 
+    [Fact]
+    public async Task Retailer_assignment_read_model_includes_profile_and_contact_fields()
+    {
+        var fixture = new Fixture();
+        var region = fixture.AddRegion("HCM");
+        var group = fixture.AddGroup(region.Id, "HCM-A");
+        var contact = fixture.AddUser(SystemRoles.Retailer);
+        contact.FullName = "Nguyễn Văn Chủ";
+        contact.Phone = "0901234567";
+        var retailer = fixture.AddRetailer(region.Id);
+        retailer.UserAccountId = contact.Id;
+        retailer.Address = "12 Nguyễn Huệ";
+        retailer.RetailerType = "Minimart";
+        retailer.StoreSizeCategory = "M";
+        retailer.PotentialStatus = "A";
+        retailer.PotentialScore = 88;
+        fixture.AddRetailerAssignment(retailer.Id, group.Id, Now.AddDays(-10));
+
+        var result = Assert.Single(await fixture.Service.ListRetailerAssignmentsAsync(
+            null, group.Id, false, Guid.NewGuid(), true, CancellationToken.None));
+
+        Assert.Equal("12 Nguyễn Huệ", result.Address);
+        Assert.Equal("Nguyễn Văn Chủ", result.ContactName);
+        Assert.Equal("0901234567", result.Phone);
+        Assert.Equal("Minimart", result.RetailerType);
+        Assert.Equal("M", result.StoreSizeCategory);
+        Assert.Equal("A", result.PotentialStatus);
+        Assert.Equal(88, result.PotentialScore);
+    }
+
     private sealed class Fixture
     {
         public Fixture()
@@ -221,7 +251,11 @@ public sealed class TerritoryServiceTests
         public void AddMembership(SalesGroupMember item) => Memberships.Add(item);
         public Task<Retailer?> FindRetailerAsync(Guid id, CancellationToken cancellationToken) => Task.FromResult(Retailers.SingleOrDefault(item => item.Id == id));
         public Task<IReadOnlyCollection<RetailerTerritoryAssignmentView>> ListRetailerAssignmentsAsync(Guid? retailerId, Guid? groupId, bool includeInactive, CancellationToken cancellationToken) =>
-            Task.FromResult<IReadOnlyCollection<RetailerTerritoryAssignmentView>>(RetailerAssignments.Where(item => (!retailerId.HasValue || item.RetailerId == retailerId.Value) && (!groupId.HasValue || item.SalesGroupId == groupId.Value) && (includeInactive || item.IsActive)).Select(item => new RetailerTerritoryAssignmentView(item, Retailers.Single(value => value.Id == item.RetailerId), Groups.Single(value => value.Id == item.SalesGroupId).Code)).ToArray());
+            Task.FromResult<IReadOnlyCollection<RetailerTerritoryAssignmentView>>(RetailerAssignments.Where(item => (!retailerId.HasValue || item.RetailerId == retailerId.Value) && (!groupId.HasValue || item.SalesGroupId == groupId.Value) && (includeInactive || item.IsActive)).Select(item => {
+                var retailer = Retailers.Single(value => value.Id == item.RetailerId);
+                var contact = retailer.UserAccountId.HasValue ? Users.SingleOrDefault(value => value.Id == retailer.UserAccountId.Value) : null;
+                return new RetailerTerritoryAssignmentView(item, retailer, Groups.Single(value => value.Id == item.SalesGroupId).Code, contact);
+            }).ToArray());
         public Task<IReadOnlyCollection<RetailerSalesAssignment>> ListActiveRetailerAssignmentsAsync(Guid retailerId, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyCollection<RetailerSalesAssignment>>(RetailerAssignments.Where(item => item.RetailerId == retailerId && item.IsActive).ToArray());
         public void AddRetailerAssignment(RetailerSalesAssignment item) => RetailerAssignments.Add(item);
         public Task<TerritoryAccessView?> FindOrderAccessAsync(Guid userId, Guid retailerId, CancellationToken cancellationToken)

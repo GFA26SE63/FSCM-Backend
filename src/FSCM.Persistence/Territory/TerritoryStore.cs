@@ -103,8 +103,15 @@ public sealed class TerritoryStore(AppDbContext dbContext) : ITerritoryStore
             from assignment in assignments
             join retailer in dbContext.RetailerRecords.AsNoTracking() on assignment.RetailerId equals retailer.Id
             join salesGroup in dbContext.SalesGroupRecords.AsNoTracking() on assignment.SalesGroupId equals salesGroup.Id
+            join contactAccount in dbContext.UserAccountRecords.AsNoTracking()
+                on retailer.UserAccountId equals (Guid?)contactAccount.Id into contactAccounts
+            from contact in contactAccounts.DefaultIfEmpty()
+            join declarationContact in dbContext.RetailerDeclarationContactRecords.AsNoTracking()
+                on retailer.Id equals declarationContact.RetailerId into declarationContacts
+            from declarationContact in declarationContacts.DefaultIfEmpty()
             orderby assignment.AssignedAt descending
-            select new RetailerTerritoryAssignmentView(assignment, retailer, salesGroup.Code))
+            select new RetailerTerritoryAssignmentView(
+                assignment, retailer, salesGroup.Code, contact, declarationContact))
             .ToArrayAsync(cancellationToken);
     }
 
