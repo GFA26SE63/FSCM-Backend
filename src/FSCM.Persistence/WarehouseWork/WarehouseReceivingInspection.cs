@@ -17,6 +17,7 @@ public sealed partial class WarehouseWorkService
         if (d.Kind != "Receipt" || d.Reason != "Factory" || d.GoodsReceiptId != null || d.Status != "Open")
             throw PickingOperationException.Conflict("Chỉ kiểm đếm trên phiếu nhập nhà máy đang mở.");
         var manifest = await factory.ManifestAsync(code.Trim(), ct);
+        RequireBoundPallet(d, manifest.Pallet.Id);
         if (manifest.Pallet.DestinationWarehouseId != d.WarehouseId || manifest.Pallet.Status != "Dispatched")
             throw PickingOperationException.Conflict("Pallet chưa xuất hoặc không thuộc kho nhận.");
         return manifest;

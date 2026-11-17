@@ -34,6 +34,7 @@ public sealed class WarehouseDocumentsPostgresTests
             "Remote tests require FSCM_TEST_POSTGRES_ALLOWED_HOST matching the test server.");
         Assert.StartsWith("fscm_e2e_", target.Database);
         Assert.Matches("^fscm_e2e_[a-z0-9_]+$", target.Database!);
+        target.Database += "_warehouse";
         var traceTarget = new Npgsql.NpgsqlConnectionStringBuilder(target.ConnectionString) { Database = target.Database + "_trace" };
         foreach (var database in new[] { target, traceTarget })
         {
@@ -128,6 +129,22 @@ public sealed class WarehouseDocumentsPostgresTests
         await Assert.ThrowsAsync<PickingOperationException>(() => Call(s => s.ScanAsync(receiptId, "WRONG", receipt.Document.Version, keeper, SystemRoles.WarehouseKeeper, default)));
         await Assert.ThrowsAsync<PickingOperationException>(() => Call(s => s.ScanAsync(receiptId, produced.Pallets[0].Code, receipt.Document.Version, keeper, SystemRoles.WarehouseKeeper, default)));
         await Factory(s => s.DispatchAsync(productionId, source, default));
+        var pendingFactory = await Call(s => s.PendingFactoryAsync(keeper, SystemRoles.WarehouseKeeper, default));
+        Assert.Equal(2, pendingFactory.Count(p => produced.Pallets.Any(x => x.Id == p.PalletId)));
+        Assert.All(pendingFactory, p => Assert.Equal(source, p.DestinationWarehouseId));
+        Assert.Empty(await Call(s => s.PendingFactoryAsync(Guid.NewGuid(), SystemRoles.WarehouseKeeper, default)));
+        var prepareData = new PrepareFactoryReceiptRequest(produced.Pallets[0].Code);
+        await Assert.ThrowsAsync<PickingOperationException>(() => Call(s => s.PrepareFactoryAsync(prepareData, Guid.NewGuid(), SystemRoles.WarehouseKeeper, default)));
+        var preparedReceipt = await Call(s => s.PrepareFactoryAsync(prepareData, keeper, SystemRoles.WarehouseKeeper, default));
+        Assert.Equal(preparedReceipt, await Call(s => s.PrepareFactoryAsync(prepareData, keeper, SystemRoles.WarehouseKeeper, default)));
+        var preparedWork = await Call(s => s.GetAsync(preparedReceipt, keeper, SystemRoles.WarehouseKeeper, default));
+        Assert.Equal(source, preparedWork.Document.WarehouseId);
+        Assert.Empty(preparedWork.Cartons);
+        Assert.Equal(0, await Db(db => db.BatchRecords.CountAsync(b => b.FactoryProductionBatchId == productionId)));
+        Assert.Equal(preparedReceipt, (await Call(s => s.PendingFactoryAsync(keeper, SystemRoles.WarehouseKeeper, default)))
+            .Single(p => p.PalletId == produced.Pallets[0].Id).ReceiptDocumentId);
+        await Assert.ThrowsAsync<PickingOperationException>(() => Call(s => s.PreviewPalletAsync(preparedReceipt, produced.Pallets[1].Code, keeper, SystemRoles.WarehouseKeeper, default)));
+        await Assert.ThrowsAsync<PickingOperationException>(() => Call(s => s.ScanAsync(preparedReceipt, produced.Pallets[1].Code, 1, keeper, SystemRoles.WarehouseKeeper, default)));
         var wrongWarehouseReceipt = await Call(s => s.CreateFactoryAsync(new(destination), "wrong-wh-receipt", keeper, SystemRoles.WarehouseKeeper, default));
         await Assert.ThrowsAsync<PickingOperationException>(() => Call(s => s.ScanAsync(wrongWarehouseReceipt, produced.Pallets[0].Code, 1, keeper, SystemRoles.WarehouseKeeper, default)));
         foreach (var pallet in produced.Pallets)
@@ -138,6 +155,8 @@ public sealed class WarehouseDocumentsPostgresTests
         }
         receipt = await Call(s => s.GetAsync(receiptId, keeper, SystemRoles.WarehouseKeeper, default));
         Assert.Equal(6, receipt.Cartons.Count);
+        // Local receipt is authoritative while the external acknowledgement is still pending.
+        Assert.Empty(await Call(s => s.PendingFactoryAsync(keeper, SystemRoles.WarehouseKeeper, default)));
         Assert.Equal(72, await FactoryDb(db => db.Set<FactoryProductUnit>().CountAsync()));
         Assert.Equal(0, await Db(db => db.Set<FSCM.Domain.Entities.FactoryProductUnit>().CountAsync()));
         Assert.Equal(2, await Db(db => db.Set<FSCM.Domain.Entities.FactoryReceiptSync>().CountAsync(x => x.SyncedAt == null)));
@@ -226,6 +245,7 @@ public sealed class WarehouseDocumentsPostgresTests
             foreach (var b in await db.InventoryBalanceRecords.Where(b => db.BatchRecords.Any(x => x.Id == b.BatchId && x.ProductId == product)).ToArrayAsync())
             { b.PhysicalQuantity = b.BatchId == batchId ? 4 : 0; b.ReservedQuantity = 0; b.AvailableQuantity = b.PhysicalQuantity; b.Version++; }
             var retailer = await db.RetailerRecords.SingleAsync(r => r.Code == "10004127");
+            retailer.CreditLimit = 100_000_000m;
             var destinationMap = await db.MapLocationRecords.SingleAsync(l => l.RetailerId == retailer.Id);
             var sourceMap = await db.MapLocationRecords.SingleAsync(l => l.WarehouseId == source);
             sourceMap.Latitude = destinationMap.Latitude + 0.001m; sourceMap.Longitude = destinationMap.Longitude + 0.001m;

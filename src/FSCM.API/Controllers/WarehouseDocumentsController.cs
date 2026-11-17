@@ -20,6 +20,12 @@ public sealed class WarehouseDocumentsController(WarehouseWorkService service, I
     public Task<WarehouseWorkResult[]> List(CancellationToken ct) => service.ListAsync(Actor, Role, ct);
     [HttpGet("{id:guid}")]
     public Task<WarehouseWorkResult> Get(Guid id, CancellationToken ct) => service.GetAsync(id, Actor, Role, ct);
+    [HttpGet("factory-pending")]
+    public Task<FactoryInboundPallet[]> FactoryPending(CancellationToken ct) => service.PendingFactoryAsync(Actor, Role, ct);
+    [HttpPost("factory-receipts/from-pallet")]
+    [Authorize(Roles = SystemRoles.WarehouseKeeper)]
+    public async Task<WarehouseWorkResult> PrepareFactory(PrepareFactoryReceiptRequest request, CancellationToken ct) =>
+        await Get(await service.PrepareFactoryAsync(request, Actor, Role, ct), ct);
     [HttpPost("requests")]
     [Authorize(Roles = SystemRoles.Admin)]
     public async Task<WarehouseWorkResult> CreateRequest(CreateWarehouseRequest request,
