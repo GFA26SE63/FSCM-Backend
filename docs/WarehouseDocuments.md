@@ -48,3 +48,8 @@ Migration `20261112153513_AddWarehouseDocumentsAndCartons` tạo ba bảng chứ
 Cập nhật tách DB: batch/pallet/carton/serial gốc nằm trong `fscm_traceability`; các bảng factory trong DB kho là bản sao khi nhận hàng và dữ liệu di sản. Nhận pallet ghi `FACTORY_RECEIPT_SYNC` cùng giao dịch tồn; API worker ACK sang nhà máy có retry. Xem FactoryTraceability.md và dùng runner mới để migrate đủ cả hai context trước khi vận hành.
 
 Cập nhật ứng dụng độc lập: hệ thống nhà máy nằm ở `../FSCM-Traceability` với giao diện riêng. Backend FSCM nhận manifest và ACK qua API gateway có khóa, không đọc DB nhà máy trong runtime. Menu factory ở FSCM mở URL `Traceability:PublicUrl`. Khởi động lại backend/frontend khi chuyển sang bản này.
+
+
+## Draft PXK before scans
+
+New warehouse requests create Kind Issue, status Open with a PXK code before scanning. Scans assign cartons without dispatching stock. Posting requires all cartons, preserves document ID/code and dispatches atomically. Transfer receipts require a Posted source issue. Legacy Picking documents keep their existing snapshot completion path. No schema migration.

@@ -134,7 +134,7 @@ public sealed partial class WarehouseWorkService(AppDbContext db, InventoryServi
             await Access(wh, actor, role, ct);
             if (await Documents.AnyAsync(x => x.SourceDocumentId == sourceId, ct))
                 throw PickingOperationException.Conflict("Đã có phiếu thực hiện cho chứng từ nguồn này.");
-            var d = New(source.Kind == "Request" ? "Picking" : "Receipt", source.Reason, wh,
+            var d = New(source.Kind == "Request" ? "Issue" : "Receipt", source.Reason, wh,
                 key, new { sourceId }, actor, source.Note);
             d.SourceDocumentId = source.Id; d.DestinationWarehouseId = source.DestinationWarehouseId;
             var sourceLines = await Lines.Where(x => x.DocumentId == sourceId).ToArrayAsync(ct);
@@ -184,7 +184,7 @@ public sealed partial class WarehouseWorkService(AppDbContext db, InventoryServi
             var existing = await Cartons.SingleOrDefaultAsync(x => x.DocumentId == id && x.CartonId == cartonId, ct);
             // A repeated scanner delivery is an idempotent read, including after another scan changed the version.
             if (existing?.ScannedAt is not null) return id;
-            if (d.Kind is not ("Picking" or "Receipt") || d.Status != "Open") throw PickingOperationException.Conflict("Phiếu không nhận quét.");
+            if (d.Kind is not ("Picking" or "Issue" or "Receipt") || d.Status != "Open") throw PickingOperationException.Conflict("Phiếu không nhận quét.");
             Version(d, version);
             if (d.Kind == "Receipt")
             {
@@ -523,7 +523,7 @@ public sealed partial class WarehouseWorkService(AppDbContext db, InventoryServi
             Keeper(role);
             var d = await Find(id, ct);
             await Access(d.WarehouseId, actor, role, ct);
-            if (d.Kind != "Picking" || d.Status != "Open") throw PickingOperationException.Conflict("Chỉ chuẩn bị nhãn cho phiếu xuất đang mở.");
+            if (d.Kind is not ("Picking" or "Issue") || d.Status != "Open") throw PickingOperationException.Conflict("Chỉ chuẩn bị nhãn cho phiếu xuất đang mở.");
             var lines = await Lines.Where(x => x.DocumentId == id).ToArrayAsync(ct);
             foreach (var group in lines.GroupBy(x => x.BatchId!.Value))
             {
