@@ -216,6 +216,12 @@ public sealed class WarehouseDocumentsPostgresTests
         var req = await Call(s => s.CreateRequestAsync(new(source, destination, "Transfer", [], [new(batchId, 2)], null), "transfer-key", admin, SystemRoles.Admin, default));
         Assert.Equal(2, await Db(db => db.InventoryBalanceRecords.Where(b => b.BatchId == batchId).Select(b => b.ReservedQuantity).SingleAsync()));
         var issueId = await Call(s => s.CreateChildAsync(req, "issue-key", keeper, SystemRoles.WarehouseKeeper, default));
+        var draftIssue = await Call(s => s.GetAsync(issueId, keeper, SystemRoles.WarehouseKeeper, default));
+        Assert.Equal("Issue", draftIssue.Document.Kind);
+        Assert.StartsWith("PXK-", draftIssue.Document.Code);
+        Assert.Empty(draftIssue.Cartons);
+        await Assert.ThrowsAsync<PickingOperationException>(() => Call(s => s.PostAsync(issueId, draftIssue.Document.Version, keeper, SystemRoles.WarehouseKeeper, default)));
+
         await Assert.ThrowsAsync<PickingOperationException>(() => Call(s => s.CreateChildAsync(req, "issue-other", keeper, SystemRoles.WarehouseKeeper, default)));
         foreach (var carton in receipt.Cartons.Take(2))
         {
@@ -243,7 +249,7 @@ public sealed class WarehouseDocumentsPostgresTests
         var movedCarton = inbound.Cartons.First().CartonId;
         var movedTrace = await Factory(s => s.TraceAsync(movedCarton, admin, SystemRoles.Admin, default));
         Assert.Equal(destination, movedTrace.CurrentStock.Single().WarehouseId);
-        Assert.Equal(4, movedTrace.History.Length); // receipt -> picking -> posted issue -> destination receipt
+        Assert.Equal(3, movedTrace.History.Length); // receipt -> stable PXK -> destination receipt
         var movedInventory = await Db(db => new FactoryQrInventoryService(db).ListAsync(admin, SystemRoles.Admin,
             destination, movedCarton, "Available", null, 1, 50, default));
         var movedRow = Assert.Single(movedInventory.Items);
@@ -289,7 +295,8 @@ public sealed class WarehouseDocumentsPostgresTests
         }
         var prepared = await Call(s => s.GetAsync(groupedIssueId, keeper, SystemRoles.WarehouseKeeper, default));
         Assert.Equal("Prepared", prepared.Document.Status);
-        Assert.Equal("Picking", prepared.Document.Kind);
+        Assert.Equal("Issue", prepared.Document.Kind);
+        Assert.StartsWith("PXK-", prepared.Document.Code);
         var originalCarton = prepared.Cartons.First().CartonId;
         await Assert.ThrowsAsync<PickingOperationException>(() => Call(s => s.RemoveCartonAsync(groupedIssueId,
             originalCarton, "CID-NOT-FOUND", "Invalid replacement", prepared.Document.Version, keeper, SystemRoles.WarehouseKeeper, default)));
@@ -322,7 +329,7 @@ public sealed class WarehouseDocumentsPostgresTests
 
         Assert.Equal(2, prepared.Lines.Select(l => l.SalesOrderId).Distinct().Count());
         var postedIssue = await Call(s => s.PostAsync(groupedIssueId, prepared.Document.Version, keeper, SystemRoles.WarehouseKeeper, default));
-        Assert.NotEqual(groupedIssueId, postedIssue);
+        Assert.Equal(groupedIssueId, postedIssue);
         Assert.Equal("Issue", (await Call(s => s.GetAsync(postedIssue, keeper, SystemRoles.WarehouseKeeper, default))).Document.Kind);
         await Assert.ThrowsAsync<PickingOperationException>(() => Call(s => s.RemoveCartonAsync(groupedIssueId,
             originalCarton, null, "Too late", prepared.Document.Version, keeper, SystemRoles.WarehouseKeeper, default)));

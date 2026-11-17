@@ -16,6 +16,8 @@ public sealed class WarehouseDocumentsController(WarehouseWorkService service, I
 {
     private Guid Actor => Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
     private string Role => User.FindFirstValue(ClaimTypes.Role)!;
+    [HttpGet("issue-workflow")]
+    public object IssueWorkflow() => new { Version = 2, IssueBeforeScan = true, StableIssueId = true };
     [HttpGet]
     public Task<WarehouseWorkResult[]> List(CancellationToken ct) => service.ListAsync(Actor, Role, ct);
     [HttpGet("{id:guid}")]
