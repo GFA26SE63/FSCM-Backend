@@ -144,14 +144,22 @@ public sealed class WarehouseDocumentsPostgresTests
         Assert.Equal(preparedReceipt, (await Call(s => s.PendingFactoryAsync(keeper, SystemRoles.WarehouseKeeper, default)))
             .Single(p => p.PalletId == produced.Pallets[0].Id).ReceiptDocumentId);
         await Assert.ThrowsAsync<PickingOperationException>(() => Call(s => s.PreviewPalletAsync(preparedReceipt, produced.Pallets[1].Code, keeper, SystemRoles.WarehouseKeeper, default)));
+        await Assert.ThrowsAsync<PickingOperationException>(() => Call(s => s.ScanReceiptPalletAsync(preparedReceipt,
+            new(produced.Pallets[1].Code, 1, "Camera"), keeper, SystemRoles.WarehouseKeeper, "Integration phone", default)));
+        Assert.Empty(await Call(s => s.ReceiptScansAsync(preparedReceipt, keeper, SystemRoles.WarehouseKeeper, default)));
         await Assert.ThrowsAsync<PickingOperationException>(() => Call(s => s.ScanAsync(preparedReceipt, produced.Pallets[1].Code, 1, keeper, SystemRoles.WarehouseKeeper, default)));
         var wrongWarehouseReceipt = await Call(s => s.CreateFactoryAsync(new(destination), "wrong-wh-receipt", keeper, SystemRoles.WarehouseKeeper, default));
+        await Assert.ThrowsAsync<PickingOperationException>(() => Call(s => s.ScanReceiptPalletAsync(wrongWarehouseReceipt,
+            new(produced.Pallets[0].Code, 1, "Camera"), keeper, SystemRoles.WarehouseKeeper, "Integration phone", default)));
         await Assert.ThrowsAsync<PickingOperationException>(() => Call(s => s.ScanAsync(wrongWarehouseReceipt, produced.Pallets[0].Code, 1, keeper, SystemRoles.WarehouseKeeper, default)));
         foreach (var pallet in produced.Pallets)
         {
             receipt = await Call(s => s.GetAsync(receiptId, keeper, SystemRoles.WarehouseKeeper, default));
-            await Call(s => s.ScanAsync(receiptId, pallet.Code, receipt.Document.Version, keeper, SystemRoles.WarehouseKeeper, default));
-            await Call(s => s.ScanAsync(receiptId, pallet.Code, receipt.Document.Version, keeper, SystemRoles.WarehouseKeeper, default));
+            var scan = await Call(s => s.ScanReceiptPalletAsync(receiptId, new(pallet.Code, receipt.Document.Version, "Camera"), keeper, SystemRoles.WarehouseKeeper, "Integration phone", default));
+            var request = new InspectedPalletRequest(pallet.Code, scan.DocumentVersion,
+                scan.Manifest!.Cartons.Select(c => new FSCM.Domain.Entities.ReceiptCartonInspection(c.Code, "Accepted", null, null)).ToArray(), scan.Id);
+            await Call(s => s.ReceiveInspectedPalletAsync(receiptId, request, keeper, SystemRoles.WarehouseKeeper, default));
+            await Call(s => s.ReceiveInspectedPalletAsync(receiptId, request, keeper, SystemRoles.WarehouseKeeper, default));
         }
         receipt = await Call(s => s.GetAsync(receiptId, keeper, SystemRoles.WarehouseKeeper, default));
         Assert.Equal(6, receipt.Cartons.Count);
@@ -193,7 +201,9 @@ public sealed class WarehouseDocumentsPostgresTests
         Assert.NotEqual(produced.Batch.Code, second.Batch.Code);
         await Factory(s => s.DispatchAsync(secondProductionId, source, default));
         var receipt2 = await Call(s => s.CreateFactoryAsync(new(source), "factory-key-2", keeper, SystemRoles.WarehouseKeeper, default));
-        await Call(s => s.ScanAsync(receipt2, second.Pallets[0].Code, 1, keeper, SystemRoles.WarehouseKeeper, default));
+        var secondScan = await Call(s => s.ScanReceiptPalletAsync(receipt2, new(second.Pallets[0].Code, 1, "Camera"), keeper, SystemRoles.WarehouseKeeper, "Integration phone", default));
+        await Call(s => s.ReceiveInspectedPalletAsync(receipt2, new(second.Pallets[0].Code, secondScan.DocumentVersion,
+            secondScan.Manifest!.Cartons.Select(c => new FSCM.Domain.Entities.ReceiptCartonInspection(c.Code, "Accepted", null, null)).ToArray(), secondScan.Id), keeper, SystemRoles.WarehouseKeeper, default));
         Assert.Equal(2, await Db(db => db.BatchRecords.CountAsync(b => b.FactoryProductionBatchId == productionId || b.FactoryProductionBatchId == secondProductionId)));
         var traceUnit = await FactoryDb(db => db.Set<FactoryProductUnit>().Where(u => db.Set<FactoryCarton>()
             .Any(c => c.Id == u.CartonId && db.Set<FactoryPallet>().Any(p => p.Id == c.PalletId && p.ProductionBatchId == productionId))).FirstAsync());
@@ -330,15 +340,30 @@ public sealed class WarehouseDocumentsPostgresTests
             new(manifest.Cartons[0].Code, "Accepted", null, null),
             new(manifest.Cartons[1].Code, "Damaged", "Wet carton", "QUARANTINE-01"),
             new(manifest.Cartons[2].Code, "Missing", "Not on truck", null)];
-        var inspectedRequest = new InspectedPalletRequest(manifest.Pallet.Code, 1, inspected);
+        await Assert.ThrowsAsync<PickingOperationException>(() => Call(s => s.ReceiveInspectedPalletAsync(inspectionReceipt,
+            new(manifest.Pallet.Code, 1, inspected), keeper, SystemRoles.WarehouseKeeper, default)));
+        await Assert.ThrowsAsync<PickingOperationException>(() => Call(s => s.ScanReceiptPalletAsync(inspectionReceipt,
+            new(manifest.Pallet.Code, 1, "Manual"), keeper, SystemRoles.WarehouseKeeper, null, default)));
+        var inspectionScan = await Call(s => s.ScanReceiptPalletAsync(inspectionReceipt, new(manifest.Pallet.Code, 1, "Camera"), keeper, SystemRoles.WarehouseKeeper, "Integration phone", default));
+        Assert.Equal(keeper, inspectionScan.ScannedByUserId);
+        Assert.Equal(manifest.Pallet.Code, inspectionScan.PalletCode);
+        Assert.Empty((await Call(s => s.GetAsync(inspectionReceipt, keeper, SystemRoles.WarehouseKeeper, default))).Cartons);
+        Assert.Single(await Call(s => s.ReceiptScansAsync(inspectionReceipt, keeper, SystemRoles.WarehouseKeeper, default)));
+        Assert.Equal(0, await Db(db => db.BatchRecords.CountAsync(b => b.FactoryProductionBatchId == inspectedProduction)));
+        var inspectedRequest = new InspectedPalletRequest(manifest.Pallet.Code, inspectionScan.DocumentVersion, inspected, inspectionScan.Id);
+        await Assert.ThrowsAsync<PickingOperationException>(() => Call(s => s.ReceiveInspectedPalletAsync(inspectionReceipt,
+            inspectedRequest with { ScanId = Guid.NewGuid() }, keeper, SystemRoles.WarehouseKeeper, default)));
+        await Assert.ThrowsAsync<PickingOperationException>(() => Call(s => s.ReceiveInspectedPalletAsync(receipt2,
+            inspectedRequest, keeper, SystemRoles.WarehouseKeeper, default)));
         await Call(s => s.ReceiveInspectedPalletAsync(inspectionReceipt, inspectedRequest, keeper, SystemRoles.WarehouseKeeper, default));
         await Call(s => s.ReceiveInspectedPalletAsync(inspectionReceipt, inspectedRequest, keeper, SystemRoles.WarehouseKeeper, default));
         await Assert.ThrowsAsync<PickingOperationException>(() => Call(s => s.ReceiveInspectedPalletAsync(inspectionReceipt,
             inspectedRequest with { Cartons = inspected.Select(x => x with { Disposition = "Accepted" }).ToArray() }, keeper, SystemRoles.WarehouseKeeper, default)));
         var receiptView = await Call(s => s.GetAsync(inspectionReceipt, keeper, SystemRoles.WarehouseKeeper, default));
         var missingManifest = await Call(s => s.PreviewPalletAsync(inspectionReceipt, inspectionBatch.Pallets[1].Code, keeper, SystemRoles.WarehouseKeeper, default));
-        await Call(s => s.ReceiveInspectedPalletAsync(inspectionReceipt, new(missingManifest.Pallet.Code, receiptView.Document.Version,
-            missingManifest.Cartons.Select(c => new FSCM.Domain.Entities.ReceiptCartonInspection(c.Code, "Missing", "Pallet absent", null)).ToArray()), keeper, SystemRoles.WarehouseKeeper, default));
+        var missingScan = await Call(s => s.ScanReceiptPalletAsync(inspectionReceipt, new(missingManifest.Pallet.Code, receiptView.Document.Version, "Camera"), keeper, SystemRoles.WarehouseKeeper, "Integration phone", default));
+        await Call(s => s.ReceiveInspectedPalletAsync(inspectionReceipt, new(missingManifest.Pallet.Code, missingScan.DocumentVersion,
+            missingManifest.Cartons.Select(c => new FSCM.Domain.Entities.ReceiptCartonInspection(c.Code, "Missing", "Pallet absent", null)).ToArray(), missingScan.Id), keeper, SystemRoles.WarehouseKeeper, default));
         receiptView = await Call(s => s.GetAsync(inspectionReceipt, keeper, SystemRoles.WarehouseKeeper, default));
         Assert.Single(receiptView.Cartons);
         var inspectedBatchId = receiptView.Lines.Single().BatchId;
