@@ -41,7 +41,8 @@ public sealed record UserListQuery(
     string? Role,
     bool? IsActive,
     int Page,
-    int PageSize);
+    int PageSize,
+    string Sort = "desc");
 
 public sealed record UserSummary(
     Guid Id,
