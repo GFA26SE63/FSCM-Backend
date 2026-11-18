@@ -4,7 +4,7 @@ Hệ thống lưu ảnh nghiệp vụ trong Azure Blob Storage (container Privat
 **blob key + metadata**, không lưu bytes. Giai đoạn này chỉ hỗ trợ ảnh JPG/JPEG/PNG/WebP (tối đa 10 MB),
 chưa hỗ trợ PDF/Word/Excel.
 
-Bốn nhóm ảnh và container tương ứng:
+Các nhóm ảnh và container tương ứng:
 
 | Nghiệp vụ | Container | Lưu ở đâu trong DB |
 |---|---|---|
@@ -12,6 +12,7 @@ Bốn nhóm ảnh và container tương ứng:
 | Write-off (ảnh hàng hư hỏng / giảm tồn) | `write-off-attachments` | `WRITE_OFF_ATTACHMENT.BlobUrl` (lưu key) |
 | Retailer (ảnh mặt trước cửa hàng) | `retailer-storefront-images` | `RETAILER.StorefrontImageBlobKey` |
 | Product (ảnh sản phẩm) | `product-images` | `PRODUCT.ImageBlobKey` |
+| Loyalty reward (ảnh quà đổi điểm) | dùng chung `ProductImagesContainer`, prefix `reward/` | `LOYALTY_REWARD.ImageUrl` lưu key cố định; URL ngoài có sẵn vẫn được giữ |
 
 ## 1. Tạo Storage Account và container
 1. Tạo **Storage Account** loại StorageV2 (Standard, LRS cho dev).
@@ -64,9 +65,16 @@ Key Vault reference). Connection string cần **account key** để backend sinh
 | `DELETE /api/v1/write-offs/{id}/attachments/{attachmentId}` | Admin/Operator | Xóa ảnh write-off (xóa cả blob). |
 | `POST /api/v1/retailers/{id}/storefront-image` (file) | Admin/Operator/SalesManager/Sales/Retailer | Upload/thay ảnh mặt tiền. Retailer chỉ sửa của chính mình. Trả `RetailerDetails.storefrontImageUrl`. |
 | `POST /api/v1/products/{id}/image` (file) | Admin | Upload/thay ảnh sản phẩm. Trả `ProductResult.imageUrl`. |
+| `POST /api/v1/loyalty/rewards/{id}/image` (file) | Admin | Upload/thay ảnh quà đã tồn tại. Trả `RewardResult.imageUrl` (SAS URL) và `imageReference` (key cố định). Không đổi điểm, số lượng hoặc trạng thái quà. |
 
 Các response có URL ảnh (`storefrontImageUrl`, `imageUrl`, `complaint evidence url`) đều là **SAS URL
 ngắn hạn**, sinh lại mỗi lần đọc.
+
+Ảnh quà dùng cấu hình Blob hiện có, không cần container/config hoặc migration mới. Khi sửa thông tin
+quà, gửi lại `imageReference` vào `imageUrl` để giữ ảnh đã upload; không lưu SAS URL sắp hết hạn.
+GraphQL entity `loyaltyRewards.imageUrl` vẫn là giá trị lưu trong DB. FE phân trang danh sách qua
+GraphQL rồi gọi `GET /api/v1/loyalty/rewards/{id}` cho ảnh có prefix `reward/` trong trang đó để lấy URL xem.
+URL ngoài do người dùng nhập vẫn được hỗ trợ và không bị xóa khỏi dịch vụ ngoài khi thay ảnh.
 
 ## 5. Lỗi thường gặp
 - `503 service_unavailable`: chưa cấu hình `FscmBlobStorage:ConnectionString`.

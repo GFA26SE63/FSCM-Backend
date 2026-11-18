@@ -18,7 +18,8 @@ public sealed class FakeImageStorage : IImageStorage
     {
         using var ms = new MemoryStream();
         await upload.Content.CopyToAsync(ms, cancellationToken);
-        var key = $"{category}/{Guid.NewGuid():N}";
+        var prefix = category == ImageCategory.LoyaltyRewardImage ? "reward" : category.ToString();
+        var key = $"{prefix}/{Guid.NewGuid():N}";
         Blobs[key] = (category, ms.ToArray(), upload.ContentType);
         return new StoredImage(key, upload.FileName, upload.ContentType, upload.SizeBytes);
     }

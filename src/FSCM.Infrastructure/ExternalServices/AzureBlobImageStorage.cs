@@ -90,6 +90,7 @@ public sealed class AzureBlobImageStorage : IImageStorage
         ImageCategory.WriteOffAttachment => _options.WriteOffAttachmentsContainer,
         ImageCategory.RetailerStorefront => _options.RetailerStorefrontContainer,
         ImageCategory.ProductImage => _options.ProductImagesContainer,
+        ImageCategory.LoyaltyRewardImage => _options.ProductImagesContainer,
         _ => throw new ArgumentOutOfRangeException(nameof(category), category, null)
     };
 
@@ -99,6 +100,7 @@ public sealed class AzureBlobImageStorage : IImageStorage
         ImageCategory.WriteOffAttachment => "write-off",
         ImageCategory.RetailerStorefront => "retailer",
         ImageCategory.ProductImage => "product",
+        ImageCategory.LoyaltyRewardImage => "reward",
         _ => "misc"
     };
 }

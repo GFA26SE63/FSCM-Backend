@@ -7,6 +7,50 @@ public sealed class LoyaltyServiceTests
 {
     private static readonly DateTimeOffset Now = new(2026, 10, 24, 0, 0, 0, TimeSpan.Zero);
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task List_finishes_each_retailer_query_before_starting_another(bool includeInactive)
+    {
+        var fixture = new Fixture();
+        var first = fixture.Store.AddProgram(Now, Now.AddDays(30));
+        var second = fixture.Store.AddProgram(Now, Now.AddDays(60));
+        var inactive = fixture.Store.AddProgram(Now, Now.AddDays(90));
+        first.IsActive = second.IsActive = true;
+        var retailerIds = fixture.Store.Programs.ToDictionary(program => program.Id, _ => Guid.NewGuid());
+        var gate = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var started = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var readsStarted = 0;
+        var activeReads = 0;
+        var overlappingReads = 0;
+        fixture.Store.ReadProgramRetailers = async (id, cancellationToken) =>
+        {
+            Interlocked.Increment(ref readsStarted);
+            if (Interlocked.Increment(ref activeReads) > 1)
+                Interlocked.Increment(ref overlappingReads);
+            started.TrySetResult(true);
+            try
+            {
+                await gate.Task.WaitAsync(cancellationToken);
+                return new[] { retailerIds[id] };
+            }
+            finally { Interlocked.Decrement(ref activeReads); }
+        };
+
+        var listing = fixture.Service.ListAsync(includeInactive, CancellationToken.None);
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var readsBeforeRelease = readsStarted;
+        gate.SetResult(true);
+        var rows = (await listing).ToArray();
+
+        Assert.Equal(1, readsBeforeRelease);
+        Assert.Equal(0, overlappingReads);
+        var expected = includeInactive ? new[] { first, second, inactive } : new[] { first, second };
+        Assert.Equal(expected.Select(program => program.Id), rows.Select(row => row.Id));
+        foreach (var row in rows)
+            Assert.Equal(new[] { retailerIds[row.Id] }, row.RetailerIds);
+    }
+
     [Fact]
     public async Task Create_generates_draft_program_with_normalized_values()
     {
@@ -85,6 +129,7 @@ public sealed class LoyaltyServiceTests
         public List<LoyaltyProgram> Programs { get; } = [];
         public Guid RetailerId { get; } = Guid.NewGuid();
         public List<LoyaltyProgramRetailer> ProgramRetailers { get; } = [];
+        public Func<Guid, CancellationToken, Task<IReadOnlyCollection<Guid>>>? ReadProgramRetailers { get; set; }
 
         public Task<IReadOnlyCollection<LoyaltyProgram>> ListProgramsAsync(
             bool includeInactive, CancellationToken cancellationToken) =>
@@ -98,6 +143,7 @@ public sealed class LoyaltyServiceTests
             Task.FromResult($"LP-{Programs.Count + 1:000}");
 
         public Task<IReadOnlyCollection<Guid>> ListProgramRetailerIdsAsync(Guid programId, CancellationToken cancellationToken) =>
+            ReadProgramRetailers?.Invoke(programId, cancellationToken) ??
             Task.FromResult<IReadOnlyCollection<Guid>>(ProgramRetailers.Where(item => item.LoyaltyProgramId == programId).Select(item => item.RetailerId).ToArray());
 
         public Task<IReadOnlyCollection<Guid>> FindExistingRetailerIdsAsync(IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken) =>
