@@ -15,6 +15,34 @@ public sealed class DeliveryEtaServiceTests
         var error = await Assert.ThrowsAsync<DeliveryEtaOperationException>(() => fixture.Service.EstimateAsync(fixture.Request(), default));
         Assert.Equal("conflict", error.Code);
     }
+
+    [Fact]
+    public async Task Stale_route_cache_is_allowed_when_explicitly_permitted_as_fallback()
+    {
+        var fixture = await Fixture.CreateAsync();
+        fixture.Store.Distance.ExpiresAt = Now.AddMinutes(-1);
+        var request = new EtaRequest(fixture.WarehouseId, fixture.RetailerId, Now, AllowStaleDistance: true);
+        var result = await fixture.Service.EstimateAsync(request, default);
+        Assert.NotNull(result);
+        Assert.Equal(fixture.Store.Distance.DistanceMeters, result.DistanceMeters);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Stale_fallback_rejects_changed_coordinates(bool warehouseMoved)
+    {
+        var fixture = await Fixture.CreateAsync();
+        fixture.Store.Distance.ExpiresAt = Now.AddMinutes(-1);
+        if (warehouseMoved) fixture.Store.WarehouseLocation.Version++;
+        else fixture.Store.RetailerLocation.Version++;
+
+        var error = await Assert.ThrowsAsync<DeliveryEtaOperationException>(() => fixture.Service.EstimateAsync(
+            new EtaRequest(fixture.WarehouseId, fixture.RetailerId, Now, AllowStaleDistance: true), default));
+
+        Assert.Equal("conflict", error.Code);
+        Assert.True(error.CanRefreshDistance);
+    }
     // 2026-10-21 03:00 UTC is 10:00 in Vietnam.
     private static readonly DateTimeOffset Now = new(2026, 10, 21, 3, 0, 0, TimeSpan.Zero);
     private static readonly Guid Actor = Guid.Parse("11111111-1111-1111-1111-111111111111");
@@ -270,7 +298,7 @@ public sealed class DeliveryEtaServiceTests
             schedule.Milestones.Select(item => item.LocalTime));
     }
 
-    private sealed class Fixture
+    internal sealed class Fixture
     {
         public static readonly TimeZoneInfo Vietnam = TimeZoneInfo.FindSystemTimeZoneById("Asia/Ho_Chi_Minh");
 
@@ -328,7 +356,7 @@ public sealed class DeliveryEtaServiceTests
         public override DateTimeOffset GetUtcNow() => utcNow ?? Now;
     }
 
-    private sealed class FakeStore : IDeliveryEtaStore
+    internal sealed class FakeStore : IDeliveryEtaStore
     {
         public FakeStore(Guid warehouseId, Guid retailerId)
         {

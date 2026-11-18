@@ -31,6 +31,7 @@ jobs:
     env:
       TraceabilityProjectPath: ${{ github.workspace }}/.ci/traceability/FSCM.Traceability.csproj
       FSCM_DISPOSAL_TEST_POSTGRES: Host=127.0.0.1;Port=5432;Database=postgres;Username=postgres;Password=disposal-ci-only
+      FSCM_TEST_POSTGRES: Host=127.0.0.1;Port=5432;Database=fscm_e2e_ci;Username=postgres;Password=disposal-ci-only
 
     steps:
       - name: Check out source
@@ -40,7 +41,7 @@ jobs:
         uses: actions/checkout@v7
         with:
           repository: GFA26SE63/FSCM-Traceability
-          ref: be7070e0f353a6e7f8be5889c5c97d883f1fda87
+          ref: 149c3e21043f98323f211d5f2ddc650257e37fdd
           path: .ci/traceability
           persist-credentials: false
 

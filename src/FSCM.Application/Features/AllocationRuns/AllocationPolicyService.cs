@@ -32,23 +32,7 @@ public class AllocationPolicyService(IOrderStore store, DeliveryEtaService eta, 
         var routes = new Dictionary<Guid, EtaResult?>();
         foreach (var warehouseId in positions.Select(p => p.Warehouse.Id).Distinct())
         {
-            try { routes[warehouseId] = await eta.EstimateAsync(new(warehouseId, retailerId, at), ct); }
-            catch (DeliveryEtaOperationException e) when (e.Code is "not_found" or "conflict")
-            {
-                routes[warehouseId] = null;
-                if (maps is not null && e.CanRefreshDistance)
-                {
-                    try
-                    {
-                        await maps.RefreshDistanceAsync(warehouseId, retailerId, ct);
-                        routes[warehouseId] = await eta.EstimateAsync(new(warehouseId, retailerId, at), ct);
-                    }
-                    catch (MapOperationException) { /* No verified route: never substitute a straight-line estimate. */ }
-                    catch (DeliveryEtaOperationException retry) when (retry.Code is "not_found" or "conflict") { }
-                    catch (TransitTableOperationException retry) when (retry.Code == "not_found") { }
-                }
-            }
-            catch (TransitTableOperationException e) when (e.Code == "not_found") { routes[warehouseId] = null; }
+            routes[warehouseId] = await ResolveRouteAsync(warehouseId, retailerId, at, ct);
         }
         return positions.Select(p =>
         {
@@ -59,6 +43,40 @@ public class AllocationPolicyService(IOrderStore store, DeliveryEtaService eta, 
                 p.IssuableQuantity, route?.DistanceMeters ?? 0, arrival,
                 arrival.HasValue ? DateOnly.FromDateTime(arrival.Value.ToOffset(TimeSpan.FromHours(7)).DateTime) : null);
         }).ToArray();
+    }
+
+    private async Task<EtaResult?> ResolveRouteAsync(Guid warehouseId, Guid retailerId,
+        DateTimeOffset at, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        try { return await eta.EstimateAsync(new(warehouseId, retailerId, at), ct); }
+        catch (DeliveryEtaOperationException e) when (e.Code is "not_found" or "conflict")
+        {
+            if (!e.CanRefreshDistance) return null;
+        }
+        catch (TransitTableOperationException e) when (e.Code == "not_found") { return null; }
+
+        var allowStaleDistance = maps is null;
+        if (maps is not null)
+        {
+            try { await maps.RefreshDistanceAsync(warehouseId, retailerId, ct); }
+            catch (MapOperationException e) when (e.Code == "map_provider_error")
+            {
+                // Only provider outages permit fallback to the same verified coordinates.
+                allowStaleDistance = true;
+            }
+            catch (MapOperationException e) when (e.Code is "not_found" or "conflict") { return null; }
+        }
+
+        // A provider can wrap request cancellation as a provider error. Never turn it into fallback.
+        ct.ThrowIfCancellationRequested();
+        try
+        {
+            return await eta.EstimateAsync(new(warehouseId, retailerId, at,
+                AllowStaleDistance: allowStaleDistance), ct);
+        }
+        catch (DeliveryEtaOperationException e) when (e.Code is "not_found" or "conflict") { return null; }
+        catch (TransitTableOperationException e) when (e.Code == "not_found") { return null; }
     }
 }
 

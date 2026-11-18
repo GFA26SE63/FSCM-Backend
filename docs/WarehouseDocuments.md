@@ -1,10 +1,10 @@
 # Chứng từ nhập, xuất và luân chuyển kho
 
-Màn hình vận hành: `/warehouse-work` trên frontend. API: `/api/v1/warehouse-documents`.
+Màn hình vận hành: `/warehouse-inbound` (nhập), `/warehouse-outbound` (xuất), `/warehouse-transfers` (luân chuyển), `/warehouse-trace` (tra cứu). API: `/api/v1/warehouse-documents`.
 
 ## Quy trình
 
-1. **Nhập từ nhà máy:** Admin mô phỏng sản xuất và đóng hàng ở `/factory-traceability`: nhà máy tạo batch, cấp serial từng sản phẩm, đóng carton và xếp pallet; in QR tại nguồn, sau đó phát hành chuyến đến một kho. Warehouse Keeper tạo PNK lý do Factory, chỉ chọn kho và ghi chú, rồi quét pallet. Manifest được tra từ dữ liệu traceability, kiểm tra trạng thái đã xuất và kho đích; toàn bộ carton tự tạo mapping và cộng tồn **ngay trong cùng giao dịch quét**. Quét lại trả kết quả cũ, không cộng tồn. Nút hoàn tất chỉ đóng PNK, không cộng tồn lần nữa. Không có bước nhập tay SKU/NSX/HSD hoặc sinh batch/QR nhà máy tại kho. [Thiết kế mã và mô phỏng](FactoryTraceability.md).
+1. **Nhập từ nhà máy:** Nhà máy đóng hàng, in QR và phát hành pallet với kho đích trên Traceability. FSCM lấy danh sách pallet đã xuất qua API tích hợp và chỉ trả hàng gửi tới kho được phân công. Thủ kho chọn pallet trong Hàng chờ nhận; FSCM tạo hoặc mở lại một PNK gắn với pallet đó, tự lấy kho nhận từ manifest, không nhận warehouseId do trình duyệt chọn. Mở PNK và xem danh sách kiểm đếm chưa cộng tồn. Thủ kho đánh dấu từng carton Đạt/Hỏng/Thiếu, ghi lý do và vị trí cách ly khi hỏng, rồi xác nhận nhận: chỉ carton đạt được cộng tồn trong cùng giao dịch. Quét/nhận lại không cộng tồn lần nữa. Pallet đã nhận tại FSCM bị loại khỏi hàng chờ ngay cả khi ACK về Traceability chưa đồng bộ. Hoàn tất chỉ đóng PNK. Không nhập tay SKU/NSX/HSD hoặc sinh QR nhà máy tại kho. Phiếu cũ và API tạo phiếu thủ công được giữ để tương thích; luồng mới dùng endpoint from-pallet.
 2. **Luân chuyển:** Admin chọn kho xuất, kho nhận, batch và số carton, phát hành yêu cầu. Hệ thống giữ tồn ngay, tránh bán cùng lượng hàng. Thủ kho nguồn lập PXK từ yêu cầu, quét đúng carton và xác nhận xuất. Tồn nguồn giảm; carton chuyển sang InTransit. Thủ kho đích lập PNK từ PXK đã ghi sổ, quét chính các carton đã xuất rồi xác nhận nhập. Tồn đích tăng; giữ nguyên carton_id, SKU, NSX/HSD và lịch sử batch nguồn.
 3. **Xuất nhiều đơn:** Admin chọn nhiều đơn đã có PO/allocation ở cùng kho và phát hành một yêu cầu xuất. Warehouse Keeper chỉ lập **một PXK** từ yêu cầu đó. Bảng tổng hợp gom SKU/batch và tổng carton cần lấy; bảng chi tiết giữ mapping về từng đơn. Quét một carton tự phân vào một dòng đơn còn thiếu, theo batch đã được thuật toán chọn.
 4. Khi quét đủ PXK đơn hàng, tất cả phiếu soạn bên trong hoàn tất và PXK chuyển `Prepared`. Xác nhận xuất tổng gọi nghiệp vụ xuất cho các shipment trong **một giao dịch**, tiêu thụ reservation và trừ tồn một lần. Điều kiện thanh toán, thời hạn giao/MLOR và quy tắc mọi kho của đơn đã soạn đủ tiếp tục có hiệu lực. Nếu kho khác chưa đủ, PXK giữ `Prepared` để xuất lại sau; không hoàn tác việc soạn ở kho này.
@@ -48,3 +48,8 @@ Migration `20261112153513_AddWarehouseDocumentsAndCartons` tạo ba bảng chứ
 Cập nhật tách DB: batch/pallet/carton/serial gốc nằm trong `fscm_traceability`; các bảng factory trong DB kho là bản sao khi nhận hàng và dữ liệu di sản. Nhận pallet ghi `FACTORY_RECEIPT_SYNC` cùng giao dịch tồn; API worker ACK sang nhà máy có retry. Xem FactoryTraceability.md và dùng runner mới để migrate đủ cả hai context trước khi vận hành.
 
 Cập nhật ứng dụng độc lập: hệ thống nhà máy nằm ở `../FSCM-Traceability` với giao diện riêng. Backend FSCM nhận manifest và ACK qua API gateway có khóa, không đọc DB nhà máy trong runtime. Menu factory ở FSCM mở URL `Traceability:PublicUrl`. Khởi động lại backend/frontend khi chuyển sang bản này.
+
+
+## Draft PXK before scans
+
+New warehouse requests create Kind Issue, status Open with a PXK code before scanning. Scans assign cartons without dispatching stock. Posting requires all cartons, preserves document ID/code and dispatches atomically. Transfer receipts require a Posted source issue. Legacy Picking documents keep their existing snapshot completion path. No schema migration.

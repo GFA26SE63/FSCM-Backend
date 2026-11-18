@@ -182,6 +182,10 @@ public sealed class RetailerStore(AppDbContext dbContext) : IRetailerStore
              salesGroup.IsActive && salesGroup.RegionId == regionId && user.IsActive && user.Role == SystemRoles.Sales
          select member).AnyAsync(cancellationToken);
 
+    public Task<bool> IsActiveSalesGroupInRegionAsync(Guid regionId, Guid salesGroupId, CancellationToken cancellationToken) =>
+        dbContext.SalesGroupRecords.AsNoTracking().AnyAsync(group =>
+            group.Id == salesGroupId && group.IsActive && group.RegionId == regionId, cancellationToken);
+
     public Task<RetailerTerritoryAccess?> FindTerritoryAccessAsync(Guid userId, Guid retailerId, CancellationToken cancellationToken) =>
         (from member in dbContext.SalesGroupMemberRecords.AsNoTracking()
          join salesGroup in dbContext.SalesGroupRecords.AsNoTracking() on member.SalesGroupId equals salesGroup.Id

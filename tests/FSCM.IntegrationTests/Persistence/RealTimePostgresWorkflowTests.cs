@@ -74,7 +74,9 @@ public sealed class RealTimePostgresWorkflowTests
             op = users.Single(u => u.Email == "operator@fscm.local").Id;
             retailerUser = users.Single(u => u.Email == "retailer@fscm.local").Id;
             keeper = users.Single(u => u.Email == "warehouse.keeper@fscm.local").Id;
-            retailer = (await db.RetailerRecords.SingleAsync(r => r.Code == "10004127")).Id;
+            var creditRetailer = await db.RetailerRecords.SingleAsync(r => r.Code == "10004127");
+            creditRetailer.CreditLimit = 100_000_000m;
+            retailer = creditRetailer.Id;
             product = (await db.ProductRecords.SingleAsync(p => p.Sku == "SKU001")).Id;
             foreach (var order in await db.SalesOrderRecords.ToArrayAsync()) order.Status = OrderStatuses.Withdrawn;
             var batches = await db.BatchRecords.Where(b => b.ProductId == product).OrderByDescending(b => b.ExpirationDate).ToArrayAsync();

@@ -39,7 +39,7 @@ public sealed partial class WarehouseWorkService
         var d = await Find(id, ct);
         await Access(d.WarehouseId, actor, role, ct);
         Version(d, version);
-        if (d.Kind != "Picking" || d.Status is not ("Open" or "Prepared") ||
+        if (d.Kind is not ("Picking" or "Issue") || d.Status is not ("Open" or "Prepared") ||
             await Documents.AnyAsync(x => x.SourceDocumentId == id && x.Kind == "Issue", ct))
             throw PickingOperationException.Conflict("Chỉ bỏ/đổi carton trên phiếu soạn chưa xuất.");
         if (string.IsNullOrWhiteSpace(reason) || reason.Length > 300)

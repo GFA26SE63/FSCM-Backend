@@ -28,10 +28,25 @@ public sealed class RetailersController(RetailerService service) : ControllerBas
     public Task<RetailerDetails> Get(Guid retailerId, CancellationToken cancellationToken) =>
         service.GetAsync(retailerId, GetActorUserId(), GetActorRole(), cancellationToken);
 
-    [Authorize(Roles = SystemRoles.Sales)]
+    /// <summary>
+    /// Sales declares a retailer (draft or submitted). Admin creates one from the Portal, which
+    /// always lands in the review queue (PendingApproval) like a submitted Sales declaration.
+    /// </summary>
+    [Authorize(Roles = $"{SystemRoles.Sales},{SystemRoles.Admin}")]
     [HttpPost]
     public async Task<IActionResult> Declare(DeclareRetailerRequest request, CancellationToken cancellationToken)
     {
+        if (GetActorRole() == SystemRoles.Admin)
+        {
+            var created = await service.CreateByAdminAsync(GetActorUserId(), request.RegionId, request.SalesGroupId,
+                request.Name, request.ContactName, request.Phone, request.Email, request.Address,
+                request.RetailerType, request.ForecastRevenue, request.StoreSizeSquareMeters,
+                request.PurchasingCapacity, request.PurchaseFrequencyPerMonth, request.AssessmentNote,
+                request.Latitude, request.Longitude, request.ProviderPlaceId,
+                request.MlorDeclarations?.Select(ToMlorData).ToArray(), cancellationToken);
+            return CreatedAtAction(nameof(Get), new { retailerId = created.Id }, created);
+        }
+
         var result = await service.DeclareAsync(GetActorUserId(), request.RegionId, request.SalesGroupId,
             request.Name, request.ContactName, request.Phone, request.Email, request.Address,
             request.RetailerType, request.ForecastRevenue, request.StoreSizeSquareMeters,
