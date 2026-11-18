@@ -1,9 +1,17 @@
 using FSCM.Application.Features.EntityQueries;
 using FSCM.Application.Features.Orders;
+using FSCM.Application.Features.Complaints;
+using FSCM.Application.Features.Identity;
+using FSCM.Application.Features.Inventory;
+using FSCM.Application.Features.Loyalty;
+using FSCM.Application.Features.Refunds;
 using FSCM.Application.Features.Promotions;
 using FSCM.Application.Features.Retailers;
 using FSCM.Application.Features.WarehouseConfiguration;
 using FSCM.Domain.Entities;
+using FSCM.Domain.Authorization;
+using FSCM.Persistence.DbContexts;
+using FSCM.Persistence.Inventory;
 using HotChocolate.Data;
 using HotChocolate.Types;
 using InventoryBatchEntity = FSCM.Domain.Entities.Batch;
@@ -17,6 +25,43 @@ namespace FSCM.API.GraphQL;
 /// </summary>
 public sealed class EntityQuery(EntityQueryAccess access)
 {
+    public Task<IReadOnlyCollection<ComplaintResult>> ComplaintReads(
+        [Service] ComplaintService service, CancellationToken cancellationToken = default) =>
+        service.ListAsync(access.UserId, access.Role, cancellationToken);
+
+    public Task<IReadOnlyCollection<RefundResult>> RefundReads(
+        [Service] RefundService service, Guid? orderId = null, string? status = null,
+        CancellationToken cancellationToken = default) =>
+        service.ListAsync(orderId, status, access.UserId, access.Role, cancellationToken);
+
+    public Task<IReadOnlyCollection<GoodsReceiptResult>> GoodsReceiptReads(
+        [Service] InventoryService service, Guid? warehouseId = null,
+        CancellationToken cancellationToken = default) =>
+        service.ListReceiptsAsync(access.UserId, access.Role, warehouseId, cancellationToken);
+
+    public Task<PagedUserResult> UserReads(
+        [Service] IdentityService service, string? search = null, string? role = null,
+        bool? isActive = null, int page = 1, int pageSize = 20,
+        string sort = "desc",
+        CancellationToken cancellationToken = default) =>
+        service.ListUsersAsync(new UserListQuery(search, role, isActive, page, pageSize, sort), cancellationToken);
+
+    public Task<IReadOnlyCollection<RedemptionResult>> RedemptionReads(
+        [Service] RedemptionService service, CancellationToken cancellationToken = default) =>
+        access.Role is SystemRoles.Admin or SystemRoles.Operator
+            ? service.ListForAdminAsync(cancellationToken)
+            : service.ListAsync(access.UserId, cancellationToken);
+
+    public Task<DisposalResult[]> DisposalReads(
+        [Service] AppDbContext db, [Service] TimeProvider clock,
+        CancellationToken cancellationToken = default) =>
+        new DisposalService(db, clock).ListAsync(access.UserId, access.Role, null, cancellationToken);
+
+    public Task<IReadOnlyCollection<PromotionResult>> PromotionReads(
+        [Service] PromotionService service, bool includeInactive = true,
+        CancellationToken cancellationToken = default) =>
+        service.ListAsync(includeInactive, cancellationToken);
+
     /// <summary>F32/F37 scoped order list; mirrors GET /api/v1/orders.</summary>
     public Task<PagedOrderResult> OrderReads(
         [Service] OrderService service,
@@ -24,11 +69,12 @@ public sealed class EntityQuery(EntityQueryAccess access)
         Guid? retailerId = null,
         bool createdByMe = false,
         string? search = null,
+        string sort = "desc",
         int page = 1,
         int pageSize = 20,
         CancellationToken cancellationToken = default) =>
         service.ListAsync(access.UserId, access.Role,
-            new OrderListQuery(status, retailerId, createdByMe, search, page, pageSize), cancellationToken);
+            new OrderListQuery(status, retailerId, createdByMe, search, page, pageSize, sort), cancellationToken);
 
     /// <summary>F32/F37 scoped order detail with immutable allocation/F98 fragments.</summary>
     public Task<OrderDetailResult> OrderRead(
