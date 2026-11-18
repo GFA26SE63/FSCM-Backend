@@ -66,6 +66,10 @@ public sealed class DashboardStore(AppDbContext db) : IDashboardStore
 
     /// <summary>Batches returned for the Portal's paged "Batch cần chú ý" list (shown 10 at a time).</summary>
     private const int ExpiryRiskLimit = 200;
+    /// <summary>Work items per source and in total; the Portal shows them 10 at a time.</summary>
+    private const int WorkItemLimit = 200;
+    /// <summary>Best-selling SKUs returned for "Top SKU bán chạy" (shown 10 at a time).</summary>
+    private const int TopProductLimit = 100;
 
     private static decimal Percent(decimal part, decimal whole) =>
         whole <= 0 ? 0m : Math.Round(part / whole * 100m, 1, MidpointRounding.AwayFromZero);
@@ -142,7 +146,7 @@ public sealed class DashboardStore(AppDbContext db) : IDashboardStore
                 agedRedemptions > 0 ? "danger" : "warn", $"/redeem{(redemptionScope.Length > 0 ? "?" + redemptionScope[1..] : "")}"));
             var redemptionWork = await (from x in openRedemptions join r in db.RetailerRecords on x.RetailerId equals r.Id
                 join gift in db.LoyaltyRewardRecords on x.LoyaltyRewardId equals gift.Id
-                orderby x.UpdatedAt select new { x.Id, x.Status, x.UpdatedAt, r.Name, Gift = gift.Name }).Take(15).ToArrayAsync(ct);
+                orderby x.UpdatedAt select new { x.Id, x.Status, x.UpdatedAt, r.Name, Gift = gift.Name }).Take(WorkItemLimit).ToArrayAsync(ct);
             work.AddRange(redemptionWork.Select(x => new DashboardWorkItem("redemption", x.Id, x.Id.ToString(),
                 $"{x.Name} · {x.Gift}", x.Status, x.Status == "Pending" ? "Chờ duyệt đổi quà" : x.Status == "Approved" ? "Chờ giao quà" : "Chờ xác nhận nhận quà",
                 x.UpdatedAt, x.UpdatedAt < now.AddDays(-3) ? 1 : 2, $"/redeem/{x.Id}")));
@@ -200,7 +204,7 @@ public sealed class DashboardStore(AppDbContext db) : IDashboardStore
                 orderby g.Sum(r => r.line.OrderedQuantity) descending
                 select new DashboardProduct(g.Key.ProductId, g.Key.SkuSnapshot, g.Key.ProductNameSnapshot,
                     g.Sum(r => r.line.OrderedQuantity), g.Sum(r => r.total.Net > 0 ? Math.Round(r.order.Amount * r.line.NetAmount / r.total.Net, 2) : 0m)))
-                .Take(10).ToArrayAsync(ct);
+                .Take(TopProductLimit).ToArrayAsync(ct);
             var roster = await (from member in db.SalesGroupMemberRecords.AsNoTracking()
                 join person in db.UserAccountRecords.AsNoTracking() on member.UserAccountId equals person.Id
                 join groupRow in db.SalesGroupRecords.AsNoTracking() on member.SalesGroupId equals groupRow.Id
@@ -275,10 +279,10 @@ public sealed class DashboardStore(AppDbContext db) : IDashboardStore
 
             var failures = await orders.Where(o => o.Status == OrderStatuses.AllocationFailed || o.Status == OrderStatuses.AllocationConflict ||
                     o.Status == OrderStatuses.Allocating && o.UpdatedAt < now.AddMinutes(-2))
-                .OrderBy(o => o.UpdatedAt).Take(15).Select(o => new { o.Id, o.OrderCode, o.Status, o.RejectionReason, o.UpdatedAt }).ToArrayAsync(ct);
+                .OrderBy(o => o.UpdatedAt).Take(WorkItemLimit).Select(o => new { o.Id, o.OrderCode, o.Status, o.RejectionReason, o.UpdatedAt }).ToArrayAsync(ct);
             work.AddRange(failures.Select(o => new DashboardWorkItem("allocation", o.Id, o.OrderCode, "Phân bổ cần xử lý", o.Status,
                 o.RejectionReason ?? "Đang phân bổ quá 2 phút", o.UpdatedAt, 1, manager ? null : $"/orders/{o.Id}")));
-            var complaints = await requests.OrderBy(c => c.ReportedAt).Take(15)
+            var complaints = await requests.OrderBy(c => c.ReportedAt).Take(WorkItemLimit)
                 .Select(c => new { c.Id, c.ReportedAt, c.SalesOrderId, c.Status, c.RequestType }).ToArrayAsync(ct);
             work.AddRange(complaints.Select(c => new DashboardWorkItem("complaint", c.Id, $"KN-{c.Id.ToString("N")[..8].ToUpperInvariant()}",
                 c.RequestType == "Return" ? "Yêu cầu trả hàng" : c.RequestType == "DamagedCollection" ? "Thu hồi hàng hỏng" : "Khiếu nại đang chờ",
@@ -287,7 +291,7 @@ public sealed class DashboardStore(AppDbContext db) : IDashboardStore
             if (global)
             {
                 var refunds = await db.ManualRefundRecords.AsNoTracking().Where(r => orderIds.Contains(r.SalesOrderId) && r.Status != "Refunded")
-                    .OrderBy(r => r.CreatedAt).Take(15).Select(r => new { r.Id, r.SalesOrderId, r.Status, r.Amount, r.CreatedAt }).ToArrayAsync(ct);
+                    .OrderBy(r => r.CreatedAt).Take(WorkItemLimit).Select(r => new { r.Id, r.SalesOrderId, r.Status, r.Amount, r.CreatedAt }).ToArrayAsync(ct);
                 work.AddRange(refunds.Select(r => new DashboardWorkItem("refund", r.Id, $"HT-{r.Id.ToString("N")[..8].ToUpperInvariant()}",
                     r.Status == "AwaitingVerification" ? "Hoàn tiền chờ xác minh" : "Hoàn tiền cần xử lý", r.Status,
                     "Chỉ trạng thái Refunded mới tính là đã hoàn", r.CreatedAt, r.Status == "AwaitingVerification" ? 1 : 2, $"/refunds/{r.Id}", r.Amount)));
@@ -419,20 +423,20 @@ public sealed class DashboardStore(AppDbContext db) : IDashboardStore
             cards.Add(new("lowStock", "SKU dưới ngưỡng tồn khu vực", coverRows.Count(r => r.Flag == "BelowMinimum"), "count",
                 $"Ngưỡng tối thiểu {minimum:0.#} thùng / SKU / khu vực", coverRows.Any(r => r.Flag == "BelowMinimum") ? "danger" : "neutral"));
                 cards.Add(new("shipmentExceptions", "Shipment ngoại lệ", await shipments.CountAsync(s => s.Status == "Exception", ct), "count", "Cần kiểm tra trước khi tiếp tục", "danger"));
-            var pickRows = await picks.OrderByDescending(p => p.Status == "Exception").ThenBy(p => p.CreatedAt).Take(15).Select(p => new { p.Id, p.PickingCode, p.Status, p.CreatedAt }).ToArrayAsync(ct);
+            var pickRows = await picks.OrderByDescending(p => p.Status == "Exception").ThenBy(p => p.CreatedAt).Take(WorkItemLimit).Select(p => new { p.Id, p.PickingCode, p.Status, p.CreatedAt }).ToArrayAsync(ct);
             work.AddRange(pickRows.Select(p => new DashboardWorkItem("picking", p.Id, p.PickingCode, "Phiếu soạn còn mở", p.Status,
                 "Mở phiếu để tiếp tục soạn / xử lý ngoại lệ", p.CreatedAt, p.Status == "Exception" ? 1 : 3, $"/runpicking?code={Uri.EscapeDataString(p.PickingCode)}")));
             var shipmentRows = await shipments.Where(s => s.Status == "Exception" || s.Status == "Ready" || s.Status == "Issued")
-                .OrderByDescending(s => s.Status == "Exception").ThenBy(s => s.CreatedAt).Take(20).Select(s => new { s.Id, s.ShipmentCode, s.Status, s.ExceptionReason, s.CreatedAt }).ToArrayAsync(ct);
+                .OrderByDescending(s => s.Status == "Exception").ThenBy(s => s.CreatedAt).Take(WorkItemLimit).Select(s => new { s.Id, s.ShipmentCode, s.Status, s.ExceptionReason, s.CreatedAt }).ToArrayAsync(ct);
             work.AddRange(shipmentRows.Select(s => new DashboardWorkItem("shipment", s.Id, s.ShipmentCode,
                 s.Status == "Exception" ? "Shipment ngoại lệ" : s.Status == "Issued" ? "Chờ điều phối giao" : "Sẵn sàng xuất kho", s.Status,
                 s.ExceptionReason ?? "Kiểm tra kho, thanh toán và điều phối", s.CreatedAt, s.Status == "Exception" ? 1 : 2, "/readiness")));
-                var receiptsOpen = await receiptRows.OrderBy(r => r.CreatedAt).Take(10).Select(r => new { r.Id, r.ReceiptCode, r.Status, r.CreatedAt }).ToArrayAsync(ct);
+                var receiptsOpen = await receiptRows.OrderBy(r => r.CreatedAt).Take(WorkItemLimit).Select(r => new { r.Id, r.ReceiptCode, r.Status, r.CreatedAt }).ToArrayAsync(ct);
                 work.AddRange(receiptsOpen.Select(r => new DashboardWorkItem("receipt", r.Id, r.ReceiptCode, "Phiếu nhập còn mở", r.Status,
                     "Kiểm tra SKU, batch và số lượng nhập", r.CreatedAt, 3, $"/receipts/{Uri.EscapeDataString(r.ReceiptCode)}")));
         }
         return new(role, now, periodFrom, periodTo, scope, cards, statuses, trend, products, team, inventory, risks,
-            work.OrderBy(w => w.Priority).ThenBy(w => w.Since).Take(30).ToArray(), customers, health, unattributed, notes,
+            work.OrderBy(w => w.Priority).ThenBy(w => w.Since).Take(WorkItemLimit).ToArray(), customers, health, unattributed, notes,
             debtAging, stockCover, expiryRiskTotal);
     }
 }

@@ -1,9 +1,34 @@
 using FSCM.Domain.Entities;
+using FSCM.Application.Features.Storage;
 
 namespace FSCM.Application.Features.Loyalty;
 
-public sealed class RewardService(IRewardStore store, TimeProvider timeProvider)
+public sealed class RewardService(IRewardStore store, TimeProvider timeProvider, ImageUploadService? images = null)
 {
+    public const string ImagePrefix = "reward/";
+
+    public async Task<RewardResult> SetImageAsync(Guid id, ImageUpload upload, CancellationToken cancellationToken)
+    {
+        var reward = await store.FindAsync(id, cancellationToken)
+            ?? throw LoyaltyOperationException.NotFound("Loyalty reward was not found.");
+        var storage = images ?? throw ImageStorageException.Unavailable("Image storage is unavailable.");
+        var previous = reward.ImageUrl;
+        var previousUpdatedAt = reward.UpdatedAt;
+        var stored = await storage.ValidateAndUploadAsync(ImageCategory.LoyaltyRewardImage, upload, cancellationToken);
+        reward.ImageUrl = stored.BlobKey; // Stable key, never persist a short-lived SAS URL.
+        reward.UpdatedAt = timeProvider.GetUtcNow();
+        try { await store.SaveChangesAsync(cancellationToken); }
+        catch
+        {
+            reward.ImageUrl = previous;
+            reward.UpdatedAt = previousUpdatedAt;
+            await storage.DeleteAsync(ImageCategory.LoyaltyRewardImage, stored.BlobKey, CancellationToken.None);
+            throw;
+        }
+        if (previous?.StartsWith(ImagePrefix, StringComparison.Ordinal) == true && previous != stored.BlobKey)
+            await storage.DeleteAsync(ImageCategory.LoyaltyRewardImage, previous, cancellationToken);
+        return ToResult(reward);
+    }
     public async Task<IReadOnlyCollection<RewardResult>> ListAsync(
         Guid? programId, bool includeInactive, CancellationToken cancellationToken) =>
         (await store.ListAsync(programId, includeInactive, cancellationToken)).Select(ToResult).ToArray();
@@ -85,8 +110,13 @@ public sealed class RewardService(IRewardStore store, TimeProvider timeProvider)
     }
 
     private static string? Normalize(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
-    private static RewardResult ToResult(LoyaltyReward item) => new(item.Id, item.LoyaltyProgramId,
-        item.Code, item.Name, item.Description, item.ImageUrl, item.RewardType, item.RequiredPoints,
+    private RewardResult ToResult(LoyaltyReward item) => new(item.Id, item.LoyaltyProgramId,
+        item.Code, item.Name, item.Description, ReadImageUrl(item.ImageUrl), item.RewardType, item.RequiredPoints,
         item.DiscountAmount, item.DiscountPercent, item.AvailableQuantity, item.IsActive,
-        item.CreatedAt, item.UpdatedAt);
+        item.CreatedAt, item.UpdatedAt, item.ImageUrl);
+
+    private string? ReadImageUrl(string? reference) => reference?.StartsWith(ImagePrefix, StringComparison.Ordinal) == true
+        ? (images ?? throw ImageStorageException.Unavailable("Image storage is unavailable."))
+            .GetReadUrl(ImageCategory.LoyaltyRewardImage, reference)
+        : reference;
 }
