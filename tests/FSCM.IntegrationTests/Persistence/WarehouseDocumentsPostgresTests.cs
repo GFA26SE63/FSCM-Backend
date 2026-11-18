@@ -34,7 +34,7 @@ public sealed class WarehouseDocumentsPostgresTests
             "Remote tests require FSCM_TEST_POSTGRES_ALLOWED_HOST matching the test server.");
         Assert.StartsWith("fscm_e2e_", target.Database);
         Assert.Matches("^fscm_e2e_[a-z0-9_]+$", target.Database!);
-        target.Database += "_warehouse";
+        target.Database += $"_warehouse_{Guid.NewGuid().ToString("N")[..12]}";
         var traceTarget = new Npgsql.NpgsqlConnectionStringBuilder(target.ConnectionString) { Database = target.Database + "_trace" };
         foreach (var database in new[] { target, traceTarget })
         {
