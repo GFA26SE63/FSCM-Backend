@@ -121,7 +121,15 @@ public sealed class WarehouseDocumentsController(WarehouseWorkService service, I
     public async Task<ContentResult> Labels(Guid id, CancellationToken ct)
     {
         var result = await Get(id, ct);
-        var html = new System.Text.StringBuilder("<!doctype html><html lang='vi'><meta charset='utf-8'><title>Carton QR</title><style>body{font:14px Arial,sans-serif}article{display:inline-block;width:280px;padding:16px;margin:8px;border:1px solid;break-inside:avoid}svg{width:180px;height:180px}small{overflow-wrap:anywhere;display:block}@media print{button{display:none}}</style><button onclick='window.print()'>In nhãn carton</button>");
+        // Print button in its own toolbar row on top, styled like the Portal primary button (.btn.btn-primary).
+        var html = new System.Text.StringBuilder("<!doctype html><html lang='vi'><meta charset='utf-8'><title>Carton QR</title><style>" +
+            "*{box-sizing:border-box}body{font:14px Arial,sans-serif;margin:0;padding:0 8px 8px;color:#1b1f1d}" +
+            ".print-toolbar{position:sticky;top:0;z-index:1;display:flex;gap:8px;padding:12px 8px;margin:0 -8px 4px;background:#fff;border-bottom:1px solid #e3e7e4}" +
+            ".print-toolbar button{display:inline-flex;align-items:center;justify-content:center;height:38px;padding:0 14px;border-radius:8px;border:1px solid #14655b;background:#14655b;color:#fff;font:inherit;font-size:13.5px;font-weight:600;cursor:pointer}" +
+            ".print-toolbar button:hover{background:#0e4b43;border-color:#0e4b43}.print-toolbar button:focus-visible{outline:2px solid #14655b;outline-offset:2px}" +
+            "article{display:inline-block;width:280px;padding:16px;margin:8px;border:1px solid;break-inside:avoid;vertical-align:top}svg{width:180px;height:180px}small{overflow-wrap:anywhere;display:block}" +
+            "@media print{.print-toolbar{display:none}body{padding:0}}</style>" +
+            "<div class='print-toolbar'><button type='button' onclick='window.print()'>In nhãn carton</button></div>");
         foreach (var carton in result.Cartons)
         {
             var line = result.Lines.Single(x => x.Id == carton.LineId);
