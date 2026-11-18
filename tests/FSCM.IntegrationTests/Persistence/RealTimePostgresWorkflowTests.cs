@@ -44,10 +44,11 @@ public sealed class RealTimePostgresWorkflowTests
         var target = new Npgsql.NpgsqlConnectionStringBuilder(connection);
         Assert.True(target.Host is "127.0.0.1" or "localhost");
         Assert.StartsWith("fscm_e2e_", target.Database);
+        target.Database += $"_realtime_{Guid.NewGuid().ToString("N")[..12]}";
         // This suite creates, migrates and seeds a new database. It never deletes a database.
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
-            ["ConnectionStrings:DefaultConnection"] = connection,
+            ["ConnectionStrings:DefaultConnection"] = target.ConnectionString,
             ["SeedData:DefaultPassword"] = "Local-E2e-Only!2049",
             ["Jwt:Secret"] = new string('e', 64),
             ["Jwt:Issuer"] = "FSCM.API",
@@ -74,7 +75,9 @@ public sealed class RealTimePostgresWorkflowTests
             op = users.Single(u => u.Email == "operator@fscm.local").Id;
             retailerUser = users.Single(u => u.Email == "retailer@fscm.local").Id;
             keeper = users.Single(u => u.Email == "warehouse.keeper@fscm.local").Id;
-            retailer = (await db.RetailerRecords.SingleAsync(r => r.Code == "10004127")).Id;
+            var creditRetailer = await db.RetailerRecords.SingleAsync(r => r.Code == "10004127");
+            creditRetailer.CreditLimit = 100_000_000m;
+            retailer = creditRetailer.Id;
             product = (await db.ProductRecords.SingleAsync(p => p.Sku == "SKU001")).Id;
             foreach (var order in await db.SalesOrderRecords.ToArrayAsync()) order.Status = OrderStatuses.Withdrawn;
             var batches = await db.BatchRecords.Where(b => b.ProductId == product).OrderByDescending(b => b.ExpirationDate).ToArrayAsync();

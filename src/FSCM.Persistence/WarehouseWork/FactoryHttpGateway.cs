@@ -9,6 +9,7 @@ public sealed record FactorySourceTrace(FactoryProductionBatch Batch, string Sku
 
 public interface IFactoryGateway
 {
+    Task<FactoryInboundPallet[]> DispatchedAsync(Guid[] warehouseIds, CancellationToken ct);
     Task<PalletManifest> ManifestAsync(string code, CancellationToken ct);
     Task<FactorySourceTrace> TraceAsync(string code, CancellationToken ct);
     Task<Guid> AcknowledgeReceiptAsync(FactoryReceiptSync receipt, CancellationToken ct);
@@ -31,6 +32,10 @@ public sealed class FactoryHttpGateway(HttpClient http) : IFactoryGateway
         catch (OperationCanceledException) when (!ct.IsCancellationRequested) { throw PickingOperationException.Conflict("API traceability phản hồi quá thời gian chờ."); }
     }
     public Task<PalletManifest> ManifestAsync(string code, CancellationToken ct) => Send<PalletManifest>(HttpMethod.Get, $"api/integration/pallets/{Uri.EscapeDataString(code)}/manifest", null, ct);
+    public Task<FactoryInboundPallet[]> DispatchedAsync(Guid[] warehouseIds, CancellationToken ct) =>
+        warehouseIds.Length == 0 ? Task.FromResult(Array.Empty<FactoryInboundPallet>()) :
+        Send<FactoryInboundPallet[]>(HttpMethod.Get, "api/integration/dispatches?" +
+            string.Join("&", warehouseIds.Distinct().Select(id => $"warehouseIds={id:D}")), null, ct);
     public Task<FactorySourceTrace> TraceAsync(string code, CancellationToken ct) => Send<FactorySourceTrace>(HttpMethod.Get, $"api/integration/trace?code={Uri.EscapeDataString(code)}", null, ct);
     public async Task<Guid> AcknowledgeReceiptAsync(FactoryReceiptSync receipt, CancellationToken ct)
     {

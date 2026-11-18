@@ -16,7 +16,10 @@ public enum ImageCategory
     RetailerStorefront,
 
     /// <summary>Product catalog images (container <c>product-images</c>).</summary>
-    ProductImage
+    ProductImage,
+
+    /// <summary>Reward images, isolated by the reward/ prefix in the catalog image container.</summary>
+    LoyaltyRewardImage
 }
 
 /// <summary>Result of persisting one image to blob storage.</summary>

@@ -16,10 +16,18 @@ public sealed class WarehouseDocumentsController(WarehouseWorkService service, I
 {
     private Guid Actor => Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
     private string Role => User.FindFirstValue(ClaimTypes.Role)!;
+    [HttpGet("issue-workflow")]
+    public object IssueWorkflow() => new { Version = 2, IssueBeforeScan = true, StableIssueId = true };
     [HttpGet]
     public Task<WarehouseWorkResult[]> List(CancellationToken ct) => service.ListAsync(Actor, Role, ct);
     [HttpGet("{id:guid}")]
     public Task<WarehouseWorkResult> Get(Guid id, CancellationToken ct) => service.GetAsync(id, Actor, Role, ct);
+    [HttpGet("factory-pending")]
+    public Task<FactoryInboundPallet[]> FactoryPending(CancellationToken ct) => service.PendingFactoryAsync(Actor, Role, ct);
+    [HttpPost("factory-receipts/from-pallet")]
+    [Authorize(Roles = SystemRoles.WarehouseKeeper)]
+    public async Task<WarehouseWorkResult> PrepareFactory(PrepareFactoryReceiptRequest request, CancellationToken ct) =>
+        await Get(await service.PrepareFactoryAsync(request, Actor, Role, ct), ct);
     [HttpPost("requests")]
     [Authorize(Roles = SystemRoles.Admin)]
     public async Task<WarehouseWorkResult> CreateRequest(CreateWarehouseRequest request,
@@ -40,6 +48,36 @@ public sealed class WarehouseDocumentsController(WarehouseWorkService service, I
     public Task<PalletManifest> PreviewPallet(Guid id, string code, CancellationToken ct) => service.PreviewPalletAsync(id, code, Actor, Role, ct);
     [HttpGet("{id:guid}/receipt-reports")]
     public Task<PalletReceiptReport[]> ReceiptReports(Guid id, CancellationToken ct) => service.ReceiptReportsAsync(id, Actor, Role, ct);
+    [HttpPost("{id:guid}/pallet-scans")]
+    [Authorize(Roles = SystemRoles.WarehouseKeeper)]
+    public Task<ReceiptPalletScan> ScanPallet(Guid id, ReceiptPalletScanRequest request, CancellationToken ct) =>
+        service.ScanReceiptPalletAsync(id, request, Actor, Role, Request.Headers.UserAgent.ToString(), ct);
+    [HttpGet("{id:guid}/pallet-scans")]
+    public Task<ReceiptPalletScan[]> PalletScans(Guid id, CancellationToken ct) => service.ReceiptScansAsync(id, Actor, Role, ct);
+    [HttpGet("{id:guid}/receipt-print")]
+    public async Task<ContentResult> ReceiptPrint(Guid id, CancellationToken ct)
+    {
+        var work = await Get(id, ct);
+        var info = await service.ReceiptPrintInfoAsync(id, Actor, Role, ct);
+        var reports = await service.ReceiptReportsAsync(id, Actor, Role, ct);
+        var scans = await service.ReceiptScansAsync(id, Actor, Role, ct);
+        static string E(string? s) => WebUtility.HtmlEncode(s ?? "—");
+        static string At(DateTimeOffset? t) => t?.ToOffset(TimeSpan.FromHours(7)).ToString("dd/MM/yyyy HH:mm:ss") ?? "—";
+        var d = work.Document;
+        var html = new System.Text.StringBuilder("<!doctype html><html lang='vi'><meta charset='utf-8'><title>Phiếu nhập kho</title><style>body{font:14px Arial;padding:24px;color:#111}table{width:100%;border-collapse:collapse;margin:16px 0}th,td{border:1px solid #aaa;padding:8px;text-align:left;overflow-wrap:anywhere}td{max-width:260px}@media print{button{display:none}}</style><button onclick='window.print()'>In / Lưu PDF</button><h1>PHIẾU NHẬP KHO</h1>");
+        html.Append($"<p>Số phiếu: <b>{E(d.Code)}</b></p><p>Kho nhận: {E(info.Warehouse)} · Người lập: {E(info.Creator)}</p><p>Ngày lập: {At(d.CreatedAt)} · Ngày hoàn tất: {At(d.PostedAt)} (UTC+7)</p><p>Trạng thái: {E(d.Status == "Open" ? "Đang xử lý — chưa hoàn tất" : d.Status == "Posted" ? "Đã ghi sổ" : d.Status)}</p><p>{E(d.Note)}</p>");
+        html.Append("<h2>Hàng nhập thực tế</h2><table><tr><th>SKU / sản phẩm</th><th>Batch / nguồn</th><th>NSX / HSD</th><th>Carton đạt</th></tr>");
+        foreach (var l in work.Lines)
+            html.Append($"<tr><td>{E(l.Sku)} · {E(l.ProductName)}</td><td>{E(l.BatchCode)} / {E(l.SourceLotCode)}</td><td>{l.ProductionDate:dd/MM/yyyy} / {l.ExpirationDate:dd/MM/yyyy}</td><td>{l.Quantity}</td></tr>");
+        html.Append("</table><h2>Biên bản kiểm đếm</h2><table><tr><th>Pallet / CID</th><th>Kết quả</th><th>Lý do</th><th>Vị trí cách ly</th></tr>");
+        foreach (var p in reports)
+            foreach (var c in p.Cartons)
+                html.Append($"<tr><td>{E(p.PalletCode)} / {E(c.CartonCode)}</td><td>{E(c.Disposition == "Accepted" ? "Đạt" : c.Disposition == "Damaged" ? "Hỏng — cách ly" : "Thiếu")}</td><td>{E(c.Reason)}</td><td>{E(c.QuarantineLocation)}</td></tr>");
+        html.Append("</table><h2>Lịch sử quét đối chiếu</h2><table><tr><th>Pallet</th><th>Người quét</th><th>Thời gian máy chủ (UTC+7)</th></tr>");
+        foreach (var s in scans)
+            html.Append($"<tr><td>{E(s.PalletCode)}</td><td>{E(s.ScannedByName)} ({s.ScannedByUserId})</td><td>{At(s.ScannedAt)}</td></tr>");
+        return Content(html.Append("</table><p>Người giao hàng: __________________ &nbsp; Người nhận hàng: __________________</p></html>").ToString(), "text/html; charset=utf-8");
+    }
     [HttpPost("{id:guid}/receive-pallet")]
     [Authorize(Roles = SystemRoles.WarehouseKeeper)]
     public async Task<WarehouseWorkResult> ReceivePallet(Guid id, InspectedPalletRequest request, CancellationToken ct) =>
@@ -83,7 +121,15 @@ public sealed class WarehouseDocumentsController(WarehouseWorkService service, I
     public async Task<ContentResult> Labels(Guid id, CancellationToken ct)
     {
         var result = await Get(id, ct);
-        var html = new System.Text.StringBuilder("<!doctype html><html lang='vi'><meta charset='utf-8'><title>Carton QR</title><style>body{font:14px Arial,sans-serif}article{display:inline-block;width:280px;padding:16px;margin:8px;border:1px solid;break-inside:avoid}svg{width:180px;height:180px}small{overflow-wrap:anywhere;display:block}@media print{button{display:none}}</style><button onclick='window.print()'>In nhãn carton</button>");
+        // Print button in its own toolbar row on top, styled like the Portal primary button (.btn.btn-primary).
+        var html = new System.Text.StringBuilder("<!doctype html><html lang='vi'><meta charset='utf-8'><title>Carton QR</title><style>" +
+            "*{box-sizing:border-box}body{font:14px Arial,sans-serif;margin:0;padding:0 8px 8px;color:#1b1f1d}" +
+            ".print-toolbar{position:sticky;top:0;z-index:1;display:flex;gap:8px;padding:12px 8px;margin:0 -8px 4px;background:#fff;border-bottom:1px solid #e3e7e4}" +
+            ".print-toolbar button{display:inline-flex;align-items:center;justify-content:center;height:38px;padding:0 14px;border-radius:8px;border:1px solid #14655b;background:#14655b;color:#fff;font:inherit;font-size:13.5px;font-weight:600;cursor:pointer}" +
+            ".print-toolbar button:hover{background:#0e4b43;border-color:#0e4b43}.print-toolbar button:focus-visible{outline:2px solid #14655b;outline-offset:2px}" +
+            "article{display:inline-block;width:280px;padding:16px;margin:8px;border:1px solid;break-inside:avoid;vertical-align:top}svg{width:180px;height:180px}small{overflow-wrap:anywhere;display:block}" +
+            "@media print{.print-toolbar{display:none}body{padding:0}}</style>" +
+            "<div class='print-toolbar'><button type='button' onclick='window.print()'>In nhãn carton</button></div>");
         foreach (var carton in result.Cartons)
         {
             var line = result.Lines.Single(x => x.Id == carton.LineId);

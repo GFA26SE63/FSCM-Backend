@@ -1,4 +1,5 @@
 using FSCM.API.Contracts.Loyalty;
+using FSCM.API.Infrastructure;
 using FSCM.Application.Features.Loyalty;
 using FSCM.Domain.Authorization;
 using Microsoft.AspNetCore.Authorization;
@@ -34,6 +35,16 @@ public sealed class LoyaltyRewardsController(RewardService service) : Controller
     public Task<RewardResult> Update(Guid id, UpdateRewardRequest request, CancellationToken cancellationToken) =>
         service.UpdateAsync(id, new(request.Name, request.Description, request.ImageUrl, request.RewardType,
             request.RequiredPoints, request.DiscountAmount, request.DiscountPercent, request.AvailableQuantity), cancellationToken);
+
+    [Authorize(Roles = SystemRoles.Admin)]
+    [HttpPost("{id:guid}/image")]
+    [RequestSizeLimit(ImageUploadLimits.MaxRequestBytes)]
+    [ProducesResponseType<RewardResult>(StatusCodes.Status200OK)]
+    public async Task<RewardResult> SetImage(Guid id, IFormFile file, CancellationToken cancellationToken)
+    {
+        await using var upload = await file.ToImageUploadAsync(cancellationToken);
+        return await service.SetImageAsync(id, upload, cancellationToken);
+    }
 
     [Authorize(Roles = SystemRoles.Admin)]
     [HttpPost("{id:guid}/activate")]

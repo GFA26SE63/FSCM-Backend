@@ -6,9 +6,15 @@ namespace FSCM.Application.Features.Loyalty;
 public sealed class LoyaltyService(ILoyaltyStore store, TimeProvider timeProvider)
 {
     public async Task<IReadOnlyCollection<LoyaltyProgramResult>> ListAsync(
-        bool includeInactive, CancellationToken cancellationToken) =>
-        await Task.WhenAll((await store.ListProgramsAsync(includeInactive, cancellationToken))
-            .Select(program => ToResultAsync(program, cancellationToken)));
+        bool includeInactive, CancellationToken cancellationToken)
+    {
+        var programs = await store.ListProgramsAsync(includeInactive, cancellationToken);
+        var results = new List<LoyaltyProgramResult>(programs.Count);
+        // The store shares one scoped DbContext; finish each query before starting the next.
+        foreach (var program in programs)
+            results.Add(await ToResultAsync(program, cancellationToken));
+        return results;
+    }
 
     public async Task<LoyaltyProgramResult> GetAsync(Guid id, CancellationToken cancellationToken) =>
         await ToResultAsync(await store.FindProgramAsync(id, cancellationToken)
