@@ -9,6 +9,7 @@ public sealed class RealTimeRecoveryTests
 {
     [Fact]
     [Trait("Report5Case", "UT-Allocation Run Result-UTCID03")]
+    [Trait("Report5Case", "UT-Allocation Trace-UTCID04")]
     public async Task Three_version_collisions_create_an_allocation_conflict_retry_record_not_out_of_stock()
     {
         var orderId = Guid.NewGuid();
@@ -19,6 +20,8 @@ public sealed class RealTimeRecoveryTests
         await service.AllocateAsync(orderId, actorId, default);
 
         Assert.Equal(3, store.Attempts);
+        Assert.Equal(3, store.RollbackCalls);
+        Assert.Equal(0m, store.NetReservedQuantity);
         Assert.Equal(3, store.ClearTrackingCalls);
         Assert.Equal(1, store.MarkFailedCalls);
         Assert.Equal(orderId, store.FailedOrderId);
@@ -46,6 +49,8 @@ public sealed class RealTimeRecoveryTests
     private sealed class FailingStore(bool conflict) : IRealTimeAllocationStore
     {
         public int Attempts;
+        public int RollbackCalls;
+        public decimal NetReservedQuantity;
         public int ClearTrackingCalls;
         public int MarkFailedCalls;
         public Guid FailedOrderId;
@@ -53,7 +58,12 @@ public sealed class RealTimeRecoveryTests
         public string? FailedStatus;
         public string? FailureReason;
         public Task ExecuteInTransactionAsync(Func<CancellationToken, Task> operation, CancellationToken ct)
-        { Attempts++; throw conflict ? new AllocationConcurrencyException("conflict") : new InvalidOperationException("interrupted"); }
+        {
+            Attempts++;
+            RollbackCalls++;
+            NetReservedQuantity = 0m;
+            throw conflict ? new AllocationConcurrencyException("conflict") : new InvalidOperationException("interrupted");
+        }
         public Task MarkFailedAsync(Guid order, Guid actor, string status, string reason, DateTimeOffset now, CancellationToken ct)
         {
             MarkFailedCalls++;
