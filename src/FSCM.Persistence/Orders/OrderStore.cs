@@ -206,8 +206,10 @@ public sealed class OrderStore(AppDbContext dbContext) : IOrderStore
             _ => query.Where(_ => false)
         };
         var totalCount = await query.CountAsync(cancellationToken);
-        var ids = await query.OrderByDescending(item => item.ServerReceivedAt)
-            .ThenBy(item => item.OrderCode)
+        var ordered = filter.Sort == "asc"
+            ? query.OrderBy(item => item.ServerReceivedAt).ThenBy(item => item.OrderCode)
+            : query.OrderByDescending(item => item.ServerReceivedAt).ThenByDescending(item => item.OrderCode);
+        var ids = await ordered
             .Skip((filter.Page - 1) * filter.PageSize)
             .Take(filter.PageSize)
             .Select(item => item.Id).ToArrayAsync(cancellationToken);

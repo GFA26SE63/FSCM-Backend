@@ -284,6 +284,8 @@ public sealed class IdentityService(
             throw IdentityOperationException.Validation("Page must be greater than zero.");
         if (query.PageSize is < 1 or > 100)
             throw IdentityOperationException.Validation("Page size must be between 1 and 100.");
+        if (query.Sort is not ("asc" or "desc"))
+            throw IdentityOperationException.Validation("User sort must be asc or desc.");
 
         var normalizedRole = string.IsNullOrWhiteSpace(query.Role) ? null : query.Role.Trim();
         if (normalizedRole is not null && !SystemRoles.IsValid(normalizedRole))
