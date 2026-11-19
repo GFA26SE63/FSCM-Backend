@@ -10,6 +10,8 @@ public sealed class RealTimeRecoveryTests
     [Theory]
     [InlineData(true, 3, OrderStatuses.AllocationConflict)]
     [InlineData(false, 1, OrderStatuses.AllocationFailed)]
+    // Report5 UT-Allocation Plan Approval-UTCID03: failures remain retryable; retry authorization
+    // and reallocation from current snapshots are covered by RealTimePostgresWorkflowTests.
     public async Task Exhausted_or_technical_failures_leave_a_retryable_status(bool conflict, int attempts, string status)
     {
         var store = new FailingStore(conflict);
