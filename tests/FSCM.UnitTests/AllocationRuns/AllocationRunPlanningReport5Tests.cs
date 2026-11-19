@@ -82,36 +82,116 @@ public sealed class AllocationRunPlanningReport5Tests
         Assert.Contains(nameof(OrderService.ListAsync), commandNames);
     }
 
+    [Fact]
+    [Trait("Report5Case", "UT-Allocation Run Result-UTCID01")]
+    public async Task Two_region_linked_warehouses_return_a_complete_quoted_result_with_locked_fragment_prices()
+    {
+        var fixture = new Fixture([6m, 4m]);
+
+        await fixture.Service.AllocateAsync(fixture.Order.Id, fixture.ActorId, default);
+
+        Assert.Equal(OrderStatuses.Quoted, fixture.Order.Status);
+        var allocations = fixture.Store.Allocations.OrderBy(item => item.AllocationSequence).ToArray();
+        Assert.Equal([6m, 4m], allocations.Select(item => item.AllocatedQuantity));
+        Assert.Equal(2, allocations.Select(item => item.WarehouseId).Distinct().Count());
+        Assert.Single(fixture.RegionIds.Distinct());
+        Assert.All(allocations, item =>
+        {
+            Assert.Equal(100_000m, item.UnitPrice);
+            Assert.Equal(100_000m, item.PostPromotionUnitPrice);
+            Assert.Equal(item.AllocatedQuantity * item.UnitPrice, item.NetAmount);
+            Assert.Equal(AcceptedAt, item.PricedAt);
+            Assert.Equal(AllocationInventoryStatuses.Reserved, item.Status);
+            Assert.Contains(fixture.Store.Reservations, reservation =>
+                reservation.AllocationId == item.Id && reservation.BatchId == item.BatchId &&
+                reservation.Quantity == item.AllocatedQuantity && reservation.Status == ReservationStatuses.Active);
+        });
+        Assert.Equal(10m, fixture.Store.Reservations.Sum(item => item.Quantity));
+        Assert.Equal(1_000_000m, Assert.Single(fixture.Store.Quotes).TotalAmount);
+        Assert.Equal(AllocationRunStatuses.Succeeded, Assert.Single(fixture.Store.Runs).Status);
+    }
+
+    [Fact]
+    [Trait("Report5Case", "UT-Allocation Run Result-UTCID02")]
+    public async Task Short_line_returns_out_of_stock_with_sku_and_missing_quantity_without_reservation_or_quote()
+    {
+        var fixture = new Fixture([6m, 3m]);
+
+        await fixture.Service.AllocateAsync(fixture.Order.Id, fixture.ActorId, default);
+
+        Assert.Equal(OrderStatuses.OutOfStock, fixture.Order.Status);
+        var run = Assert.Single(fixture.Store.Runs);
+        Assert.Equal(AllocationRunStatuses.OutOfStock, run.Status);
+        Assert.Contains("SKU-PLANNING", run.FailureReason);
+        Assert.Contains("Thiếu 1 thùng", run.FailureReason);
+        Assert.Empty(fixture.Store.Allocations);
+        Assert.Empty(fixture.Store.Reservations);
+        Assert.Empty(fixture.Store.Transactions);
+        Assert.Empty(fixture.Store.Quotes);
+        Assert.All(fixture.Balances, balance => Assert.Equal(0m, balance.ReservedQuantity));
+    }
+
+    [Fact]
+    [Trait("Report5Case", "UT-Allocation Run Result-UTCID04")]
+    public async Task Failure_after_temporary_fragment_selection_rolls_back_to_zero_net_reservations()
+    {
+        var fixture = new Fixture([10m], includeUnfulfillableSecondLine: true);
+        var physicalBefore = fixture.Balances.Sum(item => item.PhysicalQuantity);
+
+        await fixture.Service.AllocateAsync(fixture.Order.Id, fixture.ActorId, default);
+
+        Assert.Equal(OrderStatuses.OutOfStock, fixture.Order.Status);
+        Assert.Equal(AllocationRunStatuses.OutOfStock, Assert.Single(fixture.Store.Runs).Status);
+        Assert.Empty(fixture.Store.Allocations);
+        Assert.Empty(fixture.Store.Reservations);
+        Assert.Empty(fixture.Store.Transactions);
+        Assert.Empty(fixture.Store.Quotes);
+        Assert.Equal(physicalBefore, fixture.Balances.Sum(item => item.PhysicalQuantity));
+        Assert.All(fixture.Balances, balance =>
+        {
+            Assert.Equal(0m, balance.ReservedQuantity);
+            Assert.Equal(balance.PhysicalQuantity, balance.AvailableQuantity);
+        });
+        Assert.DoesNotContain(fixture.Store.History, item => item.ToStatus == OrderStatuses.Quoted);
+    }
+
     private sealed class Fixture
     {
         public Guid ActorId { get; } = Guid.NewGuid();
         public SalesOrder Order { get; }
-        public InventoryBalance Balance { get; }
+        public InventoryBalance Balance => Balances[0];
+        public IReadOnlyList<InventoryBalance> Balances { get; }
+        public IReadOnlyList<Guid> RegionIds { get; }
         public RecordingStore Store { get; }
         public RealTimeAllocationService Service { get; }
 
-        public Fixture()
+        public Fixture(decimal[]? availableQuantities = null, bool includeUnfulfillableSecondLine = false)
         {
+            availableQuantities ??= [20m];
             var product = new Product
             {
                 Id = Guid.NewGuid(), ProductCategoryId = Guid.NewGuid(), Sku = "SKU-PLANNING",
                 Name = "Sản phẩm lập kế hoạch", ShelfLifeHours = 720, Status = ProductStatuses.Published
             };
-            var warehouse = new Warehouse
+            var regionId = Guid.NewGuid();
+            var warehouses = availableQuantities.Select((_, index) => new Warehouse
             {
-                Id = Guid.NewGuid(), Code = "WH-PLANNING", Name = "Kho lập kế hoạch", IsActive = true
-            };
-            var batch = new Batch
+                Id = Guid.NewGuid(), RegionId = regionId, Code = $"WH-PLANNING-{index + 1}",
+                Name = $"Kho lập kế hoạch {index + 1}", IsActive = true
+            }).ToArray();
+            var batches = availableQuantities.Select((quantity, index) => new Batch
             {
-                Id = Guid.NewGuid(), ProductId = product.Id, WarehouseId = warehouse.Id,
-                BatchCode = "LOT-PLANNING", ProductionDate = new DateOnly(2026, 11, 1),
-                ExpirationDate = new DateOnly(2026, 12, 15), Quantity = 20m
-            };
-            Balance = new InventoryBalance
+                Id = Guid.NewGuid(), ProductId = product.Id, WarehouseId = warehouses[index].Id,
+                BatchCode = $"LOT-PLANNING-{index + 1}", ProductionDate = new DateOnly(2026, 11, 1),
+                ExpirationDate = new DateOnly(2026, 12, 15).AddDays(index), Quantity = quantity
+            }).ToArray();
+            Balances = batches.Select((batch, index) => new InventoryBalance
             {
-                Id = Guid.NewGuid(), BatchId = batch.Id, PhysicalQuantity = 20m,
-                AvailableQuantity = 20m, ReservedQuantity = 0m, Version = 1, UpdatedAt = AcceptedAt
-            };
+                Id = Guid.NewGuid(), BatchId = batch.Id, PhysicalQuantity = availableQuantities[index],
+                AvailableQuantity = availableQuantities[index], ReservedQuantity = 0m,
+                Version = 1, UpdatedAt = AcceptedAt
+            }).ToArray();
+            RegionIds = warehouses.Select(item => item.RegionId).ToArray();
             Order = new SalesOrder
             {
                 Id = Guid.NewGuid(), OrderCode = "DH-PLANNING", RetailerId = Guid.NewGuid(),
@@ -128,28 +208,42 @@ public sealed class AllocationRunPlanningReport5Tests
                 PricedAt = AcceptedAt, MlorResolvedAt = AcceptedAt, CreatedAt = AcceptedAt,
                 FinalPricePendingAllocation = true
             };
-            var candidate = new RealTimeInventoryCandidate(batch, Balance, warehouse, product, null, null);
-            Store = new RecordingStore(new(Order, [line], null, [candidate], 1));
+            var lines = new List<SalesOrderLine> { line };
+            if (includeUnfulfillableSecondLine)
+            {
+                lines.Add(new SalesOrderLine
+                {
+                    Id = Guid.NewGuid(), SalesOrderId = Order.Id, ProductId = Guid.NewGuid(), LineNumber = 2,
+                    SkuSnapshot = "SKU-MISSING", ProductNameSnapshot = "Sản phẩm thiếu", OrderedQuantity = 1m,
+                    UnitPrice = 50_000m, GrossAmount = 50_000m, NetAmount = 50_000m,
+                    MlorMinimumLifeRatio = 0.25m, MlorSourceScope = "Default", MlorSourceVersion = 1,
+                    PricedAt = AcceptedAt, MlorResolvedAt = AcceptedAt, CreatedAt = AcceptedAt,
+                    FinalPricePendingAllocation = true
+                });
+            }
+            var candidates = batches.Select((batch, index) =>
+                new RealTimeInventoryCandidate(batch, Balances[index], warehouses[index], product, null, null)).ToArray();
+            Store = new RecordingStore(new(Order, lines, null, candidates, 1));
             var discounts = new ShelfLifeDiscountService(new NoDiscountStore(), new FixedClock(AcceptedAt));
             Service = new RealTimeAllocationService(Store, new AllocationPricingService(discounts),
-                new FixedClock(AcceptedAt), new DeterministicPolicy(batch, warehouse));
+                new FixedClock(AcceptedAt), new DeterministicPolicy());
         }
     }
 
-    private sealed class DeterministicPolicy(Batch batch, Warehouse warehouse)
-        : AllocationPolicyService(null!, null!)
+    private sealed class DeterministicPolicy : AllocationPolicyService
     {
+        public DeterministicPolicy() : base(null!, null!) { }
+
         public override Task<AllocationWeights> WeightsAsync(CancellationToken ct) =>
             Task.FromResult(new AllocationWeights(MaximumDistanceMeters: 30_000m));
 
         public override Task<BatchCandidate[]> CandidatesAsync(Guid retailerId,
             IReadOnlyCollection<RealTimeInventoryCandidate> positions, DateTimeOffset at, CancellationToken ct) =>
-            Task.FromResult(new[]
-            {
-                new BatchCandidate(batch.Id, batch.BatchCode, warehouse.Id, warehouse.Code,
-                    BatchExpiration.ExclusiveEnd(batch.ExpirationDate), positions.Single().IssuableQuantity,
-                    1_000m, at.AddHours(1), DateOnly.FromDateTime(at.AddHours(8).DateTime))
-            });
+            Task.FromResult(positions.Select((position, index) =>
+                new BatchCandidate(position.Batch.Id, position.Batch.BatchCode, position.Warehouse.Id,
+                    position.Warehouse.Code, BatchExpiration.ExclusiveEnd(position.Batch.ExpirationDate),
+                    position.IssuableQuantity, 1_000m + index,
+                    at.AddHours(1), DateOnly.FromDateTime(at.AddHours(8).DateTime))).ToArray());
     }
 
     private sealed class RecordingStore(RealTimeAllocationContext context) : IRealTimeAllocationStore
