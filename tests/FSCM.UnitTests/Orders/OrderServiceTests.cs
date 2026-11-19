@@ -179,6 +179,7 @@ public sealed class OrderServiceTests
     }
 
     [Fact]
+    [Trait("Report5Case", "UT-Warehouse Config-UTCID03")]
     public async Task Retailer_creates_own_order_with_promotions_and_replays_without_duplicates()
     {
         var fixture = new Fixture();
@@ -189,6 +190,11 @@ public sealed class OrderServiceTests
         Assert.Equal(result.Id, replay.Id);
         Assert.Equal(100m, result.DiscountAmount);
         Assert.Single(fixture.Store.Orders);
+        var maskedMlor = Assert.Single(result.Lines).Mlor;
+        Assert.Equal(string.Empty, maskedMlor.SourceScope);
+        Assert.Null(maskedMlor.SourceRuleId);
+        Assert.Equal(0, maskedMlor.SourceVersion);
+        Assert.Equal(0m, maskedMlor.MinimumLifeRatio);
     }
 
     [Fact]
@@ -327,6 +333,27 @@ public sealed class OrderServiceTests
         Assert.Single(fixture.Store.Orders);
         Assert.Empty(fixture.Store.Allocations);
         Assert.Equal(5m, fixture.Store.Balance.AvailableQuantity);
+    }
+
+    [Fact]
+    public async Task Report5_NFR01_order_is_enqueued_immediately_with_server_time_and_audit_trace()
+    {
+        var fixture = new Fixture();
+        var request = fixture.Request(10);
+
+        var created = await fixture.Service.CreateAsync(request, fixture.SalesUserId, default);
+        var replay = await fixture.Service.CreateAsync(request, fixture.SalesUserId, default);
+
+        var persisted = Assert.Single(fixture.Store.Orders);
+        Assert.Equal(OrderStatuses.Allocating, created.Status);
+        Assert.Equal(Now, persisted.AcceptedAt);
+        Assert.Equal(Now, persisted.CreatedAt);
+        Assert.Equal(created.Id, replay.Id);
+        Assert.Empty(fixture.Store.Allocations);
+        Assert.Equal(0m, fixture.Store.Balance.ReservedQuantity);
+        var audit = Assert.Single(fixture.Store.Audits);
+        Assert.Equal("OrderCaptured", audit.Action);
+        Assert.Equal(Now, audit.CreatedAt);
     }
 
     [Fact]
@@ -765,6 +792,29 @@ public sealed class OrderServiceTests
             allocation.Id, allocation.BatchId, allocation.WarehouseId, allocation.AllocatedQuantity,
             allocation.Status, store.Balance.PhysicalQuantity, store.Balance.ReservedQuantity,
             store.Balance.AvailableQuantity, store.Balance.Version);
+    }
+
+    [Fact]
+    [Trait("Report5Case", "UT-Allocation Run Planning-UTCID03")]
+    public async Task Unknown_allocation_retry_target_is_not_found_without_creating_side_effects()
+    {
+        var fixture = new Fixture();
+        var orderCount = fixture.Store.Orders.Count;
+        var allocationCount = fixture.Store.Allocations.Count;
+        var historyCount = fixture.Store.History.Count;
+        var physicalBefore = fixture.Store.Balance.PhysicalQuantity;
+        var reservedBefore = fixture.Store.Balance.ReservedQuantity;
+
+        var exception = await Assert.ThrowsAsync<OrderOperationException>(() =>
+            fixture.Service.RetryAllocationAsync(Guid.NewGuid(), 1, fixture.SalesUserId,
+                SystemRoles.Sales, default));
+
+        Assert.Equal("not_found", exception.Code);
+        Assert.Equal(orderCount, fixture.Store.Orders.Count);
+        Assert.Equal(allocationCount, fixture.Store.Allocations.Count);
+        Assert.Equal(historyCount, fixture.Store.History.Count);
+        Assert.Equal(physicalBefore, fixture.Store.Balance.PhysicalQuantity);
+        Assert.Equal(reservedBefore, fixture.Store.Balance.ReservedQuantity);
     }
 
     private sealed class FixedTimeProvider(DateTimeOffset now) : TimeProvider

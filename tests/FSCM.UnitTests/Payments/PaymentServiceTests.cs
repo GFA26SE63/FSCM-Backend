@@ -260,6 +260,29 @@ public sealed class PaymentServiceTests
     }
 
     [Fact]
+    public async Task Report5_NFR03_unverified_payment_stays_unpaid_and_verified_replay_confirms_once()
+    {
+        var fixture = new Fixture(OrderPaymentMethods.Prepaid);
+        var checkout = await fixture.Service.CreatePayOsCheckoutAsync(
+            fixture.Order.Id, new(0), fixture.SalesUserId, SystemRoles.Sales, default);
+
+        Assert.Equal(PaymentStatuses.Unpaid, fixture.Payment!.Status);
+        Assert.Equal(0m, fixture.Payment.ConfirmedAmount);
+        Assert.Empty(fixture.Store.Receipts);
+
+        var webhook = fixture.Gateway.CreateWebhook(checkout);
+        await fixture.Service.HandlePayOsWebhookAsync(webhook, default);
+        await fixture.Service.HandlePayOsWebhookAsync(webhook, default);
+
+        Assert.Equal(PaymentStatuses.Paid, fixture.Payment.Status);
+        Assert.Equal(fixture.Payment.AdjustedAmount, fixture.Payment.ConfirmedAmount);
+        Assert.Equal(2, fixture.Payment.Version);
+        Assert.Equal(2, fixture.Store.Audits.Count);
+        Assert.Single(fixture.Store.Audits, audit => audit.Action == "PayOsPaymentConfirmed");
+        Assert.Empty(fixture.Store.Receipts);
+    }
+
+    [Fact]
     public async Task Reading_prepaid_payment_reconciles_paid_link_when_webhook_is_delayed()
     {
         var fixture = new Fixture(OrderPaymentMethods.Prepaid);

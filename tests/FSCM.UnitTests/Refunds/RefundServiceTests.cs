@@ -8,7 +8,29 @@ namespace FSCM.UnitTests.Refunds;
 public sealed class RefundServiceTests
 {
     [Fact]
-    public async Task Operator_submits_external_transfer_and_different_admin_verifies_it()
+    public async Task UT_Refund_Service_UTCID01_creates_a_claim_linked_obligation_at_the_approved_batch_net_loss()
+    {
+        var fixture = new Fixture();
+        var claimId = Guid.NewGuid();
+        const decimal batchFinalNetUnitPrice = 23_000m;
+        const decimal damagedQuantity = 2m;
+        fixture.RegisterApprovedClaim(claimId, damagedQuantity * batchFinalNetUnitPrice);
+
+        var listPriceAttempt = await Assert.ThrowsAsync<RefundOperationException>(() =>
+            fixture.CreateForClaimAsync(claimId, 60_000m, "refund-list-price-1"));
+        Assert.Equal("conflict", listPriceAttempt.Code);
+
+        var created = await fixture.CreateForClaimAsync(claimId,
+            damagedQuantity * batchFinalNetUnitPrice, "refund-batch-net-1");
+
+        Assert.Equal(46_000m, created.Amount);
+        Assert.Equal(claimId, created.ReceiptDiscrepancyId);
+        Assert.Equal(RefundStatuses.PendingRefund, created.Status);
+        Assert.Equal(60_000m, created.RefundDueAmount);
+    }
+
+    [Fact]
+    public async Task UT_Refund_Service_UTCID02_external_transfer_evidence_awaits_independent_verification()
     {
         var fixture = new Fixture();
         var created = await fixture.CreateAsync(40_000, "refund-create-1");
@@ -19,17 +41,41 @@ public sealed class RefundServiceTests
             new(created.Version, fixture.Now.AddMinutes(-5), "TXN-001", "private://refunds/evidence-001"),
             "refund-evidence-1", fixture.OperatorId, SystemRoles.Operator, default);
         Assert.Equal(RefundStatuses.AwaitingVerification, submitted.Status);
+        Assert.Equal("TXN-001", submitted.TransactionReference);
+        Assert.Equal("private://refunds/evidence-001", submitted.EvidenceReference);
+        Assert.Equal(0m, submitted.RefundedAmount);
+        Assert.Null(submitted.VerifiedAt);
+    }
+
+    [Fact]
+    public async Task UT_Refund_Service_UTCID03_independent_admin_verification_is_timestamped_and_replayable_once()
+    {
+        var fixture = new Fixture();
+        var created = await fixture.CreateAsync(40_000, "refund-create-verify");
+        var submitted = await fixture.Service.SubmitEvidenceAsync(created.Id,
+            new(created.Version, fixture.Now.AddMinutes(-5), "TXN-VERIFY", "private://refunds/evidence-verify"),
+            "refund-evidence-verify", fixture.OperatorId, SystemRoles.Operator, default);
 
         var verified = await fixture.Service.VerifyAsync(created.Id,
             new(submitted.Version, true, "Đã đối chiếu sao kê"), "refund-verify-1",
             fixture.AdminId, SystemRoles.Admin, default);
+        var replay = await fixture.Service.VerifyAsync(created.Id,
+            new(submitted.Version, true, "Đã đối chiếu sao kê"), "refund-verify-1",
+            fixture.AdminId, SystemRoles.Admin, default);
+
         Assert.Equal(RefundStatuses.Refunded, verified.Status);
         Assert.Equal(40_000, verified.RefundedAmount);
         Assert.Equal(20_000, verified.RefundDueAmount);
+        Assert.NotNull(verified.VerifiedAt);
+        Assert.Equal(fixture.Now, verified.VerifiedAt.Value);
+        Assert.Equal("private://refunds/evidence-verify", verified.EvidenceReference);
+        Assert.Equal(verified.Id, replay.Id);
+        Assert.Equal(verified.Version, replay.Version);
+        Assert.Equal(3, fixture.AuditCount);
     }
 
     [Fact]
-    public async Task Pending_refunds_reserve_cap_and_prevent_over_refund()
+    public async Task UT_Refund_Service_UTCID04_pending_refunds_reserve_cap_and_prevent_over_refund()
     {
         var fixture = new Fixture();
         await fixture.CreateAsync(40_000, "refund-create-2");
@@ -39,7 +85,7 @@ public sealed class RefundServiceTests
     }
 
     [Fact]
-    public async Task Idempotency_key_replays_same_create_and_rejects_changed_payload()
+    public async Task UT_Refund_Service_UTCID04_idempotency_key_replays_same_create_and_rejects_changed_payload()
     {
         var fixture = new Fixture();
         var first = await fixture.CreateAsync(40_000, "refund-create-4");
@@ -96,6 +142,7 @@ public sealed class RefundServiceTests
         public Guid AdminId { get; } = Guid.NewGuid();
         public RefundService Service { get; }
         private FakeStore Store { get; }
+        public int AuditCount => Store.AuditCount;
 
         public Fixture()
         {
@@ -106,6 +153,14 @@ public sealed class RefundServiceTests
         public Task<RefundResult> CreateAsync(decimal amount, string key) => Service.CreateAsync(
             new(Store.Order.Id, amount, "Cửa hàng An Khang", "Điều chỉnh nghĩa vụ hợp lệ"),
             key, OperatorId, SystemRoles.Operator, default);
+
+        public void RegisterApprovedClaim(Guid claimId, decimal adjustmentAmount) =>
+            Store.Claims[claimId] = new RefundClaimSource(claimId, Store.Order.Id, true,
+                "FinancialAdjustment", adjustmentAmount, 0m);
+
+        public Task<RefundResult> CreateForClaimAsync(Guid claimId, decimal amount, string key) =>
+            Service.CreateAsync(new(Store.Order.Id, amount, "Cửa hàng An Khang",
+                "Hoàn tiền cho lô hàng hư hỏng", claimId), key, OperatorId, SystemRoles.Operator, default);
     }
 
     private sealed class FakeStore : IRefundStore, IPaymentStore
@@ -115,6 +170,7 @@ public sealed class RefundServiceTests
         private Payment Payment { get; }
         private List<ManualRefund> Refunds { get; } = [];
         private List<AuditLog> Audits { get; } = [];
+        public int AuditCount => Audits.Count;
 
         public FakeStore(DateTimeOffset now)
         {
