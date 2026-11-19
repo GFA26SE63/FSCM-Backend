@@ -24,6 +24,10 @@ namespace FSCM.IntegrationTests.Persistence;
 public sealed class WarehouseDocumentsPostgresTests
 {
     [PostgresWorkflowFact]
+    [Trait("Report5Case", "UT-QR Label Service-UTCID01")]
+    [Trait("Report5Case", "UT-QR Label Service-UTCID02")]
+    [Trait("Report5Case", "UT-QR Label Service-UTCID03")]
+    [Trait("Report5Case", "UT-QR Label Service-UTCID04")]
     public async Task Cartons_receive_transfer_and_grouped_order_issue_are_atomic_and_traceable()
     {
         var target = new Npgsql.NpgsqlConnectionStringBuilder(Environment.GetEnvironmentVariable("FSCM_TEST_POSTGRES"));
@@ -288,15 +292,28 @@ public sealed class WarehouseDocumentsPostgresTests
         }
         var grouped = await Call(s => s.CreateRequestAsync(new(source, null, "Order", orderIds.ToArray(), [], null), "orders-key", admin, SystemRoles.Admin, default));
         var groupedIssueId = await Call(s => s.CreateChildAsync(grouped, "grouped-issue", keeper, SystemRoles.WarehouseKeeper, default));
+        var openBeforeInvalidScan = await Call(s => s.GetAsync(groupedIssueId, keeper, SystemRoles.WarehouseKeeper, default));
+        var physicalBeforeInvalidScan = await Db(db => db.InventoryBalanceRecords.Where(b => b.BatchId == batchId)
+            .Select(b => b.PhysicalQuantity).SingleAsync());
+        await Assert.ThrowsAsync<PickingOperationException>(() => Call(s => s.ScanAsync(groupedIssueId,
+            "CID-NOT-IN-PXK", openBeforeInvalidScan.Document.Version, keeper, SystemRoles.WarehouseKeeper, default)));
+        var openAfterInvalidScan = await Call(s => s.GetAsync(groupedIssueId, keeper, SystemRoles.WarehouseKeeper, default));
+        Assert.Equal(groupedIssueId, openAfterInvalidScan.Document.Id);
+        Assert.Equal("Open", openAfterInvalidScan.Document.Status);
+        Assert.Empty(openAfterInvalidScan.Cartons);
+        Assert.Equal(physicalBeforeInvalidScan, await Db(db => db.InventoryBalanceRecords.Where(b => b.BatchId == batchId)
+            .Select(b => b.PhysicalQuantity).SingleAsync()));
         foreach (var carton in receipt.Cartons.Skip(2).Take(2))
         {
             var issue = await Call(s => s.GetAsync(groupedIssueId, keeper, SystemRoles.WarehouseKeeper, default));
+            await Call(s => s.ScanAsync(groupedIssueId, carton.CartonId, issue.Document.Version, keeper, SystemRoles.WarehouseKeeper, default));
             await Call(s => s.ScanAsync(groupedIssueId, carton.CartonId, issue.Document.Version, keeper, SystemRoles.WarehouseKeeper, default));
         }
         var prepared = await Call(s => s.GetAsync(groupedIssueId, keeper, SystemRoles.WarehouseKeeper, default));
         Assert.Equal("Prepared", prepared.Document.Status);
         Assert.Equal("Issue", prepared.Document.Kind);
         Assert.StartsWith("PXK-", prepared.Document.Code);
+        Assert.Equal(2, prepared.Cartons.Count);
         var originalCarton = prepared.Cartons.First().CartonId;
         await Assert.ThrowsAsync<PickingOperationException>(() => Call(s => s.RemoveCartonAsync(groupedIssueId,
             originalCarton, "CID-NOT-FOUND", "Invalid replacement", prepared.Document.Version, keeper, SystemRoles.WarehouseKeeper, default)));
