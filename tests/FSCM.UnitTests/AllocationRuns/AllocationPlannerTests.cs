@@ -11,6 +11,7 @@ public sealed class AllocationPlannerTests
     private static readonly Guid ProductB = Guid.NewGuid();
 
     [Fact]
+    [Trait("Report5Case", "UT-Allocation Engine + Benchmark-UTCID04")]
     public void An_earlier_order_takes_stock_away_from_a_later_one()
     {
         var planner = NewPlanner();
@@ -48,6 +49,7 @@ public sealed class AllocationPlannerTests
     }
 
     [Fact]
+    [Trait("Report5Case", "UT-Allocation Engine + Benchmark-UTCID05")]
     public void A_short_line_hands_back_every_draw_the_order_already_made()
     {
         var planner = NewPlanner();

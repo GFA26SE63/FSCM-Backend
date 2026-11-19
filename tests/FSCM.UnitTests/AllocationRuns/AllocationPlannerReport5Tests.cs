@@ -9,6 +9,32 @@ public sealed class AllocationPlannerReport5Tests
     private static readonly Guid Product = Guid.NewGuid();
 
     [Fact]
+    [Trait("Report5Case", "UT-Allocation Engine + Benchmark-UTCID01")]
+    public void Invalid_pool_batches_are_removed_before_scoring_and_active_lock_quantity_is_unavailable()
+    {
+        var wrongProduct = Guid.NewGuid();
+        var valid = Batch("VALID", "WH-VALID", 5m);
+        var expired = new PlannerBatch(Guid.NewGuid(), "EXPIRED", Guid.NewGuid(), "WH-EXPIRED",
+            Product, Arrival.AddHours(-1), 5m);
+        // Active InventoryLock exclusion is applied before the engine; zero is the issuable quantity.
+        var locked = new PlannerBatch(Guid.NewGuid(), "INVENTORY-LOCKED", Guid.NewGuid(), "WH-LOCKED",
+            Product, Arrival.AddHours(400), 0m);
+        var wrongSku = new PlannerBatch(Guid.NewGuid(), "WRONG-SKU", Guid.NewGuid(), "WH-WRONG",
+            wrongProduct, Arrival.AddHours(400), 50m);
+
+        var plan = NewPlanner().Plan([Order("SO-FILTER", 1, 5m)],
+            [expired, locked, wrongSku, valid], Route);
+
+        var allocation = Assert.Single(Assert.Single(plan.Orders).Allocations);
+        Assert.Equal(valid.BatchId, allocation.BatchId);
+        Assert.Equal(5m, allocation.Quantity);
+        Assert.Equal(0m, plan.RemainingPool[valid.BatchId]);
+        Assert.Equal(0m, plan.RemainingPool[locked.BatchId]);
+        Assert.Equal(50m, plan.RemainingPool[wrongSku.BatchId]);
+        Assert.Equal(5m, plan.RemainingPool[expired.BatchId]);
+    }
+
+    [Fact]
     public void UT_Allocation_Planner_UTCID02_equal_accepted_priority_is_tiebroken_by_immutable_so_code()
     {
         var stock = Batch("B-LAST-10", "WH-A", 10m);

@@ -15,6 +15,7 @@ public sealed class AllocationBenchmarkSuiteTests
         new Dictionary<Guid,int> { [Product]=220 },[]);
 
     [Fact]
+    [Trait("Report5Case", "UT-Allocation Engine + Benchmark-UTCID07")]
     public void Coverage_is_batch_coverage_and_can_split_warehouses_and_starve_the_next_order()
     {
         var fixture=Scenario([Batch("A-OLD",Wa,10,200),Batch("B-OLD",Wa,10,200),Batch("C-FRESH",Wb,15,400),Batch("D-FRESH",Wc,5,400)],
@@ -25,7 +26,11 @@ public sealed class AllocationBenchmarkSuiteTests
         Assert.Equal(2,fefo.FulfilledOrders);Assert.Equal(0,fefo.SplitOrders);Assert.Equal(20,fefo.NearExpiryQuantity);
         Assert.Equal(35,fefo.CommittedQuantity);Assert.False(greedy.Pareto);Assert.True(fefo.Pareto);
         Assert.NotNull(greedy.MedianMilliseconds);Assert.NotNull(greedy.ScoreTraceRows);
-        Assert.Null(fefo.MedianMilliseconds);Assert.Null(fefo.ScoreTraceRows);
+        Assert.NotNull(fefo.MedianMilliseconds);Assert.Null(fefo.ScoreTraceRows);
+        Assert.True(greedy.FulfilledOrders < fefo.FulfilledOrders);
+        Assert.True(greedy.NearExpiryQuantity < fefo.NearExpiryQuantity);
+        Assert.True(greedy.RouteKilometers > 0);Assert.True(fefo.RouteKilometers > 0);
+        Assert.True(greedy.WarehouseLegs > 0);Assert.True(fefo.WarehouseLegs > 0);
         Assert.Equal(new decimal[]{10,10,15,5},fixture.Pool.Select(b=>b.RemainingQuantity));
     }
 

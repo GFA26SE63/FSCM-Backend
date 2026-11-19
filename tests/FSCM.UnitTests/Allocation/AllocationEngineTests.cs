@@ -21,6 +21,25 @@ public sealed class AllocationEngineTests
     }
 
     [Fact]
+    [Trait("Report5Case", "UT-Allocation Engine + Benchmark-UTCID02")]
+    public void Shelf_life_discount_cannot_make_a_batch_below_effective_mlor_eligible()
+    {
+        var request = Request(5m, mlorRatio: 0.7m);
+        var belowMlor = Candidate("B-GENEROUS-DISCOUNT", remainingLifeHours: 503);
+
+        var result = new AllocationEngine().Allocate(request, [belowMlor]);
+
+        Assert.False(result.IsFullyAllocated);
+        Assert.Empty(result.Allocations);
+        Assert.Empty(result.ScoreTrace);
+        Assert.Contains(result.FilterTrace, item => item.BatchId == belowMlor.BatchId &&
+            item.Reason == AllocationFilterReason.BelowMlor && item.RequiredShelfLifeHours == 504m);
+        Assert.DoesNotContain(typeof(AllocationEngine).GetConstructors().SelectMany(item => item.GetParameters()),
+            parameter => parameter.ParameterType.Name.Contains("Discount", StringComparison.OrdinalIgnoreCase) ||
+                         parameter.ParameterType.Name.Contains("Pricing", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
     public void A_score_tie_uses_earlier_expiration_before_batch_code()
     {
         var engine=new AllocationEngine(new(0,0,1));
@@ -114,6 +133,7 @@ public sealed class AllocationEngineTests
     }
 
     [Fact]
+    [Trait("Report5Case", "UT-Allocation Engine + Benchmark-UTCID03")]
     public void A_nearer_warehouse_beats_a_shorter_dated_batch_at_the_default_weights()
     {
         var engine = new AllocationEngine();
@@ -127,6 +147,8 @@ public sealed class AllocationEngineTests
         var scores = result.ScoreTrace.Where(item => item.Iteration == 1).ToArray();
         Assert.True(scores.Single(item => item.BatchCode == "B").WeightedScore
             > scores.Single(item => item.BatchCode == "A").WeightedScore);
+        Assert.Equal(new AllocationWeights(), result.Weights);
+        Assert.All(scores, score => Assert.Equal(1m, score.CoverageScore));
     }
 
     [Fact]
@@ -161,6 +183,7 @@ public sealed class AllocationEngineTests
     }
 
     [Fact]
+    [Trait("Report5Case", "UT-Allocation Engine + Benchmark-UTCID06")]
     public void Equal_scores_break_on_batch_code_so_a_rerun_matches()
     {
         var engine = new AllocationEngine();
@@ -168,8 +191,12 @@ public sealed class AllocationEngineTests
         var second = Candidate("B-001", available: 10m);
 
         var result = engine.Allocate(Request(10m), [first, second]);
+        var repeated = engine.Allocate(Request(10m), [second, first]);
 
         Assert.Equal("B-001", Assert.Single(result.Allocations).BatchCode);
+        Assert.Equal("B-001", Assert.Single(repeated.Allocations).BatchCode);
+        Assert.Equal(result.ScoreTrace.Select(item => (item.BatchCode, item.Rank, item.Selected)),
+            repeated.ScoreTrace.Select(item => (item.BatchCode, item.Rank, item.Selected)));
     }
 
     [Fact]
