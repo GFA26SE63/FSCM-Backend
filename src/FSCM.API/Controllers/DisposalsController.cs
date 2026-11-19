@@ -32,6 +32,7 @@ public sealed class DisposalsController(AppDbContext db, TimeProvider clock) : C
     public async Task<IActionResult> Create(DisposalInput input, CancellationToken ct)
     {
         var items = await Service.CreateAsync(input, Actor, Role, ct);
+        if (items.Length == 0) return Ok(new { items });
         return CreatedAtAction(nameof(Get), new { code = items[0].Code }, new { items });
     }
 }

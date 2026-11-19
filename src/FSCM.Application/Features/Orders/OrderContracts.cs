@@ -198,7 +198,8 @@ public sealed record OrderListQuery(
     bool CreatedByMe,
     string? Search,
     int Page,
-    int PageSize);
+    int PageSize,
+    string Sort = "desc");
 
 public sealed record PagedOrderResult(
     IReadOnlyCollection<OrderSummaryResult> Items,
