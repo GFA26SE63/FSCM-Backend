@@ -1,6 +1,7 @@
 using FSCM.Application.Features.Identity;
 using FSCM.Application.Features.Retailers;
 using FSCM.Application.Features.WarehouseConfiguration;
+using FSCM.Domain.Allocation;
 using FSCM.Domain.Entities;
 using FSCM.UnitTests.Storage;
 
@@ -213,6 +214,27 @@ public sealed class RetailerServiceTests
     }
 
     [Fact]
+    public async Task Report5_ST004_rejection_requires_reason_is_audited_and_blocks_order_eligibility()
+    {
+        var fixture = new Fixture();
+        var declared = await fixture.DeclareAsync(10_000_000, 20, 20);
+
+        var missingReason = await Assert.ThrowsAsync<RetailerOperationException>(() =>
+            fixture.Service.ReviewAsync(declared.Id, Guid.NewGuid(), false, null, null, CancellationToken.None));
+        var rejected = await fixture.Service.ReviewAsync(
+            declared.Id, Guid.NewGuid(), false, null, "Hồ sơ chưa hợp lệ", CancellationToken.None);
+        var eligibility = await fixture.Service.CheckOrderEligibilityAsync(
+            fixture.SalesUserId, declared.Id, CancellationToken.None);
+
+        Assert.Equal("validation_error", missingReason.Code);
+        Assert.Equal(RetailerStatuses.Rejected, rejected.Status);
+        Assert.False(eligibility.IsEligible);
+        Assert.Contains(fixture.Store.AuditLogs, log =>
+            log.EntityId == declared.Id && log.Reason == "Hồ sơ chưa hợp lệ");
+        Assert.Empty(fixture.Store.ContactAccounts);
+    }
+
+    [Fact]
     public async Task Approval_requires_reason()
     {
         var fixture = new Fixture();
@@ -280,10 +302,13 @@ public sealed class RetailerServiceTests
     }
 
     [Fact]
+    [Trait("Report5Case", "UT-Warehouse Config-UTCID03")]
     public async Task Mlor_resolution_prefers_sku_then_most_specific_category()
     {
         var fixture = new Fixture();
         var declared = await fixture.DeclareAsync(20_000_000, 20, 40);
+        fixture.Store.Mlors.Single(item => item.RetailerId == declared.Id &&
+            item.ProductCategoryId == fixture.Category.Id).MinimumLifeRatio = 0.5m;
         fixture.Store.Mlors.Add(new RetailerProductMlor
         {
             Id = Guid.NewGuid(),
@@ -301,14 +326,14 @@ public sealed class RetailerServiceTests
 
         Assert.Equal("Category", categoryResult.SourceScope);
         Assert.Equal(fixture.Category.Id, categoryResult.ProductCategoryId);
-        Assert.Equal(0.35m, categoryResult.MinimumLifeRatio);
+        Assert.Equal(0.5m, categoryResult.MinimumLifeRatio);
 
         fixture.Store.Mlors.Add(new RetailerProductMlor
         {
             Id = Guid.NewGuid(),
             RetailerId = declared.Id,
             ProductId = fixture.Product.Id,
-            MinimumLifeRatio = 0.6m,
+            MinimumLifeRatio = 0.7m,
             Version = 2,
             UpdatedByUserId = fixture.SalesUserId,
             EffectiveFrom = Now,
@@ -319,8 +344,17 @@ public sealed class RetailerServiceTests
             fixture.SalesUserId, "Sales", CancellationToken.None);
 
         Assert.Equal("Sku", result.SourceScope);
-        Assert.Equal(0.6m, result.MinimumLifeRatio);
+        Assert.Equal(0.7m, result.MinimumLifeRatio);
         Assert.Equal(2, result.SourceVersion);
+
+        var engine = new AllocationEngine();
+        var request = new AllocationRequest(fixture.Product.Sku, 1m,
+            fixture.Product.ShelfLifeHours, result.MinimumLifeRatio, null);
+        BatchCandidate Candidate(string code, int remainingHours) => new(
+            Guid.NewGuid(), code, Guid.NewGuid(), "WH-ETA", Now.AddHours(remainingHours),
+            1m, 1_000m, Now, DateOnly.FromDateTime(Now.Date));
+        Assert.False(engine.Allocate(request, [Candidate("BELOW-SKU-MLOR", 117)]).IsFullyAllocated);
+        Assert.True(engine.Allocate(request, [Candidate("MEETS-SKU-MLOR", 118)]).IsFullyAllocated);
     }
 
     [Fact]

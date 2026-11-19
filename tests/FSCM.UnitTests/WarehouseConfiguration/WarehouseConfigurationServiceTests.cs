@@ -27,6 +27,52 @@ public sealed class WarehouseConfigurationServiceTests
     }
 
     [Fact]
+    [Trait("Report5Case", "UT-Warehouse Config-UTCID01")]
+    public async Task Two_active_warehouses_in_one_region_are_independent_peers_and_both_counted()
+    {
+        var fixture = new Fixture();
+
+        var first = await fixture.Service.CreateWarehouseAsync(new(
+            "WH-W1", "Kho W1", fixture.RegionId, "Địa chỉ kho W1", 10.8m, 106.7m, null, 10), default);
+        var second = await fixture.Service.CreateWarehouseAsync(new(
+            "WH-W2", "Kho W2", fixture.RegionId, "Địa chỉ kho W2", 10.9m, 106.8m, null, 10), default);
+        var active = await fixture.Service.ListWarehousesAsync(includeInactive: false, default);
+
+        Assert.NotEqual(first.Id, second.Id);
+        Assert.Equal(2, active.Count);
+        Assert.All(active, warehouse =>
+        {
+            Assert.Equal(fixture.RegionId, warehouse.RegionId);
+            Assert.True(warehouse.IsActive);
+        });
+        Assert.Equal(["WH-W1", "WH-W2"], active.Select(item => item.Code).Order());
+    }
+
+    [Fact]
+    [Trait("Report5Case", "UT-Warehouse Config-UTCID02")]
+    public async Task Missing_or_unknown_region_is_rejected_and_no_hierarchy_contract_exists()
+    {
+        var fixture = new Fixture();
+
+        var missing = await Assert.ThrowsAsync<WarehouseConfigurationOperationException>(() =>
+            fixture.Service.CreateWarehouseAsync(new(
+                "WH-MISSING", "Kho thiếu vùng", Guid.Empty, "Địa chỉ hợp lệ", 10.8m, 106.7m, null, 10), default));
+        fixture.Store.RegionExists = false;
+        var unknown = await Assert.ThrowsAsync<WarehouseConfigurationOperationException>(() =>
+            fixture.Service.CreateWarehouseAsync(new(
+                "WH-UNKNOWN", "Kho sai vùng", Guid.NewGuid(), "Địa chỉ hợp lệ", 10.8m, 106.7m, null, 10), default));
+
+        Assert.Equal("validation_error", missing.Code);
+        Assert.Equal("not_found", unknown.Code);
+        Assert.Empty(fixture.Store.Warehouses);
+        var acceptedFields = typeof(SaveWarehouseData).GetProperties().Select(property => property.Name).ToArray();
+        Assert.DoesNotContain("ParentWarehouseId", acceptedFields);
+        Assert.DoesNotContain("WarehouseType", acceptedFields);
+        Assert.DoesNotContain("IsCentral", acceptedFields);
+        Assert.Contains(nameof(SaveWarehouseData.RegionId), acceptedFields);
+    }
+
+    [Fact]
     public async Task Warehouse_detail_returns_only_active_warehouse_keepers()
     {
         var fixture = new Fixture();

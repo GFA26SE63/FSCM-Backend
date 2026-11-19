@@ -50,6 +50,26 @@ public sealed class OrderReleaseServiceTests
     }
 
     [Fact]
+    public async Task Report5_NFR05_reservation_is_released_once_without_creating_picking_work()
+    {
+        var (service, store) = Build();
+        var balance = Hold(store, 20m, 100m, 20m);
+
+        var first = await service.ReleaseAsync(OrderId, ActorId, "DH-NFR-05", default);
+        var replay = await service.ReleaseAsync(OrderId, ActorId, "DH-NFR-05", default);
+
+        Assert.Equal(1, first.ReleasedAllocationCount);
+        Assert.Equal(0, replay.ReleasedAllocationCount);
+        Assert.Equal(0m, balance.ReservedQuantity);
+        Assert.Equal(100m, balance.AvailableQuantity);
+        Assert.Empty(store.Shares);
+        Assert.Empty(store.RemovedItems);
+        var ledger = Assert.Single(store.Transactions);
+        Assert.Equal(InventoryTransactionTypes.OrderRelease, ledger.TransactionType);
+        Assert.Equal(-20m, ledger.ReservedQuantityDelta);
+    }
+
+    [Fact]
     public async Task Inconsistent_reserved_quantity_is_refused()
     {
         var (service, store) = Build();
