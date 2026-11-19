@@ -214,6 +214,27 @@ public sealed class RetailerServiceTests
     }
 
     [Fact]
+    public async Task Report5_ST004_rejection_requires_reason_is_audited_and_blocks_order_eligibility()
+    {
+        var fixture = new Fixture();
+        var declared = await fixture.DeclareAsync(10_000_000, 20, 20);
+
+        var missingReason = await Assert.ThrowsAsync<RetailerOperationException>(() =>
+            fixture.Service.ReviewAsync(declared.Id, Guid.NewGuid(), false, null, null, CancellationToken.None));
+        var rejected = await fixture.Service.ReviewAsync(
+            declared.Id, Guid.NewGuid(), false, null, "Hồ sơ chưa hợp lệ", CancellationToken.None);
+        var eligibility = await fixture.Service.CheckOrderEligibilityAsync(
+            fixture.SalesUserId, declared.Id, CancellationToken.None);
+
+        Assert.Equal("validation_error", missingReason.Code);
+        Assert.Equal(RetailerStatuses.Rejected, rejected.Status);
+        Assert.False(eligibility.IsEligible);
+        Assert.Contains(fixture.Store.AuditLogs, log =>
+            log.EntityId == declared.Id && log.Reason == "Hồ sơ chưa hợp lệ");
+        Assert.Empty(fixture.Store.ContactAccounts);
+    }
+
+    [Fact]
     public async Task Approval_requires_reason()
     {
         var fixture = new Fixture();

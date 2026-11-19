@@ -9,6 +9,28 @@ public sealed class CatalogServiceTests
     private static readonly DateTimeOffset Now = new(2026, 10, 12, 10, 0, 0, TimeSpan.Zero);
 
     [Fact]
+    public async Task Report5_ST001_draft_publish_records_timestamp_and_rejects_later_edit()
+    {
+        var fixture = new CatalogFixture();
+        var category = fixture.AddCategory("CAT-01");
+        var product = fixture.AddProduct(category.Id, "SKU001", ProductStatuses.Draft);
+        fixture.AddPrice(product.Id, 100_000m);
+
+        var published = await fixture.Service.PublishProductAsync(product.Id, CancellationToken.None);
+        var error = await Assert.ThrowsAsync<CatalogOperationException>(() =>
+            fixture.Service.UpdateProductAsync(
+                product.Id,
+                new UpdateProductData(category.Id, "Changed", "Carton", 100, 10),
+                CancellationToken.None));
+
+        Assert.Equal(ProductStatuses.Published, published.Status);
+        Assert.Equal(Now, published.PublishedAt);
+        Assert.Equal("invalid_transition", error.Code);
+        Assert.Equal("Product SKU001", product.Name);
+        Assert.Single(fixture.Store.Prices, price => price.ProductId == product.Id && price.IsActive);
+    }
+
+    [Fact]
     public async Task Published_product_is_locked_for_edits()
     {
         var fixture = new CatalogFixture();

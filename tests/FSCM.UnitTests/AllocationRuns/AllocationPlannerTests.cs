@@ -70,6 +70,29 @@ public sealed class AllocationPlannerTests
     }
 
     [Fact]
+    public void Report5_NFR04_short_order_rolls_back_every_fragment_and_retry_is_deterministic()
+    {
+        var planner = NewPlanner();
+        var plentiful = Batch("B-NFR-A", ProductA, quantity: 100m);
+        var scarce = Batch("B-NFR-B", ProductB, quantity: 1m);
+        var order = Order("DH-NFR-04", 1,
+            Line(ProductA, "SKU-A", 10m), Line(ProductB, "SKU-B", 10m));
+
+        var first = planner.Plan([order], [plentiful, scarce], Route);
+        var retry = planner.Plan([order], [plentiful, scarce], Route);
+
+        Assert.All(new[] { first, retry }, plan =>
+        {
+            var result = Assert.Single(plan.Orders);
+            Assert.False(result.IsFullyAllocated);
+            Assert.Empty(result.Allocations);
+            Assert.Equal(100m, plan.RemainingPool[plentiful.BatchId]);
+            Assert.Equal(1m, plan.RemainingPool[scarce.BatchId]);
+            Assert.Contains("SKU-B", result.ShortageReason);
+        });
+    }
+
+    [Fact]
     public void Stock_released_by_a_short_order_is_available_to_the_orders_behind_it()
     {
         var planner = NewPlanner();

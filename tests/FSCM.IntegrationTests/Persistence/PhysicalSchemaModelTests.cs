@@ -302,6 +302,21 @@ public sealed class PhysicalSchemaModelTests
     }
 
     [Fact]
+    public void Report5_NFR06_warehouse_uses_required_region_fk_without_parent_hierarchy()
+    {
+        using var context = CreateContext();
+        var warehouse = context.Model.FindEntityType(typeof(Warehouse))!;
+        var regionId = warehouse.FindProperty(nameof(Warehouse.RegionId));
+
+        Assert.NotNull(regionId);
+        Assert.False(regionId.IsNullable);
+        Assert.Null(warehouse.FindProperty("ParentWarehouseId"));
+        var regionForeignKey = Assert.Single(warehouse.GetForeignKeys(), foreignKey =>
+            foreignKey.Properties.Count == 1 && foreignKey.Properties[0].Name == nameof(Warehouse.RegionId));
+        Assert.Equal(typeof(Region), regionForeignKey.PrincipalEntityType.ClrType);
+    }
+
+    [Fact]
     public void Model_uses_date_only_expiry_and_optimistic_inventory_versions()
     {
         using var context = CreateContext();

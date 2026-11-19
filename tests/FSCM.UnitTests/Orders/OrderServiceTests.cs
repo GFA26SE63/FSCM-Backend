@@ -336,6 +336,27 @@ public sealed class OrderServiceTests
     }
 
     [Fact]
+    public async Task Report5_NFR01_order_is_enqueued_immediately_with_server_time_and_audit_trace()
+    {
+        var fixture = new Fixture();
+        var request = fixture.Request(10);
+
+        var created = await fixture.Service.CreateAsync(request, fixture.SalesUserId, default);
+        var replay = await fixture.Service.CreateAsync(request, fixture.SalesUserId, default);
+
+        var persisted = Assert.Single(fixture.Store.Orders);
+        Assert.Equal(OrderStatuses.Allocating, created.Status);
+        Assert.Equal(Now, persisted.AcceptedAt);
+        Assert.Equal(Now, persisted.CreatedAt);
+        Assert.Equal(created.Id, replay.Id);
+        Assert.Empty(fixture.Store.Allocations);
+        Assert.Equal(0m, fixture.Store.Balance.ReservedQuantity);
+        var audit = Assert.Single(fixture.Store.Audits);
+        Assert.Equal("OrderCaptured", audit.Action);
+        Assert.Equal(Now, audit.CreatedAt);
+    }
+
+    [Fact]
     public async Task Configured_order_step_is_enforced()
     {
         var fixture = new Fixture();
