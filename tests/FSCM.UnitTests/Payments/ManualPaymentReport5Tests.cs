@@ -1,6 +1,8 @@
 using FSCM.Application.Features.Orders;
 using FSCM.Application.Features.Payments;
+using FSCM.Application.Features.Quotes;
 using FSCM.Domain.Entities;
+using AllocationEntity = FSCM.Domain.Entities.Allocation;
 
 namespace FSCM.UnitTests.Payments;
 
@@ -44,7 +46,7 @@ public sealed class ManualPaymentReport5Tests
         public SalesOrder Order { get; } = new() { Id = Guid.NewGuid(), OrderCode = "SO-MANUAL-PAY", Status = OrderStatuses.Quoted };
         public SalesOrderQuote Quote { get; } = new() { Id = Guid.NewGuid(), Status = SalesOrderQuoteStatuses.Accepted, RevisionNumber = 1, AcceptedByUserId = Guid.NewGuid() };
         public Payment Payment { get; } = new();
-        public Allocation Allocation { get; } = new() { Id = Guid.NewGuid(), BatchId = Guid.NewGuid(), WarehouseId = Guid.NewGuid(), AllocatedQuantity = 1m };
+        public AllocationEntity Allocation { get; } = new() { Id = Guid.NewGuid(), BatchId = Guid.NewGuid(), WarehouseId = Guid.NewGuid(), AllocatedQuantity = 1m };
         public PurchaseOrder? PurchaseOrder { get; private set; }
         public int PurchaseOrderAddCount { get; private set; }
         public List<PickingList> PickingLists { get; } = [];

@@ -1,8 +1,10 @@
 using FSCM.Application.Features.AllocationRuns;
+using FSCM.Application.Features.Inventory;
 using FSCM.Application.Features.Orders;
 using FSCM.Application.Features.ShelfLifeDiscounts;
 using FSCM.Domain.Allocation;
 using FSCM.Domain.Entities;
+using AllocationEntity = FSCM.Domain.Entities.Allocation;
 
 namespace FSCM.UnitTests.AllocationRuns;
 
@@ -249,7 +251,7 @@ public sealed class AllocationRunPlanningReport5Tests
     private sealed class RecordingStore(RealTimeAllocationContext context) : IRealTimeAllocationStore
     {
         public List<AllocationRun> Runs { get; } = [];
-        public List<Allocation> Allocations { get; } = [];
+        public List<AllocationEntity> Allocations { get; } = [];
         public List<Reservation> Reservations { get; } = [];
         public List<InventoryTransaction> Transactions { get; } = [];
         public List<SalesOrderQuote> Quotes { get; } = [];
@@ -261,7 +263,7 @@ public sealed class AllocationRunPlanningReport5Tests
         public Task<(string OrderCode, string Status)> ReadOrderStateAsync(Guid orderId, CancellationToken ct) =>
             Task.FromResult((context.Order.OrderCode, context.Order.Status));
         public void AddRun(AllocationRun run) => Runs.Add(run);
-        public void AddAllocation(Allocation allocation) => Allocations.Add(allocation);
+        public void AddAllocation(AllocationEntity allocation) => Allocations.Add(allocation);
         public void AddReservation(Reservation reservation) => Reservations.Add(reservation);
         public void AddTransaction(InventoryTransaction transaction) => Transactions.Add(transaction);
         public void AddQuote(SalesOrderQuote quote) => Quotes.Add(quote);

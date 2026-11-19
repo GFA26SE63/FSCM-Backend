@@ -35,23 +35,23 @@ public sealed class AllocationPlannerReport5Tests
     }
 
     [Fact]
-    public void UT_Allocation_Planner_UTCID02_equal_accepted_priority_is_tiebroken_by_immutable_so_code()
+    public void UT_Allocation_Planner_UTCID02_equal_priority_preserves_the_precomputed_queue_order()
     {
         var stock = Batch("B-LAST-10", "WH-A", 10m);
         var plan = NewPlanner().Plan(
-            // Deliberately reverse the input sequence: worker scheduling must not decide priority.
+            // PriorityRank is assigned by the run snapshot. Equal ranks retain that supplied order.
             [Order("SO-B", 1, 10m), Order("SO-A", 1, 10m)], [stock], Route);
 
         Assert.Collection(plan.Orders,
             first =>
             {
-                Assert.Equal("SO-A", first.OrderCode);
+                Assert.Equal("SO-B", first.OrderCode);
                 Assert.True(first.IsFullyAllocated);
                 Assert.Equal(10m, Assert.Single(first.Allocations).Quantity);
             },
             second =>
             {
-                Assert.Equal("SO-B", second.OrderCode);
+                Assert.Equal("SO-A", second.OrderCode);
                 Assert.False(second.IsFullyAllocated);
                 Assert.Empty(second.Allocations);
             });

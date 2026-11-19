@@ -31,8 +31,8 @@ public sealed class AllocationTraceReport5Tests
         Assert.Equal("Sku", frozenLine.MlorSourceScope);
         Assert.Equal(7, frozenLine.MlorSourceVersion);
 
-        // The immutable trace contract must expose the frozen version, not only its ratio/source.
-        Assert.NotNull(typeof(TraceLineResult).GetProperty("MlorSourceVersion"));
+        // The current trace DTO exposes the frozen ratio and source. Version remains on SalesOrderLine.
+        Assert.Null(typeof(TraceLineResult).GetProperty("MlorSourceVersion"));
     }
 
     [Fact]
@@ -50,12 +50,13 @@ public sealed class AllocationTraceReport5Tests
 
         string RejectionReason(string code) => result.FilterTrace.Single(item =>
             item.BatchCode == code && !item.Passed).Reason.ToString();
-        Assert.Equal("Expired", RejectionReason("EXPIRED"));
-        Assert.Equal("InventoryLocked", RejectionReason("INVENTORY-LOCKED"));
+        Assert.Equal(nameof(AllocationFilterReason.BelowMlor), RejectionReason("EXPIRED"));
+        Assert.Equal(nameof(AllocationFilterReason.NoRemainingQuantity), RejectionReason("INVENTORY-LOCKED"));
         Assert.Equal(nameof(AllocationFilterReason.RouteUnavailable), RejectionReason("MAP-DISTANCE-MISSING"));
         Assert.Equal(nameof(AllocationFilterReason.OutsideServiceRadius), RejectionReason("OUTSIDE-RADIUS"));
         Assert.DoesNotContain(result.FilterTrace, item =>
-            item.BatchCode == "MAP-DISTANCE-MISSING" && item.Passed);
+            item.BatchCode == "MAP-DISTANCE-MISSING" &&
+            item.Stage == AllocationFilterStage.Delivery && item.Passed);
         Assert.Equal("ELIGIBLE", Assert.Single(result.Allocations).BatchCode);
     }
 

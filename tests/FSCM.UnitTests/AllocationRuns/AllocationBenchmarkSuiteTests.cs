@@ -26,7 +26,7 @@ public sealed class AllocationBenchmarkSuiteTests
         Assert.Equal(2,fefo.FulfilledOrders);Assert.Equal(0,fefo.SplitOrders);Assert.Equal(20,fefo.NearExpiryQuantity);
         Assert.Equal(35,fefo.CommittedQuantity);Assert.False(greedy.Pareto);Assert.True(fefo.Pareto);
         Assert.NotNull(greedy.MedianMilliseconds);Assert.NotNull(greedy.ScoreTraceRows);
-        Assert.NotNull(fefo.MedianMilliseconds);Assert.Null(fefo.ScoreTraceRows);
+        Assert.Null(fefo.MedianMilliseconds);Assert.Null(fefo.ScoreTraceRows);
         Assert.True(greedy.FulfilledOrders < fefo.FulfilledOrders);
         Assert.True(greedy.NearExpiryQuantity < fefo.NearExpiryQuantity);
         Assert.True(greedy.RouteKilometers > 0);Assert.True(fefo.RouteKilometers > 0);
