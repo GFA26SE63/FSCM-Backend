@@ -74,9 +74,45 @@ public sealed class OperationsReportStore(AppDbContext db) : IOperationsReportSt
             notes.Add("Giảm chiến dịch và giảm HSD được tách theo thành phần giá đã chốt. Nếu đơn cũ không lưu mã chiến dịch thì hiển thị Chưa lưu mã; không suy ra chương trình từ cấu hình hiện tại.");
             notes.Add("Tiền giảm là giá chốt trước điều chỉnh trả hàng/khiếu nại, không phải doanh thu ghi nhận. Đơn hủy vẫn hiển thị theo trạng thái để đối soát; lọc Completed để xem đơn hoàn tất.");
         }
+        List<PromotionProgramSummaryRow>? byProgram = null;
+        if (kind == "promotions")
+        {
+            var promoData = await source
+                .Select(r => new
+                {
+                    r.ProgramCode,
+                    r.ProgramName,
+                    r.OrderId,
+                    r.Quantity,
+                    r.GrossAmount,
+                    r.DiscountAmount,
+                    r.CampaignDiscountAmount,
+                    r.ShelfLifeDiscountAmount,
+                    r.NetAmount,
+                    r.Status
+                })
+                .ToListAsync(ct);
+
+            byProgram = promoData
+                .GroupBy(r => new { r.ProgramCode, r.ProgramName })
+                .Select(g => new PromotionProgramSummaryRow(
+                    g.Key.ProgramCode,
+                    g.Key.ProgramName,
+                    g.Select(r => r.OrderId).Where(id => id.HasValue).Distinct().Count(),
+                    g.Sum(r => r.Quantity ?? 0),
+                    g.Sum(r => r.GrossAmount),
+                    g.Sum(r => r.DiscountAmount),
+                    g.Sum(r => r.CampaignDiscountAmount),
+                    g.Sum(r => r.ShelfLifeDiscountAmount),
+                    g.Sum(r => r.NetAmount),
+                    g.Where(r => r.Status == "Completed").Sum(r => r.DiscountAmount)
+                ))
+                .OrderByDescending(p => p.DiscountAmount)
+                .ToList();
+        }
         var items = await source.OrderByDescending(r => r.At).ThenBy(r => r.Id)
             .Skip((q.Page - 1) * q.PageSize).Take(q.PageSize).ToArrayAsync(ct);
-        return new(items, count, q.Page, q.PageSize, summary, notes);
+        return new(items, count, q.Page, q.PageSize, summary, notes, byProgram);
     }
 
     private IQueryable<OperationsReportRow> Redemptions() =>

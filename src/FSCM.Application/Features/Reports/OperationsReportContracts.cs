@@ -42,10 +42,24 @@ public sealed class OperationsReportRow
     public decimal ShelfLifeDiscountAmount { get; init; }
 }
 
+public sealed record PromotionProgramSummaryRow(
+    string ProgramCode,
+    string ProgramName,
+    int OrderCount,
+    decimal TotalQuantity,
+    decimal GrossAmount,
+    decimal DiscountAmount,
+    decimal CampaignDiscountAmount,
+    decimal ShelfLifeDiscountAmount,
+    decimal NetAmount,
+    decimal CompletedDiscountAmount
+);
+
 public sealed record OperationsReportMetric(string Label, decimal Value);
 public sealed record OperationsReportResult(IReadOnlyCollection<OperationsReportRow> Items,
     int TotalCount, int Page, int PageSize, IReadOnlyCollection<OperationsReportMetric> Summary,
-    IReadOnlyCollection<string> Notes);
+    IReadOnlyCollection<string> Notes,
+    IReadOnlyCollection<PromotionProgramSummaryRow>? ByProgram = null);
 
 public interface IOperationsReportStore
 {
