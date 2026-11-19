@@ -767,6 +767,29 @@ public sealed class OrderServiceTests
             store.Balance.AvailableQuantity, store.Balance.Version);
     }
 
+    [Fact]
+    [Trait("Report5Case", "UT-Allocation Run Planning-UTCID03")]
+    public async Task Unknown_allocation_retry_target_is_not_found_without_creating_side_effects()
+    {
+        var fixture = new Fixture();
+        var orderCount = fixture.Store.Orders.Count;
+        var allocationCount = fixture.Store.Allocations.Count;
+        var historyCount = fixture.Store.History.Count;
+        var physicalBefore = fixture.Store.Balance.PhysicalQuantity;
+        var reservedBefore = fixture.Store.Balance.ReservedQuantity;
+
+        var exception = await Assert.ThrowsAsync<OrderOperationException>(() =>
+            fixture.Service.RetryAllocationAsync(Guid.NewGuid(), 1, fixture.SalesUserId,
+                SystemRoles.Sales, default));
+
+        Assert.Equal("not_found", exception.Code);
+        Assert.Equal(orderCount, fixture.Store.Orders.Count);
+        Assert.Equal(allocationCount, fixture.Store.Allocations.Count);
+        Assert.Equal(historyCount, fixture.Store.History.Count);
+        Assert.Equal(physicalBefore, fixture.Store.Balance.PhysicalQuantity);
+        Assert.Equal(reservedBefore, fixture.Store.Balance.ReservedQuantity);
+    }
+
     private sealed class FixedTimeProvider(DateTimeOffset now) : TimeProvider
     {
         public override DateTimeOffset GetUtcNow() => now;
