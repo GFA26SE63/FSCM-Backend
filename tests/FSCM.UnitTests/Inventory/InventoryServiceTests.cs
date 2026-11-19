@@ -94,7 +94,7 @@ public sealed class InventoryServiceTests
     }
 
     [Fact]
-    public async Task Repeated_create_and_approval_are_idempotent_without_adding_stock_twice()
+    public async Task UT_Inventory_Service_UTCID05_repeated_create_and_approval_are_idempotent_without_adding_stock_twice()
     {
         var fixture = new Fixture();
         var first = await fixture.CreateAsync("receipt-key-0001", 25, new DateOnly(2027, 4, 30));
@@ -105,6 +105,8 @@ public sealed class InventoryServiceTests
 
         Assert.Equal(first.Id, second.Id);
         Assert.Equal(25, fixture.Store.Balances.Single().PhysicalQuantity);
+        Assert.Single(fixture.Store.Batches);
+        Assert.Single(fixture.Store.Transactions);
     }
 
     [Fact]
