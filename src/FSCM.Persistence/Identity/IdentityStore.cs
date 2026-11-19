@@ -50,10 +50,10 @@ public sealed class IdentityStore(AppDbContext dbContext) : IIdentityStore
             users = users.Where(user => user.IsActive == query.IsActive.Value);
 
         var totalCount = await users.CountAsync(cancellationToken);
-        var items = await users
-            .OrderBy(user => user.FullName)
-            .ThenBy(user => user.Email)
-            .ThenBy(user => user.Id)
+        var ordered = query.Sort == "asc"
+            ? users.OrderBy(user => user.CreatedAt).ThenBy(user => user.Id)
+            : users.OrderByDescending(user => user.CreatedAt).ThenByDescending(user => user.Id);
+        var items = await ordered
             .Skip((query.Page - 1) * query.PageSize)
             .Take(query.PageSize)
             .ToArrayAsync(cancellationToken);
