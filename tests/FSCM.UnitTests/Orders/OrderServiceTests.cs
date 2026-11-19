@@ -179,6 +179,7 @@ public sealed class OrderServiceTests
     }
 
     [Fact]
+    [Trait("Report5Case", "UT-Warehouse Config-UTCID03")]
     public async Task Retailer_creates_own_order_with_promotions_and_replays_without_duplicates()
     {
         var fixture = new Fixture();
@@ -189,6 +190,11 @@ public sealed class OrderServiceTests
         Assert.Equal(result.Id, replay.Id);
         Assert.Equal(100m, result.DiscountAmount);
         Assert.Single(fixture.Store.Orders);
+        var maskedMlor = Assert.Single(result.Lines).Mlor;
+        Assert.Equal(string.Empty, maskedMlor.SourceScope);
+        Assert.Null(maskedMlor.SourceRuleId);
+        Assert.Equal(0, maskedMlor.SourceVersion);
+        Assert.Equal(0m, maskedMlor.MinimumLifeRatio);
     }
 
     [Fact]

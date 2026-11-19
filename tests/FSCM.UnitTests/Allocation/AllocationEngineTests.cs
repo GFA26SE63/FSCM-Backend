@@ -79,6 +79,25 @@ public sealed class AllocationEngineTests
     }
 
     [Fact]
+    [Trait("Report5Case", "UT-Warehouse Config-UTCID04")]
+    public void Service_radius_excludes_far_W1_and_accepts_cross_region_W2_without_tier_preference()
+    {
+        var w1 = Candidate("W1-FAR", distanceMeters: 20_001m) with { WarehouseId = Guid.NewGuid() };
+        var w2 = Candidate("W2-CROSS-REGION", distanceMeters: 19_999m) with { WarehouseId = Guid.NewGuid() };
+
+        var result = new AllocationEngine().Allocate(Request(5m), [w1, w2]);
+
+        var allocation = Assert.Single(result.Allocations);
+        Assert.True(result.IsFullyAllocated);
+        Assert.Equal(w2.WarehouseId, allocation.WarehouseId);
+        Assert.Equal("W2-CROSS-REGION", allocation.BatchCode);
+        Assert.Contains(result.FilterTrace, item =>
+            item.BatchCode == "W1-FAR" && item.Reason == AllocationFilterReason.OutsideServiceRadius);
+        Assert.Contains(result.FilterTrace, item =>
+            item.BatchCode == "W2-CROSS-REGION" && item.Passed && item.Reason == AllocationFilterReason.Eligible);
+    }
+
+    [Fact]
     public void Mlor_is_measured_in_hours_so_a_same_day_difference_still_counts()
     {
         var engine = new AllocationEngine();
