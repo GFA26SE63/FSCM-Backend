@@ -78,6 +78,24 @@ public sealed class WarehouseDocumentsController(WarehouseWorkService service, I
             html.Append($"<tr><td>{E(s.PalletCode)}</td><td>{E(s.ScannedByName)} ({s.ScannedByUserId})</td><td>{At(s.ScannedAt)}</td></tr>");
         return Content(html.Append("</table><p>Người giao hàng: __________________ &nbsp; Người nhận hàng: __________________</p></html>").ToString(), "text/html; charset=utf-8");
     }
+    [HttpGet("{id:guid}/issue-print")]
+    public async Task<ContentResult> IssuePrint(Guid id, CancellationToken ct)
+    {
+        var work = await Get(id, ct);
+        var info = await service.ReceiptPrintInfoAsync(id, Actor, Role, ct);
+        static string E(string? s) => WebUtility.HtmlEncode(s ?? "—");
+        static string At(DateTimeOffset? t) => t?.ToOffset(TimeSpan.FromHours(7)).ToString("dd/MM/yyyy HH:mm:ss") ?? "—";
+        var d = work.Document;
+        var html = new System.Text.StringBuilder("<!doctype html><html lang='vi'><meta charset='utf-8'><title>Phiếu xuất kho</title><style>body{font:14px Arial;padding:24px;color:#111}table{width:100%;border-collapse:collapse;margin:16px 0}th,td{border:1px solid #aaa;padding:8px;text-align:left;overflow-wrap:anywhere}td{max-width:260px}@media print{button{display:none}}</style><button onclick='window.print()'>In / Lưu PDF</button><h1>PHIẾU XUẤT KHO</h1>");
+        html.Append($"<p>Số phiếu: <b>{E(d.Code)}</b></p><p>Kho xuất: {E(info.Warehouse)} · Người lập: {E(info.Creator)}</p><p>Ngày lập: {At(d.CreatedAt)} · Ngày xuất kho: {At(d.PostedAt)} (UTC+7)</p><p>Trạng thái: {E(d.Status == "Posted" ? "Đã ghi sổ" : d.Status)}</p><p>{E(d.Note)}</p>");
+        html.Append("<h2>Chi tiết hàng xuất kho</h2><table><tr><th>Đơn hàng</th><th>SKU / sản phẩm</th><th>Batch / Lô</th><th>NSX / HSD</th><th>Số carton</th></tr>");
+        foreach (var l in work.Lines)
+            html.Append($"<tr><td>{E(l.OrderCode)}</td><td>{E(l.Sku)} · {E(l.ProductName)}</td><td>{E(l.BatchCode ?? l.SourceLotCode)}</td><td>{l.ProductionDate:dd/MM/yyyy} / {l.ExpirationDate:dd/MM/yyyy}</td><td>{l.Quantity}</td></tr>");
+        html.Append("</table><h2>Danh sách thùng carton (CID) đã quét xuất</h2><table><tr><th>Mã thùng (CID)</th><th>Thời gian quét</th></tr>");
+        foreach (var c in work.Cartons)
+            html.Append($"<tr><td>{E(c.CartonId)}</td><td>{At(c.ScannedAt)}</td></tr>");
+        return Content(html.Append("</table><p>Người giao hàng / Thủ kho: __________________ &nbsp; Người nhận / Tài xế: __________________</p></html>").ToString(), "text/html; charset=utf-8");
+    }
     [HttpPost("{id:guid}/receive-pallet")]
     [Authorize(Roles = SystemRoles.WarehouseKeeper)]
     public async Task<WarehouseWorkResult> ReceivePallet(Guid id, InspectedPalletRequest request, CancellationToken ct) =>
