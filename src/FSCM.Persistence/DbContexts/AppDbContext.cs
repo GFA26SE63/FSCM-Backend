@@ -13,6 +13,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
     public DbSet<UserCredential> UserCredentials => Set<UserCredential>();
     public DbSet<RetailerActivationChallenge> RetailerActivationChallenges => Set<RetailerActivationChallenge>();
+    public DbSet<RoleDefinition> RoleDefinitionRecords => Set<RoleDefinition>();
+    public DbSet<RolePermission> RolePermissionRecords => Set<RolePermission>();
 
     public DbSet<UserAccount> UserAccountRecords => Set<UserAccount>();
     public DbSet<Warehouse> WarehouseRecords => Set<Warehouse>();
