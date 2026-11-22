@@ -12,5 +12,6 @@ public interface IRoleStore
     Task<int> CountUsersAssignedAsync(string roleCode, CancellationToken ct);
     void AddRole(RoleDefinition role);
     void RemoveRole(RoleDefinition role);
+    void ReplacePermissions(RoleDefinition role, IEnumerable<string> newPermissionKeys, DateTimeOffset now);
     Task SaveChangesAsync(CancellationToken ct);
 }
