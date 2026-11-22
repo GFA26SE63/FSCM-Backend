@@ -54,6 +54,7 @@ public static class DependencyInjection
         services.AddScoped<ReportService>();
         services.AddScoped<FSCM.Application.Features.Dashboard.DashboardService>();
         services.AddScoped<IdentityService>();
+        services.AddScoped<FSCM.Application.Features.Roles.RoleService>();
         services.AddScoped<RetailerActivationService>();
         services.AddScoped<InventoryService>();
         services.AddScoped<InventoryLifecycleService>();
