@@ -232,6 +232,83 @@ public sealed class IdentityStore(AppDbContext dbContext) : IIdentityStore
             .Where(token => token.UserAccountId == userId && token.RevokedAt == null && token.ExpiresAt > now)
             .ToArrayAsync(cancellationToken);
 
+    public async Task<IReadOnlyCollection<string>> GetRolePermissionsAsync(
+        string role,
+        CancellationToken cancellationToken)
+    {
+        if (string.Equals(role, FSCM.Domain.Authorization.SystemRoles.Admin, StringComparison.OrdinalIgnoreCase))
+        {
+            return FSCM.Domain.Authorization.SystemScreenKeys.All;
+        }
+
+        var perms = await dbContext.RolePermissionRecords
+            .Where(p => p.Role!.Code.ToLower() == role.ToLower())
+            .Select(p => p.PermissionKey)
+            .ToListAsync(cancellationToken);
+
+        if (perms.Count == 0)
+        {
+            if (string.Equals(role, FSCM.Domain.Authorization.SystemRoles.Operator, StringComparison.OrdinalIgnoreCase))
+            {
+                return new[]
+                {
+                    FSCM.Domain.Authorization.SystemScreenKeys.Dashboard,
+                    FSCM.Domain.Authorization.SystemScreenKeys.Reports,
+                    FSCM.Domain.Authorization.SystemScreenKeys.WarehouseReport,
+                    FSCM.Domain.Authorization.SystemScreenKeys.Orders,
+                    FSCM.Domain.Authorization.SystemScreenKeys.Allocation,
+                    FSCM.Domain.Authorization.SystemScreenKeys.Debts,
+                    FSCM.Domain.Authorization.SystemScreenKeys.Refunds,
+                    FSCM.Domain.Authorization.SystemScreenKeys.Complaints,
+                    FSCM.Domain.Authorization.SystemScreenKeys.Batches,
+                    FSCM.Domain.Authorization.SystemScreenKeys.Readiness,
+                    FSCM.Domain.Authorization.SystemScreenKeys.Retailers,
+                    FSCM.Domain.Authorization.SystemScreenKeys.Loyalty,
+                    FSCM.Domain.Authorization.SystemScreenKeys.Redeem,
+                    FSCM.Domain.Authorization.SystemScreenKeys.Kpi,
+                    FSCM.Domain.Authorization.SystemScreenKeys.Fleet
+                };
+            }
+
+            if (string.Equals(role, FSCM.Domain.Authorization.SystemRoles.WarehouseKeeper, StringComparison.OrdinalIgnoreCase))
+            {
+                return new[]
+                {
+                    FSCM.Domain.Authorization.SystemScreenKeys.Dashboard,
+                    FSCM.Domain.Authorization.SystemScreenKeys.WarehouseInbound,
+                    FSCM.Domain.Authorization.SystemScreenKeys.WarehouseOutbound,
+                    FSCM.Domain.Authorization.SystemScreenKeys.WarehouseTransfers,
+                    FSCM.Domain.Authorization.SystemScreenKeys.Batches,
+                    FSCM.Domain.Authorization.SystemScreenKeys.WarehouseTrace,
+                    FSCM.Domain.Authorization.SystemScreenKeys.Disposal
+                };
+            }
+
+            if (string.Equals(role, FSCM.Domain.Authorization.SystemRoles.SalesManager, StringComparison.OrdinalIgnoreCase))
+            {
+                return new[]
+                {
+                    FSCM.Domain.Authorization.SystemScreenKeys.Dashboard,
+                    FSCM.Domain.Authorization.SystemScreenKeys.Regions,
+                    FSCM.Domain.Authorization.SystemScreenKeys.Kpi
+                };
+            }
+        }
+
+        return perms;
+    }
+
+    public async Task<bool> RoleExistsAsync(
+        string role,
+        CancellationToken cancellationToken)
+    {
+        if (FSCM.Domain.Authorization.SystemRoles.All.Contains(role))
+            return true;
+
+        return await dbContext.RoleDefinitionRecords
+            .AnyAsync(r => r.Code.ToLower() == role.ToLower(), cancellationToken);
+    }
+
     public void AddUser(UserAccount user) => dbContext.UserAccountRecords.Add(user);
 
     public void AddCredential(UserCredential credential) => dbContext.UserCredentials.Add(credential);
