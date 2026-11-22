@@ -193,24 +193,13 @@ public sealed class RoleService(
         // Admin role always has all permissions and cannot have its permissions stripped
         if (role.Code != SystemRoles.Admin)
         {
-            role.Permissions.Clear();
             var validKeys = SystemScreenKeys.All.ToHashSet(StringComparer.OrdinalIgnoreCase);
-            if (request.Permissions is not null)
-            {
-                foreach (var key in request.Permissions.Distinct(StringComparer.OrdinalIgnoreCase))
-                {
-                    if (validKeys.Contains(key))
-                    {
-                        role.Permissions.Add(new RolePermission
-                        {
-                            Id = Guid.NewGuid(),
-                            RoleId = role.Id,
-                            PermissionKey = key,
-                            CreatedAt = now
-                        });
-                    }
-                }
-            }
+            var filteredKeys = (request.Permissions ?? [])
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Where(validKeys.Contains)
+                .ToList();
+
+            store.ReplacePermissions(role, filteredKeys, now);
         }
 
         await store.SaveChangesAsync(ct);
