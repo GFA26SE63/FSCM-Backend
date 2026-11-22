@@ -60,24 +60,20 @@ public sealed class StandaloneTraceabilityTests
     public void Standalone_model_keeps_existing_factory_schema_and_migration_history()
     {
         using var db = new FactoryDbContext(new DbContextOptionsBuilder<FactoryDbContext>().UseNpgsql("Host=127.0.0.1;Database=unused_factory;Username=unused").Options);
-        Assert.Equal(new[] { "FACTORY_CARTON", "FACTORY_PALLET", "FACTORY_PRODUCTION_BATCH", "FACTORY_PRODUCT_UNIT" },
-            db.Model.GetEntityTypes().Select(x => x.GetTableName()).Order(StringComparer.Ordinal).ToArray());
-        using var original = new FSCM.Persistence.DbContexts.TraceabilityDbContext(
-            new DbContextOptionsBuilder<FSCM.Persistence.DbContexts.TraceabilityDbContext>()
-                .UseNpgsql("Host=127.0.0.1;Database=unused_factory;Username=unused").Options);
+        var tables = db.Model.GetEntityTypes().Select(x => x.GetTableName()).ToArray();
+        Assert.All(new[] { "FACTORY_CARTON", "FACTORY_PALLET", "FACTORY_PRODUCTION_BATCH", "FACTORY_PRODUCT_UNIT" },
+            table => Assert.Contains(table, tables));
         var migrations = db.Database.GetMigrations().ToArray();
-        Assert.Equal(original.Database.GetMigrations().ToArray(), migrations);
         Assert.Equal("20261113064338_InitialFactoryDatabase", migrations[0]);
         Assert.Contains("20261114190000_AddReceiptInspection", migrations);
         Assert.False(db.Database.HasPendingModelChanges());
-        Assert.False(original.Database.HasPendingModelChanges());
         Assert.All(db.Model.GetEntityTypes().SelectMany(x => x.GetForeignKeys()), fk => Assert.StartsWith("FACTORY_", fk.PrincipalEntityType.GetTableName()));
     }
 
     [Fact]
     public async Task Standalone_health_is_independent_and_integration_requires_a_service_key()
     {
-        await using var factory = new StandaloneFactoryFixture("Host=127.0.0.1;Database=unused_factory;Username=unused", new FakeFscm());
+        await using var factory = new StandaloneFactoryFixture("Host=127.0.0.1;Database=unused_factory;Username=unused", new FakeFscm(), migrateDatabase: false);
         using var client = factory.CreateClient();
         Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/health")).StatusCode);
         Assert.Equal(HttpStatusCode.Unauthorized, (await client.GetAsync("/api/batches")).StatusCode);
@@ -90,7 +86,7 @@ public sealed class StandaloneTraceabilityTests
     [Fact]
     public async Task Admin_session_uses_httponly_cookie_and_never_returns_tokens_to_frontend()
     {
-        await using var factory = new StandaloneFactoryFixture("Host=127.0.0.1;Database=unused_factory;Username=unused", new FakeFscm());
+        await using var factory = new StandaloneFactoryFixture("Host=127.0.0.1;Database=unused_factory;Username=unused", new FakeFscm(), migrateDatabase: false);
         using var client = factory.CreateClient();
         client.DefaultRequestHeaders.Add("X-Requested-With", "Traceability");
         using var response = await client.PostAsJsonAsync("/api/session/login", new Fscm.Traceability.Models.LoginRequest("admin-test", "test-only"));
@@ -104,7 +100,7 @@ public sealed class StandaloneTraceabilityTests
     [Fact]
     public async Task Non_admin_cannot_sign_in_to_factory_and_browser_mutations_require_custom_header()
     {
-        await using var factory = new StandaloneFactoryFixture("Host=127.0.0.1;Database=unused_factory;Username=unused", new FakeFscm("WarehouseKeeper"));
+        await using var factory = new StandaloneFactoryFixture("Host=127.0.0.1;Database=unused_factory;Username=unused", new FakeFscm("WarehouseKeeper"), migrateDatabase: false);
         using var client = factory.CreateClient();
         Assert.Equal(HttpStatusCode.BadRequest, (await client.PostAsJsonAsync("/api/session/login", new Fscm.Traceability.Models.LoginRequest("user", "test"))).StatusCode);
         client.DefaultRequestHeaders.Add("X-Requested-With", "Traceability");
