@@ -1256,7 +1256,6 @@ namespace FSCM.Persistence.Migrations
 
             modelBuilder.Entity("FSCM.Domain.Entities.FactoryPallet", b =>
                 {
-                    b.Property<string>("ReceiptInspectionJson").HasColumnType("text");
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
@@ -1277,6 +1276,9 @@ namespace FSCM.Persistence.Migrations
 
                     b.Property<Guid?>("ReceiptDocumentId")
                         .HasColumnType("uuid");
+
+                    b.Property<string>("ReceiptInspectionJson")
+                        .HasColumnType("text");
 
                     b.Property<DateTimeOffset?>("ReceivedAt")
                         .HasColumnType("timestamp with time zone");
@@ -1422,7 +1424,6 @@ namespace FSCM.Persistence.Migrations
 
             modelBuilder.Entity("FSCM.Domain.Entities.FactoryReceiptSync", b =>
                 {
-                    b.Property<string>("ReceiptInspectionJson").HasColumnType("text");
                     b.Property<Guid>("PalletId")
                         .HasColumnType("uuid");
 
@@ -1435,6 +1436,9 @@ namespace FSCM.Persistence.Migrations
 
                     b.Property<Guid>("ReceiptDocumentId")
                         .HasColumnType("uuid");
+
+                    b.Property<string>("ReceiptInspectionJson")
+                        .HasColumnType("text");
 
                     b.Property<DateTimeOffset>("ReceivedAt")
                         .HasColumnType("timestamp with time zone");
@@ -4388,6 +4392,68 @@ namespace FSCM.Persistence.Migrations
                     b.ToTable("REWARD_REDEMPTION", (string)null);
                 });
 
+            modelBuilder.Entity("FSCM.Domain.Entities.RoleDefinition", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Code")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Description")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<bool>("IsSystem")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Code")
+                        .IsUnique();
+
+                    b.ToTable("SYS_ROLE", (string)null);
+                });
+
+            modelBuilder.Entity("FSCM.Domain.Entities.RolePermission", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("PermissionKey")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<Guid>("RoleId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("RoleId", "PermissionKey")
+                        .IsUnique();
+
+                    b.ToTable("SYS_ROLE_PERMISSION", (string)null);
+                });
+
             modelBuilder.Entity("FSCM.Domain.Entities.SalesGroup", b =>
                 {
                     b.Property<Guid>("Id")
@@ -6947,6 +7013,17 @@ namespace FSCM.Persistence.Migrations
                         .OnDelete(DeleteBehavior.Restrict);
                 });
 
+            modelBuilder.Entity("FSCM.Domain.Entities.RolePermission", b =>
+                {
+                    b.HasOne("FSCM.Domain.Entities.RoleDefinition", "Role")
+                        .WithMany("Permissions")
+                        .HasForeignKey("RoleId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Role");
+                });
+
             modelBuilder.Entity("FSCM.Domain.Entities.SalesGroup", b =>
                 {
                     b.HasOne("FSCM.Domain.Entities.Region", null)
@@ -7315,6 +7392,11 @@ namespace FSCM.Persistence.Migrations
                         .HasForeignKey("WriteOffId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
+                });
+
+            modelBuilder.Entity("FSCM.Domain.Entities.RoleDefinition", b =>
+                {
+                    b.Navigation("Permissions");
                 });
 #pragma warning restore 612, 618
         }

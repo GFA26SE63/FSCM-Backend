@@ -272,8 +272,9 @@ public sealed class IdentityService(
         var credential = await store.FindCredentialAsync(userId, cancellationToken);
         var scope = await store.GetScopeAsync(userId, cancellationToken);
         var scopeLabels = await store.GetScopeLabelsAsync(scope, cancellationToken);
+        var permissions = await store.GetRolePermissionsAsync(user.Role, cancellationToken);
 
-        return ToAuthenticatedUser(user, credential?.MustChangePassword ?? false, scope, scopeLabels);
+        return ToAuthenticatedUser(user, credential?.MustChangePassword ?? false, scope, scopeLabels, permissions);
     }
 
     public async Task<PagedUserResult> ListUsersAsync(
@@ -335,7 +336,7 @@ public sealed class IdentityService(
         var normalizedEmail = NormalizeEmail(email);
         ValidateFullName(fullName);
         phone = ValidatePhone(phone);
-        EnsureAssignableRole(role);
+        await EnsureAssignableRoleAsync(role, cancellationToken);
 
         if (await store.FindUserByEmailAsync(normalizedEmail, cancellationToken) is not null)
         {
@@ -397,8 +398,12 @@ public sealed class IdentityService(
         Guid actorUserId,
         CancellationToken cancellationToken)
     {
-        EnsureAssignableRole(role);
+        await EnsureAssignableRoleAsync(role, cancellationToken);
         var user = await GetManageableUserAsync(userId, cancellationToken);
+        if (string.Equals(user.Role, SystemRoles.Admin, StringComparison.OrdinalIgnoreCase))
+        {
+            throw IdentityOperationException.Forbidden("Không thể thay đổi vai trò của tài khoản Quản trị viên.");
+        }
         var oldRole = user.Role;
         user.Role = role;
         user.UpdatedAt = timeProvider.GetUtcNow();
@@ -653,6 +658,8 @@ public sealed class IdentityService(
         store.AddRefreshToken(refreshToken);
         await store.SaveChangesAsync(cancellationToken);
 
+        var permissions = await store.GetRolePermissionsAsync(user.Role, cancellationToken);
+
         return new AuthenticationResult(
             accessToken.Token,
             accessToken.ExpiresAt,
@@ -662,7 +669,8 @@ public sealed class IdentityService(
                 user,
                 credential?.MustChangePassword ?? false,
                 scope,
-                await store.GetScopeLabelsAsync(scope, cancellationToken)));
+                await store.GetScopeLabelsAsync(scope, cancellationToken),
+                permissions));
     }
 
     private async Task<AccountToken> FindUsableAccountTokenAsync(
@@ -727,9 +735,10 @@ public sealed class IdentityService(
         UserAccount user,
         bool mustChangePassword,
         IdentityScope scope,
-        IdentityScopeLabels? scopeLabels = null) =>
+        IdentityScopeLabels? scopeLabels = null,
+        IReadOnlyCollection<string>? permissions = null) =>
         new(user.Id, user.Email, user.FullName, user.Role, mustChangePassword, scope,
-            scopeLabels ?? IdentityScopeLabels.Empty);
+            scopeLabels ?? IdentityScopeLabels.Empty, permissions ?? Array.Empty<string>());
 
     private static UserSummary ToUserSummary(UserAccount user) =>
         new(user.Id, user.Email, user.Phone, user.FullName, user.Role, user.IsActive,
@@ -817,12 +826,18 @@ public sealed class IdentityService(
         return normalized;
     }
 
-    private static void EnsureAssignableRole(string role)
+    private async Task EnsureAssignableRoleAsync(string role, CancellationToken cancellationToken)
     {
-        if (!SystemRoles.CanBeAssignedThroughApi(role))
+        if (string.Equals(role, SystemRoles.Admin, StringComparison.OrdinalIgnoreCase))
         {
             throw IdentityOperationException.Forbidden(
-                "The requested role is invalid or cannot be assigned through this API.");
+                "Không được phép tạo hoặc gán tài khoản với vai trò Quản trị viên (Admin).");
+        }
+
+        if (!await store.RoleExistsAsync(role, cancellationToken))
+        {
+            throw IdentityOperationException.Validation(
+                $"Vai trò '{role}' không tồn tại trong hệ thống.");
         }
     }
 

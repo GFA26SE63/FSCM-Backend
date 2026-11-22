@@ -78,7 +78,11 @@ public sealed record AuthenticatedUser(
     string Role,
     bool MustChangePassword,
     IdentityScope Scope,
-    IdentityScopeLabels ScopeLabels);
+    IdentityScopeLabels ScopeLabels,
+    IReadOnlyCollection<string>? Permissions = null)
+{
+    public IReadOnlyCollection<string> Permissions { get; init; } = Permissions ?? Array.Empty<string>();
+}
 
 public sealed record CreatedUserResult(
     Guid UserId,
