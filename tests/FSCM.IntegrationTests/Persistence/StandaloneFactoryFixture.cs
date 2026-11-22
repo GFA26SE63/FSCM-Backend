@@ -20,9 +20,10 @@ internal sealed class StandaloneFactoryFixture : WebApplicationFactory<Fscm.Trac
     private readonly string connection;
     private readonly IFscmGateway gateway;
     private readonly string contentRoot;
-    public StandaloneFactoryFixture(string connection, IFscmGateway gateway)
+    private readonly bool migrateDatabase;
+    public StandaloneFactoryFixture(string connection, IFscmGateway gateway, bool migrateDatabase = true)
     {
-        this.connection = connection; this.gateway = gateway;
+        this.connection = connection; this.gateway = gateway; this.migrateDatabase = migrateDatabase;
         contentRoot = ResolveContentRoot(AppContext.BaseDirectory, Directory.GetCurrentDirectory());
         Environment.SetEnvironmentVariable("ASPNETCORE_TEST_CONTENTROOT_FSCM_TRACEABILITY", contentRoot);
     }
@@ -56,6 +57,7 @@ internal sealed class StandaloneFactoryFixture : WebApplicationFactory<Fscm.Trac
         builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(new Dictionary<string, string?> {
             ["ConnectionStrings:TraceabilityConnection"] = connection,
             ["Fscm:BaseUrl"] = "http://fscm.test/", ["Integration:ApiKey"] = IntegrationKey,
+            ["Database:SkipAutoMigrate"] = (!migrateDatabase).ToString(),
         }));
         builder.ConfigureServices(services => {
             services.RemoveAll<IFscmGateway>(); services.AddSingleton(gateway);
