@@ -41,7 +41,7 @@ jobs:
         uses: actions/checkout@v7
         with:
           repository: GFA26SE63/FSCM-Traceability
-          ref: 4f1a7dd19652af0cfb46be5b580f882b701493bc
+          ref: main
           path: .ci/traceability
           persist-credentials: false
 

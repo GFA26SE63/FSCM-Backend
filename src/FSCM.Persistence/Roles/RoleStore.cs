@@ -57,6 +57,24 @@ public sealed class RoleStore(AppDbContext dbContext) : IRoleStore
 
     public void RemoveRole(RoleDefinition role) => dbContext.RoleDefinitionRecords.Remove(role);
 
+    public void ReplacePermissions(RoleDefinition role, IEnumerable<string> newPermissionKeys, DateTimeOffset now)
+    {
+        dbContext.RolePermissionRecords.RemoveRange(role.Permissions);
+        role.Permissions.Clear();
+        foreach (var key in newPermissionKeys)
+        {
+            var p = new RolePermission
+            {
+                Id = Guid.NewGuid(),
+                RoleId = role.Id,
+                PermissionKey = key,
+                CreatedAt = now
+            };
+            role.Permissions.Add(p);
+            dbContext.RolePermissionRecords.Add(p);
+        }
+    }
+
     public Task SaveChangesAsync(CancellationToken ct) => dbContext.SaveChangesAsync(ct);
 
     public async Task EnsureDefaultRolesSeededAsync(TimeProvider timeProvider, CancellationToken ct)
