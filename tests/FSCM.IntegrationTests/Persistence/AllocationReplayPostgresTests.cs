@@ -16,6 +16,8 @@ namespace FSCM.IntegrationTests.Persistence;
 public sealed class AllocationReplayPostgresTests
 {
     [PostgresWorkflowFact]
+    // Report5 UT-Allocation Plan Approval-UTCID01/UTCID05: a successful replay yields one
+    // allocation run, quote and reservation set rather than duplicate persistence side effects.
     public async Task A_serialization_retry_reloads_the_pool_and_commits_only_one_allocation_attempt()
     {
         var target=new Npgsql.NpgsqlConnectionStringBuilder(Environment.GetEnvironmentVariable("FSCM_TEST_POSTGRES"));

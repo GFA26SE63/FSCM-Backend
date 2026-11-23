@@ -564,6 +564,15 @@ public sealed class IdentityServiceTests
                 .Where(token => token.UserAccountId == userId && token.RevokedAt is null && token.ExpiresAt > now)
                 .ToArray());
 
+        public Task<IReadOnlyCollection<string>> GetRolePermissionsAsync(string role, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyCollection<string>>(
+                role == SystemRoles.Admin
+                    ? SystemScreenKeys.All
+                    : Array.Empty<string>());
+
+        public Task<bool> RoleExistsAsync(string role, CancellationToken cancellationToken) =>
+            Task.FromResult(SystemRoles.All.Contains(role));
+
         public void AddUser(UserAccount user) => Users.Add(user);
         public void AddCredential(UserCredential credential) => Credentials.Add(credential);
         public void AddRefreshToken(RefreshToken refreshToken) => RefreshTokens.Add(refreshToken);
