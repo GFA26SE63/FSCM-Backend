@@ -50,7 +50,36 @@ public sealed class RoleService(
         // 6. Hệ thống
         new ScreenFeatureDto(SystemScreenKeys.Users, "Người dùng & Tài khoản", "Tạo tài khoản người dùng, phân quyền vai trò và khóa tài khoản", "system", "Hệ thống"),
         new ScreenFeatureDto(SystemScreenKeys.Roles, "Vai trò & Phân quyền", "Định nghĩa các vai trò trong hệ thống và phân quyền truy cập màn hình chức năng", "system", "Hệ thống"),
-        new ScreenFeatureDto(SystemScreenKeys.Config, "Cấu hình hệ thống", "Tham số vận hành cốt lõi, ngưỡng cảnh báo và tích hợp", "system", "Hệ thống")
+        new ScreenFeatureDto(SystemScreenKeys.Config, "Cấu hình hệ thống", "Tham số vận hành cốt lõi, ngưỡng cảnh báo và tích hợp", "system", "Hệ thống"),
+
+        // 7. Bán hàng di động (Mobile App - Sales)
+        new ScreenFeatureDto(SystemScreenKeys.MobileSalesHome, "Trang chủ & Tin tức", "Màn hình tổng quan kết quả bán hàng và bảng tin thị trường", "mobile-sales", "Bán hàng di động (Mobile Sales)"),
+        new ScreenFeatureDto(SystemScreenKeys.MobileSalesOrders, "Đơn đặt hàng", "Theo dõi trạng thái và tiến độ xử lý đơn đặt hàng đại lý", "mobile-sales", "Bán hàng di động (Mobile Sales)"),
+        new ScreenFeatureDto(SystemScreenKeys.MobileSalesOrderCreate, "Lập đơn hàng mới", "Tạo đơn hàng trực tiếp tại điểm bán của khách hàng", "mobile-sales", "Bán hàng di động (Mobile Sales)"),
+        new ScreenFeatureDto(SystemScreenKeys.MobileSalesScan, "Quét mã QR bán hàng", "Quét QR thùng hàng, tem sản phẩm và kiểm tra khuyến mãi", "mobile-sales", "Bán hàng di động (Mobile Sales)"),
+        new ScreenFeatureDto(SystemScreenKeys.MobileSalesRetailers, "Cửa hàng phụ trách", "Xem danh sách và chi tiết hồ sơ các điểm bán thuộc tuyến bán hàng", "mobile-sales", "Bán hàng di động (Mobile Sales)"),
+        new ScreenFeatureDto(SystemScreenKeys.MobileSalesDeclare, "Khai báo điểm bán mới", "Lập hồ sơ đăng ký đại lý bán lẻ mới và chụp ảnh điểm bán", "mobile-sales", "Bán hàng di động (Mobile Sales)"),
+        new ScreenFeatureDto(SystemScreenKeys.MobileSalesDeclarations, "Yêu cầu đã khai báo", "Theo dõi tình trạng phê duyệt các hồ sơ điểm bán đã nộp", "mobile-sales", "Bán hàng di động (Mobile Sales)"),
+        new ScreenFeatureDto(SystemScreenKeys.MobileSalesProducts, "Sản phẩm & Tồn kho", "Tra cứu danh mục sản phẩm, bảng giá và số lượng tồn kho", "mobile-sales", "Bán hàng di động (Mobile Sales)"),
+        new ScreenFeatureDto(SystemScreenKeys.MobileSalesPromos, "Chương trình khuyến mãi", "Tra cứu chính sách chiết khấu, khuyến mãi combo và bậc thang", "mobile-sales", "Bán hàng di động (Mobile Sales)"),
+        new ScreenFeatureDto(SystemScreenKeys.MobileSalesDebts, "Công nợ khách hàng", "Theo dõi nợ phải thu, hạn mức tín dụng và hạn thanh toán của điểm bán", "mobile-sales", "Bán hàng di động (Mobile Sales)"),
+        new ScreenFeatureDto(SystemScreenKeys.MobileSalesKpi, "KPI & Xếp hạng", "Theo dõi tiến độ hoàn thành doanh số tháng và bảng xếp hạng đội ngũ", "mobile-sales", "Bán hàng di động (Mobile Sales)"),
+        new ScreenFeatureDto(SystemScreenKeys.MobileSalesSync, "Đồng bộ ngoại tuyến", "Hàng đợi lưu trữ và tự động đồng bộ đơn hàng khi mất kết nối mạng", "mobile-sales", "Bán hàng di động (Mobile Sales)"),
+
+        // 8. Nhà bán lẻ di động (Mobile App - Retailer)
+        new ScreenFeatureDto(SystemScreenKeys.MobileRtOrders, "Đơn mua hàng", "Xem danh sách đơn đặt hàng, trạng thái giao vận và hóa đơn", "mobile-retailer", "Nhà bán lẻ di động (Mobile Retailer)"),
+        new ScreenFeatureDto(SystemScreenKeys.MobileRtOrderCreate, "Đặt hàng trực tiếp", "Tự tạo đơn đặt hàng nhập hàng FMCG từ nhà phân phối", "mobile-retailer", "Nhà bán lẻ di động (Mobile Retailer)"),
+        new ScreenFeatureDto(SystemScreenKeys.MobileRtScan, "Quét QR nhận hàng", "Quét mã QR tem thùng khi nhận hàng để xác thực nguồn gốc và niêm phong", "mobile-retailer", "Nhà bán lẻ di động (Mobile Retailer)"),
+        new ScreenFeatureDto(SystemScreenKeys.MobileRtPayments, "Thanh toán & Công nợ", "Thanh toán hóa đơn qua cổng PayOS và đối soát công nợ đại lý", "mobile-retailer", "Nhà bán lẻ di động (Mobile Retailer)"),
+        new ScreenFeatureDto(SystemScreenKeys.MobileRtLoyalty, "Thẻ tích điểm thành viên", "Tích lũy điểm thưởng theo giá trị đơn hàng và xếp hạng thành viên", "mobile-retailer", "Nhà bán lẻ di động (Mobile Retailer)"),
+        new ScreenFeatureDto(SystemScreenKeys.MobileRtGifts, "Đổi quà tích điểm", "Chọn quà tặng hấp dẫn trong danh mục và gửi yêu cầu đổi điểm", "mobile-retailer", "Nhà bán lẻ di động (Mobile Retailer)"),
+        new ScreenFeatureDto(SystemScreenKeys.MobileRtComplaints, "Khiếu nại & Hỗ trợ", "Gửi phản ánh hàng móp méo / sai lệch và yêu cầu thu hồi hàng", "mobile-retailer", "Nhà bán lẻ di động (Mobile Retailer)"),
+
+        // 9. Kho vận di động (Mobile App - Warehouse)
+        new ScreenFeatureDto(SystemScreenKeys.MobileWkPicking, "Lấy hàng theo đơn (Picking)", "Xem danh sách đơn cần nhặt hàng và quét xác nhận từng dòng hàng", "mobile-warehouse", "Kho vận di động (Mobile Warehouse)"),
+        new ScreenFeatureDto(SystemScreenKeys.MobileWkOperations, "Vận hành quét kho", "Thực hiện kiểm đếm nhập kho, xuất kho và chuyển kho trên thiết bị di động", "mobile-warehouse", "Kho vận di động (Mobile Warehouse)"),
+        new ScreenFeatureDto(SystemScreenKeys.MobileWkLabel, "Tra cứu tem kiện hàng", "Quét mã QR tem kiện/lô để kiểm tra thông tin HSD và số lượng thùng", "mobile-warehouse", "Kho vận di động (Mobile Warehouse)"),
+        new ScreenFeatureDto(SystemScreenKeys.MobileWkShipped, "Lịch sử phiếu đã xuất", "Tra cứu danh sách các phiếu xuất hàng đã hoàn tất giao dịch", "mobile-warehouse", "Kho vận di động (Mobile Warehouse)")
     };
 
     public IReadOnlyList<ScreenFeatureDto> GetScreenFeatures() => ScreenCatalog;
