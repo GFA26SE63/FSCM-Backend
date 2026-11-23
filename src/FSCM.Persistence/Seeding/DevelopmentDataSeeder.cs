@@ -515,13 +515,15 @@ public sealed class DevelopmentDataSeeder(
 
         await dbContext.SaveChangesAsync(cancellationToken);
 
-        await SeedPriceHistoryAsync(products["SKU001"], [235000m, 245000m, 252000m], now, cancellationToken);
-        await SeedPriceHistoryAsync(products["SKU002"], [310000m, 320000m], now, cancellationToken);
-        await SeedPriceHistoryAsync(products["SKU003"], [118000m], now, cancellationToken);
-        await SeedPriceHistoryAsync(products["SKU004"], [400000m, 415000m], now, cancellationToken);
-        await SeedPriceHistoryAsync(products["SKU005"], [325000m], now, cancellationToken);
+        // Demo prices intentionally scale real carton values down 1,000 times so
+        // payment and order flows can be exercised without large transactions.
+        await SeedPriceHistoryAsync(products["SKU001"], [235m, 245m, 252m], now, cancellationToken);
+        await SeedPriceHistoryAsync(products["SKU002"], [310m, 320m], now, cancellationToken);
+        await SeedPriceHistoryAsync(products["SKU003"], [118m], now, cancellationToken);
+        await SeedPriceHistoryAsync(products["SKU004"], [400m, 415m], now, cancellationToken);
+        await SeedPriceHistoryAsync(products["SKU005"], [325m], now, cancellationToken);
         foreach (var definition in definitions.Skip(5))
-            await SeedPriceHistoryAsync(products[definition.Sku], [definition.UnitPrice], now, cancellationToken);
+            await SeedPriceHistoryAsync(products[definition.Sku], [definition.UnitPrice / 1_000m], now, cancellationToken);
         await dbContext.SaveChangesAsync(cancellationToken);
         return products;
     }
@@ -575,9 +577,9 @@ public sealed class DevelopmentDataSeeder(
             .ToArrayAsync(cancellationToken);
         if (existingPrices.Length > 0)
         {
-            // Upgrade the legacy sub-1,000 VND demo history to usable carton prices,
-            // while preserving price histories intentionally edited by a user.
-            if (existingPrices.Length == prices.Count && existingPrices.Any(candidate => candidate.UnitPrice < 1_000m))
+            // Seeded catalog prices are deterministic so an existing development
+            // database is brought back to the agreed 1/1,000 demo scale.
+            if (existingPrices.Length == prices.Count)
             {
                 for (var index = 0; index < prices.Count; index++)
                     existingPrices[index].UnitPrice = prices[index];
