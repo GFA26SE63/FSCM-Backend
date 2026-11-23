@@ -29,7 +29,7 @@ public sealed class InternalTransferStore(AppDbContext dbContext) : IInternalTra
     {
         var activeShipment = await dbContext.ShipmentRecords.AnyAsync(item =>
             (item.DriverId == driverId || item.VehicleId == vehicleId) &&
-            (item.Status == "Ready" || item.Status == "Issued" || item.Status == "Delivering"), cancellationToken);
+            item.Status == "Delivering", cancellationToken);
         return activeShipment || await dbContext.WarehouseTransferRecords.AnyAsync(item =>
             item.Id != excludedTransferId && (item.DriverId == driverId || item.VehicleId == vehicleId) &&
             item.Status == InternalTransferStatuses.InTransit, cancellationToken);

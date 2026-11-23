@@ -214,7 +214,7 @@ public sealed class ShipmentStore(AppDbContext dbContext) : IShipmentStore
     {
         var activeShipment = await dbContext.ShipmentRecords.AnyAsync(item => item.Id != excludedShipmentId &&
             (item.DriverId == driverId || item.VehicleId == vehicleId) &&
-            (item.Status == ShipmentStatuses.Ready || item.Status == ShipmentStatuses.Issued || item.Status == ShipmentStatuses.Delivering), cancellationToken);
+            item.Status == ShipmentStatuses.Delivering, cancellationToken);
         return activeShipment || await dbContext.WarehouseTransferRecords.AnyAsync(item =>
             (item.DriverId == driverId || item.VehicleId == vehicleId) && item.Status == InternalTransferStatuses.InTransit, cancellationToken);
     }
