@@ -455,9 +455,11 @@ public sealed class DevelopmentDataSeeder(
         category.Name = definition.Name;
         category.Description = definition.Description;
         category.IsActive = definition.IsActive;
-        category.DefaultMlorRatio = definition.DefaultMlorRatio;
-        category.DefaultMlorVersion = Math.Max(category.DefaultMlorVersion, 1);
-        category.DefaultMlorUpdatedAt ??= now;
+        // Leave MLOR unconfigured for demo catalog entries so the system-level
+        // allocation policy remains authoritative until an Admin configures it.
+        category.DefaultMlorRatio = null;
+        category.DefaultMlorVersion = 0;
+        category.DefaultMlorUpdatedAt = null;
         category.UpdatedAt = now;
         return category;
     }
@@ -1270,8 +1272,13 @@ public sealed class DevelopmentDataSeeder(
     {
         var warehouseByCode = warehouses.ToDictionary(item => item.Code, StringComparer.Ordinal);
         var warehouseCodes = new[] { "WH-HCM-01", "WH-TD", "WH-Q7" };
-        var definitions = products.Values
-            .Where(product => product.Status == ProductStatuses.Published)
+        var definitions = new List<InventorySeed>
+        {
+            new("PN-DEMO-SKU001-HCM", "WH-HCM-01", "SKU001", DateOnly.FromDateTime(now.UtcDateTime.AddDays(180)), 500m, 60m, "LÔ-MẪU-SKU001-HCM", BatchExpiryStatuses.Valid),
+            new("PN-DEMO-SKU001-TD", "WH-TD", "SKU001", DateOnly.FromDateTime(now.UtcDateTime.AddDays(150)), 200m, 0m, "LÔ-MẪU-SKU001-TD", BatchExpiryStatuses.Valid)
+        };
+        definitions.AddRange(products.Values
+            .Where(product => product.Status == ProductStatuses.Published && product.Sku != "SKU001")
             .OrderBy(product => product.Sku, StringComparer.Ordinal)
             .Select((product, index) => new InventorySeed(
                 $"PN-DEMO-{product.Sku}",
@@ -1281,8 +1288,7 @@ public sealed class DevelopmentDataSeeder(
                 240m,
                 0m,
                 $"LÔ-MẪU-{product.Sku}",
-                BatchExpiryStatuses.Valid))
-            .ToArray();
+                BatchExpiryStatuses.Valid)));
 
         foreach (var definition in definitions)
         {
