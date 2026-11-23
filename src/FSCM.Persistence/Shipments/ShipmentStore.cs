@@ -209,6 +209,15 @@ public sealed class ShipmentStore(AppDbContext dbContext) : IShipmentStore
     public Task<Vehicle?> FindVehicleAsync(Guid id, CancellationToken cancellationToken) =>
         dbContext.VehicleRecords.AsNoTracking().SingleOrDefaultAsync(item => item.Id == id, cancellationToken);
 
+    public async Task<bool> IsTransportResourceBusyAsync(Guid driverId, Guid vehicleId, Guid? excludedShipmentId, CancellationToken cancellationToken)
+    {
+        var activeShipment = await dbContext.ShipmentRecords.AnyAsync(item => item.Id != excludedShipmentId &&
+            (item.DriverId == driverId || item.VehicleId == vehicleId) &&
+            (item.Status == ShipmentStatuses.Ready || item.Status == ShipmentStatuses.Issued || item.Status == ShipmentStatuses.Delivering), cancellationToken);
+        return activeShipment || await dbContext.WarehouseTransferRecords.AnyAsync(item =>
+            (item.DriverId == driverId || item.VehicleId == vehicleId) && item.Status == "InTransit", cancellationToken);
+    }
+
     /// <summary>
     /// What one shipment takes out of stock, traced back from the picking split to the hold that
     /// paid for it: split -> plan price -> run allocation -> reservation.

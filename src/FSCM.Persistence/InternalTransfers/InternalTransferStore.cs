@@ -19,6 +19,22 @@ public sealed class InternalTransferStore(AppDbContext dbContext) : IInternalTra
     public Task<Warehouse?> FindWarehouseAsync(Guid id, CancellationToken cancellationToken) =>
         dbContext.WarehouseRecords.AsNoTracking().SingleOrDefaultAsync(item => item.Id == id, cancellationToken);
 
+    public Task<Driver?> FindDriverAsync(Guid id, CancellationToken cancellationToken) =>
+        dbContext.DriverRecords.AsNoTracking().SingleOrDefaultAsync(item => item.Id == id, cancellationToken);
+
+    public Task<Vehicle?> FindVehicleAsync(Guid id, CancellationToken cancellationToken) =>
+        dbContext.VehicleRecords.AsNoTracking().SingleOrDefaultAsync(item => item.Id == id, cancellationToken);
+
+    public async Task<bool> IsTransportResourceBusyAsync(Guid driverId, Guid vehicleId, Guid? excludedTransferId, CancellationToken cancellationToken)
+    {
+        var activeShipment = await dbContext.ShipmentRecords.AnyAsync(item =>
+            (item.DriverId == driverId || item.VehicleId == vehicleId) &&
+            (item.Status == "Ready" || item.Status == "Issued" || item.Status == "Delivering"), cancellationToken);
+        return activeShipment || await dbContext.WarehouseTransferRecords.AnyAsync(item =>
+            item.Id != excludedTransferId && (item.DriverId == driverId || item.VehicleId == vehicleId) &&
+            item.Status == InternalTransferStatuses.InTransit, cancellationToken);
+    }
+
     public async Task<TransferInventoryView?> FindInventoryForUpdateAsync(Guid batchId, CancellationToken cancellationToken)
     {
         var batch = await dbContext.BatchRecords.SingleOrDefaultAsync(item => item.Id == batchId, cancellationToken);

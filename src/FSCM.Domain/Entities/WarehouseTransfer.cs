@@ -10,6 +10,12 @@ public sealed class WarehouseTransfer
     public Guid DestinationWarehouseId { get; set; }
     public Guid CreatedByUserId { get; set; }
     public Guid? ApprovedByUserId { get; set; }
+    public Guid? DriverId { get; set; }
+    public Guid? VehicleId { get; set; }
+    public string? DriverCodeSnapshot { get; set; }
+    public string? DriverNameSnapshot { get; set; }
+    public string? PlateNumberSnapshot { get; set; }
+    public DateTimeOffset? AssignedAt { get; set; }
     public string Status { get; set; } = string.Empty;
     public string? Note { get; set; }
     public string? RejectionReason { get; set; }
