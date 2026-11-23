@@ -7,7 +7,9 @@ namespace FSCM.Persistence.WarehouseWork;
 
 public sealed record FactoryInboundPallet(Guid PalletId, string PalletCode, Guid DestinationWarehouseId,
     DateTimeOffset? DispatchedAt, string BatchCode, string Sku, string ProductName, int CartonCount,
-    DateOnly ExpirationDate, Guid? ReceiptDocumentId = null);
+    DateOnly ExpirationDate, Guid? ReceiptDocumentId = null,
+    // Filled by Traceability for pallets dispatched on a dispatch note (PXN); null for older pallets.
+    Guid? DispatchNoteId = null, string? DispatchCode = null, string? VehicleNumber = null, string? DriverName = null);
 public sealed record PrepareFactoryReceiptRequest(string PalletCode);
 
 public sealed partial class WarehouseWorkService

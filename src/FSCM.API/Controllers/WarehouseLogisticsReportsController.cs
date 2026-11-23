@@ -17,9 +17,14 @@ public sealed class WarehouseLogisticsReportsController(IWarehouseLogisticsRepor
         [FromQuery] DateOnly toDate,
         [FromQuery] Guid? regionId,
         [FromQuery] int top = WarehouseLogisticsReportQuery.DefaultTop,
+        // Comma-separated warehouse ids to include; empty = all active warehouses in the region.
+        [FromQuery] string? warehouseIds = null,
         CancellationToken ct = default)
     {
-        var query = new WarehouseLogisticsReportQuery(fromDate, toDate, regionId, top);
+        var ids = new List<Guid>();
+        foreach (var part in (warehouseIds ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            ids.Add(Guid.TryParse(part, out var id) ? id : throw ReportOperationException.Validation("Warehouse id is invalid."));
+        var query = new WarehouseLogisticsReportQuery(fromDate, toDate, regionId, top, ids.Distinct().ToArray());
         WarehouseLogisticsReportBuilder.Validate(query);
         var today = DateOnly.FromDateTime(clock.GetUtcNow().ToOffset(TimeSpan.FromHours(7)).DateTime);
         return store.ReadAsync(query, today, ct);
