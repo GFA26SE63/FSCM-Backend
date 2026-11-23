@@ -15,6 +15,9 @@ public interface IInternalTransferStore
 {
     Task<bool> CanAccessWarehouseAsync(Guid userId, string role, Guid warehouseId, CancellationToken cancellationToken);
     Task<Warehouse?> FindWarehouseAsync(Guid id, CancellationToken cancellationToken);
+    Task<Driver?> FindDriverAsync(Guid id, CancellationToken cancellationToken) => Task.FromResult<Driver?>(null);
+    Task<Vehicle?> FindVehicleAsync(Guid id, CancellationToken cancellationToken) => Task.FromResult<Vehicle?>(null);
+    Task<bool> IsTransportResourceBusyAsync(Guid driverId, Guid vehicleId, Guid? excludedTransferId, CancellationToken cancellationToken) => Task.FromResult(false);
     Task<TransferInventoryView?> FindInventoryForUpdateAsync(Guid batchId, CancellationToken cancellationToken);
     Task<IReadOnlyCollection<TransferInventoryView>> ListSuggestionInventoryAsync(CancellationToken cancellationToken);
     Task<IReadOnlyCollection<Warehouse>> ListActiveRegionalWarehousesAsync(CancellationToken cancellationToken);

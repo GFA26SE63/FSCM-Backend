@@ -41,6 +41,8 @@ public sealed class ShipmentConfiguration : IEntityTypeConfiguration<Shipment>
         // is intentionally non-unique.
         builder.HasIndex(entity => new { entity.SalesOrderId, entity.WarehouseId }).IsUnique();
         builder.HasIndex(entity => entity.PickingListId);
+        builder.HasIndex(entity => new { entity.DriverId, entity.Status });
+        builder.HasIndex(entity => new { entity.VehicleId, entity.Status });
         builder.HasOne<SalesOrder>().WithMany().HasForeignKey(entity => entity.SalesOrderId)
             .OnDelete(DeleteBehavior.Restrict);
         builder.HasOne<Warehouse>().WithMany().HasForeignKey(entity => entity.WarehouseId)

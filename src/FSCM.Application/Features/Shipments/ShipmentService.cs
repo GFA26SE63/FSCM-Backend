@@ -510,6 +510,8 @@ public sealed class ShipmentService(
             throw ShipmentOperationException.Conflict(
                 $"Vehicle capacity is {vehicle.Capacity:0.###} cartons but the part requires " +
                 $"{view.Shipment.TotalQuantity:0.###}.");
+        if (await store.IsTransportResourceBusyAsync(driver.Id, vehicle.Id, view.Shipment.Id, cancellationToken))
+            throw ShipmentOperationException.Conflict("Driver or vehicle is already assigned to an active delivery or transfer.");
 
         var now = timeProvider.GetUtcNow();
         view.Shipment.DriverId = driver.Id;

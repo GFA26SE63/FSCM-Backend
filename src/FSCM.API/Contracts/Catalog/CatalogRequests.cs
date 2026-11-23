@@ -4,12 +4,14 @@ public sealed record CreateCategoryRequest(
     Guid? ParentCategoryId,
     string? Code,
     string Name,
-    string? Description);
+    string? Description,
+    bool AcknowledgeNonFmcgWarning = false);
 
 public sealed record UpdateCategoryRequest(
     Guid? ParentCategoryId,
     string Name,
-    string? Description);
+    string? Description,
+    bool AcknowledgeNonFmcgWarning = false);
 
 public sealed record UpdateCategoryStatusRequest(bool IsActive);
 

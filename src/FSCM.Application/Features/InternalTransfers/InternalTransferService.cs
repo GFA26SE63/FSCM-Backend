@@ -174,6 +174,20 @@ public sealed class InternalTransferService(IInternalTransferStore store, TimePr
         }
         var view = await GetForUpdateAsync(id, data.ExpectedVersion, InternalTransferStatuses.Approved, cancellationToken);
         await EnsureWarehouseAccessAsync(userId, role, view.Transfer.SourceWarehouseId, cancellationToken);
+        Driver? driver = null; Vehicle? vehicle = null;
+        if (data.DriverId != Guid.Empty || data.VehicleId != Guid.Empty)
+        {
+            if (data.DriverId == Guid.Empty || data.VehicleId == Guid.Empty)
+                throw InternalTransferOperationException.Validation("Driver and vehicle must be assigned together.");
+            driver = await store.FindDriverAsync(data.DriverId, cancellationToken)
+                ?? throw InternalTransferOperationException.NotFound("Driver was not found.");
+            vehicle = await store.FindVehicleAsync(data.VehicleId, cancellationToken)
+                ?? throw InternalTransferOperationException.NotFound("Vehicle was not found.");
+            if (!driver.IsActive || !vehicle.IsActive || driver.WarehouseId != view.Transfer.SourceWarehouseId || vehicle.WarehouseId != view.Transfer.SourceWarehouseId)
+                throw InternalTransferOperationException.Conflict("Driver and vehicle must be active and belong to the source warehouse.");
+            if (await store.IsTransportResourceBusyAsync(driver.Id, vehicle.Id, view.Transfer.Id, cancellationToken))
+                throw InternalTransferOperationException.Conflict("Driver or vehicle is already assigned to an active delivery or transfer.");
+        }
         if (data.Lines.Count != view.Items.Count || data.Lines.Select(item => item.TransferItemId).Distinct().Count() != view.Items.Count)
             throw InternalTransferOperationException.Validation("Dispatch must scan every transfer item exactly once.");
         var allCodes = data.Lines.SelectMany(item => item.QrCodes).Select(NormalizeQrCode).ToArray();
@@ -226,6 +240,12 @@ public sealed class InternalTransferService(IInternalTransferStore store, TimePr
         }
         var from = view.Transfer.Status;
         view.Transfer.Status = InternalTransferStatuses.InTransit;
+        view.Transfer.DriverId = driver?.Id;
+        view.Transfer.VehicleId = vehicle?.Id;
+        view.Transfer.DriverCodeSnapshot = driver?.Code;
+        view.Transfer.DriverNameSnapshot = driver?.FullName;
+        view.Transfer.PlateNumberSnapshot = vehicle?.PlateNumber;
+        view.Transfer.AssignedAt = driver is null ? null : now;
         view.Transfer.DispatchedAt = now;
         view.Transfer.UpdatedAt = now;
         view.Transfer.Version++;
@@ -502,6 +522,7 @@ public sealed class InternalTransferService(IInternalTransferStore store, TimePr
         view.Transfer.Id, view.Transfer.TransferCode, view.Transfer.SourceWarehouseId, view.SourceWarehouse.Code,
         view.SourceWarehouse.Name, view.Transfer.DestinationWarehouseId, view.DestinationWarehouse.Code,
         view.DestinationWarehouse.Name, view.Transfer.CreatedByUserId, view.Transfer.ApprovedByUserId,
+        view.Transfer.DriverId, view.Transfer.DriverNameSnapshot, view.Transfer.VehicleId, view.Transfer.PlateNumberSnapshot,
         view.Transfer.Status, view.Transfer.Note, view.Transfer.RejectionReason, view.Transfer.Version,
         view.Transfer.RequestedAt, view.Transfer.ApprovedAt, view.Transfer.DispatchedAt, view.Transfer.ReceivedAt,
         view.Items.Select(item => new InternalTransferItemResult(item.Item.Id, item.Item.SourceBatchId,

@@ -97,6 +97,7 @@ public interface IShipmentStore
     Task<IReadOnlyCollection<Shipment>> ListByOrderAsync(Guid orderId, CancellationToken cancellationToken);
     Task<Driver?> FindDriverAsync(Guid id, CancellationToken cancellationToken);
     Task<Vehicle?> FindVehicleAsync(Guid id, CancellationToken cancellationToken);
+    Task<bool> IsTransportResourceBusyAsync(Guid driverId, Guid vehicleId, Guid? excludedShipmentId, CancellationToken cancellationToken) => Task.FromResult(false);
 
     /// <summary>What one ready shipment would take out of stock, per batch, locked for update.</summary>
     Task<IReadOnlyCollection<ShipmentIssueRow>> ListIssuableAsync(
