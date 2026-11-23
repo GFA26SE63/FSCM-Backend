@@ -471,11 +471,11 @@ public sealed class DevelopmentDataSeeder(
     {
         var definitions = new[]
         {
-            new ProductSeed("SKU001", "Sữa tươi tiệt trùng có đường 1 lít - thùng 12 hộp", "Thùng", 4320, 720, "CAT-08", 252000m),
-            new ProductSeed("SKU002", "Sữa chua uống dâu 180 ml - thùng 48 chai", "Thùng", 1440, 240, "CAT-09", 320000m),
-            new ProductSeed("SKU003", "Mì ăn liền vị bò 75 g - thùng 30 gói", "Thùng", 4320, 720, "CAT-02", 118000m),
-            new ProductSeed("SKU004", "Nước cam 250 ml - thùng 48 hộp", "Thùng", 6480, 1080, "CAT-05", 415000m),
-            new ProductSeed("SKU005", "Nước cam 250 ml - thùng 36 hộp", "Thùng", 6480, 1080, "CAT-05", 325000m, ProductStatuses.Published, "SKU004"),
+            new ProductSeed("SKU001", "Sữa tươi tiệt trùng có đường 1 lít - thùng 12 hộp", "Thùng", 168, 24, "CAT-08", 252000m),
+            new ProductSeed("SKU002", "Sữa chua uống dâu 180 ml - thùng 48 chai", "Thùng", 336, 48, "CAT-09", 320000m),
+            new ProductSeed("SKU003", "Mì ăn liền vị bò 75 g - thùng 30 gói", "Thùng", 72, 12, "CAT-02", 118000m),
+            new ProductSeed("SKU004", "Nước cam 250 ml - thùng 48 hộp", "Thùng", 720, 120, "CAT-05", 415000m),
+            new ProductSeed("SKU005", "Nước cam 250 ml - thùng 36 hộp", "Thùng", 720, 120, "CAT-05", 325000m, ProductStatuses.Published, "SKU004"),
             new ProductSeed("SKU006", "Cháo ăn liền thịt bằm 50 g - thùng 30 gói", "Thùng", 4320, 720, "CAT-02", 132000m),
             new ProductSeed("SKU007", "Cá ngừ ngâm dầu 185 g - thùng 48 hộp", "Thùng", 17520, 2160, "CAT-03", 890000m),
             new ProductSeed("SKU008", "Ngũ cốc dinh dưỡng 500 g - thùng 12 hộp", "Thùng", 8760, 1440, "CAT-03", 720000m),
@@ -1274,8 +1274,8 @@ public sealed class DevelopmentDataSeeder(
         var warehouseCodes = new[] { "WH-HCM-01", "WH-TD", "WH-Q7" };
         var definitions = new List<InventorySeed>
         {
-            new("PN-DEMO-SKU001-HCM", "WH-HCM-01", "SKU001", DateOnly.FromDateTime(now.UtcDateTime.AddDays(180)), 500m, 60m, "LÔ-MẪU-SKU001-HCM", BatchExpiryStatuses.Valid),
-            new("PN-DEMO-SKU001-TD", "WH-TD", "SKU001", DateOnly.FromDateTime(now.UtcDateTime.AddDays(150)), 200m, 0m, "LÔ-MẪU-SKU001-TD", BatchExpiryStatuses.Valid)
+            new("PN-DEMO-SKU001-HCM", "WH-HCM-01", "SKU001", DateOnly.FromDateTime(now.UtcDateTime.AddDays(7)), 500m, 60m, "LÔ-MẪU-SKU001-HCM", BatchExpiryStatuses.Valid),
+            new("PN-DEMO-SKU001-TD", "WH-TD", "SKU001", DateOnly.FromDateTime(now.UtcDateTime.AddDays(6)), 200m, 0m, "LÔ-MẪU-SKU001-TD", BatchExpiryStatuses.Valid)
         };
         definitions.AddRange(products.Values
             .Where(product => product.Status == ProductStatuses.Published && product.Sku != "SKU001")
