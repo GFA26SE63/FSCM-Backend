@@ -92,6 +92,13 @@ public sealed class RetailersController(RetailerService service) : ControllerBas
             request.CreditTermDays, request.CreditLimit, request.Reason, cancellationToken);
 
     [Authorize(Roles = SystemRoles.Admin)]
+    [HttpPut("{retailerId:guid}/credit-terms")]
+    public Task<RetailerDetails> UpdateCreditTerms(
+        Guid retailerId, UpdateRetailerCreditTermsRequest request, CancellationToken cancellationToken) =>
+        service.UpdateCreditTermsAsync(retailerId, GetActorUserId(), request.CreditTermDays,
+            request.CreditLimit, request.Reason, cancellationToken);
+
+    [Authorize(Roles = SystemRoles.Admin)]
     [HttpPatch("{retailerId:guid}/status")]
     public Task<RetailerDetails> UpdateStatus(
         Guid retailerId, UpdateRetailerStatusRequest request, CancellationToken cancellationToken) =>
