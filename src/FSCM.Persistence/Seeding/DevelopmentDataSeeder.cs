@@ -270,9 +270,9 @@ public sealed class DevelopmentDataSeeder(
         {
             new QrLabelSeed("TEM-000204", "WH-HCM-01", "SKU001", 300m, null, QrLabelStatuses.Available, "Tem gốc cho lô sữa tiệt trùng"),
             new QrLabelSeed("TEM-000205", "WH-HCM-01", "SKU001", 100m, "TEM-000204", QrLabelStatuses.Available, "Tem con tách từ tem TEM-000204"),
-            new QrLabelSeed("TEM-000206", "WH-TD", "SKU002", 80m, null, QrLabelStatuses.Available, "Tem cho lô sữa chua uống"),
-            new QrLabelSeed("TEM-000207", "WH-Q7", "SKU003", 20m, null, QrLabelStatuses.Invalidated, "Tem mì ăn liền đã vô hiệu hóa dùng để kiểm thử"),
-            new QrLabelSeed("TEM-000208", "WH-TD", "SKU005", 200m, null, QrLabelStatuses.Available, "Tem gốc cho lô nước cam phục vụ soạn đơn tại kho Thủ Đức")
+            new QrLabelSeed("TEM-000206", "WH-HCM-01", "SKU002", 80m, null, QrLabelStatuses.Available, "Tem cho lô sữa chua uống"),
+            new QrLabelSeed("TEM-000207", "WH-TD", "SKU003", 20m, null, QrLabelStatuses.Invalidated, "Tem mì ăn liền đã vô hiệu hóa dùng để kiểm thử"),
+            new QrLabelSeed("TEM-000208", "WH-HCM-01", "SKU005", 200m, null, QrLabelStatuses.Available, "Tem gốc cho lô nước cam phục vụ soạn đơn tại kho Thành phố Hồ Chí Minh")
         };
         var labels = new Dictionary<string, BatchQrLabel>(StringComparer.Ordinal);
         foreach (var definition in definitions.Where(item => item.ParentQrCode is null))
