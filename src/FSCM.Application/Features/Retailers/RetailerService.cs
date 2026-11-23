@@ -365,6 +365,32 @@ public sealed class RetailerService(
         return await GetResultAsync(retailerId, cancellationToken);
     }
 
+    public async Task<RetailerDetails> UpdateCreditTermsAsync(
+        Guid retailerId, Guid actorUserId, int creditTermDays, decimal creditLimit,
+        string? reason, CancellationToken cancellationToken)
+    {
+        if (!AllowedCreditTerms.Contains(creditTermDays))
+            throw RetailerOperationException.Validation("Credit term must be 0, 7, 14, or 30 days.");
+        if (creditLimit < 0)
+            throw RetailerOperationException.Validation("Credit limit cannot be negative.");
+        var retailer = await store.FindForUpdateAsync(retailerId, cancellationToken)
+            ?? throw RetailerOperationException.NotFound("Retailer was not found.");
+        if (retailer.Status != RetailerStatuses.Active)
+            throw RetailerOperationException.InvalidTransition("Credit terms can be updated only for an active Retailer.");
+        reason = Clean(reason, 2000, "Credit-term update reason");
+        if (string.IsNullOrWhiteSpace(reason))
+            throw RetailerOperationException.Validation("A reason is required when changing credit terms.");
+        var before = new { retailer.CreditTermDays, retailer.CreditLimit };
+        retailer.CreditTermDays = creditTermDays;
+        retailer.CreditLimit = creditLimit;
+        retailer.UpdatedAt = timeProvider.GetUtcNow();
+        AddAudit(retailer.Id, actorUserId, "RetailerCreditTermsUpdated",
+            JsonSerializer.Serialize(before), JsonSerializer.Serialize(new { retailer.CreditTermDays, retailer.CreditLimit }),
+            reason, retailer.UpdatedAt);
+        await store.SaveChangesAsync(cancellationToken);
+        return await GetResultAsync(retailerId, cancellationToken);
+    }
+
     // Preserves the internal call shape used by pre-credit-limit tests and integrations. HTTP
     // review requests always use the overload above and must explicitly supply the limit.
     public Task<RetailerDetails> ReviewAsync(

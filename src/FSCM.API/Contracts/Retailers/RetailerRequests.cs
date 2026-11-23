@@ -27,4 +27,5 @@ public sealed record UpdateRetailerProfileRequest(
     decimal? Latitude, decimal? Longitude, string? ProviderPlaceId);
 
 public sealed record ReviewRetailerRequest(bool Approve, int? CreditTermDays, decimal? CreditLimit, string? Reason);
+public sealed record UpdateRetailerCreditTermsRequest(int CreditTermDays, decimal CreditLimit, string? Reason);
 public sealed record UpdateRetailerStatusRequest(bool IsActive);
