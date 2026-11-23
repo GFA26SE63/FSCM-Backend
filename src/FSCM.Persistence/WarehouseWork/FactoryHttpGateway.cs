@@ -7,12 +7,15 @@ namespace FSCM.Persistence.WarehouseWork;
 public sealed record FactorySourceTrace(FactoryProductionBatch Batch, string Sku, FactoryPallet? Pallet, FactoryCarton? Carton,
     FactoryProductUnit? Unit, FactoryProductUnit[] Units, string[] CartonCodes, Guid[] DestinationWarehouseIds);
 
+/// <summary>Dispatch note (PXN) a pallet left the factory on; null for pallets dispatched before dispatch notes existed.</summary>
+public sealed record FactoryPalletDispatchInfo(Guid PalletId, Guid? DispatchNoteId, string? DispatchCode);
 public interface IFactoryGateway
 {
     Task<FactoryInboundPallet[]> DispatchedAsync(Guid[] warehouseIds, CancellationToken ct);
     Task<PalletManifest> ManifestAsync(string code, CancellationToken ct);
     Task<FactorySourceTrace> TraceAsync(string code, CancellationToken ct);
     Task<Guid> AcknowledgeReceiptAsync(FactoryReceiptSync receipt, CancellationToken ct);
+    Task<FactoryPalletDispatchInfo[]> PalletDispatchInfoAsync(Guid[] palletIds, CancellationToken ct);
 }
 
 public sealed class FactoryHttpGateway(HttpClient http) : IFactoryGateway
@@ -46,5 +49,9 @@ public sealed class FactoryHttpGateway(HttpClient http) : IFactoryGateway
             throw PickingOperationException.Conflict("Traceability chưa xác nhận chi tiết kiểm đếm; cần cập nhật dịch vụ nguồn.");
         return response.Id;
     }
+    public Task<FactoryPalletDispatchInfo[]> PalletDispatchInfoAsync(Guid[] palletIds, CancellationToken ct) =>
+        palletIds.Length == 0 ? Task.FromResult(Array.Empty<FactoryPalletDispatchInfo>()) :
+        Send<FactoryPalletDispatchInfo[]>(HttpMethod.Get, "api/integration/pallets/dispatch-info?" +
+            string.Join("&", palletIds.Distinct().Select(id => $"palletIds={id:D}")), null, ct);
     private sealed record Acknowledgement(Guid Id, string? ReceiptInspectionJson);
 }

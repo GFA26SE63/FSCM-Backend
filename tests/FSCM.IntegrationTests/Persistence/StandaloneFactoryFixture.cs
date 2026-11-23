@@ -105,7 +105,9 @@ internal sealed class FactoryTestClient(HttpClient http, IServiceProvider wareho
     }
     public async Task<Guid> DispatchAsync(Guid id, Guid destination, CancellationToken ct, Guid[]? palletIds = null)
     {
-        using var response = await http.PostAsJsonAsync($"/api/batches/{id}/dispatch", new { destinationWarehouseId = destination, palletIds }, ct);
+        using var response = await http.PostAsJsonAsync($"/api/batches/{id}/dispatch", new { destinationWarehouseId = destination, palletIds,
+            // Every dispatch must name the vehicle and driver (same rule as the dispatch-note page).
+            vehicleNumber = "51C-000.01", driverName = "Tài xế kiểm thử" }, ct);
         response.EnsureSuccessStatusCode(); return id;
     }
     public async Task<FSCM.Persistence.WarehouseWork.FactoryBatchView[]> ListAsync(CancellationToken ct) =>

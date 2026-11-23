@@ -3,8 +3,15 @@ using FSCM.Application.Features.Inventory;
 namespace FSCM.Application.Features.Reports;
 
 /// <summary>Filter of the "Báo cáo kho vận" report. Dates are Vietnam calendar days, both inclusive.</summary>
-public sealed record WarehouseLogisticsReportQuery(DateOnly FromDate, DateOnly ToDate, Guid? RegionId = null, int Top = 10)
+/// <remarks>
+/// <paramref name="WarehouseIds"/> limits the report to the warehouses the user picked (the portal requires at least
+/// one so it never renders every warehouse at once); empty means every active warehouse in the region.
+/// Best sellers are ranked over the selected warehouses.
+/// </remarks>
+public sealed record WarehouseLogisticsReportQuery(DateOnly FromDate, DateOnly ToDate, Guid? RegionId = null, int Top = 10,
+    IReadOnlyCollection<Guid>? WarehouseIds = null)
 {
+    public const int MaxWarehouses = 50;
     public const int DefaultTop = 10;
     public const int MaxTop = 50;
     public const int MaxPeriodDays = 367;
@@ -58,6 +65,8 @@ public static class WarehouseLogisticsReportBuilder
             throw ReportOperationException.Validation("Select a valid reporting period of at most 367 days.");
         if (query.Top is < 1 or > WarehouseLogisticsReportQuery.MaxTop)
             throw ReportOperationException.Validation("Top must be between 1 and 50.");
+        if (query.WarehouseIds?.Count > WarehouseLogisticsReportQuery.MaxWarehouses)
+            throw ReportOperationException.Validation("Select at most 50 warehouses.");
     }
 
     /// <summary>Same rule as the dashboard: near expiry when expiry is within ceil(threshold hours / 24) days.</summary>
