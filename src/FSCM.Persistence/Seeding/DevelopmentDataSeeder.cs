@@ -268,11 +268,11 @@ public sealed class DevelopmentDataSeeder(
     {
         var definitions = new[]
         {
-            new QrLabelSeed("TEM-000204", "WH-HCM-01-SKU001-23042027-30042027", 300m, null, QrLabelStatuses.Available, "Tem gốc cho lô sữa tiệt trùng"),
-            new QrLabelSeed("TEM-000205", "WH-HCM-01-SKU001-23042027-30042027", 100m, "TEM-000204", QrLabelStatuses.Available, "Tem con tách từ tem TEM-000204"),
-            new QrLabelSeed("TEM-000206", "WH-TD-SKU002-14102026-28102026", 80m, null, QrLabelStatuses.Available, "Tem cho lô sữa chua gần hạn"),
-            new QrLabelSeed("TEM-000207", "WH-Q7-SKU003-07102026-10102026", 20m, null, QrLabelStatuses.Invalidated, "Tem lô thực phẩm hết hạn đã vô hiệu hóa"),
-            new QrLabelSeed("TEM-000208", "WH-TD-SKU001-24032027-31032027", 200m, null, QrLabelStatuses.Available, "Tem gốc cho lô sữa tươi phục vụ soạn đơn tại kho Thủ Đức")
+            new QrLabelSeed("TEM-000204", "WH-HCM-01", "SKU001", 300m, null, QrLabelStatuses.Available, "Tem gốc cho lô sữa tiệt trùng"),
+            new QrLabelSeed("TEM-000205", "WH-HCM-01", "SKU001", 100m, "TEM-000204", QrLabelStatuses.Available, "Tem con tách từ tem TEM-000204"),
+            new QrLabelSeed("TEM-000206", "WH-TD", "SKU002", 80m, null, QrLabelStatuses.Available, "Tem cho lô sữa chua uống"),
+            new QrLabelSeed("TEM-000207", "WH-Q7", "SKU003", 20m, null, QrLabelStatuses.Invalidated, "Tem mì ăn liền đã vô hiệu hóa dùng để kiểm thử"),
+            new QrLabelSeed("TEM-000208", "WH-TD", "SKU005", 200m, null, QrLabelStatuses.Available, "Tem gốc cho lô nước cam phục vụ soạn đơn tại kho Thủ Đức")
         };
         var labels = new Dictionary<string, BatchQrLabel>(StringComparer.Ordinal);
         foreach (var definition in definitions.Where(item => item.ParentQrCode is null))
@@ -343,7 +343,19 @@ public sealed class DevelopmentDataSeeder(
     private async Task<BatchQrLabel> UpsertQrLabelAsync(
         QrLabelSeed definition, Guid? parentId, Guid? rootId, DateTimeOffset now, CancellationToken cancellationToken)
     {
-        var batch = await dbContext.BatchRecords.SingleAsync(item => item.BatchCode == definition.BatchCode, cancellationToken);
+        var warehouseId = await dbContext.WarehouseRecords
+            .Where(item => item.Code == definition.WarehouseCode)
+            .Select(item => item.Id)
+            .SingleAsync(cancellationToken);
+        var batch = await dbContext.BatchRecords
+            .Join(dbContext.ProductRecords,
+                batch => batch.ProductId,
+                product => product.Id,
+                (batch, product) => new { Batch = batch, product.Sku })
+            .Where(item => item.Batch.WarehouseId == warehouseId && item.Sku == definition.Sku)
+            .OrderByDescending(item => item.Batch.ExpirationDate)
+            .Select(item => item.Batch)
+            .FirstAsync(cancellationToken);
         var label = await dbContext.BatchQrLabelRecords.SingleOrDefaultAsync(item => item.QrCode == definition.QrCode, cancellationToken);
         var isNewLabel = label is null;
         if (label is null)
@@ -1569,7 +1581,7 @@ public sealed class DevelopmentDataSeeder(
         decimal OnHand, decimal Reserved, string SourceLotCode, string ExpiryStatus);
 
     private sealed record QrLabelSeed(
-        string QrCode, string BatchCode, decimal Quantity, string? ParentQrCode,
+        string QrCode, string WarehouseCode, string Sku, decimal Quantity, string? ParentQrCode,
         string Status, string Note);
 
     private sealed record ConfigurationSeed(
