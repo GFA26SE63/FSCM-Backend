@@ -1,4 +1,5 @@
 using System.Data;
+using FSCM.Application.Features.InternalTransfers;
 using FSCM.Application.Features.Inventory;
 using FSCM.Application.Features.Picking;
 using FSCM.Application.Features.QrLabels;
@@ -211,9 +212,11 @@ public sealed class ShipmentStore(AppDbContext dbContext) : IShipmentStore
 
     public async Task<bool> IsTransportResourceBusyAsync(Guid driverId, Guid vehicleId, Guid? excludedShipmentId, CancellationToken cancellationToken)
     {
-        return await dbContext.ShipmentRecords.AnyAsync(item => item.Id != excludedShipmentId &&
+        var activeShipment = await dbContext.ShipmentRecords.AnyAsync(item => item.Id != excludedShipmentId &&
             (item.DriverId == driverId || item.VehicleId == vehicleId) &&
             (item.Status == ShipmentStatuses.Ready || item.Status == ShipmentStatuses.Issued || item.Status == ShipmentStatuses.Delivering), cancellationToken);
+        return activeShipment || await dbContext.WarehouseTransferRecords.AnyAsync(item =>
+            (item.DriverId == driverId || item.VehicleId == vehicleId) && item.Status == InternalTransferStatuses.InTransit, cancellationToken);
     }
 
     /// <summary>
