@@ -843,7 +843,18 @@ public sealed class DevelopmentDataSeeder(
                 "\"promotionRevenueRatioMaximum\":0.05,\"successfulOrdersWeight\":0.25," +
                 "\"retailersServedWeight\":0.25,\"newRetailersWeight\":0.25," +
                 "\"promotionRevenueRatioWeight\":0.25}", "object",
-                "Mục tiêu KPI tháng: 15 đơn thành công, 5 điểm bán phục vụ, 1 điểm bán mới và tỷ lệ khuyến mãi tối đa 5 phần trăm")
+                "Mục tiêu KPI tháng: 15 đơn thành công, 5 điểm bán phục vụ, 1 điểm bán mới và tỷ lệ khuyến mãi tối đa 5 phần trăm"),
+            new ConfigurationSeed("FmcgCategoryCatalogJson",
+                "{\"categories\":[" +
+                "{\"name\":\"Thực phẩm đóng gói\",\"description\":\"Mì ăn liền, đồ hộp, ngũ cốc, thực phẩm khô và thực phẩm chế biến đóng gói.\"}," +
+                "{\"name\":\"Đồ uống\",\"description\":\"Nước uống đóng chai, nước giải khát, trà, cà phê và đồ uống tiêu dùng nhanh.\"}," +
+                "{\"name\":\"Sữa và sản phẩm từ sữa\",\"description\":\"Sữa, sữa chua, phô mai, bơ và sản phẩm dinh dưỡng từ sữa.\"}," +
+                "{\"name\":\"Bánh kẹo và đồ ăn nhẹ\",\"description\":\"Bánh, kẹo, chocolate, snack và đồ ăn nhẹ đóng gói.\"}," +
+                "{\"name\":\"Gia vị và nguyên liệu nấu ăn\",\"description\":\"Nước mắm, nước tương, dầu ăn, gia vị, sốt và nguyên liệu nấu ăn.\"}," +
+                "{\"name\":\"Chăm sóc cá nhân\",\"description\":\"Dầu gội, sữa tắm, kem đánh răng, mỹ phẩm phổ thông và vệ sinh cá nhân.\"}," +
+                "{\"name\":\"Chăm sóc gia đình\",\"description\":\"Chất tẩy rửa, nước giặt, nước rửa chén, giấy vệ sinh và sản phẩm vệ sinh nhà cửa.\"}," +
+                "{\"name\":\"Sản phẩm cho mẹ và bé\",\"description\":\"Tã bỉm, khăn ướt, thức ăn trẻ em và sản phẩm chăm sóc mẹ bé.\"}]}", "json",
+                "Danh mục FMCG chuẩn mặc định, Admin có thể cập nhật bằng JSON")
         };
         foreach (var definition in configurations)
         {
