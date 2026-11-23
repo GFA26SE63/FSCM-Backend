@@ -5072,19 +5072,19 @@ namespace FSCM.Persistence.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("DriverId");
-
                     b.HasIndex("PickingListId");
 
                     b.HasIndex("ShipmentCode")
                         .IsUnique();
 
-                    b.HasIndex("VehicleId");
-
                     b.HasIndex("WarehouseId");
+
+                    b.HasIndex("DriverId", "Status");
 
                     b.HasIndex("SalesOrderId", "WarehouseId")
                         .IsUnique();
+
+                    b.HasIndex("VehicleId", "Status");
 
                     b.ToTable("SHIPMENT", (string)null);
                 });
