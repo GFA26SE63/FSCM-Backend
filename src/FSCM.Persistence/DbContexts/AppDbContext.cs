@@ -152,10 +152,6 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
         modelBuilder.ApplyConfigurationsFromAssembly(typeof(AppDbContext).Assembly);
         modelBuilder.Ignore<StockHold>();
         modelBuilder.Ignore<BatchPromotion>();
-        modelBuilder.Ignore<WarehouseTransfer>();
-        modelBuilder.Ignore<WarehouseTransferItem>();
-        modelBuilder.Ignore<WarehouseTransferEvent>();
-        modelBuilder.Ignore<WarehouseTransferLabel>();
         modelBuilder.Ignore<AllocationPlanVersion>();
         modelBuilder.Ignore<RunPickingList>();
         modelBuilder.Ignore<RunPickingGather>();

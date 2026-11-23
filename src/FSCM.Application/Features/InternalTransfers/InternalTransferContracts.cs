@@ -5,7 +5,11 @@ public sealed record CreateInternalTransferData(
     Guid SourceWarehouseId, Guid DestinationWarehouseId,
     IReadOnlyCollection<CreateInternalTransferLineData> Lines, string? Note);
 public sealed record DispatchInternalTransferLineData(Guid TransferItemId, IReadOnlyCollection<string> QrCodes);
-public sealed record DispatchInternalTransferData(int ExpectedVersion, IReadOnlyCollection<DispatchInternalTransferLineData> Lines);
+public sealed record DispatchInternalTransferData(Guid DriverId, Guid VehicleId, int ExpectedVersion, IReadOnlyCollection<DispatchInternalTransferLineData> Lines)
+{
+    public DispatchInternalTransferData(int expectedVersion, IReadOnlyCollection<DispatchInternalTransferLineData> lines)
+        : this(Guid.Empty, Guid.Empty, expectedVersion, lines) { }
+}
 public sealed record ReceiveInternalTransferData(int ExpectedVersion, IReadOnlyCollection<string> QrCodes);
 
 public sealed record TransferSuggestionBatchResult(
@@ -29,7 +33,7 @@ public sealed record InternalTransferEventResult(
 public sealed record InternalTransferResult(
     Guid Id, string TransferCode, Guid SourceWarehouseId, string SourceWarehouseCode,
     string SourceWarehouseName, Guid DestinationWarehouseId, string DestinationWarehouseCode,
-    string DestinationWarehouseName, Guid CreatedByUserId, Guid? ApprovedByUserId,
+    string DestinationWarehouseName, Guid CreatedByUserId, Guid? ApprovedByUserId, Guid? DriverId, string? DriverName, Guid? VehicleId, string? PlateNumber,
     string Status, string? Note, string? RejectionReason, int Version,
     DateTimeOffset RequestedAt, DateTimeOffset? ApprovedAt, DateTimeOffset? DispatchedAt,
     DateTimeOffset? ReceivedAt, IReadOnlyCollection<InternalTransferItemResult> Items,

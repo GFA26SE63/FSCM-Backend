@@ -268,11 +268,11 @@ public sealed class DevelopmentDataSeeder(
     {
         var definitions = new[]
         {
-            new QrLabelSeed("TEM-000204", "WH-HCM-01-SKU001-23042027-30042027", 300m, null, QrLabelStatuses.Available, "Tem gốc cho lô sữa tiệt trùng"),
-            new QrLabelSeed("TEM-000205", "WH-HCM-01-SKU001-23042027-30042027", 100m, "TEM-000204", QrLabelStatuses.Available, "Tem con tách từ tem TEM-000204"),
-            new QrLabelSeed("TEM-000206", "WH-TD-SKU002-14102026-28102026", 80m, null, QrLabelStatuses.Available, "Tem cho lô sữa chua gần hạn"),
-            new QrLabelSeed("TEM-000207", "WH-Q7-SKU003-07102026-10102026", 20m, null, QrLabelStatuses.Invalidated, "Tem lô thực phẩm hết hạn đã vô hiệu hóa"),
-            new QrLabelSeed("TEM-000208", "WH-TD-SKU001-24032027-31032027", 200m, null, QrLabelStatuses.Available, "Tem gốc cho lô sữa tươi phục vụ soạn đơn tại kho Thủ Đức")
+            new QrLabelSeed("TEM-000204", "WH-HCM-01", "SKU001", 300m, null, QrLabelStatuses.Available, "Tem gốc cho lô sữa tiệt trùng"),
+            new QrLabelSeed("TEM-000205", "WH-HCM-01", "SKU001", 100m, "TEM-000204", QrLabelStatuses.Available, "Tem con tách từ tem TEM-000204"),
+            new QrLabelSeed("TEM-000206", "WH-HCM-01", "SKU002", 80m, null, QrLabelStatuses.Available, "Tem cho lô sữa chua uống"),
+            new QrLabelSeed("TEM-000207", "WH-TD", "SKU003", 20m, null, QrLabelStatuses.Invalidated, "Tem mì ăn liền đã vô hiệu hóa dùng để kiểm thử"),
+            new QrLabelSeed("TEM-000208", "WH-HCM-01", "SKU005", 200m, null, QrLabelStatuses.Available, "Tem gốc cho lô nước cam phục vụ soạn đơn tại kho Thành phố Hồ Chí Minh")
         };
         var labels = new Dictionary<string, BatchQrLabel>(StringComparer.Ordinal);
         foreach (var definition in definitions.Where(item => item.ParentQrCode is null))
@@ -343,7 +343,19 @@ public sealed class DevelopmentDataSeeder(
     private async Task<BatchQrLabel> UpsertQrLabelAsync(
         QrLabelSeed definition, Guid? parentId, Guid? rootId, DateTimeOffset now, CancellationToken cancellationToken)
     {
-        var batch = await dbContext.BatchRecords.SingleAsync(item => item.BatchCode == definition.BatchCode, cancellationToken);
+        var warehouseId = await dbContext.WarehouseRecords
+            .Where(item => item.Code == definition.WarehouseCode)
+            .Select(item => item.Id)
+            .SingleAsync(cancellationToken);
+        var batch = await dbContext.BatchRecords
+            .Join(dbContext.ProductRecords,
+                batch => batch.ProductId,
+                product => product.Id,
+                (batch, product) => new { Batch = batch, product.Sku })
+            .Where(item => item.Batch.WarehouseId == warehouseId && item.Sku == definition.Sku)
+            .OrderByDescending(item => item.Batch.ExpirationDate)
+            .Select(item => item.Batch)
+            .FirstAsync(cancellationToken);
         var label = await dbContext.BatchQrLabelRecords.SingleOrDefaultAsync(item => item.QrCode == definition.QrCode, cancellationToken);
         var isNewLabel = label is null;
         if (label is null)
@@ -374,10 +386,30 @@ public sealed class DevelopmentDataSeeder(
     {
         var definitions = new[]
         {
-            new CategorySeed("CAT-01", "Đồ uống", "Đồ uống có hạn sử dụng ngắn", (string?)null),
-            new CategorySeed("CAT-02", "Sữa và sản phẩm từ sữa", "Sữa và các sản phẩm sữa lên men", "CAT-01"),
-            new CategorySeed("CAT-03", "Thực phẩm tươi", "Thực phẩm tươi được đóng gói", (string?)null),
-            new CategorySeed("CAT-04", "Hàng theo mùa", "Danh mục ngừng hoạt động dùng để kiểm thử", (string?)null, false)
+            new CategorySeed("CAT-01", "Thực phẩm đóng gói", "Thực phẩm chế biến, đóng gói sẵn dùng trong tiêu dùng hằng ngày.", null, 0.70m),
+            new CategorySeed("CAT-02", "Mì, cháo và phở ăn liền", "Mì, cháo, phở, bún và miến ăn liền đóng gói.", "CAT-01", 0.65m),
+            new CategorySeed("CAT-03", "Đồ hộp và thực phẩm khô", "Đồ hộp, ngũ cốc, bột, thực phẩm sấy và thực phẩm khô.", "CAT-01", 0.75m),
+            new CategorySeed("CAT-04", "Đồ uống", "Nước uống đóng chai và đồ uống tiêu dùng nhanh không bao gồm sản phẩm từ sữa.", null, 0.65m),
+            new CategorySeed("CAT-05", "Nước giải khát", "Nước ngọt, nước trái cây, nước tăng lực và nước thể thao.", "CAT-04", 0.60m),
+            new CategorySeed("CAT-06", "Trà, cà phê và nước uống", "Trà, cà phê pha sẵn, cà phê hòa tan và nước uống đóng chai.", "CAT-04", 0.70m),
+            new CategorySeed("CAT-07", "Sữa và sản phẩm từ sữa", "Sữa, sữa chua, phô mai, bơ và sản phẩm dinh dưỡng từ sữa.", null, 0.75m),
+            new CategorySeed("CAT-08", "Sữa nước và sữa bột", "Sữa tươi, sữa tiệt trùng, sữa đặc và sữa bột đóng gói.", "CAT-07", 0.75m),
+            new CategorySeed("CAT-09", "Sữa chua và chế phẩm sữa", "Sữa chua uống, sữa chua ăn, phô mai và bơ.", "CAT-07", 0.70m),
+            new CategorySeed("CAT-10", "Bánh kẹo và đồ ăn nhẹ", "Bánh, kẹo, chocolate và đồ ăn nhẹ đóng gói.", null, 0.70m),
+            new CategorySeed("CAT-11", "Bánh và kẹo", "Bánh quy, bánh mềm, kẹo cứng, kẹo dẻo và chocolate.", "CAT-10", 0.70m),
+            new CategorySeed("CAT-12", "Snack và hạt", "Snack khoai tây, bánh phồng, hạt rang và đồ ăn nhẹ.", "CAT-10", 0.70m),
+            new CategorySeed("CAT-13", "Gia vị và nguyên liệu nấu ăn", "Gia vị, dầu ăn, nước chấm, sốt và nguyên liệu bếp.", null, 0.75m),
+            new CategorySeed("CAT-14", "Dầu ăn và nước chấm", "Dầu thực vật, nước mắm, nước tương và giấm.", "CAT-13", 0.75m),
+            new CategorySeed("CAT-15", "Gia vị và sốt", "Gia vị dạng bột, hạt nêm, tương ớt, mayonnaise và sốt nấu ăn.", "CAT-13", 0.75m),
+            new CategorySeed("CAT-16", "Chăm sóc cá nhân", "Sản phẩm vệ sinh và chăm sóc cơ thể sử dụng thường ngày.", null, 0.80m),
+            new CategorySeed("CAT-17", "Chăm sóc tóc và cơ thể", "Dầu gội, dầu xả, sữa tắm, xà phòng và khử mùi.", "CAT-16", 0.80m),
+            new CategorySeed("CAT-18", "Chăm sóc răng miệng", "Kem đánh răng, bàn chải, nước súc miệng và chỉ nha khoa.", "CAT-16", 0.80m),
+            new CategorySeed("CAT-19", "Chăm sóc gia đình", "Sản phẩm giặt tẩy, vệ sinh nhà cửa và giấy tiêu dùng.", null, 0.85m),
+            new CategorySeed("CAT-20", "Giặt tẩy và vệ sinh", "Nước giặt, bột giặt, nước xả, nước rửa chén và chất tẩy rửa.", "CAT-19", 0.85m),
+            new CategorySeed("CAT-21", "Giấy và vật dụng gia đình", "Giấy vệ sinh, khăn giấy, túi rác và vật dụng tiêu hao gia đình.", "CAT-19", 0.85m),
+            new CategorySeed("CAT-22", "Sản phẩm cho mẹ và bé", "Sản phẩm dinh dưỡng, vệ sinh và chăm sóc dành cho mẹ và trẻ nhỏ.", null, 0.85m),
+            new CategorySeed("CAT-23", "Tã, khăn ướt và chăm sóc bé", "Tã bỉm, khăn ướt, sữa tắm và sản phẩm vệ sinh trẻ em.", "CAT-22", 0.85m),
+            new CategorySeed("CAT-24", "Dinh dưỡng cho bé", "Bột ăn dặm, cháo dinh dưỡng, bánh ăn dặm và đồ uống cho trẻ.", "CAT-22", 0.80m)
         };
         var categories = new Dictionary<string, ProductCategory>(StringComparer.Ordinal);
 
@@ -423,6 +455,11 @@ public sealed class DevelopmentDataSeeder(
         category.Name = definition.Name;
         category.Description = definition.Description;
         category.IsActive = definition.IsActive;
+        // Leave MLOR unconfigured for demo catalog entries so the system-level
+        // allocation policy remains authoritative until an Admin configures it.
+        category.DefaultMlorRatio = null;
+        category.DefaultMlorVersion = 0;
+        category.DefaultMlorUpdatedAt = null;
         category.UpdatedAt = now;
         return category;
     }
@@ -434,11 +471,39 @@ public sealed class DevelopmentDataSeeder(
     {
         var definitions = new[]
         {
-            new ProductSeed("SKU001", "Sữa tươi 1 lít", "Thùng", 168, 24, "CAT-02", ProductStatuses.Published),
-            new ProductSeed("SKU002", "Sữa chua uống 180 ml", "Thùng", 336, 48, "CAT-02", ProductStatuses.Published),
-            new ProductSeed("SKU003", "Bánh mì kẹp tươi", "Khay", 72, 12, "CAT-03", ProductStatuses.Draft),
-            new ProductSeed("SKU004", "Nước cam 250 ml - thùng 48 hộp", "Thùng", 720, 120, "CAT-01", ProductStatuses.Inactive),
-            new ProductSeed("SKU005", "Nước cam 250 ml - thùng 36 hộp", "Thùng", 720, 120, "CAT-01", ProductStatuses.Published, "SKU004")
+            new ProductSeed("SKU001", "Sữa tươi tiệt trùng có đường 1 lít - thùng 12 hộp", "Thùng", 168, 24, "CAT-08", 252000m),
+            new ProductSeed("SKU002", "Sữa chua uống dâu 180 ml - thùng 48 chai", "Thùng", 336, 48, "CAT-09", 320000m),
+            new ProductSeed("SKU003", "Mì ăn liền vị bò 75 g - thùng 30 gói", "Thùng", 72, 12, "CAT-02", 118000m),
+            new ProductSeed("SKU004", "Nước cam 250 ml - thùng 48 hộp", "Thùng", 720, 120, "CAT-05", 415000m),
+            new ProductSeed("SKU005", "Nước cam 250 ml - thùng 36 hộp", "Thùng", 720, 120, "CAT-05", 325000m, ProductStatuses.Published, "SKU004"),
+            new ProductSeed("SKU006", "Cháo ăn liền thịt bằm 50 g - thùng 30 gói", "Thùng", 4320, 720, "CAT-02", 132000m),
+            new ProductSeed("SKU007", "Cá ngừ ngâm dầu 185 g - thùng 48 hộp", "Thùng", 17520, 2160, "CAT-03", 890000m),
+            new ProductSeed("SKU008", "Ngũ cốc dinh dưỡng 500 g - thùng 12 hộp", "Thùng", 8760, 1440, "CAT-03", 720000m),
+            new ProductSeed("SKU009", "Nước tăng lực 250 ml - thùng 24 lon", "Thùng", 8760, 1440, "CAT-05", 238000m),
+            new ProductSeed("SKU010", "Nước tinh khiết 500 ml - thùng 24 chai", "Thùng", 17520, 2160, "CAT-06", 92000m),
+            new ProductSeed("SKU011", "Cà phê hòa tan 3 trong 1 - thùng 20 hộp", "Thùng", 17520, 2160, "CAT-06", 1160000m),
+            new ProductSeed("SKU012", "Sữa bột dinh dưỡng 900 g - thùng 12 lon", "Thùng", 17520, 2160, "CAT-08", 3480000m),
+            new ProductSeed("SKU013", "Phô mai lát 200 g - thùng 24 hộp", "Thùng", 4320, 720, "CAT-09", 1120000m),
+            new ProductSeed("SKU014", "Bánh quy bơ 300 g - thùng 24 hộp", "Thùng", 8760, 1440, "CAT-11", 960000m),
+            new ProductSeed("SKU015", "Kẹo dẻo trái cây 100 g - thùng 48 gói", "Thùng", 8760, 1440, "CAT-11", 720000m),
+            new ProductSeed("SKU016", "Snack khoai tây vị tự nhiên 52 g - thùng 40 gói", "Thùng", 6480, 1080, "CAT-12", 360000m),
+            new ProductSeed("SKU017", "Hạt điều rang muối 250 g - thùng 20 hũ", "Thùng", 8760, 1440, "CAT-12", 1800000m),
+            new ProductSeed("SKU018", "Dầu đậu nành 1 lít - thùng 12 chai", "Thùng", 17520, 2160, "CAT-14", 612000m),
+            new ProductSeed("SKU019", "Nước mắm 750 ml - thùng 12 chai", "Thùng", 17520, 2160, "CAT-14", 780000m),
+            new ProductSeed("SKU020", "Hạt nêm thịt thăn 400 g - thùng 24 gói", "Thùng", 8760, 1440, "CAT-15", 1296000m),
+            new ProductSeed("SKU021", "Tương ớt 500 g - thùng 24 chai", "Thùng", 8760, 1440, "CAT-15", 720000m),
+            new ProductSeed("SKU022", "Dầu gội sạch gàu 650 g - thùng 12 chai", "Thùng", 26280, 2160, "CAT-17", 1560000m),
+            new ProductSeed("SKU023", "Sữa tắm dưỡng ẩm 500 g - thùng 12 chai", "Thùng", 26280, 2160, "CAT-17", 1440000m),
+            new ProductSeed("SKU024", "Kem đánh răng bạc hà 180 g - thùng 48 tuýp", "Thùng", 26280, 2160, "CAT-18", 1824000m),
+            new ProductSeed("SKU025", "Bàn chải đánh răng lông mềm - thùng 72 cây", "Thùng", 43800, 4320, "CAT-18", 1080000m),
+            new ProductSeed("SKU026", "Nước giặt cửa trước 3,6 kg - thùng 4 túi", "Thùng", 26280, 2160, "CAT-20", 760000m),
+            new ProductSeed("SKU027", "Nước rửa chén 750 g - thùng 12 chai", "Thùng", 26280, 2160, "CAT-20", 540000m),
+            new ProductSeed("SKU028", "Giấy vệ sinh 10 cuộn - kiện 6 lốc", "Kiện", 43800, 4320, "CAT-21", 660000m),
+            new ProductSeed("SKU029", "Khăn giấy hộp 180 tờ - thùng 36 hộp", "Thùng", 43800, 4320, "CAT-21", 900000m),
+            new ProductSeed("SKU030", "Tã quần trẻ em cỡ M 42 miếng - thùng 4 bịch", "Thùng", 26280, 2160, "CAT-23", 1280000m),
+            new ProductSeed("SKU031", "Khăn ướt trẻ em 100 tờ - thùng 24 gói", "Thùng", 17520, 2160, "CAT-23", 840000m),
+            new ProductSeed("SKU032", "Bột ăn dặm gạo sữa 200 g - thùng 24 hộp", "Thùng", 8760, 1440, "CAT-24", 1080000m),
+            new ProductSeed("SKU033", "Bánh ăn dặm vị chuối 50 g - thùng 48 hộp", "Thùng", 6480, 1080, "CAT-24", 1344000m)
         };
         var products = new Dictionary<string, Product>(StringComparer.Ordinal);
 
@@ -464,12 +529,15 @@ public sealed class DevelopmentDataSeeder(
 
         await dbContext.SaveChangesAsync(cancellationToken);
 
-        // Development/demo prices stay deliberately low so payment flows can be exercised safely.
+        // Demo prices intentionally scale real carton values down 1,000 times so
+        // payment and order flows can be exercised without large transactions.
         await SeedPriceHistoryAsync(products["SKU001"], [235m, 245m, 252m], now, cancellationToken);
         await SeedPriceHistoryAsync(products["SKU002"], [310m, 320m], now, cancellationToken);
-        await SeedPriceHistoryAsync(products["SKU003"], [180m], now, cancellationToken);
+        await SeedPriceHistoryAsync(products["SKU003"], [118m], now, cancellationToken);
         await SeedPriceHistoryAsync(products["SKU004"], [400m, 415m], now, cancellationToken);
         await SeedPriceHistoryAsync(products["SKU005"], [325m], now, cancellationToken);
+        foreach (var definition in definitions.Skip(5))
+            await SeedPriceHistoryAsync(products[definition.Sku], [definition.UnitPrice / 1_000m], now, cancellationToken);
         await dbContext.SaveChangesAsync(cancellationToken);
         return products;
     }
@@ -502,6 +570,7 @@ public sealed class DevelopmentDataSeeder(
         product.ShelfLifeHours = definition.ShelfLifeHours;
         product.NearDateThresholdHours = definition.NearDateThresholdHours;
         product.Status = definition.Status;
+        product.ImageBlobKey = null;
         product.PublishedAt = definition.Status is ProductStatuses.Published or ProductStatuses.Inactive
             ? now.AddDays(-60)
             : null;
@@ -522,10 +591,9 @@ public sealed class DevelopmentDataSeeder(
             .ToArrayAsync(cancellationToken);
         if (existingPrices.Length > 0)
         {
-            // Upgrade only the deterministic development price history. This makes an
-            // already-seeded local database adopt the low test prices without changing
-            // a product whose price history was intentionally edited during a demo.
-            if (existingPrices.Length == prices.Count && existingPrices.All(candidate => candidate.UnitPrice >= 1_000m))
+            // Seeded catalog prices are deterministic so an existing development
+            // database is brought back to the agreed 1/1,000 demo scale.
+            if (existingPrices.Length == prices.Count)
             {
                 for (var index = 0; index < prices.Count; index++)
                     existingPrices[index].UnitPrice = prices[index];
@@ -843,7 +911,18 @@ public sealed class DevelopmentDataSeeder(
                 "\"promotionRevenueRatioMaximum\":0.05,\"successfulOrdersWeight\":0.25," +
                 "\"retailersServedWeight\":0.25,\"newRetailersWeight\":0.25," +
                 "\"promotionRevenueRatioWeight\":0.25}", "object",
-                "Mục tiêu KPI tháng: 15 đơn thành công, 5 điểm bán phục vụ, 1 điểm bán mới và tỷ lệ khuyến mãi tối đa 5 phần trăm")
+                "Mục tiêu KPI tháng: 15 đơn thành công, 5 điểm bán phục vụ, 1 điểm bán mới và tỷ lệ khuyến mãi tối đa 5 phần trăm"),
+            new ConfigurationSeed("FmcgCategoryCatalogJson",
+                "{\"categories\":[" +
+                "{\"name\":\"Thực phẩm đóng gói\",\"description\":\"Mì ăn liền, đồ hộp, ngũ cốc, thực phẩm khô và thực phẩm chế biến đóng gói.\"}," +
+                "{\"name\":\"Đồ uống\",\"description\":\"Nước uống đóng chai, nước giải khát, trà, cà phê và đồ uống tiêu dùng nhanh.\"}," +
+                "{\"name\":\"Sữa và sản phẩm từ sữa\",\"description\":\"Sữa, sữa chua, phô mai, bơ và sản phẩm dinh dưỡng từ sữa.\"}," +
+                "{\"name\":\"Bánh kẹo và đồ ăn nhẹ\",\"description\":\"Bánh, kẹo, chocolate, snack và đồ ăn nhẹ đóng gói.\"}," +
+                "{\"name\":\"Gia vị và nguyên liệu nấu ăn\",\"description\":\"Nước mắm, nước tương, dầu ăn, gia vị, sốt và nguyên liệu nấu ăn.\"}," +
+                "{\"name\":\"Chăm sóc cá nhân\",\"description\":\"Dầu gội, sữa tắm, kem đánh răng, mỹ phẩm phổ thông và vệ sinh cá nhân.\"}," +
+                "{\"name\":\"Chăm sóc gia đình\",\"description\":\"Chất tẩy rửa, nước giặt, nước rửa chén, giấy vệ sinh và sản phẩm vệ sinh nhà cửa.\"}," +
+                "{\"name\":\"Sản phẩm cho mẹ và bé\",\"description\":\"Tã bỉm, khăn ướt, thức ăn trẻ em và sản phẩm chăm sóc mẹ bé.\"}]}", "json",
+                "Danh mục FMCG chuẩn mặc định, Admin có thể cập nhật bằng JSON")
         };
         foreach (var definition in configurations)
         {
@@ -1192,13 +1271,24 @@ public sealed class DevelopmentDataSeeder(
         CancellationToken cancellationToken)
     {
         var warehouseByCode = warehouses.ToDictionary(item => item.Code, StringComparer.Ordinal);
-        var definitions = new[]
+        var warehouseCodes = new[] { "WH-HCM-01", "WH-TD", "WH-Q7" };
+        var definitions = new List<InventorySeed>
         {
-            new InventorySeed("PN-260901-01", "WH-HCM-01", "SKU001", new DateOnly(2027, 4, 30), 500m, 60m, "LÔ-SỮA-THÁNG-09", BatchExpiryStatuses.Valid),
-            new InventorySeed("PN-261001-02", "WH-TD", "SKU001", new DateOnly(2027, 3, 31), 200m, 0m, "LÔ-SỮA-THỦ-ĐỨC-THÁNG-10", BatchExpiryStatuses.Valid),
-            new InventorySeed("PN-261001-01", "WH-TD", "SKU002", new DateOnly(2026, 10, 28), 120m, 20m, "LÔ-SỮA-CHUA-THÁNG-10", BatchExpiryStatuses.NearExpiry),
-            new InventorySeed("PN-260901-02", "WH-Q7", "SKU003", new DateOnly(2026, 10, 10), 30m, 0m, "LÔ-THỰC-PHẨM-THÁNG-09", BatchExpiryStatuses.Expired)
+            new("PN-DEMO-SKU001-HCM", "WH-HCM-01", "SKU001", DateOnly.FromDateTime(now.UtcDateTime.AddDays(7)), 500m, 60m, "LÔ-MẪU-SKU001-HCM", BatchExpiryStatuses.Valid),
+            new("PN-DEMO-SKU001-TD", "WH-TD", "SKU001", DateOnly.FromDateTime(now.UtcDateTime.AddDays(6)), 200m, 0m, "LÔ-MẪU-SKU001-TD", BatchExpiryStatuses.Valid)
         };
+        definitions.AddRange(products.Values
+            .Where(product => product.Status == ProductStatuses.Published && product.Sku != "SKU001")
+            .OrderBy(product => product.Sku, StringComparer.Ordinal)
+            .Select((product, index) => new InventorySeed(
+                $"PN-DEMO-{product.Sku}",
+                warehouseCodes[index % warehouseCodes.Length],
+                product.Sku,
+                DateOnly.FromDateTime(now.UtcDateTime.AddHours(product.ShelfLifeHours * 0.75)),
+                240m,
+                0m,
+                $"LÔ-MẪU-{product.Sku}",
+                BatchExpiryStatuses.Valid)));
 
         foreach (var definition in definitions)
         {
@@ -1239,8 +1329,8 @@ public sealed class DevelopmentDataSeeder(
             await dbContext.SaveChangesAsync(cancellationToken);
 
             var line = await dbContext.GoodsReceiptLineRecords.SingleOrDefaultAsync(item =>
-                item.GoodsReceiptId == receipt.Id && item.ProductId == product.Id &&
-                item.ExpirationDate == definition.ExpirationDate, cancellationToken);
+                item.GoodsReceiptId == receipt.Id && item.ProductId == product.Id, cancellationToken);
+            var isNewLine = line is null;
             if (line is null)
             {
                 line = new GoodsReceiptLine { Id = Guid.NewGuid(), GoodsReceiptId = receipt.Id, ProductId = product.Id, CreatedAt = receivedAt };
@@ -1248,9 +1338,12 @@ public sealed class DevelopmentDataSeeder(
             }
             line.SourceLotCode = definition.SourceLotCode;
             line.ReceivedQuantity = definition.OnHand;
-            line.ProductionDate = definition.ExpirationDate.AddDays(
-                -(int)Math.Ceiling(product.ShelfLifeHours / 24m));
-            line.ExpirationDate = definition.ExpirationDate;
+            if (isNewLine)
+            {
+                line.ProductionDate = definition.ExpirationDate.AddDays(
+                    -(int)Math.Ceiling(product.ShelfLifeHours / 24m));
+                line.ExpirationDate = definition.ExpirationDate;
+            }
             await dbContext.SaveChangesAsync(cancellationToken);
 
             var batchCode = $"{warehouse.Code}-{product.Sku}-{line.ProductionDate:ddMMyyyy}-{definition.ExpirationDate:ddMMyyyy}";
@@ -1448,6 +1541,7 @@ public sealed class DevelopmentDataSeeder(
         string Name,
         string Description,
         string? ParentCode,
+        decimal DefaultMlorRatio,
         bool IsActive = true);
 
     private sealed record ProductSeed(
@@ -1457,7 +1551,8 @@ public sealed class DevelopmentDataSeeder(
         int ShelfLifeHours,
         int NearDateThresholdHours,
         string CategoryCode,
-        string Status,
+        decimal UnitPrice,
+        string Status = ProductStatuses.Published,
         string? ReplacesSku = null);
 
     private sealed record WarehouseSeed(
@@ -1492,7 +1587,7 @@ public sealed class DevelopmentDataSeeder(
         decimal OnHand, decimal Reserved, string SourceLotCode, string ExpiryStatus);
 
     private sealed record QrLabelSeed(
-        string QrCode, string BatchCode, decimal Quantity, string? ParentQrCode,
+        string QrCode, string WarehouseCode, string Sku, decimal Quantity, string? ParentQrCode,
         string Status, string Note);
 
     private sealed record ConfigurationSeed(
