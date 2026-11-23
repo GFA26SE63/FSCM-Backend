@@ -156,8 +156,8 @@ public sealed class OrderStore(AppDbContext dbContext) : IOrderStore
             await using var command = connection.CreateCommand();
             command.CommandText = "SELECT nextval('\"SalesOrderCodeSequence\"');";
             var number = Convert.ToInt64(await command.ExecuteScalarAsync(cancellationToken));
-            if (number > 999_999) throw OrderOperationException.Conflict("Order code range is exhausted.");
-            return $"DH-{number:000000}";
+            if (number > 9_999_999_999L) throw OrderOperationException.Conflict("Order code range is exhausted.");
+            return $"DH-{number:0000000000}";
         }
         finally
         {

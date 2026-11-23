@@ -59,7 +59,7 @@ public sealed partial class WarehouseWorkService
                     throw PickingOperationException.Conflict("Phiếu nhập không khớp pallet nguồn.");
                 return prior.Id;
             }
-            var document = New("Receipt", "Factory", warehouseId, key, request, actor, $"Nhận pallet {pallet.Code}");
+            var document = await New("Receipt", "Factory", warehouseId, key, request, actor, $"Nhận pallet {pallet.Code}", ct);
             Documents.Add(document);
             await db.SaveChangesAsync(ct);
             return document.Id;

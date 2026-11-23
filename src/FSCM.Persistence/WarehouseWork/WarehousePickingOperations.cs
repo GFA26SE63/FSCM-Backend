@@ -16,7 +16,7 @@ public sealed partial class WarehouseWorkService
         var cartons = await Cartons.Where(x => x.DocumentId == source.Id).ToArrayAsync(ct);
         if (lines.Length == 0 || lines.Any(l => cartons.Count(c => c.LineId == l.Id && c.ScannedAt.HasValue) != l.Quantity))
             throw PickingOperationException.Conflict("Phải soạn đủ trước khi xác nhận xuất.");
-        var issue = New("Issue", source.Reason, source.WarehouseId, $"issue:{source.Id:N}", new { source.Id }, actor, source.Note);
+        var issue = await New("Issue", source.Reason, source.WarehouseId, $"issue:{source.Id:N}", new { source.Id }, actor, source.Note, ct);
         issue.SourceDocumentId = source.Id; issue.DestinationWarehouseId = source.DestinationWarehouseId;
         issue.Status = source.Reason == "Order" ? "Prepared" : "Open";
         Documents.Add(issue);
