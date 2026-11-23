@@ -133,6 +133,14 @@ public sealed class WarehouseLogisticsReportBuilderTests
         Assert.Equal(6, b.Single(p => p.Sku == "JUICE").Expired);
     }
 
+    [Fact]
+    public void Rejects_more_than_50_selected_warehouses()
+    {
+        WarehouseLogisticsReportBuilder.Validate(Query() with { WarehouseIds = Enumerable.Range(0, 50).Select(_ => Guid.NewGuid()).ToArray() });
+        Assert.Throws<ReportOperationException>(() =>
+            WarehouseLogisticsReportBuilder.Validate(Query() with { WarehouseIds = Enumerable.Range(0, 51).Select(_ => Guid.NewGuid()).ToArray() }));
+    }
+
     [Theory]
     [InlineData(0)]
     [InlineData(51)]

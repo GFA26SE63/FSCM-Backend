@@ -112,7 +112,15 @@ public sealed class OperationsReportStore(AppDbContext db) : IOperationsReportSt
         }
         var items = await source.OrderByDescending(r => r.At).ThenBy(r => r.Id)
             .Skip((q.Page - 1) * q.PageSize).Take(q.PageSize).ToArrayAsync(ct);
-        return new(items, count, q.Page, q.PageSize, summary, notes, byProgram);
+        OperationsReportPointsTotal? pointsTotal = null;
+        if (kind == "loyalty")
+        {
+            // Totals row of the "Biến động điểm" column over every record in the filter (not just this page).
+            var received = await source.Where(r => r.Points > 0).SumAsync(r => (decimal?)r.Points, ct) ?? 0;
+            var used = -(await source.Where(r => r.Points < 0).SumAsync(r => (decimal?)r.Points, ct) ?? 0);
+            pointsTotal = new(received, used, received - used);
+        }
+        return new(items, count, q.Page, q.PageSize, summary, notes, byProgram, pointsTotal);
     }
 
     private IQueryable<OperationsReportRow> Redemptions() =>

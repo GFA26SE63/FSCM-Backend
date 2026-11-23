@@ -24,6 +24,21 @@ public sealed class WarehouseDocumentsController(WarehouseWorkService service, I
     public Task<WarehouseWorkResult> Get(Guid id, CancellationToken ct) => service.GetAsync(id, Actor, Role, ct);
     [HttpGet("factory-pending")]
     public Task<FactoryInboundPallet[]> FactoryPending(CancellationToken ct) => service.PendingFactoryAsync(Actor, Role, ct);
+    /// <summary>Receipt history: factory PNKs grouped by dispatch note (older per-pallet PNKs of one note form one group).</summary>
+    [HttpGet("factory-receipt-groups")]
+    public Task<FactoryReceiptGroup[]> FactoryReceiptGroups(CancellationToken ct) => service.FactoryReceiptGroupsAsync(Actor, Role, ct);
+    /// <summary>Pending factory goods grouped by dispatch note (PXN): one row per note with all its pallets.</summary>
+    [HttpGet("factory-pending-dispatches")]
+    public Task<FactoryInboundDispatch[]> FactoryPendingDispatches(CancellationToken ct) => service.PendingFactoryDispatchesAsync(Actor, Role, ct);
+    /// <summary>Opens the single PNK that receives every pallet of one dispatch note.</summary>
+    [HttpPost("factory-receipts/from-dispatch")]
+    [Authorize(Roles = SystemRoles.WarehouseKeeper)]
+    public async Task<WarehouseWorkResult> PrepareFactoryDispatch(PrepareFactoryDispatchReceiptRequest request, CancellationToken ct) =>
+        await Get(await service.PrepareFactoryDispatchAsync(request, Actor, Role, ct), ct);
+    /// <summary>Pallets a dispatch-note PNK must receive and which are already received; 204 for other receipts.</summary>
+    [HttpGet("{id:guid}/expected-pallets")]
+    public async Task<ActionResult<FactoryReceiptExpectation>> ExpectedPallets(Guid id, CancellationToken ct) =>
+        await service.FactoryExpectationAsync(id, Actor, Role, ct) is { } expectation ? expectation : NoContent();
     [HttpPost("factory-receipts/from-pallet")]
     [Authorize(Roles = SystemRoles.WarehouseKeeper)]
     public async Task<WarehouseWorkResult> PrepareFactory(PrepareFactoryReceiptRequest request, CancellationToken ct) =>
@@ -96,6 +111,11 @@ public sealed class WarehouseDocumentsController(WarehouseWorkService service, I
             html.Append($"<tr><td>{E(c.CartonId)}</td><td>{At(c.ScannedAt)}</td></tr>");
         return Content(html.Append("</table><p>Người giao hàng / Thủ kho: __________________ &nbsp; Người nhận / Tài xế: __________________</p></html>").ToString(), "text/html; charset=utf-8");
     }
+    /// <summary>Dispatch-note PNK: records a pallet that never arrived as "Thiếu cả pallet" (all cartons Missing).</summary>
+    [HttpPost("{id:guid}/missing-pallet")]
+    [Authorize(Roles = SystemRoles.WarehouseKeeper)]
+    public async Task<WarehouseWorkResult> MissingPallet(Guid id, MissingPalletRequest request, CancellationToken ct) =>
+        await Get(await service.MarkPalletMissingAsync(id, request, Actor, Role, ct), ct);
     [HttpPost("{id:guid}/receive-pallet")]
     [Authorize(Roles = SystemRoles.WarehouseKeeper)]
     public async Task<WarehouseWorkResult> ReceivePallet(Guid id, InspectedPalletRequest request, CancellationToken ct) =>

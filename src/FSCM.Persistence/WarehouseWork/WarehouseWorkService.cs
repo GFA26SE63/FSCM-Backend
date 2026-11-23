@@ -287,6 +287,7 @@ public sealed partial class WarehouseWorkService(AppDbContext db, InventoryServi
             else if (d.Reason == "Factory" && d.GoodsReceiptId is null)
             {
                 // Each pallet scan already posted its inventory atomically; closing never increments it again.
+                await RequireAllExpectedPalletsAsync(d, ct);
             }
             else if (d.Reason == "Factory")
             {
@@ -399,7 +400,7 @@ public sealed partial class WarehouseWorkService(AppDbContext db, InventoryServi
         }
         var manifest = await factory.ManifestAsync(code, ct);
         var p = manifest.Pallet; var fb = manifest.Batch;
-        RequireBoundPallet(d, p.Id);
+        await RequireBoundPalletAsync(d, p.Id, ct);
         if (d.Status != "Open") throw PickingOperationException.Conflict("Phiếu đã đóng, không thể nhận thêm pallet.");
         Version(d, version);
         if (p.Status != "Dispatched" || p.DestinationWarehouseId != d.WarehouseId)
