@@ -3,13 +3,14 @@ using FSCM.Application.Features.Catalog;
 using FSCM.Domain.Authorization;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using FSCM.Persistence.DbContexts;
 
 namespace FSCM.API.Controllers;
 
 [ApiController]
 [Authorize]
 [Route("api/v1/categories")]
-public sealed class CategoriesController(CatalogService catalogService) : ControllerBase
+public sealed class CategoriesController(CatalogService catalogService, AppDbContext db) : ControllerBase
 {
     [HttpGet]
     [ProducesResponseType<IReadOnlyCollection<CategoryResult>>(StatusCodes.Status200OK)]
@@ -30,6 +31,9 @@ public sealed class CategoriesController(CatalogService catalogService) : Contro
         CreateCategoryRequest request,
         CancellationToken cancellationToken)
     {
+        var evaluation = await FmcgCategoryCatalogController.EvaluateAsync(db, new(request.Name, request.Description), cancellationToken);
+        if (!evaluation.IsFmcgRelated && !request.AcknowledgeNonFmcgWarning)
+            return Conflict(new { code = "non_fmcg_warning", message = "Danh mục này không khớp danh mục FMCG chuẩn. Bạn vẫn có thể tạo sau khi xác nhận cảnh báo.", evaluation.CatalogVersion });
         var result = await catalogService.CreateCategoryAsync(
             request.ParentCategoryId,
             request.Code,
@@ -42,16 +46,21 @@ public sealed class CategoriesController(CatalogService catalogService) : Contro
     [Authorize(Roles = SystemRoles.Admin)]
     [HttpPut("{categoryId:guid}")]
     [ProducesResponseType<CategoryResult>(StatusCodes.Status200OK)]
-    public Task<CategoryResult> Update(
+    public async Task<ActionResult<CategoryResult>> Update(
         Guid categoryId,
         UpdateCategoryRequest request,
-        CancellationToken cancellationToken) =>
-        catalogService.UpdateCategoryAsync(
+        CancellationToken cancellationToken)
+    {
+        var evaluation = await FmcgCategoryCatalogController.EvaluateAsync(db, new(request.Name, request.Description), cancellationToken);
+        if (!evaluation.IsFmcgRelated && !request.AcknowledgeNonFmcgWarning)
+            return Conflict(new { code = "non_fmcg_warning", message = "Danh mục này không khớp danh mục FMCG chuẩn. Bạn vẫn có thể lưu sau khi xác nhận cảnh báo.", evaluation.CatalogVersion });
+        return await catalogService.UpdateCategoryAsync(
             categoryId,
             request.ParentCategoryId,
             request.Name,
             request.Description,
             cancellationToken);
+    }
 
     [Authorize(Roles = SystemRoles.Admin)]
     [HttpPatch("{categoryId:guid}/status")]
