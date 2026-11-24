@@ -10,6 +10,7 @@ using FSCM.Domain.Authorization;
 using FSCM.Domain.Entities;
 using FSCM.Persistence.DbContexts;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using Npgsql;
 
 namespace FSCM.Persistence.WarehouseWork;
@@ -65,7 +66,7 @@ public sealed partial class WarehouseWorkService(AppDbContext db, InventoryServi
             var replay = await Replay(key, data, actor, ct);
             if (replay.HasValue) return replay.Value;
             await Access(data.WarehouseId, actor, role, ct);
-            var d = New("Request", data.Reason, data.WarehouseId, key, data, actor, data.Note);
+            var d = await New("Request", data.Reason, data.WarehouseId, key, data, actor, data.Note, ct);
             if (data.Reason == "Order")
             {
                 if (data.DestinationWarehouseId.HasValue || data.OrderIds.Length == 0 ||
@@ -134,8 +135,8 @@ public sealed partial class WarehouseWorkService(AppDbContext db, InventoryServi
             await Access(wh, actor, role, ct);
             if (await Documents.AnyAsync(x => x.SourceDocumentId == sourceId, ct))
                 throw PickingOperationException.Conflict("Đã có phiếu thực hiện cho chứng từ nguồn này.");
-            var d = New(source.Kind == "Request" ? "Issue" : "Receipt", source.Reason, wh,
-                key, new { sourceId }, actor, source.Note);
+            var d = await New(source.Kind == "Request" ? "Issue" : "Receipt", source.Reason, wh,
+                key, new { sourceId }, actor, source.Note, ct);
             d.SourceDocumentId = source.Id; d.DestinationWarehouseId = source.DestinationWarehouseId;
             var sourceLines = await Lines.Where(x => x.DocumentId == sourceId).ToArrayAsync(ct);
             foreach (var l in sourceLines)
@@ -164,7 +165,7 @@ public sealed partial class WarehouseWorkService(AppDbContext db, InventoryServi
             await Access(data.WarehouseId, actor, role, ct);
             if (data.Lines is { Length: > 0 })
                 throw PickingOperationException.Validation("Nhập từ nhà máy chỉ quét pallet đã phát hành; không nhập SKU/batch hoặc sinh QR tại kho.");
-            var d = New("Receipt", "Factory", data.WarehouseId, key, data, actor, data.Note);
+            var d = await New("Receipt", "Factory", data.WarehouseId, key, data, actor, data.Note, ct);
             Documents.Add(d);
             await db.SaveChangesAsync(ct);
             return d.Id;
@@ -568,12 +569,68 @@ public sealed partial class WarehouseWorkService(AppDbContext db, InventoryServi
             ProductionDate = batch.ProductionDate, ExpirationDate = batch.ExpirationDate,
             SourceLotCode = batch.FactoryProductionBatchId.HasValue ? db.Set<FactoryProductionBatch>().Local.FirstOrDefault(x => x.Id == batch.FactoryProductionBatchId)?.Code ?? (await db.Set<FactoryProductionBatch>().SingleAsync(x => x.Id == batch.FactoryProductionBatchId, ct)).Code : null };
     }
-    private WarehouseDocument New<T>(string kind, string reason, Guid wh, string key, T request, Guid actor, string? note)
+    private async Task<WarehouseDocument> New<T>(string kind, string reason, Guid wh, string key, T request, Guid actor, string? note, CancellationToken ct)
     {
         var id = Guid.NewGuid();
-        return new() { Id = id, Code = $"{(kind == "Request" ? "YCK" : kind == "Picking" ? "PSO" : kind == "Issue" ? "PXK" : "PNK")}-{id:N}",
+        var code = await NextDocumentCodeAsync(kind, wh, ct);
+        return new() { Id = id, Code = code,
             Kind = kind, Reason = reason, WarehouseId = wh, CreatedByUserId = actor, CreatedAt = clock.GetUtcNow(),
             OperationKey = key, RequestHash = Hash(request, actor), Note = note };
+    }
+
+    private async Task<string> NextDocumentCodeAsync(string kind, Guid warehouseId, CancellationToken ct)
+    {
+        var prefix = kind == "Request" ? "YCK" : kind == "Picking" ? "PSO" : kind == "Issue" ? "PXK" : "PNK";
+        var warehouse = await db.WarehouseRecords.AsNoTracking().FirstOrDefaultAsync(x => x.Id == warehouseId, ct);
+        var whCode = warehouse?.Code ?? "WH";
+        var today = FactoryTraceabilityService.VietnamDate(clock.GetUtcNow());
+
+        var connection = db.Database.GetDbConnection();
+        var openedHere = connection.State != ConnectionState.Open;
+        if (openedHere) await connection.OpenAsync(ct);
+        try
+        {
+            await using var command = connection.CreateCommand();
+            if (db.Database.CurrentTransaction != null)
+            {
+                command.Transaction = db.Database.CurrentTransaction.GetDbTransaction();
+            }
+            command.CommandText = """
+                INSERT INTO "BUSINESS_DOCUMENT_SEQUENCE" ("DocumentType", "BusinessDate", "LastNumber")
+                VALUES (@docType, @businessDate, 1)
+                ON CONFLICT ("DocumentType", "BusinessDate") DO UPDATE
+                SET "LastNumber" = "BUSINESS_DOCUMENT_SEQUENCE"."LastNumber" + 1
+                RETURNING "LastNumber";
+                """;
+            command.Parameters.Add(new NpgsqlParameter<string>("docType", prefix));
+            command.Parameters.Add(new NpgsqlParameter<DateOnly>("businessDate", today));
+            var number = Convert.ToInt32(await command.ExecuteScalarAsync(ct));
+            var candidate = $"{prefix}-{whCode}-{today:yyyyMMdd}-{number:D4}";
+            while (await Documents.AnyAsync(x => x.Code == candidate, ct))
+            {
+                number++;
+                candidate = $"{prefix}-{whCode}-{today:yyyyMMdd}-{number:D4}";
+            }
+            return candidate;
+        }
+        catch
+        {
+            var todayStart = new DateTimeOffset(today.ToDateTime(TimeOnly.MinValue), TimeSpan.FromHours(7));
+            var todayEnd = todayStart.AddDays(1);
+            var count = await Documents.CountAsync(d => d.Kind == kind && d.CreatedAt >= todayStart && d.CreatedAt < todayEnd, ct);
+            var number = count + 1;
+            var candidate = $"{prefix}-{whCode}-{today:yyyyMMdd}-{number:D4}";
+            while (await Documents.AnyAsync(x => x.Code == candidate, ct))
+            {
+                number++;
+                candidate = $"{prefix}-{whCode}-{today:yyyyMMdd}-{number:D4}";
+            }
+            return candidate;
+        }
+        finally
+        {
+            if (openedHere) await connection.CloseAsync();
+        }
     }
     private static string Hash<T>(T request, Guid actor) => Convert.ToHexString(SHA256.HashData(
         Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new { actor, request }))));

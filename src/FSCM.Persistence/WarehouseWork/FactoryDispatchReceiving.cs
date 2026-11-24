@@ -87,7 +87,7 @@ public sealed partial class WarehouseWorkService
             await Access(warehouseId, actor, role, ct);
             var first = pallets[0];
             var code = first.DispatchCode ?? request.DispatchNoteId.ToString("N");
-            var document = New("Receipt", "Factory", warehouseId, key, request, actor, $"Nhận phiếu xuất {code} · {pallets.Length} pallet");
+            var document = await New("Receipt", "Factory", warehouseId, key, request, actor, $"Nhận phiếu xuất {code} · {pallets.Length} pallet", ct);
             Documents.Add(document);
             var expectation = new FactoryReceiptExpectation(request.DispatchNoteId, code, first.VehicleNumber, first.DriverName,
                 pallets.Select(p => new FactoryExpectedPallet(p.PalletId, p.PalletCode, p.BatchCode, p.Sku, p.ProductName,

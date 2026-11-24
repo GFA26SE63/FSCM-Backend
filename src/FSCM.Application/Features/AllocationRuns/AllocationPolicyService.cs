@@ -10,15 +10,28 @@ namespace FSCM.Application.Features.AllocationRuns;
 /// <summary>The same published rules are used for availability, reservation and delivery rechecks.</summary>
 public class AllocationPolicyService(IOrderStore store, DeliveryEtaService eta, MapService? maps = null)
 {
+    private readonly AsyncLocal<IDictionary<Guid, Task<EtaResult?>>?> routeCache = new();
+
+    /// <summary>Shares warehouse-to-retailer routes for one bounded read operation.</summary>
+    public IDisposable CacheRoutes()
+    {
+        var previous = routeCache.Value;
+        routeCache.Value = new Dictionary<Guid, Task<EtaResult?>>();
+        return new RouteCacheScope(routeCache, previous);
+    }
+
     public virtual async Task<AllocationWeights> WeightsAsync(CancellationToken ct)
     {
         var weights = new AllocationWeights();
         if (await store.FindConfigurationAsync("allocation.weights", ct) is { } raw)
         {
             using var json = JsonDocument.Parse(raw);
-            weights = weights with { ShelfLife = json.RootElement.GetProperty("expiry").GetDecimal(),
+            weights = weights with
+            {
+                ShelfLife = json.RootElement.GetProperty("expiry").GetDecimal(),
                 Distance = json.RootElement.GetProperty("distance").GetDecimal(),
-                Coverage = json.RootElement.GetProperty("coverage").GetDecimal() };
+                Coverage = json.RootElement.GetProperty("coverage").GetDecimal()
+            };
         }
         if (await store.FindConfigurationAsync("allocation.service_radius_meters", ct) is { } radius)
             weights = weights with { MaximumDistanceMeters = decimal.Parse(radius, System.Globalization.CultureInfo.InvariantCulture) };
@@ -32,7 +45,19 @@ public class AllocationPolicyService(IOrderStore store, DeliveryEtaService eta, 
         var routes = new Dictionary<Guid, EtaResult?>();
         foreach (var warehouseId in positions.Select(p => p.Warehouse.Id).Distinct())
         {
-            routes[warehouseId] = await ResolveRouteAsync(warehouseId, retailerId, at, ct);
+            // An availability request commonly checks many SKUs for the same
+            // retailer. The delivery route depends on the warehouse and the
+            // retailer, not the SKU, so reuse the in-flight/completed lookup.
+            // This also prevents a map-distance refresh for every SKU.
+            Task<EtaResult?>? routeTask = null;
+            if (this.routeCache.Value is not null)
+                this.routeCache.Value.TryGetValue(warehouseId, out routeTask);
+            if (routeTask is null)
+            {
+                routeTask = ResolveRouteAsync(warehouseId, retailerId, at, ct);
+                this.routeCache.Value?[warehouseId] = routeTask;
+            }
+            routes[warehouseId] = await routeTask;
         }
         return positions.Select(p =>
         {
@@ -43,6 +68,13 @@ public class AllocationPolicyService(IOrderStore store, DeliveryEtaService eta, 
                 p.IssuableQuantity, route?.DistanceMeters ?? 0, arrival,
                 arrival.HasValue ? DateOnly.FromDateTime(arrival.Value.ToOffset(TimeSpan.FromHours(7)).DateTime) : null);
         }).ToArray();
+    }
+
+    private sealed class RouteCacheScope(
+        AsyncLocal<IDictionary<Guid, Task<EtaResult?>>?> owner,
+        IDictionary<Guid, Task<EtaResult?>>? previous) : IDisposable
+    {
+        public void Dispose() => owner.Value = previous;
     }
 
     private async Task<EtaResult?> ResolveRouteAsync(Guid warehouseId, Guid retailerId,
