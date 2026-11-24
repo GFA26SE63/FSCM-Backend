@@ -59,7 +59,11 @@ public sealed record OperationsReportMetric(string Label, decimal Value);
 public sealed record OperationsReportResult(IReadOnlyCollection<OperationsReportRow> Items,
     int TotalCount, int Page, int PageSize, IReadOnlyCollection<OperationsReportMetric> Summary,
     IReadOnlyCollection<string> Notes,
-    IReadOnlyCollection<PromotionProgramSummaryRow>? ByProgram = null);
+    IReadOnlyCollection<PromotionProgramSummaryRow>? ByProgram = null,
+    OperationsReportPointsTotal? PointsTotal = null);
+
+/// <summary>Loyalty report: points received (+), used (−) and net change over the whole filter.</summary>
+public sealed record OperationsReportPointsTotal(decimal Received, decimal Used, decimal Net);
 
 public interface IOperationsReportStore
 {

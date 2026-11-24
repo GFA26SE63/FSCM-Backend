@@ -18,6 +18,11 @@ public sealed class WarehouseLogisticsReportStore(AppDbContext db) : IWarehouseL
 
         var warehouseQuery = db.WarehouseRecords.AsNoTracking().Where(w => w.IsActive);
         if (query.RegionId.HasValue) warehouseQuery = warehouseQuery.Where(w => w.RegionId == query.RegionId.Value);
+        if (query.WarehouseIds is { Count: > 0 })
+        {
+            var selectedIds = query.WarehouseIds.ToArray();
+            warehouseQuery = warehouseQuery.Where(w => selectedIds.Contains(w.Id));
+        }
 
         var warehouses = await (from w in warehouseQuery
             join r in db.RegionRecords.AsNoTracking() on w.RegionId equals r.Id into regions

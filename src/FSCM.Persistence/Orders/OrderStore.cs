@@ -156,8 +156,8 @@ public sealed class OrderStore(AppDbContext dbContext) : IOrderStore
             await using var command = connection.CreateCommand();
             command.CommandText = "SELECT nextval('\"SalesOrderCodeSequence\"');";
             var number = Convert.ToInt64(await command.ExecuteScalarAsync(cancellationToken));
-            if (number > 999_999) throw OrderOperationException.Conflict("Order code range is exhausted.");
-            return $"DH-{number:000000}";
+            if (number > 9_999_999_999L) throw OrderOperationException.Conflict("Order code range is exhausted.");
+            return $"DH-{number:0000000000}";
         }
         finally
         {
@@ -209,16 +209,47 @@ public sealed class OrderStore(AppDbContext dbContext) : IOrderStore
         var ordered = filter.Sort == "asc"
             ? query.OrderBy(item => item.ServerReceivedAt).ThenBy(item => item.OrderCode)
             : query.OrderByDescending(item => item.ServerReceivedAt).ThenByDescending(item => item.OrderCode);
-        var ids = await ordered
+        var orders = await ordered
             .Skip((filter.Page - 1) * filter.PageSize)
             .Take(filter.PageSize)
-            .Select(item => item.Id).ToArrayAsync(cancellationToken);
-        var results = new List<OrderView>(ids.Length);
-        foreach (var id in ids)
+            .ToArrayAsync(cancellationToken);
+        if (orders.Length == 0) return ([], totalCount);
+
+        // List cards need only summary data. Loading every order through
+        // LoadAsync used to issue a full detail graph per row (lines,
+        // allocations, history, shipments, payment and allocation context),
+        // turning one ten-row GraphQL page into hundreds of serial queries.
+        var orderIds = orders.Select(item => item.Id).ToArray();
+        var lines = await dbContext.SalesOrderLineRecords.AsNoTracking()
+            .Where(item => orderIds.Contains(item.SalesOrderId))
+            .OrderBy(item => item.LineNumber)
+            .ToArrayAsync(cancellationToken);
+        var shipments = await dbContext.ShipmentRecords.AsNoTracking()
+            .Where(item => orderIds.Contains(item.SalesOrderId))
+            .Select(item => new { item.SalesOrderId, View = new OrderShipmentView(item.Id, item.Status, item.DispatchedAt, item.ReceivedAt) })
+            .ToArrayAsync(cancellationToken);
+        var runs = await dbContext.AllocationRunRecords.AsNoTracking()
+            .Where(item => orderIds.Contains(item.SalesOrderId))
+            .OrderByDescending(item => item.AttemptNumber)
+            .ThenByDescending(item => item.StartedAt)
+            .ToArrayAsync(cancellationToken);
+
+        var results = orders.Select(order =>
         {
-            var view = await FindAsync(id, false, cancellationToken);
-            if (view is not null) results.Add(view);
-        }
+            var run = runs.FirstOrDefault(item => item.SalesOrderId == order.Id);
+            OrderAllocationReadContext? allocation = run is null ? null : new(
+                run.Id, run.RunCode, run.Status, run.Status, run.FailureReason,
+                Guid.Empty, run.AttemptNumber, AllocationPlanVersionStatuses.Approved,
+                run.CompletedAt ?? run.StartedAt, [], []) { Audit = AllocationAudit.Read(run.AlgorithmSettings) };
+            return new OrderView(
+                order,
+                lines.Where(item => item.SalesOrderId == order.Id)
+                    .Select(item => new OrderLineView(item, [], null)).ToArray(),
+                [],
+                shipments.Where(item => item.SalesOrderId == order.Id).Select(item => item.View).ToArray(),
+                new Dictionary<Guid, string>(), new Dictionary<Guid, string>(), new Dictionary<Guid, int>())
+            { AllocationContext = allocation };
+        }).ToArray();
 
         return (results, totalCount);
     }

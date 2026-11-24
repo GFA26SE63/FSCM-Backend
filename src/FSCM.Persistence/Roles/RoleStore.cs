@@ -110,13 +110,13 @@ public sealed class RoleStore(AppDbContext dbContext) : IRoleStore
             (
                 SystemRoles.WarehouseKeeper,
                 "Thủ kho",
-                "Quản lý chứng từ xuất nhập kho, tồn kho, lô hàng, luân chuyển và tiêu hủy hàng hết hạn.",
+                "Quản lý chứng từ xuất nhập kho, tồn kho, lô hàng, luân chuyển trên cổng Web và thiết bị cầm tay Mobile.",
                 true,
                 new[]
                 {
                     SystemScreenKeys.Dashboard, SystemScreenKeys.WarehouseInbound, SystemScreenKeys.WarehouseOutbound,
                     SystemScreenKeys.WarehouseTransfers, SystemScreenKeys.Batches, SystemScreenKeys.WarehouseTrace, SystemScreenKeys.Disposal
-                }
+                }.Concat(SystemScreenKeys.MobileWarehouseScreens).ToArray()
             ),
             (
                 SystemRoles.SalesManager,
@@ -133,21 +133,46 @@ public sealed class RoleStore(AppDbContext dbContext) : IRoleStore
                 "Nhân viên bán hàng",
                 "Nhân viên kinh doanh khai báo khách hàng và chăm sóc đại lý trên ứng dụng di động.",
                 true,
-                Array.Empty<string>()
+                SystemScreenKeys.MobileSalesScreens.ToArray()
             ),
             (
                 SystemRoles.Retailer,
                 "Nhà bán lẻ",
                 "Đại lý bán lẻ đặt hàng, thanh toán nợ và đổi quà trên ứng dụng di động.",
                 true,
-                Array.Empty<string>()
+                SystemScreenKeys.MobileRetailerScreens.ToArray()
             )
         };
+
+        var existingRolesWithPerms = await dbContext.RoleDefinitionRecords
+            .Include(r => r.Permissions)
+            .ToListAsync(ct);
+        var existingDict = existingRolesWithPerms.ToDictionary(r => r.Code, StringComparer.OrdinalIgnoreCase);
 
         bool changes = false;
         foreach (var def in defaultRoles)
         {
-            if (!existingSet.Contains(def.Code))
+            if (existingDict.TryGetValue(def.Code, out var existingRole))
+            {
+                // If system role has no permissions in DB (e.g. Sales, Retailer from earlier migration), seed defaults
+                if (existingRole.IsSystem && existingRole.Permissions.Count == 0 && def.Permissions.Length > 0)
+                {
+                    foreach (var perm in def.Permissions)
+                    {
+                        var p = new RolePermission
+                        {
+                            Id = Guid.NewGuid(),
+                            RoleId = existingRole.Id,
+                            PermissionKey = perm,
+                            CreatedAt = now
+                        };
+                        existingRole.Permissions.Add(p);
+                        dbContext.RolePermissionRecords.Add(p);
+                    }
+                    changes = true;
+                }
+            }
+            else
             {
                 var role = new RoleDefinition
                 {
@@ -162,13 +187,15 @@ public sealed class RoleStore(AppDbContext dbContext) : IRoleStore
 
                 foreach (var perm in def.Permissions)
                 {
-                    role.Permissions.Add(new RolePermission
+                    var p = new RolePermission
                     {
                         Id = Guid.NewGuid(),
                         RoleId = role.Id,
                         PermissionKey = perm,
                         CreatedAt = now
-                    });
+                    };
+                    role.Permissions.Add(p);
+                    dbContext.RolePermissionRecords.Add(p);
                 }
 
                 dbContext.RoleDefinitionRecords.Add(role);

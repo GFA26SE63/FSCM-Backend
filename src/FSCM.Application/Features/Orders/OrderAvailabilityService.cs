@@ -27,6 +27,9 @@ public sealed class OrderAvailabilityService(
         var now = timeProvider.GetUtcNow();
         var engine = new AllocationEngine(await policy.WeightsAsync(cancellationToken));
         var items = new List<OrderAvailabilityItem>();
+        // Routes are SKU-independent. Retain them for this bounded request so
+        // checking a catalog does not repeatedly call ETA/maps per SKU.
+        using var routeCache = policy.CacheRoutes();
         foreach (var productId in productIds.Distinct())
         {
             var product = await store.FindPublishedProductAsync(productId, cancellationToken)
@@ -36,16 +39,20 @@ public sealed class OrderAvailabilityService(
                 new RealTimeInventoryCandidate(position.Batch, position.Balance,
                     position.Warehouse, product, position.WarehouseLatitude, position.WarehouseLongitude,
                     position.ActiveLockedQuantity)).ToArray();
-            var candidates = await policy.CandidatesAsync(retailerId, inventoryPositions, now, cancellationToken);
+            var candidates = await policy.CandidatesAsync(
+                retailerId, inventoryPositions, now, cancellationToken);
             var mlor = await store.ResolveMlorAsync(retailerId, productId, now, cancellationToken);
             if (mlor is null)
             {
-                items.Add(new(productId, product.Sku, 0) { Warehouses = positions.GroupBy(p => p.Warehouse.Id)
+                items.Add(new(productId, product.Sku, 0)
+                {
+                    Warehouses = positions.GroupBy(p => p.Warehouse.Id)
                     .Select(g => new OrderWarehouseAvailability(g.Key, g.First().Warehouse.Code,
                         g.First().Warehouse.Name, 0,
                         candidates.FirstOrDefault(c => c.WarehouseId == g.Key && c.EstimatedArrivalAt.HasValue)?.DistanceMeters,
                         candidates.Where(c => c.WarehouseId == g.Key).All(engine.IsOutsideServiceRadius)
-                            ? "OutsideServiceRadius" : "MissingMlor")).ToArray() });
+                            ? "OutsideServiceRadius" : "MissingMlor")).ToArray()
+                });
                 continue;
             }
             var result = engine.Allocate(new AllocationRequest(product.Sku, 1,
