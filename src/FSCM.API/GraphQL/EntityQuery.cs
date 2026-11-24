@@ -141,6 +141,8 @@ public sealed class EntityQuery(EntityQueryAccess access)
     public IQueryable<UserAccount> UserAccounts([Service] IEntityQueryService source) => source.Query<UserAccount>(access);
     [UsePaging(typeof(DomainEntityObjectType<Warehouse>), ConnectionName = "EntityWarehouses", DefaultPageSize = 50, MaxPageSize = int.MaxValue, IncludeTotalCount = true, RequirePagingBoundaries = false), UseProjection, UseFiltering, UseSorting]
     public IQueryable<Warehouse> Warehouses([Service] IEntityQueryService source) => source.Query<Warehouse>(access);
+    [UsePaging(typeof(DomainEntityObjectType<WarehouseTransfer>), ConnectionName = "EntityWarehouseTransfers", DefaultPageSize = 50, MaxPageSize = int.MaxValue, IncludeTotalCount = true, RequirePagingBoundaries = false), UseProjection, UseFiltering, UseSorting]
+    public IQueryable<WarehouseTransfer> WarehouseTransfers([Service] IEntityQueryService source) => source.Query<WarehouseTransfer>(access);
     [UsePaging(typeof(DomainEntityObjectType<UserWarehouseAssignment>), ConnectionName = "EntityUserWarehouseAssignments", DefaultPageSize = 50, MaxPageSize = int.MaxValue, IncludeTotalCount = true, RequirePagingBoundaries = false), UseProjection, UseFiltering, UseSorting]
     public IQueryable<UserWarehouseAssignment> UserWarehouseAssignments([Service] IEntityQueryService source) => source.Query<UserWarehouseAssignment>(access);
     [UsePaging(typeof(DomainEntityObjectType<UserRegionAssignment>), ConnectionName = "EntityUserRegionAssignments", DefaultPageSize = 50, MaxPageSize = int.MaxValue, IncludeTotalCount = true, RequirePagingBoundaries = false), UseProjection, UseFiltering, UseSorting]
