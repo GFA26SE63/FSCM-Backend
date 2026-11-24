@@ -177,6 +177,9 @@ public sealed class EntityQueryService(AppDbContext dbContext) : IEntityQuerySer
             return Cast<TEntity, Driver>(dbContext.DriverRecords.Where(x => warehouseIds.Contains(x.WarehouseId)));
         if (typeof(TEntity) == typeof(Vehicle))
             return Cast<TEntity, Vehicle>(dbContext.VehicleRecords.Where(x => warehouseIds.Contains(x.WarehouseId)));
+        if (typeof(TEntity) == typeof(WarehouseTransfer))
+            return Cast<TEntity, WarehouseTransfer>(dbContext.WarehouseTransferRecords.Where(x =>
+                warehouseIds.Contains(x.SourceWarehouseId) || warehouseIds.Contains(x.DestinationWarehouseId)));
         if (typeof(TEntity) == typeof(WriteOff))
             return Cast<TEntity, WriteOff>(dbContext.WriteOffRecords.Where(x => warehouseIds.Contains(x.WarehouseId)));
         if (typeof(TEntity) == typeof(WriteOffItem))
