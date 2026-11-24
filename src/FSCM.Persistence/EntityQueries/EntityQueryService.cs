@@ -11,6 +11,12 @@ public sealed class EntityQueryService(AppDbContext dbContext) : IEntityQuerySer
     public IQueryable<TEntity> Query<TEntity>(EntityQueryAccess access) where TEntity : class
     {
         var query = dbContext.Set<TEntity>().AsNoTracking();
+        // Notifications are a private inbox.  Administrative access to other
+        // entities must never turn this into a system-wide notification feed.
+        if (typeof(TEntity) == typeof(Notification))
+            return Cast<TEntity, Notification>(dbContext.NotificationRecords
+                .AsNoTracking()
+                .Where(x => x.UserAccountId == access.UserId));
         if (access.Role == SystemRoles.Admin)
             return query;
         if (access.Role == SystemRoles.Operator && !IsAdminOnlyEntity<TEntity>())
