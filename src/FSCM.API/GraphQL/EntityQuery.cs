@@ -289,4 +289,57 @@ public sealed class EntityQuery(EntityQueryAccess access)
     public IQueryable<WriteOffAttachment> WriteOffAttachments([Service] IEntityQueryService source) => source.Query<WriteOffAttachment>(access);
     [UsePaging(typeof(DomainEntityObjectType<SystemConfiguration>), ConnectionName = "EntitySystemConfigurations", DefaultPageSize = 50, MaxPageSize = int.MaxValue, IncludeTotalCount = true, RequirePagingBoundaries = false), UseProjection, UseFiltering, UseSorting]
     public IQueryable<SystemConfiguration> SystemConfigurations([Service] IEntityQueryService source) => source.Query<SystemConfiguration>(access);
+
+    [UsePaging(typeof(DomainEntityObjectType<WarehouseDocument>), ConnectionName = "EntityWarehouseDocuments", DefaultPageSize = 50, MaxPageSize = int.MaxValue, IncludeTotalCount = true, RequirePagingBoundaries = false), UseProjection, UseFiltering, UseSorting]
+    public IQueryable<WarehouseDocument> WarehouseDocuments([Service] IEntityQueryService source) => source.Query<WarehouseDocument>(access);
+    [UsePaging(typeof(DomainEntityObjectType<WarehouseDocumentLine>), ConnectionName = "EntityWarehouseDocumentLines", DefaultPageSize = 50, MaxPageSize = int.MaxValue, IncludeTotalCount = true, RequirePagingBoundaries = false), UseProjection, UseFiltering, UseSorting]
+    public IQueryable<WarehouseDocumentLine> WarehouseDocumentLines([Service] IEntityQueryService source) => source.Query<WarehouseDocumentLine>(access);
+    [UsePaging(typeof(DomainEntityObjectType<WarehouseDocumentCarton>), ConnectionName = "EntityWarehouseDocumentCartons", DefaultPageSize = 50, MaxPageSize = int.MaxValue, IncludeTotalCount = true, RequirePagingBoundaries = false), UseProjection, UseFiltering, UseSorting]
+    public IQueryable<WarehouseDocumentCarton> WarehouseDocumentCartons([Service] IEntityQueryService source) => source.Query<WarehouseDocumentCarton>(access);
+    [UsePaging(typeof(DomainEntityObjectType<RoleDefinition>), ConnectionName = "EntityRoleDefinitions", DefaultPageSize = 50, MaxPageSize = int.MaxValue, IncludeTotalCount = true, RequirePagingBoundaries = false), UseProjection, UseFiltering, UseSorting]
+    public IQueryable<RoleDefinition> RoleDefinitions([Service] IEntityQueryService source) => source.Query<RoleDefinition>(access);
+    [UsePaging(typeof(DomainEntityObjectType<RolePermission>), ConnectionName = "EntityRolePermissions", DefaultPageSize = 50, MaxPageSize = int.MaxValue, IncludeTotalCount = true, RequirePagingBoundaries = false), UseProjection, UseFiltering, UseSorting]
+    public IQueryable<RolePermission> RolePermissions([Service] IEntityQueryService source) => source.Query<RolePermission>(access);
+    [UsePaging(typeof(DomainEntityObjectType<RetailerDeclarationContact>), ConnectionName = "EntityRetailerDeclarationContacts", DefaultPageSize = 50, MaxPageSize = int.MaxValue, IncludeTotalCount = true, RequirePagingBoundaries = false), UseProjection, UseFiltering, UseSorting]
+    public IQueryable<RetailerDeclarationContact> RetailerDeclarationContacts([Service] IEntityQueryService source) => source.Query<RetailerDeclarationContact>(access);
+    [UsePaging(typeof(DomainEntityObjectType<TransitTimeRule>), ConnectionName = "EntityTransitTimeRules", DefaultPageSize = 50, MaxPageSize = int.MaxValue, IncludeTotalCount = true, RequirePagingBoundaries = false), UseProjection, UseFiltering, UseSorting]
+    public IQueryable<TransitTimeRule> TransitTimeRules([Service] IEntityQueryService source) => source.Query<TransitTimeRule>(access);
+    [UsePaging(typeof(DomainEntityObjectType<AllocationPlanVersion>), ConnectionName = "EntityAllocationPlanVersions", DefaultPageSize = 50, MaxPageSize = int.MaxValue, IncludeTotalCount = true, RequirePagingBoundaries = false), UseProjection, UseFiltering, UseSorting]
+    public IQueryable<AllocationPlanVersion> AllocationPlanVersions([Service] IEntityQueryService source) => source.Query<AllocationPlanVersion>(access);
+    [UsePaging(typeof(DomainEntityObjectType<SalesOrderQuote>), ConnectionName = "EntitySalesOrderQuotes", DefaultPageSize = 50, MaxPageSize = int.MaxValue, IncludeTotalCount = true, RequirePagingBoundaries = false), UseProjection, UseFiltering, UseSorting]
+    public IQueryable<SalesOrderQuote> SalesOrderQuotes([Service] IEntityQueryService source) => source.Query<SalesOrderQuote>(access);
+    [UsePaging(typeof(DomainEntityObjectType<PurchaseOrder>), ConnectionName = "EntityPurchaseOrders", DefaultPageSize = 50, MaxPageSize = int.MaxValue, IncludeTotalCount = true, RequirePagingBoundaries = false), UseProjection, UseFiltering, UseSorting]
+    public IQueryable<PurchaseOrder> PurchaseOrders([Service] IEntityQueryService source) => source.Query<PurchaseOrder>(access);
+    [UsePaging(typeof(DomainEntityObjectType<AllocationLineTrace>), ConnectionName = "EntityAllocationLineTraces", DefaultPageSize = 50, MaxPageSize = int.MaxValue, IncludeTotalCount = true, RequirePagingBoundaries = false), UseProjection, UseFiltering, UseSorting]
+    public IQueryable<AllocationLineTrace> AllocationLineTraces([Service] IEntityQueryService source) => source.Query<AllocationLineTrace>(access);
+    [UsePaging(typeof(DomainEntityObjectType<AllocationTraceCandidate>), ConnectionName = "EntityAllocationTraceCandidates", DefaultPageSize = 50, MaxPageSize = int.MaxValue, IncludeTotalCount = true, RequirePagingBoundaries = false), UseProjection, UseFiltering, UseSorting]
+    public IQueryable<AllocationTraceCandidate> AllocationTraceCandidates([Service] IEntityQueryService source) => source.Query<AllocationTraceCandidate>(access);
+    [UsePaging(typeof(DomainEntityObjectType<AllocationTraceScore>), ConnectionName = "EntityAllocationTraceScores", DefaultPageSize = 50, MaxPageSize = int.MaxValue, IncludeTotalCount = true, RequirePagingBoundaries = false), UseProjection, UseFiltering, UseSorting]
+    public IQueryable<AllocationTraceScore> AllocationTraceScores([Service] IEntityQueryService source) => source.Query<AllocationTraceScore>(access);
+    [UsePaging(typeof(DomainEntityObjectType<RunPickingList>), ConnectionName = "EntityRunPickingLists", DefaultPageSize = 50, MaxPageSize = int.MaxValue, IncludeTotalCount = true, RequirePagingBoundaries = false), UseProjection, UseFiltering, UseSorting]
+    public IQueryable<RunPickingList> RunPickingLists([Service] IEntityQueryService source) => source.Query<RunPickingList>(access);
+    [UsePaging(typeof(DomainEntityObjectType<RunPickingGather>), ConnectionName = "EntityRunPickingGathers", DefaultPageSize = 50, MaxPageSize = int.MaxValue, IncludeTotalCount = true, RequirePagingBoundaries = false), UseProjection, UseFiltering, UseSorting]
+    public IQueryable<RunPickingGather> RunPickingGathers([Service] IEntityQueryService source) => source.Query<RunPickingGather>(access);
+    [UsePaging(typeof(DomainEntityObjectType<RunPickingSplit>), ConnectionName = "EntityRunPickingSplits", DefaultPageSize = 50, MaxPageSize = int.MaxValue, IncludeTotalCount = true, RequirePagingBoundaries = false), UseProjection, UseFiltering, UseSorting]
+    public IQueryable<RunPickingSplit> RunPickingSplits([Service] IEntityQueryService source) => source.Query<RunPickingSplit>(access);
+    [UsePaging(typeof(DomainEntityObjectType<StockHold>), ConnectionName = "EntityStockHolds", DefaultPageSize = 50, MaxPageSize = int.MaxValue, IncludeTotalCount = true, RequirePagingBoundaries = false), UseProjection, UseFiltering, UseSorting]
+    public IQueryable<StockHold> StockHolds([Service] IEntityQueryService source) => source.Query<StockHold>(access);
+    [UsePaging(typeof(DomainEntityObjectType<ReturnHandlingDocument>), ConnectionName = "EntityReturnHandlingDocuments", DefaultPageSize = 50, MaxPageSize = int.MaxValue, IncludeTotalCount = true, RequirePagingBoundaries = false), UseProjection, UseFiltering, UseSorting]
+    public IQueryable<ReturnHandlingDocument> ReturnHandlingDocuments([Service] IEntityQueryService source) => source.Query<ReturnHandlingDocument>(access);
+    [UsePaging(typeof(DomainEntityObjectType<ComplaintEvidence>), ConnectionName = "EntityComplaintEvidences", DefaultPageSize = 50, MaxPageSize = int.MaxValue, IncludeTotalCount = true, RequirePagingBoundaries = false), UseProjection, UseFiltering, UseSorting]
+    public IQueryable<ComplaintEvidence> ComplaintEvidences([Service] IEntityQueryService source) => source.Query<ComplaintEvidence>(access);
+    [UsePaging(typeof(DomainEntityObjectType<RetailerDebtPayOsCheckout>), ConnectionName = "EntityRetailerDebtPayOsCheckouts", DefaultPageSize = 50, MaxPageSize = int.MaxValue, IncludeTotalCount = true, RequirePagingBoundaries = false), UseProjection, UseFiltering, UseSorting]
+    public IQueryable<RetailerDebtPayOsCheckout> RetailerDebtPayOsCheckouts([Service] IEntityQueryService source) => source.Query<RetailerDebtPayOsCheckout>(access);
+    [UsePaging(typeof(DomainEntityObjectType<RetailerDebtPayOsAllocation>), ConnectionName = "EntityRetailerDebtPayOsAllocations", DefaultPageSize = 50, MaxPageSize = int.MaxValue, IncludeTotalCount = true, RequirePagingBoundaries = false), UseProjection, UseFiltering, UseSorting]
+    public IQueryable<RetailerDebtPayOsAllocation> RetailerDebtPayOsAllocations([Service] IEntityQueryService source) => source.Query<RetailerDebtPayOsAllocation>(access);
+    [UsePaging(typeof(DomainEntityObjectType<BatchPromotion>), ConnectionName = "EntityBatchPromotions", DefaultPageSize = 50, MaxPageSize = int.MaxValue, IncludeTotalCount = true, RequirePagingBoundaries = false), UseProjection, UseFiltering, UseSorting]
+    public IQueryable<BatchPromotion> BatchPromotions([Service] IEntityQueryService source) => source.Query<BatchPromotion>(access);
+    [UsePaging(typeof(DomainEntityObjectType<WarehouseTransferItem>), ConnectionName = "EntityWarehouseTransferItems", DefaultPageSize = 50, MaxPageSize = int.MaxValue, IncludeTotalCount = true, RequirePagingBoundaries = false), UseProjection, UseFiltering, UseSorting]
+    public IQueryable<WarehouseTransferItem> WarehouseTransferItems([Service] IEntityQueryService source) => source.Query<WarehouseTransferItem>(access);
+    [UsePaging(typeof(DomainEntityObjectType<WarehouseTransferEvent>), ConnectionName = "EntityWarehouseTransferEvents", DefaultPageSize = 50, MaxPageSize = int.MaxValue, IncludeTotalCount = true, RequirePagingBoundaries = false), UseProjection, UseFiltering, UseSorting]
+    public IQueryable<WarehouseTransferEvent> WarehouseTransferEvents([Service] IEntityQueryService source) => source.Query<WarehouseTransferEvent>(access);
+    [UsePaging(typeof(DomainEntityObjectType<WarehouseTransferLabel>), ConnectionName = "EntityWarehouseTransferLabels", DefaultPageSize = 50, MaxPageSize = int.MaxValue, IncludeTotalCount = true, RequirePagingBoundaries = false), UseProjection, UseFiltering, UseSorting]
+    public IQueryable<WarehouseTransferLabel> WarehouseTransferLabels([Service] IEntityQueryService source) => source.Query<WarehouseTransferLabel>(access);
+    [UsePaging(typeof(DomainEntityObjectType<LoyaltyProgramRetailer>), ConnectionName = "EntityLoyaltyProgramRetailers", DefaultPageSize = 50, MaxPageSize = int.MaxValue, IncludeTotalCount = true, RequirePagingBoundaries = false), UseProjection, UseFiltering, UseSorting]
+    public IQueryable<LoyaltyProgramRetailer> LoyaltyProgramRetailers([Service] IEntityQueryService source) => source.Query<LoyaltyProgramRetailer>(access);
 }
