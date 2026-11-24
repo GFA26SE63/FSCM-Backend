@@ -62,7 +62,10 @@ public sealed partial class WarehouseWorkService(AppDbContext db, InventoryServi
     public Task<Guid> CreateRequestAsync(CreateWarehouseRequest data, string key, Guid actor, string role, CancellationToken ct) =>
         Atomic(async () =>
         {
-            if (role != SystemRoles.Admin) throw PickingOperationException.Forbidden("Chỉ admin được phát hành yêu cầu kho.");
+            var requiredPermission = data.Reason == "Transfer"
+                ? SystemScreenKeys.WarehouseTransfers
+                : SystemScreenKeys.WarehouseOutbound;
+            await EnsurePermissionAsync(role, requiredPermission, ct);
             var replay = await Replay(key, data, actor, ct);
             if (replay.HasValue) return replay.Value;
             await Access(data.WarehouseId, actor, role, ct);
@@ -123,10 +126,13 @@ public sealed partial class WarehouseWorkService(AppDbContext db, InventoryServi
     public Task<Guid> CreateChildAsync(Guid sourceId, string key, Guid actor, string role, CancellationToken ct) =>
         Atomic(async () =>
         {
-            Keeper(role);
+            var source = await Find(sourceId, ct);
+            var requiredPermission = source.Reason == "Transfer"
+                ? SystemScreenKeys.WarehouseTransfers
+                : SystemScreenKeys.WarehouseOutbound;
+            await EnsurePermissionAsync(role, requiredPermission, ct);
             var replay = await Replay(key, new { sourceId }, actor, ct);
             if (replay.HasValue) return replay.Value;
-            var source = await Find(sourceId, ct);
             if (source.Kind == "Request" && source.Status != "Open" ||
                 source.Kind == "Issue" && (source.Status != "Posted" || source.Reason != "Transfer") ||
                 source.Kind is not ("Request" or "Issue"))
@@ -482,8 +488,12 @@ public sealed partial class WarehouseWorkService(AppDbContext db, InventoryServi
     public Task<Guid> CancelRequestAsync(Guid id, int version, Guid actor, string role, CancellationToken ct) =>
         Atomic(async () =>
         {
-            if (role != SystemRoles.Admin) throw PickingOperationException.Forbidden("Chỉ admin được hủy yêu cầu kho.");
             var d = await Find(id, ct);
+            var requiredPermission = d.Reason == "Transfer"
+                ? SystemScreenKeys.WarehouseTransfers
+                : SystemScreenKeys.WarehouseOutbound;
+            await EnsurePermissionAsync(role, requiredPermission, ct);
+            await Access(d.WarehouseId, actor, role, ct);
             if (d.Status == "Cancelled") return id;
             Version(d, version);
             if (d.Kind != "Request" || d.Status != "Open") throw PickingOperationException.Conflict("Chỉ hủy yêu cầu chưa xuất kho.");
@@ -645,7 +655,27 @@ public sealed partial class WarehouseWorkService(AppDbContext db, InventoryServi
     private async Task<WarehouseDocument> Find(Guid id, CancellationToken ct) =>
         await Documents.SingleOrDefaultAsync(x => x.Id == id, ct)
         ?? throw PickingOperationException.NotFound("Không tìm thấy chứng từ kho.");
+    private async Task EnsurePermissionAsync(string role, string permissionKey, CancellationToken ct)
+    {
+        if (string.Equals(role, SystemRoles.Admin, StringComparison.OrdinalIgnoreCase))
+            return;
+
+        var hasPermission = await db.RolePermissionRecords
+            .AnyAsync(p => p.Role!.Code.ToLower() == role.ToLower() && p.PermissionKey == permissionKey, ct);
+
+        if (!hasPermission)
+        {
+            if (role == SystemRoles.WarehouseKeeper &&
+                (permissionKey == SystemScreenKeys.WarehouseOutbound || permissionKey == SystemScreenKeys.WarehouseTransfers))
+            {
+                return;
+            }
+
+            throw PickingOperationException.Forbidden($"Vai trò '{role}' chưa được cấp quyền '{permissionKey}'.");
+        }
+    }
     private async Task<bool> HasAccess(Guid wh, Guid actor, string role, CancellationToken ct) => role == SystemRoles.Admin ||
+        role == SystemRoles.Operator ||
         role == SystemRoles.WarehouseKeeper && await ReportingScopeQueries.ManagedWarehouses(db, actor).AnyAsync(x => x.Id == wh, ct);
     private async Task Access(Guid wh, Guid actor, string role, CancellationToken ct)
     {
@@ -659,7 +689,11 @@ public sealed partial class WarehouseWorkService(AppDbContext db, InventoryServi
         if (await db.InventoryLockRecords.AnyAsync(x => x.BatchId == batch.Id && x.Status == "Active", ct))
             throw PickingOperationException.Conflict("Batch đang bị khóa; giải quyết khóa trước khi lấy hàng.");
     }
-    private static void Keeper(string role) { if (role != SystemRoles.WarehouseKeeper) throw PickingOperationException.Forbidden("Chỉ thủ kho được lập và thực hiện phiếu kho."); }
+    private static void Keeper(string role)
+    {
+        if (role != SystemRoles.WarehouseKeeper && role != SystemRoles.Admin)
+            throw PickingOperationException.Forbidden("Chỉ thủ kho hoặc quản trị viên được lập và thực hiện phiếu kho.");
+    }
     private static void Version(WarehouseDocument d, int v) { if (d.Version != v) throw PickingOperationException.Conflict("Phiếu đã thay đổi, tải lại trước khi thao tác."); }
     public static void WholeCartons(decimal quantity) { if (quantity <= 0 || quantity != decimal.Truncate(quantity)) throw PickingOperationException.Validation("Số carton phải là số nguyên dương."); }
     private void Event(BatchQrLabel label, WarehouseDocument d, Guid actor, string action, string from, string to) =>

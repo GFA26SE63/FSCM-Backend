@@ -11,7 +11,7 @@ namespace FSCM.API.Controllers;
 
 [ApiController]
 [Route("api/v1/warehouse-documents")]
-[Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.WarehouseKeeper}")]
+[Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.WarehouseKeeper},{SystemRoles.Operator}")]
 public sealed class WarehouseDocumentsController(WarehouseWorkService service, IQrCodeRenderer qr, QrLabelService labels) : ControllerBase
 {
     private Guid Actor => Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
@@ -44,12 +44,12 @@ public sealed class WarehouseDocumentsController(WarehouseWorkService service, I
     public async Task<WarehouseWorkResult> PrepareFactory(PrepareFactoryReceiptRequest request, CancellationToken ct) =>
         await Get(await service.PrepareFactoryAsync(request, Actor, Role, ct), ct);
     [HttpPost("requests")]
-    [Authorize(Roles = SystemRoles.Admin)]
+    [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.WarehouseKeeper},{SystemRoles.Operator}")]
     public async Task<WarehouseWorkResult> CreateRequest(CreateWarehouseRequest request,
         [FromHeader(Name = "Idempotency-Key")] string key, CancellationToken ct) =>
         await Get(await service.CreateRequestAsync(request, key, Actor, Role, ct), ct);
     [HttpPost("{id:guid}/create-document")]
-    [Authorize(Roles = SystemRoles.WarehouseKeeper)]
+    [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.WarehouseKeeper},{SystemRoles.Operator}")]
     public async Task<WarehouseWorkResult> CreateChild(Guid id,
         [FromHeader(Name = "Idempotency-Key")] string key, CancellationToken ct) =>
         await Get(await service.CreateChildAsync(id, key, Actor, Role, ct), ct);
@@ -144,15 +144,15 @@ public sealed class WarehouseDocumentsController(WarehouseWorkService service, I
         return Content(html.Append("</html>").ToString(), "text/html; charset=utf-8");
     }
     [HttpPost("{id:guid}/cancel")]
-    [Authorize(Roles = SystemRoles.Admin)]
+    [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.WarehouseKeeper},{SystemRoles.Operator}")]
     public async Task<WarehouseWorkResult> Cancel(Guid id, PostRequest request, CancellationToken ct) =>
         await Get(await service.CancelRequestAsync(id, request.ExpectedVersion, Actor, Role, ct), ct);
     [HttpPost("{id:guid}/scans")]
-    [Authorize(Roles = SystemRoles.WarehouseKeeper)]
+    [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.WarehouseKeeper}")]
     public async Task<WarehouseWorkResult> Scan(Guid id, ScanRequest request, CancellationToken ct) =>
         await Get(await service.ScanAsync(id, request.CartonId, request.ExpectedVersion, Actor, Role, ct), ct);
     [HttpPost("{id:guid}/post")]
-    [Authorize(Roles = SystemRoles.WarehouseKeeper)]
+    [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.WarehouseKeeper}")]
     public async Task<WarehouseWorkResult> Post(Guid id, PostRequest request, CancellationToken ct) =>
         await Get(await service.PostAsync(id, request.ExpectedVersion, Actor, Role, ct), ct);
     [HttpGet("{id:guid}/labels")]
