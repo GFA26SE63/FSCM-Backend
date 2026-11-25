@@ -276,6 +276,7 @@ public sealed class IdentityStore(AppDbContext dbContext) : IIdentityStore
                 {
                     FSCM.Domain.Authorization.SystemScreenKeys.Dashboard,
                     FSCM.Domain.Authorization.SystemScreenKeys.WarehouseInbound,
+                    FSCM.Domain.Authorization.SystemScreenKeys.WarehouseFactoryRequests,
                     FSCM.Domain.Authorization.SystemScreenKeys.WarehouseOutbound,
                     FSCM.Domain.Authorization.SystemScreenKeys.WarehouseTransfers,
                     FSCM.Domain.Authorization.SystemScreenKeys.Batches,
