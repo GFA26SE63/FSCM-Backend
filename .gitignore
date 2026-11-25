@@ -46,3 +46,6 @@ logs/
 # Legacy local runtime retained while old factory process is running; source is in sibling repo.
 /standalone/FSCM.Traceability/
 /.ci/traceability/
+
+CLAUDE.md
+graphify-out

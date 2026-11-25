@@ -15,7 +15,13 @@ public static class WebApplicationExtensions
 
         app.UseSerilogRequestLogging();
         app.UseExceptionHandler();
-        app.UseHttpsRedirection();
+        // Development: keep plain HTTP (http://localhost:5246) usable so the
+        // mobile app on a physical phone / emulator can reach the API without
+        // trusting the ASP.NET dev HTTPS certificate.
+        if (!app.Environment.IsDevelopment())
+        {
+            app.UseHttpsRedirection();
+        }
         app.UseCors(ServiceCollectionExtensions.CorsPolicyName);
         app.UseAuthentication();
         app.UseAuthorization();
