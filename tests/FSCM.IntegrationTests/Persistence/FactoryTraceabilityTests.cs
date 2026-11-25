@@ -89,6 +89,21 @@ public sealed partial class FactoryTraceabilityTests
     }
 
     [Fact]
+    public async Task Current_pallet_count_counts_distinct_pallets_of_available_cartons_and_rejects_other_roles()
+    {
+        using var db = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
+            .UseNpgsql("Host=127.0.0.1;Database=unused;Username=unused").Options);
+        var service = new FactoryQrInventoryService(db);
+        var sql = service.CurrentPalletIds(Guid.NewGuid()).ToQueryString();
+        Assert.Contains("DISTINCT", sql);
+        Assert.Contains("FACTORY_CARTON", sql);
+        Assert.Contains("Available", sql);
+        Assert.DoesNotContain("FACTORY_PALLET\"", sql); // pallet status (always Received) is not used
+        await Assert.ThrowsAsync<FSCM.Application.Features.Inventory.InventoryOperationException>(() =>
+            service.CurrentPalletCountAsync(Guid.NewGuid(), "Retailer", Guid.NewGuid(), default));
+    }
+
+    [Fact]
     public async Task QR_inventory_rejects_invalid_pages_before_accessing_database()
     {
         using var db = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()

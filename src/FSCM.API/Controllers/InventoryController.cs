@@ -29,6 +29,10 @@ public sealed class InventoryController(InventoryService service, IOptions<DateT
         service.ListInventoryAsync(GetActorUserId(), GetActorRole(), warehouseId, productId,
             includeExpired, cancellationToken);
 
+    [HttpGet("pallet-count")]
+    public Task<WarehousePalletCount> PalletCount([FromQuery] Guid warehouseId, CancellationToken cancellationToken) =>
+        factoryQrInventory.CurrentPalletCountAsync(GetActorUserId(), GetActorRole(), warehouseId, cancellationToken);
+
     [HttpGet("batches/{batchId:guid}")]
     public Task<BatchInventoryResult> GetBatch(Guid batchId, CancellationToken cancellationToken) =>
         service.GetBatchAsync(batchId, GetActorUserId(), GetActorRole(), cancellationToken);
