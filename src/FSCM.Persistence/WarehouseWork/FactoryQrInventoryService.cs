@@ -1,4 +1,5 @@
 using FSCM.Application.Features.Inventory;
+using FSCM.Application.Features.QrLabels;
 using FSCM.Domain.Authorization;
 using FSCM.Domain.Entities;
 using FSCM.Persistence.DbContexts;
@@ -31,6 +32,9 @@ public sealed class FactoryQrInventoryRow
 }
 
 public sealed record FactoryQrInventoryPage(FactoryQrInventoryRow[] Items, int TotalCount, int Page, int PageSize);
+
+/// <summary>Distinct factory pallets with at least one carton QR currently Available in the warehouse.</summary>
+public sealed record WarehousePalletCount(Guid WarehouseId, int CurrentPalletCount);
 
 /// <summary>Read the WMS snapshot and current QR location, even while the factory API is unavailable.</summary>
 public sealed class FactoryQrInventoryService(AppDbContext db)
@@ -83,6 +87,25 @@ public sealed class FactoryQrInventoryService(AppDbContext db)
             _ => throw InventoryOperationException.Validation("Trạng thái đồng bộ không hợp lệ.")
         };
         return query;
+    }
+
+    /// <summary>Pallet IDs counted as "đang có": a carton of the pallet is Available in the warehouse (owner decision 2026-11-25).</summary>
+    public IQueryable<Guid> CurrentPalletIds(Guid warehouseId) =>
+        (from label in db.BatchQrLabelRecords.AsNoTracking()
+         where label.CurrentWarehouseId == warehouseId && label.Status == QrLabelStatuses.Available
+         join carton in db.Set<FactoryCarton>().AsNoTracking() on label.QrCode equals carton.Code
+         select carton.PalletId).Distinct();
+
+    public async Task<WarehousePalletCount> CurrentPalletCountAsync(Guid actor, string role, Guid warehouseId, CancellationToken ct)
+    {
+        if (role is not (SystemRoles.Admin or SystemRoles.Operator or SystemRoles.WarehouseKeeper))
+            throw InventoryOperationException.Forbidden("Không được xem tồn QR.");
+        if (!await db.WarehouseRecords.AnyAsync(w => w.Id == warehouseId, ct))
+            throw InventoryOperationException.NotFound("Không tìm thấy kho.");
+        if (role == SystemRoles.WarehouseKeeper &&
+            !await ReportingScopeQueries.ManagedWarehouses(db, actor).AnyAsync(w => w.Id == warehouseId, ct))
+            throw InventoryOperationException.Forbidden("Kho không thuộc phạm vi quản lý.");
+        return new(warehouseId, await CurrentPalletIds(warehouseId).CountAsync(ct));
     }
 
     public async Task<FactoryQrInventoryPage> ListAsync(Guid actor, string role, Guid? warehouseId,
