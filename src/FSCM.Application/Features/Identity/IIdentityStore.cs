@@ -63,6 +63,10 @@ public interface IIdentityStore
         DateTimeOffset now,
         CancellationToken cancellationToken);
 
+    Task<IReadOnlyCollection<string>> GetRolePermissionsAsync(string role, CancellationToken cancellationToken);
+
+    Task<bool> RoleExistsAsync(string role, CancellationToken cancellationToken);
+
     void AddUser(UserAccount user);
 
     void AddCredential(UserCredential credential);

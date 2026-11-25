@@ -16,6 +16,6 @@ public sealed record RewardResult(
     Guid Id, Guid LoyaltyProgramId, string Code, string Name, string? Description,
     string? ImageUrl, string RewardType, int RequiredPoints, decimal? DiscountAmount,
     decimal? DiscountPercent, int? AvailableQuantity, bool IsActive,
-    DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt);
+    DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt, string? ImageReference = null);
 
 public sealed record RewardView(LoyaltyReward Reward);

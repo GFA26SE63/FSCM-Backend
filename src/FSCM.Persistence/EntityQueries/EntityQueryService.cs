@@ -11,6 +11,12 @@ public sealed class EntityQueryService(AppDbContext dbContext) : IEntityQuerySer
     public IQueryable<TEntity> Query<TEntity>(EntityQueryAccess access) where TEntity : class
     {
         var query = dbContext.Set<TEntity>().AsNoTracking();
+        // Notifications are a private inbox.  Administrative access to other
+        // entities must never turn this into a system-wide notification feed.
+        if (typeof(TEntity) == typeof(Notification))
+            return Cast<TEntity, Notification>(dbContext.NotificationRecords
+                .AsNoTracking()
+                .Where(x => x.UserAccountId == access.UserId));
         if (access.Role == SystemRoles.Admin)
             return query;
         if (access.Role == SystemRoles.Operator && !IsAdminOnlyEntity<TEntity>())
@@ -46,6 +52,10 @@ public sealed class EntityQueryService(AppDbContext dbContext) : IEntityQuerySer
                 retailerIds.Contains(x.RetailerId) || salesGroupIds.Contains(x.SalesGroupId)));
         if (typeof(TEntity) == typeof(RetailerProductMlor))
             return Cast<TEntity, RetailerProductMlor>(dbContext.RetailerProductMlorRecords.Where(x => retailerIds.Contains(x.RetailerId)));
+        if (typeof(TEntity) == typeof(RetailerDeclarationContact))
+            return Cast<TEntity, RetailerDeclarationContact>(dbContext.RetailerDeclarationContactRecords.Where(x => retailerIds.Contains(x.RetailerId)));
+        if (typeof(TEntity) == typeof(TransitTimeRule))
+            return Cast<TEntity, TransitTimeRule>(dbContext.TransitTimeRuleRecords.Where(x => warehouseIds.Contains(x.WarehouseId)));
         if (typeof(TEntity) == typeof(SalesOrder))
             return Cast<TEntity, SalesOrder>(ScopedOrders(access));
         if (typeof(TEntity) == typeof(SalesOrderLine))
@@ -57,6 +67,10 @@ public sealed class EntityQueryService(AppDbContext dbContext) : IEntityQuerySer
             return Cast<TEntity, OrderStatusHistory>(dbContext.OrderStatusHistoryRecords.Where(x => orderIds.Contains(x.SalesOrderId)));
         if (typeof(TEntity) == typeof(SalesOrderAttachment))
             return Cast<TEntity, SalesOrderAttachment>(dbContext.SalesOrderAttachmentRecords.Where(x => orderIds.Contains(x.SalesOrderId)));
+        if (typeof(TEntity) == typeof(SalesOrderQuote))
+            return Cast<TEntity, SalesOrderQuote>(dbContext.SalesOrderQuoteRecords.Where(x => orderIds.Contains(x.SalesOrderId)));
+        if (typeof(TEntity) == typeof(PurchaseOrder))
+            return Cast<TEntity, PurchaseOrder>(dbContext.PurchaseOrderRecords.Where(x => orderIds.Contains(x.SalesOrderId)));
         if (typeof(TEntity) == typeof(Payment))
             return Cast<TEntity, Payment>(dbContext.PaymentRecords.Where(x => orderIds.Contains(x.SalesOrderId)));
         if (typeof(TEntity) == typeof(PaymentReceipt))
@@ -113,6 +127,12 @@ public sealed class EntityQueryService(AppDbContext dbContext) : IEntityQuerySer
         if (typeof(TEntity) == typeof(ReplacementCase))
             return Cast<TEntity, ReplacementCase>(dbContext.ReplacementCaseRecords.Where(x =>
                 dbContext.ReceiptDiscrepancyRecords.Any(claim => claim.Id == x.ReceiptDiscrepancyId && orderIds.Contains(claim.SalesOrderId))));
+        if (typeof(TEntity) == typeof(ReturnHandlingDocument))
+            return Cast<TEntity, ReturnHandlingDocument>(dbContext.ReturnHandlingDocumentRecords.Where(x =>
+                dbContext.ReceiptDiscrepancyRecords.Any(claim => claim.Id == x.ReceiptDiscrepancyId && orderIds.Contains(claim.SalesOrderId))));
+        if (typeof(TEntity) == typeof(ComplaintEvidence))
+            return Cast<TEntity, ComplaintEvidence>(dbContext.ComplaintEvidenceRecords.Where(x =>
+                dbContext.ReceiptDiscrepancyRecords.Any(claim => claim.Id == x.ReceiptDiscrepancyId && orderIds.Contains(claim.SalesOrderId))));
         if (typeof(TEntity) == typeof(Allocation))
             return Cast<TEntity, Allocation>(dbContext.AllocationRecords.Where(x =>
                 warehouseIds.Contains(x.WarehouseId) || dbContext.SalesOrderLineRecords.Any(line =>
@@ -127,6 +147,11 @@ public sealed class EntityQueryService(AppDbContext dbContext) : IEntityQuerySer
                         dbContext.AllocationRunLineRecords.Any(line => line.Id == a.AllocationRunLineId &&
                             dbContext.SalesOrderLineRecords.Any(orderLine => orderLine.Id == line.SalesOrderLineId &&
                                 orderIds.Contains(orderLine.SalesOrderId))))))));
+        if (typeof(TEntity) == typeof(StockHold))
+            return Cast<TEntity, StockHold>(dbContext.StockHoldRecords.Where(x =>
+                dbContext.AllocationRecords.Any(allocation => allocation.Id == x.AllocationId &&
+                    (warehouseIds.Contains(allocation.WarehouseId) || dbContext.SalesOrderLineRecords.Any(line =>
+                        line.Id == allocation.SalesOrderLineId && orderIds.Contains(line.SalesOrderId))))));
 
         var runIds = ScopedRunIds(access, orderIds);
         var runOrderIds = dbContext.AllocationRunOrderRecords.Where(x => runIds.Contains(x.AllocationRunId) &&
@@ -149,6 +174,27 @@ public sealed class EntityQueryService(AppDbContext dbContext) : IEntityQuerySer
             return Cast<TEntity, AllocationPlanPrice>(dbContext.AllocationPlanPriceRecords.Where(x =>
                 runIds.Contains(x.AllocationRunId) && runLineIds.Contains(x.AllocationRunLineId) &&
                 (access.Role != SystemRoles.WarehouseKeeper || warehouseIds.Contains(x.WarehouseId))));
+        if (typeof(TEntity) == typeof(AllocationPlanVersion))
+            return Cast<TEntity, AllocationPlanVersion>(dbContext.AllocationPlanVersionRecords.Where(x => runIds.Contains(x.AllocationRunId)));
+        if (typeof(TEntity) == typeof(AllocationLineTrace))
+            return Cast<TEntity, AllocationLineTrace>(dbContext.AllocationLineTraceRecords.Where(x => runIds.Contains(x.AllocationRunId)));
+        if (typeof(TEntity) == typeof(AllocationTraceCandidate))
+            return Cast<TEntity, AllocationTraceCandidate>(dbContext.AllocationTraceCandidateRecords.Where(x =>
+                dbContext.AllocationLineTraceRecords.Any(trace => trace.Id == x.AllocationLineTraceId && runIds.Contains(trace.AllocationRunId))));
+        if (typeof(TEntity) == typeof(AllocationTraceScore))
+            return Cast<TEntity, AllocationTraceScore>(dbContext.AllocationTraceScoreRecords.Where(x =>
+                dbContext.AllocationLineTraceRecords.Any(trace => trace.Id == x.AllocationLineTraceId && runIds.Contains(trace.AllocationRunId))));
+        if (typeof(TEntity) == typeof(RunPickingList))
+            return Cast<TEntity, RunPickingList>(dbContext.RunPickingListRecords.Where(x =>
+                runIds.Contains(x.AllocationRunId) && (access.Role != SystemRoles.WarehouseKeeper || warehouseIds.Contains(x.WarehouseId))));
+        if (typeof(TEntity) == typeof(RunPickingGather))
+            return Cast<TEntity, RunPickingGather>(dbContext.RunPickingGatherRecords.Where(x =>
+                dbContext.RunPickingListRecords.Any(list => list.Id == x.RunPickingListId && runIds.Contains(list.AllocationRunId) &&
+                    (access.Role != SystemRoles.WarehouseKeeper || warehouseIds.Contains(list.WarehouseId)))));
+        if (typeof(TEntity) == typeof(RunPickingSplit))
+            return Cast<TEntity, RunPickingSplit>(dbContext.RunPickingSplitRecords.Where(x =>
+                orderIds.Contains(x.SalesOrderId) && (access.Role != SystemRoles.WarehouseKeeper ||
+                    dbContext.AllocationRunAllocationRecords.Any(allocation => allocation.Id == x.AllocationRunAllocationId && warehouseIds.Contains(allocation.WarehouseId)))));
 
         if (typeof(TEntity) == typeof(GoodsReceipt))
             return Cast<TEntity, GoodsReceipt>(dbContext.GoodsReceiptRecords.Where(x => warehouseIds.Contains(x.WarehouseId)));
@@ -171,6 +217,33 @@ public sealed class EntityQueryService(AppDbContext dbContext) : IEntityQuerySer
             return Cast<TEntity, Driver>(dbContext.DriverRecords.Where(x => warehouseIds.Contains(x.WarehouseId)));
         if (typeof(TEntity) == typeof(Vehicle))
             return Cast<TEntity, Vehicle>(dbContext.VehicleRecords.Where(x => warehouseIds.Contains(x.WarehouseId)));
+        if (typeof(TEntity) == typeof(WarehouseTransfer))
+            return Cast<TEntity, WarehouseTransfer>(dbContext.WarehouseTransferRecords.Where(x =>
+                warehouseIds.Contains(x.SourceWarehouseId) || warehouseIds.Contains(x.DestinationWarehouseId)));
+        if (typeof(TEntity) == typeof(WarehouseTransferItem))
+            return Cast<TEntity, WarehouseTransferItem>(dbContext.WarehouseTransferItemRecords.Where(x =>
+                dbContext.WarehouseTransferRecords.Any(transfer => transfer.Id == x.WarehouseTransferId &&
+                    (warehouseIds.Contains(transfer.SourceWarehouseId) || warehouseIds.Contains(transfer.DestinationWarehouseId)))));
+        if (typeof(TEntity) == typeof(WarehouseTransferEvent))
+            return Cast<TEntity, WarehouseTransferEvent>(dbContext.WarehouseTransferEventRecords.Where(x =>
+                dbContext.WarehouseTransferRecords.Any(transfer => transfer.Id == x.WarehouseTransferId &&
+                    (warehouseIds.Contains(transfer.SourceWarehouseId) || warehouseIds.Contains(transfer.DestinationWarehouseId)))));
+        if (typeof(TEntity) == typeof(WarehouseTransferLabel))
+            return Cast<TEntity, WarehouseTransferLabel>(dbContext.WarehouseTransferLabelRecords.Where(x =>
+                dbContext.WarehouseTransferItemRecords.Any(item => item.Id == x.WarehouseTransferItemId &&
+                    dbContext.WarehouseTransferRecords.Any(transfer => transfer.Id == item.WarehouseTransferId &&
+                        (warehouseIds.Contains(transfer.SourceWarehouseId) || warehouseIds.Contains(transfer.DestinationWarehouseId))))));
+        if (typeof(TEntity) == typeof(WarehouseDocument))
+            return Cast<TEntity, WarehouseDocument>(dbContext.WarehouseDocuments.Where(x =>
+                warehouseIds.Contains(x.WarehouseId) || (x.DestinationWarehouseId != null && warehouseIds.Contains(x.DestinationWarehouseId.Value))));
+        if (typeof(TEntity) == typeof(WarehouseDocumentLine))
+            return Cast<TEntity, WarehouseDocumentLine>(dbContext.WarehouseDocumentLines.Where(x =>
+                dbContext.WarehouseDocuments.Any(document => document.Id == x.DocumentId &&
+                    (warehouseIds.Contains(document.WarehouseId) || (document.DestinationWarehouseId != null && warehouseIds.Contains(document.DestinationWarehouseId.Value))))));
+        if (typeof(TEntity) == typeof(WarehouseDocumentCarton))
+            return Cast<TEntity, WarehouseDocumentCarton>(dbContext.WarehouseDocumentCartons.Where(x =>
+                dbContext.WarehouseDocuments.Any(document => document.Id == x.DocumentId &&
+                    (warehouseIds.Contains(document.WarehouseId) || (document.DestinationWarehouseId != null && warehouseIds.Contains(document.DestinationWarehouseId.Value))))));
         if (typeof(TEntity) == typeof(WriteOff))
             return Cast<TEntity, WriteOff>(dbContext.WriteOffRecords.Where(x => warehouseIds.Contains(x.WarehouseId)));
         if (typeof(TEntity) == typeof(WriteOffItem))
@@ -188,6 +261,16 @@ public sealed class EntityQueryService(AppDbContext dbContext) : IEntityQuerySer
                 dbContext.RetailerLoyaltyRecords.Any(loyalty => loyalty.Id == x.RetailerLoyaltyId && retailerIds.Contains(loyalty.RetailerId))));
         if (typeof(TEntity) == typeof(RewardRedemption))
             return Cast<TEntity, RewardRedemption>(dbContext.RewardRedemptionRecords.Where(x => retailerIds.Contains(x.RetailerId)));
+        if (typeof(TEntity) == typeof(LoyaltyProgramRetailer))
+            return Cast<TEntity, LoyaltyProgramRetailer>(dbContext.LoyaltyProgramRetailerRecords.Where(x => retailerIds.Contains(x.RetailerId)));
+        if (typeof(TEntity) == typeof(RetailerDebtPayOsCheckout))
+            return Cast<TEntity, RetailerDebtPayOsCheckout>(dbContext.RetailerDebtPayOsCheckoutRecords.Where(x => retailerIds.Contains(x.RetailerId)));
+        if (typeof(TEntity) == typeof(RetailerDebtPayOsAllocation))
+            return Cast<TEntity, RetailerDebtPayOsAllocation>(dbContext.RetailerDebtPayOsAllocationRecords.Where(x =>
+                dbContext.RetailerDebtPayOsCheckoutRecords.Any(checkout => checkout.Id == x.CheckoutId && retailerIds.Contains(checkout.RetailerId))));
+        if (typeof(TEntity) == typeof(BatchPromotion))
+            return Cast<TEntity, BatchPromotion>(dbContext.BatchPromotionRecords.Where(x =>
+                dbContext.BatchRecords.Any(batch => batch.Id == x.BatchId && warehouseIds.Contains(batch.WarehouseId))));
         if (typeof(TEntity) == typeof(MapLocation))
             return Cast<TEntity, MapLocation>(dbContext.MapLocationRecords.Where(x =>
                 (x.WarehouseId != null && (access.Role != SystemRoles.WarehouseKeeper || warehouseIds.Contains(x.WarehouseId.Value))) ||
@@ -243,7 +326,8 @@ public sealed class EntityQueryService(AppDbContext dbContext) : IEntityQuerySer
     private static bool IsAdminOnlyEntity<TEntity>() => typeof(TEntity) == typeof(UserAccount) ||
         typeof(TEntity) == typeof(UserWarehouseAssignment) || typeof(TEntity) == typeof(UserRegionAssignment) ||
         typeof(TEntity) == typeof(SalesGroupMember) || typeof(TEntity) == typeof(AuditLog) ||
-        typeof(TEntity) == typeof(SystemConfiguration);
+        typeof(TEntity) == typeof(SystemConfiguration) || typeof(TEntity) == typeof(RoleDefinition) ||
+        typeof(TEntity) == typeof(RolePermission);
 
     private static IQueryable<TEntity> Cast<TEntity, TActual>(IQueryable<TActual> query)
         where TEntity : class where TActual : class => (IQueryable<TEntity>)(object)query;

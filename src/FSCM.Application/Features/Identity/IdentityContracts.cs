@@ -41,7 +41,8 @@ public sealed record UserListQuery(
     string? Role,
     bool? IsActive,
     int Page,
-    int PageSize);
+    int PageSize,
+    string Sort = "desc");
 
 public sealed record UserSummary(
     Guid Id,
@@ -77,7 +78,11 @@ public sealed record AuthenticatedUser(
     string Role,
     bool MustChangePassword,
     IdentityScope Scope,
-    IdentityScopeLabels ScopeLabels);
+    IdentityScopeLabels ScopeLabels,
+    IReadOnlyCollection<string>? Permissions = null)
+{
+    public IReadOnlyCollection<string> Permissions { get; init; } = Permissions ?? Array.Empty<string>();
+}
 
 public sealed record CreatedUserResult(
     Guid UserId,

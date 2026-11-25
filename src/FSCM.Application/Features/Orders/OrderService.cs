@@ -245,6 +245,8 @@ public sealed class OrderService(
             throw OrderOperationException.Validation("Page must be at least 1 and pageSize must be between 1 and 100.");
         if (query.Search?.Length > 200)
             throw OrderOperationException.Validation("Search cannot exceed 200 characters.");
+        if (query.Sort is not ("asc" or "desc"))
+            throw OrderOperationException.Validation("Order sort must be asc or desc.");
 
         var result = await store.ListAsync(actorUserId, actorRole, query, cancellationToken);
         return new(result.Items.Select(ToSummary).ToArray(), query.Page, query.PageSize, result.TotalCount);

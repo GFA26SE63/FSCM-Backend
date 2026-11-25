@@ -66,7 +66,7 @@ public sealed class InternalTransfersController(InternalTransferService service)
         Guid id, DispatchInternalTransferRequest request,
         [FromHeader(Name = "Idempotency-Key")] string operationKey,
         CancellationToken cancellationToken) =>
-        service.DispatchAsync(id, new(request.ExpectedVersion,
+        service.DispatchAsync(id, new(request.DriverId, request.VehicleId, request.ExpectedVersion,
             request.Lines.Select(item => new DispatchInternalTransferLineData(
                 item.TransferItemId, item.QrCodes)).ToArray()), operationKey,
             GetActorUserId(), GetActorRole(), cancellationToken);
