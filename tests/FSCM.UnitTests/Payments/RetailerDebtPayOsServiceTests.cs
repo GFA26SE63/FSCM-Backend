@@ -67,6 +67,32 @@ public sealed class RetailerDebtPayOsServiceTests
     }
 
     [Fact]
+    public async Task Report5_NFR02_selected_debt_never_overpays_and_duplicate_callback_allocates_once()
+    {
+        var fixture = new Fixture();
+        var service = fixture.CreateService();
+        var checkout = await service.CreateAsync(new(
+            RetailerDebtCheckoutModes.Selected, [fixture.Payment.Id]), "nfr-02",
+            fixture.UserId, SystemRoles.Retailer, CancellationToken.None);
+
+        Assert.Equal(800_000m, checkout.Amount);
+        Assert.Equal(200_000m, fixture.Payment.ConfirmedAmount);
+        Assert.Equal(PaymentStatuses.PartiallyPaid, fixture.Payment.Status);
+
+        var payload = new PayOsWebhookPayload(
+            checkout.PayOsOrderCode, 800_000, "FSCM", "1", "PAYOS-NFR-02", "2026-11-11 09:00:00",
+            "VND", checkout.PaymentLinkId, "00", "success", null, null, null, null, null, null);
+        var verified = new PayOsVerifiedWebhook("00", true, payload);
+        await service.HandleVerifiedWebhookAsync(verified, CancellationToken.None);
+        await service.HandleVerifiedWebhookAsync(verified, CancellationToken.None);
+
+        Assert.Single(fixture.Store.Receipts);
+        Assert.Equal(fixture.Payment.Amount, fixture.Payment.ConfirmedAmount);
+        Assert.Equal(PaymentStatuses.Paid, fixture.Payment.Status);
+        Assert.True(fixture.Payment.ConfirmedAmount <= fixture.Payment.AdjustedAmount);
+    }
+
+    [Fact]
     public async Task Cancelled_payment_link_is_reconciled_and_releases_receivables()
     {
         var fixture = new Fixture();

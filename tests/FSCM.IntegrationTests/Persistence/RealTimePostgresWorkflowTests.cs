@@ -44,10 +44,11 @@ public sealed class RealTimePostgresWorkflowTests
         var target = new Npgsql.NpgsqlConnectionStringBuilder(connection);
         Assert.True(target.Host is "127.0.0.1" or "localhost");
         Assert.StartsWith("fscm_e2e_", target.Database);
+        target.Database += $"_realtime_{Guid.NewGuid().ToString("N")[..12]}";
         // This suite creates, migrates and seeds a new database. It never deletes a database.
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
-            ["ConnectionStrings:DefaultConnection"] = connection,
+            ["ConnectionStrings:DefaultConnection"] = target.ConnectionString,
             ["SeedData:DefaultPassword"] = "Local-E2e-Only!2049",
             ["Jwt:Secret"] = new string('e', 64),
             ["Jwt:Issuer"] = "FSCM.API",

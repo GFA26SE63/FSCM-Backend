@@ -517,6 +517,10 @@ public sealed class IdentityAuthorizationTests : IClassFixture<IdentityAuthoriza
         public Task<IReadOnlyCollection<RefreshToken>> GetActiveRefreshTokensAsync(Guid userId, DateTimeOffset now, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyCollection<RefreshToken>>(RefreshTokens.Where(token =>
                 token.UserAccountId == userId && token.RevokedAt is null && token.ExpiresAt > now).ToArray());
+        public Task<IReadOnlyCollection<string>> GetRolePermissionsAsync(string roleCode, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyCollection<string>>([]);
+        public Task<bool> RoleExistsAsync(string roleCode, CancellationToken cancellationToken) =>
+            Task.FromResult(true);
         public void AddUser(UserAccount user) => Users.Add(user);
         public void AddCredential(UserCredential credential) => Credentials.Add(credential);
         public void AddRefreshToken(RefreshToken refreshToken) => RefreshTokens.Add(refreshToken);

@@ -20,7 +20,7 @@ public sealed class OperationsReportsPostgresTests
         var target = new Npgsql.NpgsqlConnectionStringBuilder(Environment.GetEnvironmentVariable("FSCM_TEST_POSTGRES"));
         Assert.True(target.Host is "127.0.0.1" or "localhost");
         Assert.StartsWith("fscm_e2e_", target.Database);
-        target.Database += "_ops";
+        target.Database += $"_ops_{Guid.NewGuid().ToString("N")[..12]}";
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
             ["ConnectionStrings:DefaultConnection"] = target.ConnectionString,

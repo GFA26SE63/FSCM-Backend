@@ -11,6 +11,7 @@ public sealed class AllocationPlannerTests
     private static readonly Guid ProductB = Guid.NewGuid();
 
     [Fact]
+    [Trait("Report5Case", "UT-Allocation Engine + Benchmark-UTCID04")]
     public void An_earlier_order_takes_stock_away_from_a_later_one()
     {
         var planner = NewPlanner();
@@ -48,6 +49,7 @@ public sealed class AllocationPlannerTests
     }
 
     [Fact]
+    [Trait("Report5Case", "UT-Allocation Engine + Benchmark-UTCID05")]
     public void A_short_line_hands_back_every_draw_the_order_already_made()
     {
         var planner = NewPlanner();
@@ -65,6 +67,29 @@ public sealed class AllocationPlannerTests
         // The first line had already drawn 10 from B-A; it must be back in the pool.
         Assert.Equal(100m, plan.RemainingPool[plentiful.BatchId]);
         Assert.Equal(1m, plan.RemainingPool[scarce.BatchId]);
+    }
+
+    [Fact]
+    public void Report5_NFR04_short_order_rolls_back_every_fragment_and_retry_is_deterministic()
+    {
+        var planner = NewPlanner();
+        var plentiful = Batch("B-NFR-A", ProductA, quantity: 100m);
+        var scarce = Batch("B-NFR-B", ProductB, quantity: 1m);
+        var order = Order("DH-NFR-04", 1,
+            Line(ProductA, "SKU-A", 10m), Line(ProductB, "SKU-B", 10m));
+
+        var first = planner.Plan([order], [plentiful, scarce], Route);
+        var retry = planner.Plan([order], [plentiful, scarce], Route);
+
+        Assert.All(new[] { first, retry }, plan =>
+        {
+            var result = Assert.Single(plan.Orders);
+            Assert.False(result.IsFullyAllocated);
+            Assert.Empty(result.Allocations);
+            Assert.Equal(100m, plan.RemainingPool[plentiful.BatchId]);
+            Assert.Equal(1m, plan.RemainingPool[scarce.BatchId]);
+            Assert.Contains("SKU-B", result.ShortageReason);
+        });
     }
 
     [Fact]

@@ -7,7 +7,9 @@ namespace FSCM.Persistence.WarehouseWork;
 
 public sealed record FactoryInboundPallet(Guid PalletId, string PalletCode, Guid DestinationWarehouseId,
     DateTimeOffset? DispatchedAt, string BatchCode, string Sku, string ProductName, int CartonCount,
-    DateOnly ExpirationDate, Guid? ReceiptDocumentId = null);
+    DateOnly ExpirationDate, Guid? ReceiptDocumentId = null,
+    // Filled by Traceability for pallets dispatched on a dispatch note (PXN); null for older pallets.
+    Guid? DispatchNoteId = null, string? DispatchCode = null, string? VehicleNumber = null, string? DriverName = null);
 public sealed record PrepareFactoryReceiptRequest(string PalletCode);
 
 public sealed partial class WarehouseWorkService
@@ -57,7 +59,7 @@ public sealed partial class WarehouseWorkService
                     throw PickingOperationException.Conflict("Phiếu nhập không khớp pallet nguồn.");
                 return prior.Id;
             }
-            var document = New("Receipt", "Factory", warehouseId, key, request, actor, $"Nhận pallet {pallet.Code}");
+            var document = await New("Receipt", "Factory", warehouseId, key, request, actor, $"Nhận pallet {pallet.Code}", ct);
             Documents.Add(document);
             await db.SaveChangesAsync(ct);
             return document.Id;
