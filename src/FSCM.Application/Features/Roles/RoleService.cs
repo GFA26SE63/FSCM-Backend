@@ -24,6 +24,7 @@ public sealed class RoleService(
 
         // 3. Kho vận
         new ScreenFeatureDto(SystemScreenKeys.WarehouseInbound, "Nhập kho (PNK)", "Tạo và kiểm duyệt phiếu nhập kho từ nhà máy và chuyển kho", "warehouse", "Kho vận"),
+        new ScreenFeatureDto(SystemScreenKeys.WarehouseFactoryRequests, "Yêu cầu nhận hàng từ nhà máy", "Tiếp nhận phiếu xuất xưởng của nhà máy và mở phiếu kiểm đếm khi hàng đến kho", "warehouse", "Kho vận"),
         new ScreenFeatureDto(SystemScreenKeys.WarehouseOutbound, "Xuất kho (PXK)", "Lập và xử lý phiếu xuất kho giao hàng cho đại lý / luân chuyển", "warehouse", "Kho vận"),
         new ScreenFeatureDto(SystemScreenKeys.WarehouseTransfers, "Luân chuyển kho", "Quản lý điều chuyển hàng hóa giữa các kho nội bộ", "warehouse", "Kho vận"),
         new ScreenFeatureDto(SystemScreenKeys.Batches, "Quản lý lô hàng", "Theo dõi chi tiết số lô, hạn sử dụng, in mã QR và truy xuất nguồn gốc", "warehouse", "Kho vận"),
