@@ -68,4 +68,6 @@ public sealed record OperationsReportPointsTotal(decimal Received, decimal Used,
 public interface IOperationsReportStore
 {
     Task<OperationsReportResult> ReadAsync(string kind, OperationsReportQuery query, CancellationToken ct);
+    Task<OperationsReportResult> ReadAsync(string kind, OperationsReportQuery query, Guid? actorUserId, string? actorRole, CancellationToken ct) =>
+        ReadAsync(kind, query, ct);
 }

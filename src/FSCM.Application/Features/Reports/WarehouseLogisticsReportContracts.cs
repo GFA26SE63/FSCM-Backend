@@ -9,7 +9,7 @@ namespace FSCM.Application.Features.Reports;
 /// Best sellers are ranked over the selected warehouses.
 /// </remarks>
 public sealed record WarehouseLogisticsReportQuery(DateOnly FromDate, DateOnly ToDate, Guid? RegionId = null, int Top = 10,
-    IReadOnlyCollection<Guid>? WarehouseIds = null)
+    IReadOnlyCollection<Guid>? WarehouseIds = null, bool AllSkus = false)
 {
     public const int MaxWarehouses = 50;
     public const int DefaultTop = 10;
@@ -43,6 +43,8 @@ public sealed record WarehouseLogisticsReport(
 public interface IWarehouseLogisticsReportStore
 {
     Task<WarehouseLogisticsReport> ReadAsync(WarehouseLogisticsReportQuery query, DateOnly today, CancellationToken ct);
+    Task<WarehouseLogisticsReport> ReadAsync(WarehouseLogisticsReportQuery query, DateOnly today, Guid? actorUserId, string? actorRole, CancellationToken ct) =>
+        ReadAsync(query, today, ct);
 }
 
 // Raw rows loaded by the store; the builder below turns them into the report so the rules are unit-testable.
@@ -63,7 +65,7 @@ public static class WarehouseLogisticsReportBuilder
             query.ToDate == DateOnly.MaxValue ||
             query.ToDate.DayNumber - query.FromDate.DayNumber >= WarehouseLogisticsReportQuery.MaxPeriodDays)
             throw ReportOperationException.Validation("Select a valid reporting period of at most 367 days.");
-        if (query.Top is < 1 or > WarehouseLogisticsReportQuery.MaxTop)
+        if (!query.AllSkus && query.Top is < 1 or > WarehouseLogisticsReportQuery.MaxTop)
             throw ReportOperationException.Validation("Top must be between 1 and 50.");
         if (query.WarehouseIds?.Count > WarehouseLogisticsReportQuery.MaxWarehouses)
             throw ReportOperationException.Validation("Select at most 50 warehouses.");
@@ -87,7 +89,7 @@ public static class WarehouseLogisticsReportBuilder
                 .Sum(m => m.PhysicalQuantityDelta);
         // Best sellers: period sales first; when the period has few or no sales the list is still filled by
         // all-time sales, then current stock, so the current-stock columns show even without movements.
-        var top = productById.Keys
+        var ranked = productById.Keys
             .Select(id => new
             {
                 ProductId = id,
@@ -97,8 +99,8 @@ public static class WarehouseLogisticsReportBuilder
             })
             .Where(x => x.Period > 0 || x.Lifetime > 0 || x.OnHand > 0)
             .OrderByDescending(x => x.Period).ThenByDescending(x => x.Lifetime).ThenByDescending(x => x.OnHand)
-            .ThenBy(x => productById[x.ProductId].Sku, StringComparer.Ordinal)
-            .Take(query.Top)
+            .ThenBy(x => productById[x.ProductId].Sku, StringComparer.Ordinal);
+        var top = (query.AllSkus ? ranked : ranked.Take(query.Top))
             .Select((x, i) => new WarehouseLogisticsProduct(x.ProductId, productById[x.ProductId].Sku,
                 productById[x.ProductId].Name, i + 1, x.Period))
             .ToArray();
