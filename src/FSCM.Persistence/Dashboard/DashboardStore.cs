@@ -434,6 +434,20 @@ public sealed class DashboardStore(AppDbContext db) : IDashboardStore
                 var receiptsOpen = await receiptRows.OrderBy(r => r.CreatedAt).Take(WorkItemLimit).Select(r => new { r.Id, r.ReceiptCode, r.Status, r.CreatedAt }).ToArrayAsync(ct);
                 work.AddRange(receiptsOpen.Select(r => new DashboardWorkItem("receipt", r.Id, r.ReceiptCode, "Phiếu nhập còn mở", r.Status,
                     "Kiểm tra SKU, batch và số lượng nhập", r.CreatedAt, 3, $"/receipts/{Uri.EscapeDataString(r.ReceiptCode)}")));
+            var transferArrivals = await db.WarehouseDocuments.AsNoTracking()
+                .Where(d => d.Kind == "Issue" && d.Reason == "Transfer" && d.Status == "Posted"
+                    && d.DestinationWarehouseId.HasValue && allowedWarehouses.Contains(d.DestinationWarehouseId.Value)
+                    && !db.WarehouseDocuments.Any(r => r.SourceDocumentId == d.Id && r.Status != "Cancelled"))
+                .OrderBy(d => d.PostedAt ?? d.CreatedAt).Take(WorkItemLimit)
+                .Select(d => new { d.Id, d.Code, At = d.PostedAt ?? d.CreatedAt }).ToArrayAsync(ct);
+            cards.Add(new("transferArrivalPending", "Luân chuyển chờ nhận", transferArrivals.Length, "count", "Hàng đã xuất từ kho gửi, chờ nhập vào kho đích", transferArrivals.Length > 0 ? "warn" : "neutral", "/warehouse-transfers"));
+            work.AddRange(transferArrivals.Select(t => new DashboardWorkItem("transfer", t.Id, t.Code, "Hàng luân chuyển chờ nhận", "Confirmed",
+                "Mở phiếu để quét xác nhận nhập kho đích", t.At, 2, "/warehouse-transfers")));
+            var expiredDisposal = riskRows.Where(b => b.ExpirationDate < today && b.OnHand > 0)
+                .OrderBy(b => b.ExpirationDate).ThenByDescending(b => b.OnHand).Take(20).ToArray();
+            work.AddRange(expiredDisposal.Select(b => new DashboardWorkItem("disposal", b.Id, b.BatchCode, "Lô hết hạn cần hủy", "Expired",
+                $"Kho {b.Code} · SKU {b.Sku} · Tồn {b.OnHand:0.#} thùng", new DateTimeOffset(b.ExpirationDate.ToDateTime(TimeOnly.MinValue), Vietnam),
+                1, "/disposal/new")));
         }
         return new(role, now, periodFrom, periodTo, scope, cards, statuses, trend, products, team, inventory, risks,
             work.OrderBy(w => w.Priority).ThenBy(w => w.Since).Take(WorkItemLimit).ToArray(), customers, health, unattributed, notes,
