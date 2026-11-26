@@ -133,6 +133,7 @@ public sealed class AuthController(
 
     [Authorize]
     [HttpGet("me")]
+    [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
     [ProducesResponseType<AuthenticatedUser>(StatusCodes.Status200OK)]
     public Task<AuthenticatedUser> Me(CancellationToken cancellationToken)
     {

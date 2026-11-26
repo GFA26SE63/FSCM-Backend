@@ -13,7 +13,7 @@ namespace FSCM.API.Controllers;
 [Route("api/v1/batch-discounts")]
 public sealed class BatchDiscountsController(PromotionService service) : ControllerBase
 {
-    [Authorize(Roles = SystemRoles.Admin)]
+    [Authorize]
     [HttpGet("suggestions")]
     public Task<IReadOnlyCollection<BatchDiscountSuggestionResult>> Suggestions(
         [FromQuery] Guid? warehouseId, [FromQuery] Guid? productId,
@@ -30,7 +30,7 @@ public sealed class BatchDiscountsController(PromotionService service) : Control
     public Task<BatchDiscountResult> Get(Guid id, CancellationToken cancellationToken) =>
         service.GetBatchDiscountAsync(id, cancellationToken);
 
-    [Authorize(Roles = SystemRoles.Admin)]
+    [Authorize]
     [HttpPost("batches/{batchId:guid}")]
     public async Task<IActionResult> Apply(Guid batchId, ApplyBatchDiscountRequest request,
         CancellationToken cancellationToken)
@@ -40,7 +40,7 @@ public sealed class BatchDiscountsController(PromotionService service) : Control
         return CreatedAtAction(nameof(Get), new { id = result.Id }, result);
     }
 
-    [Authorize(Roles = SystemRoles.Admin)]
+    [Authorize]
     [HttpPost("{id:guid}/remove")]
     public Task<BatchDiscountResult> Remove(Guid id, CancellationToken cancellationToken) =>
         service.RemoveBatchDiscountAsync(id, ActorId(), cancellationToken);

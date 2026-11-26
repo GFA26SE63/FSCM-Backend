@@ -16,16 +16,16 @@ public sealed class QuotesController(QuoteService service) : ControllerBase
     public Task<IReadOnlyCollection<SalesOrderQuoteResult>> ForOrder(Guid orderId, CancellationToken ct) => service.ListForOrderAsync(orderId, ActorId(), Role(), ct);
 
     [HttpGet("runs/{runId:guid}")]
-    [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator}")]
+    [Authorize]
     public Task<IReadOnlyCollection<SalesOrderQuoteResult>> ForRun(Guid runId, CancellationToken ct) => service.ListForRunAsync(runId, ct);
 
     [HttpPost("{id:guid}/accept")]
-    [Authorize(Roles = SystemRoles.Retailer)]
+    [Authorize]
     public Task<SalesOrderQuoteResult> Accept(Guid id, AcceptQuoteRequest request, CancellationToken ct) =>
         service.AcceptAsync(id, request.ExpectedVersion, request.PaymentMethod, ActorId(), Role(), ct);
 
     [HttpPost("{id:guid}/reject")]
-    [Authorize(Roles = SystemRoles.Retailer)]
+    [Authorize]
     public Task<SalesOrderQuoteResult> Reject(Guid id, RejectQuoteRequest request, CancellationToken ct) => service.RejectAsync(id, request.ExpectedVersion, request.Reason, ActorId(), Role(), ct);
 
     private Guid ActorId() => Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var id) ? id : throw QuoteOperationException.Validation("Authenticated user identifier is invalid.");

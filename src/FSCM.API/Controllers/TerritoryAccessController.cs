@@ -7,7 +7,7 @@ using Microsoft.AspNetCore.Mvc;
 namespace FSCM.API.Controllers;
 
 [ApiController]
-[Authorize(Roles = SystemRoles.Sales)]
+[Authorize]
 [Route("api/v1/territory-access")]
 public sealed class TerritoryAccessController(TerritoryService service) : ControllerBase
 {

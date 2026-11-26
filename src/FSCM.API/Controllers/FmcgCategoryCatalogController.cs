@@ -31,12 +31,12 @@ public sealed class FmcgCategoryCatalogController(AppDbContext db, TimeProvider 
             : new { row.Version, row.UpdatedAt, document = Parse(row.ConfigValue) });
     }
 
-    [HttpGet("history"), Authorize(Roles = SystemRoles.Admin)]
+    [HttpGet("history"), Authorize]
     public async Task<IReadOnlyCollection<FmcgCategoryCatalogVersionResult>> History(CancellationToken ct) =>
         await db.SystemConfigurationRecords.AsNoTracking().Where(x => x.ConfigKey == Key).OrderByDescending(x => x.Version)
             .Select(x => new FmcgCategoryCatalogVersionResult(x.Version, x.UpdatedAt, x.UpdatedByUserId, x.IsActive)).ToArrayAsync(ct);
 
-    [HttpPut, Authorize(Roles = SystemRoles.Admin)]
+    [HttpPut, Authorize]
     public async Task<IActionResult> Put([FromBody] JsonElement value, CancellationToken ct)
     {
         FmcgCategoryCatalogDocument document;

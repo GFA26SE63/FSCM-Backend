@@ -8,7 +8,7 @@ using Microsoft.AspNetCore.Mvc;
 namespace FSCM.API.Controllers;
 
 [ApiController]
-[Authorize(Roles = SystemRoles.Admin)]
+[Authorize]
 [Route("api/v1/users")]
 public sealed class UsersController(IdentityService identityService) : ControllerBase
 {

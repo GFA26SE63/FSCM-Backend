@@ -8,6 +8,25 @@ namespace FSCM.Persistence.Roles;
 
 public sealed class RoleStore(AppDbContext dbContext) : IRoleStore
 {
+    public async Task<IReadOnlyList<ScreenApiMapping>> GetScreenApiMappingsAsync(string businessRole, CancellationToken ct) =>
+        await dbContext.ScreenApiMappings.AsNoTracking().Where(row => row.BusinessRole == businessRole).ToArrayAsync(ct);
+
+    public async Task<IReadOnlyList<string>> GetApiScreenCodesAsync(string businessRole, string apiCode, CancellationToken ct) =>
+        await dbContext.ScreenApiMappings.AsNoTracking().Where(row => row.BusinessRole == businessRole && row.ApiCode == apiCode)
+            .Select(row => row.ScreenCode).ToArrayAsync(ct);
+
+    public async Task<T> InTransactionAsync<T>(Func<Task<T>> operation, CancellationToken ct)
+    {
+        if (dbContext.Database.CurrentTransaction is not null) return await operation();
+        return await dbContext.Database.CreateExecutionStrategy().ExecuteAsync(async () =>
+        {
+            await using var transaction = await dbContext.Database.BeginTransactionAsync(ct);
+            var result = await operation();
+            await transaction.CommitAsync(ct);
+            return result;
+        });
+    }
+
     public async Task<IReadOnlyList<(RoleDefinition Role, int UserCount)>> ListRolesAsync(string? search, CancellationToken ct)
     {
         var query = dbContext.RoleDefinitionRecords
@@ -26,8 +45,8 @@ public sealed class RoleStore(AppDbContext dbContext) : IRoleStore
         var roleCodes = roles.Select(r => r.Code).ToList();
 
         var userCounts = await dbContext.UserAccountRecords
-            .Where(u => roleCodes.Contains(u.Role))
-            .GroupBy(u => u.Role)
+            .Where(u => roleCodes.Contains(u.RoleDefinition == null ? u.Role : u.RoleDefinition.Code))
+            .GroupBy(u => u.RoleDefinition == null ? u.Role : u.RoleDefinition.Code)
             .Select(g => new { RoleCode = g.Key, Count = g.Count() })
             .ToDictionaryAsync(x => x.RoleCode, x => x.Count, StringComparer.OrdinalIgnoreCase, ct);
 
@@ -47,13 +66,14 @@ public sealed class RoleStore(AppDbContext dbContext) : IRoleStore
 
     public Task<bool> HasUsersAssignedAsync(string roleCode, CancellationToken ct) =>
         dbContext.UserAccountRecords
-            .AnyAsync(u => u.Role.ToLower() == roleCode.ToLower(), ct);
+            .AnyAsync(u => (u.RoleDefinition == null ? u.Role : u.RoleDefinition.Code).ToLower() == roleCode.ToLower(), ct);
 
     public Task<int> CountUsersAssignedAsync(string roleCode, CancellationToken ct) =>
         dbContext.UserAccountRecords
-            .CountAsync(u => u.Role.ToLower() == roleCode.ToLower(), ct);
+            .CountAsync(u => (u.RoleDefinition == null ? u.Role : u.RoleDefinition.Code).ToLower() == roleCode.ToLower(), ct);
 
     public void AddRole(RoleDefinition role) => dbContext.RoleDefinitionRecords.Add(role);
+    public void AddAuditLog(AuditLog audit) => dbContext.AuditLogRecords.Add(audit);
 
     public void RemoveRole(RoleDefinition role) => dbContext.RoleDefinitionRecords.Remove(role);
 
@@ -77,135 +97,4 @@ public sealed class RoleStore(AppDbContext dbContext) : IRoleStore
 
     public Task SaveChangesAsync(CancellationToken ct) => dbContext.SaveChangesAsync(ct);
 
-    public async Task EnsureDefaultRolesSeededAsync(TimeProvider timeProvider, CancellationToken ct)
-    {
-        var now = timeProvider.GetUtcNow();
-        var existingCodes = await dbContext.RoleDefinitionRecords
-            .Select(r => r.Code)
-            .ToListAsync(ct);
-        var existingSet = new HashSet<string>(existingCodes, StringComparer.OrdinalIgnoreCase);
-
-        var defaultRoles = new List<(string Code, string Name, string Description, bool IsSystem, string[] Permissions)>
-        {
-            (
-                SystemRoles.Admin,
-                "Quản trị viên",
-                "Toàn quyền quản trị hệ thống, quản lý tài khoản và phân quyền vai trò.",
-                true,
-                SystemScreenKeys.All.ToArray()
-            ),
-            (
-                SystemRoles.Operator,
-                "Nhân viên vận hành",
-                "Xử lý đơn hàng, điều phối giao hàng, công nợ, khiếu nại và đổi quà.",
-                true,
-                new[]
-                {
-                    SystemScreenKeys.Dashboard, SystemScreenKeys.Reports, SystemScreenKeys.WarehouseReport,
-                    SystemScreenKeys.Orders, SystemScreenKeys.Allocation, SystemScreenKeys.Debts, SystemScreenKeys.Refunds,
-                    SystemScreenKeys.Complaints, SystemScreenKeys.Batches, SystemScreenKeys.Readiness,
-                    SystemScreenKeys.Retailers, SystemScreenKeys.Loyalty, SystemScreenKeys.Redeem, SystemScreenKeys.Kpi, SystemScreenKeys.Fleet
-                }
-            ),
-            (
-                SystemRoles.WarehouseKeeper,
-                "Thủ kho",
-                "Quản lý chứng từ xuất nhập kho, tồn kho, lô hàng, luân chuyển trên cổng Web và thiết bị cầm tay Mobile.",
-                true,
-                new[]
-                {
-                    SystemScreenKeys.Dashboard, SystemScreenKeys.WarehouseInbound, SystemScreenKeys.WarehouseFactoryRequests, SystemScreenKeys.WarehouseOutbound,
-                    SystemScreenKeys.WarehouseTransfers, SystemScreenKeys.Batches, SystemScreenKeys.WarehouseTrace, SystemScreenKeys.Disposal
-                }.Concat(SystemScreenKeys.MobileWarehouseScreens).ToArray()
-            ),
-            (
-                SystemRoles.SalesManager,
-                "Quản lý bán hàng",
-                "Quản lý khu vực kinh doanh, nhóm bán hàng và chỉ tiêu KPI.",
-                true,
-                new[]
-                {
-                    SystemScreenKeys.Dashboard, SystemScreenKeys.Regions, SystemScreenKeys.Kpi
-                }
-            ),
-            (
-                SystemRoles.Sales,
-                "Nhân viên bán hàng",
-                "Nhân viên kinh doanh khai báo khách hàng và chăm sóc đại lý trên ứng dụng di động.",
-                true,
-                SystemScreenKeys.MobileSalesScreens.ToArray()
-            ),
-            (
-                SystemRoles.Retailer,
-                "Nhà bán lẻ",
-                "Đại lý bán lẻ đặt hàng, thanh toán nợ và đổi quà trên ứng dụng di động.",
-                true,
-                SystemScreenKeys.MobileRetailerScreens.ToArray()
-            )
-        };
-
-        var existingRolesWithPerms = await dbContext.RoleDefinitionRecords
-            .Include(r => r.Permissions)
-            .ToListAsync(ct);
-        var existingDict = existingRolesWithPerms.ToDictionary(r => r.Code, StringComparer.OrdinalIgnoreCase);
-
-        bool changes = false;
-        foreach (var def in defaultRoles)
-        {
-            if (existingDict.TryGetValue(def.Code, out var existingRole))
-            {
-                // If system role has no permissions in DB (e.g. Sales, Retailer from earlier migration), seed defaults
-                if (existingRole.IsSystem && existingRole.Permissions.Count == 0 && def.Permissions.Length > 0)
-                {
-                    foreach (var perm in def.Permissions)
-                    {
-                        var p = new RolePermission
-                        {
-                            Id = Guid.NewGuid(),
-                            RoleId = existingRole.Id,
-                            PermissionKey = perm,
-                            CreatedAt = now
-                        };
-                        existingRole.Permissions.Add(p);
-                        dbContext.RolePermissionRecords.Add(p);
-                    }
-                    changes = true;
-                }
-            }
-            else
-            {
-                var role = new RoleDefinition
-                {
-                    Id = Guid.NewGuid(),
-                    Code = def.Code,
-                    Name = def.Name,
-                    Description = def.Description,
-                    IsSystem = def.IsSystem,
-                    CreatedAt = now,
-                    UpdatedAt = now
-                };
-
-                foreach (var perm in def.Permissions)
-                {
-                    var p = new RolePermission
-                    {
-                        Id = Guid.NewGuid(),
-                        RoleId = role.Id,
-                        PermissionKey = perm,
-                        CreatedAt = now
-                    };
-                    role.Permissions.Add(p);
-                    dbContext.RolePermissionRecords.Add(p);
-                }
-
-                dbContext.RoleDefinitionRecords.Add(role);
-                changes = true;
-            }
-        }
-
-        if (changes)
-        {
-            await dbContext.SaveChangesAsync(ct);
-        }
-    }
 }

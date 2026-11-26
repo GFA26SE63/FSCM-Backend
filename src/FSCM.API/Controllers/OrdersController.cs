@@ -1,4 +1,4 @@
-﻿using System.Security.Claims;
+using System.Security.Claims;
 using FSCM.API.Contracts.Deliveries;
 using FSCM.API.Contracts.Orders;
 using FSCM.Application.Features.Deliveries;
@@ -23,12 +23,12 @@ public sealed class OrdersController(
         availability.CheckAsync(request.RetailerId, request.ProductIds,
             GetActorUserId(), GetActorRole(), cancellationToken);
 
-    [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator},{SystemRoles.Sales},{SystemRoles.Retailer}")]
+    [Authorize]
     [HttpPost("{id:guid}/allocation/retry")]
     public Task<OrderDetailResult> RetryAllocation(Guid id, RetryAllocationRequest request, CancellationToken ct) =>
         service.RetryAllocationAsync(id, request.ExpectedVersion, GetActorUserId(), GetActorRole(), ct);
 
-    [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator},{SystemRoles.SalesManager},{SystemRoles.Sales},{SystemRoles.WarehouseKeeper},{SystemRoles.Retailer}")]
+    [Authorize]
     [HttpGet]
     public Task<PagedOrderResult> List(
         [FromQuery] string? status,
@@ -42,22 +42,22 @@ public sealed class OrdersController(
         service.ListAsync(GetActorUserId(), GetActorRole(),
             new(status, retailerId, createdByMe, search, page, size ?? pageSize), cancellationToken);
 
-    [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator},{SystemRoles.SalesManager},{SystemRoles.Sales},{SystemRoles.WarehouseKeeper},{SystemRoles.Retailer}")]
+    [Authorize]
     [HttpGet("{id:guid}")]
     public Task<OrderDetailResult> Get(Guid id, CancellationToken cancellationToken) =>
         service.GetAsync(id, GetActorUserId(), GetActorRole(), cancellationToken);
 
-    [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator},{SystemRoles.SalesManager},{SystemRoles.Sales},{SystemRoles.WarehouseKeeper},{SystemRoles.Retailer}")]
+    [Authorize]
     [HttpGet("by-code/{code}")]
     public Task<OrderDetailResult> GetByCode(string code, CancellationToken cancellationToken) =>
         service.GetByCodeAsync(code, GetActorUserId(), GetActorRole(), cancellationToken);
 
-    [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator},{SystemRoles.SalesManager},{SystemRoles.Sales},{SystemRoles.WarehouseKeeper},{SystemRoles.Retailer}")]
+    [Authorize]
     [HttpGet("{id:guid}/timeline")]
     public Task<OrderTimelineResult> Timeline(Guid id, CancellationToken cancellationToken) =>
         service.GetTimelineAsync(id, GetActorUserId(), GetActorRole(), cancellationToken);
 
-    [Authorize(Roles = $"{SystemRoles.Sales},{SystemRoles.Retailer}")]
+    [Authorize]
     [HttpPost]
     [ProducesResponseType<OrderDetailResult>(StatusCodes.Status201Created)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
@@ -81,7 +81,7 @@ public sealed class OrdersController(
         return CreatedAtAction(nameof(Get), new { id = result.Id }, result);
     }
 
-    [Authorize(Roles = SystemRoles.Sales)]
+    [Authorize]
     [HttpPost("offline")]
     [HttpPost("sync")]
     [ProducesResponseType<OrderDetailResult>(StatusCodes.Status201Created)]
@@ -113,7 +113,7 @@ public sealed class OrdersController(
         return CreatedAtAction(nameof(Get), new { id = result.Id }, result);
     }
 
-    [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator},{SystemRoles.Sales}")]
+    [Authorize]
     [HttpPost("{id:guid}/cancel")]
     public Task<OrderDetailResult> Cancel(
         Guid id,

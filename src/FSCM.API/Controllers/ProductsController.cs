@@ -30,7 +30,7 @@ public sealed class ProductsController(CatalogService catalogService) : Controll
     public Task<ProductResult> Get(Guid productId, CancellationToken cancellationToken) =>
         catalogService.GetProductAsync(productId, cancellationToken);
 
-    [Authorize(Roles = SystemRoles.Admin)]
+    [Authorize]
     [HttpPost]
     [ProducesResponseType<ProductResult>(StatusCodes.Status201Created)]
     public async Task<IActionResult> Create(
@@ -50,7 +50,7 @@ public sealed class ProductsController(CatalogService catalogService) : Controll
         return CreatedAtAction(nameof(Get), new { productId = result.Id }, result);
     }
 
-    [Authorize(Roles = SystemRoles.Admin)]
+    [Authorize]
     [HttpPut("{productId:guid}")]
     [ProducesResponseType<ProductResult>(StatusCodes.Status200OK)]
     public Task<ProductResult> Update(
@@ -67,7 +67,7 @@ public sealed class ProductsController(CatalogService catalogService) : Controll
                 request.NearDateThresholdHours),
             cancellationToken);
 
-    [Authorize(Roles = SystemRoles.Admin)]
+    [Authorize]
     [HttpDelete("{productId:guid}")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     public async Task<IActionResult> Delete(Guid productId, CancellationToken cancellationToken)
@@ -76,13 +76,13 @@ public sealed class ProductsController(CatalogService catalogService) : Controll
         return NoContent();
     }
 
-    [Authorize(Roles = SystemRoles.Admin)]
+    [Authorize]
     [HttpPost("{productId:guid}/publish")]
     [ProducesResponseType<ProductResult>(StatusCodes.Status200OK)]
     public Task<ProductResult> Publish(Guid productId, CancellationToken cancellationToken) =>
         catalogService.PublishProductAsync(productId, cancellationToken);
 
-    [Authorize(Roles = SystemRoles.Admin)]
+    [Authorize]
     [HttpPost("{productId:guid}/inactivate")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     public async Task<IActionResult> Inactivate(Guid productId, CancellationToken cancellationToken)
@@ -91,7 +91,7 @@ public sealed class ProductsController(CatalogService catalogService) : Controll
         return NoContent();
     }
 
-    [Authorize(Roles = SystemRoles.Admin)]
+    [Authorize]
     [HttpPost("{productId:guid}/replacement")]
     [ProducesResponseType<ProductResult>(StatusCodes.Status201Created)]
     public async Task<IActionResult> CreateReplacement(
@@ -116,7 +116,7 @@ public sealed class ProductsController(CatalogService catalogService) : Controll
     /// Copies allowed product master data into an independent Draft with a caller-supplied new SKU.
     /// Inventory, batches, reservations, transactions, and replacement lineage are never copied.
     /// </summary>
-    [Authorize(Roles = SystemRoles.Admin)]
+    [Authorize]
     [HttpPost("{productId:guid}/clone")]
     [ProducesResponseType<ProductResult>(StatusCodes.Status201Created)]
     public async Task<IActionResult> Clone(
@@ -139,7 +139,7 @@ public sealed class ProductsController(CatalogService catalogService) : Controll
     }
 
     /// <summary>Upload / thay thế ảnh sản phẩm (chỉ hiển thị, không ảnh hưởng SKU, giá, tồn kho).</summary>
-    [Authorize(Roles = SystemRoles.Admin)]
+    [Authorize]
     [HttpPost("{productId:guid}/image")]
     [RequestSizeLimit(ImageUploadLimits.MaxRequestBytes)]
     [ProducesResponseType<ProductResult>(StatusCodes.Status200OK)]
@@ -164,7 +164,7 @@ public sealed class ProductsController(CatalogService catalogService) : Controll
         CancellationToken cancellationToken) =>
         catalogService.GetPriceSuggestionAsync(productId, cancellationToken);
 
-    [Authorize(Roles = SystemRoles.Admin)]
+    [Authorize]
     [HttpPost("{productId:guid}/prices")]
     [ProducesResponseType<ProductPriceResult>(StatusCodes.Status201Created)]
     public async Task<IActionResult> SetPrice(

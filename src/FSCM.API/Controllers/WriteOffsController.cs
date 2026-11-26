@@ -8,7 +8,7 @@ using Microsoft.AspNetCore.Mvc;
 namespace FSCM.API.Controllers;
 
 [ApiController]
-[Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator},{SystemRoles.WarehouseKeeper}")]
+[Authorize]
 [Route("api/v1/write-offs")]
 public sealed class WriteOffsController(WriteOffService service) : ControllerBase
 {
@@ -30,7 +30,7 @@ public sealed class WriteOffsController(WriteOffService service) : ControllerBas
         Guid writeOffId, CancellationToken ct) =>
         service.ListAttachmentsAsync(writeOffId, ct);
 
-    [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator}")]
+    [Authorize]
     [HttpDelete("{writeOffId:guid}/attachments/{attachmentId:guid}")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     public async Task<IActionResult> RemoveAttachment(

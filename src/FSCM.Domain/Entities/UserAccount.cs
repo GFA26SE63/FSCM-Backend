@@ -11,6 +11,8 @@ public sealed class UserAccount
     public string? Phone { get; set; }
     public string FullName { get; set; } = string.Empty;
     public string Role { get; set; } = string.Empty;
+    public Guid? RoleDefinitionId { get; set; }
+    public RoleDefinition? RoleDefinition { get; set; }
     public bool IsActive { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }

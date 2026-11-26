@@ -1,4 +1,4 @@
-﻿using System.Security.Claims;
+using System.Security.Claims;
 using FSCM.API.Contracts.Shipments;
 using FSCM.Application.Features.Shipments;
 using FSCM.Domain.Authorization;
@@ -8,7 +8,7 @@ using Microsoft.AspNetCore.Mvc;
 namespace FSCM.API.Controllers;
 
 [ApiController]
-[Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator},{SystemRoles.SalesManager},{SystemRoles.Sales},{SystemRoles.WarehouseKeeper},{SystemRoles.Retailer}")]
+[Authorize]
 [Route("api/v1/shipments")]
 public sealed class ShipmentsController(ShipmentService service) : ControllerBase
 {
@@ -44,12 +44,12 @@ public sealed class ShipmentsController(ShipmentService service) : ControllerBas
     public Task<RetailerOrderDeliveryResult> OrderDeliveryView(Guid orderId, CancellationToken cancellationToken) =>
         service.GetRetailerOrderDeliveryAsync(orderId, GetActorUserId(), GetActorRole(), cancellationToken);
 
-    [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator}")]
+    [Authorize]
     [HttpPost("orders/{orderId:guid}/sync")]
     public Task<IReadOnlyCollection<ShipmentResult>> Sync(Guid orderId, CancellationToken cancellationToken) =>
         service.SyncOrderAsync(orderId, GetActorRole(), cancellationToken);
 
-    [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator}")]
+    [Authorize]
     [HttpPatch("{id:guid}/exception")]
     public Task<ShipmentResult> FlagException(
         Guid id, [FromBody] FlagShipmentExceptionRequest request, CancellationToken cancellationToken) =>
@@ -58,7 +58,7 @@ public sealed class ShipmentsController(ShipmentService service) : ControllerBas
             GetActorRole(), cancellationToken);
 
     /// <summary>F92: settle a shipment exception; the part leaves Exception and the order can reach Delivered.</summary>
-    [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator}")]
+    [Authorize]
     [HttpPost("{id:guid}/exception/resolve")]
     public Task<ShipmentResult> ResolveException(
         Guid id, [FromBody] ResolveShipmentExceptionRequest request, CancellationToken cancellationToken) =>
@@ -66,7 +66,7 @@ public sealed class ShipmentsController(ShipmentService service) : ControllerBas
             new ResolveShipmentExceptionData(request.Reason, request.ExpectedVersion),
             GetActorUserId(), GetActorRole(), cancellationToken);
 
-    [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator}")]
+    [Authorize]
     [HttpPatch("{id:guid}/assignment")]
     public Task<ShipmentResult> Assign(
         Guid id, [FromBody] AssignShipmentRequest request, CancellationToken cancellationToken) =>
@@ -79,7 +79,7 @@ public sealed class ShipmentsController(ShipmentService service) : ControllerBas
     /// This transition does not deduct inventory again; it only hands the picked QR labels to
     /// transport and changes them to InTransit.
     /// </summary>
-    [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator}")]
+    [Authorize]
     [HttpPost("{id:guid}/dispatch")]
     public Task<ShipmentResult> Dispatch(
         Guid id, [FromBody] DispatchShipmentRequest request, CancellationToken cancellationToken) =>
@@ -91,7 +91,7 @@ public sealed class ShipmentsController(ShipmentService service) : ControllerBas
     /// Missing quantity is calculated by the server and the order completes only after every
     /// shipment is received without an exception.
     /// </summary>
-    [Authorize(Roles = SystemRoles.Retailer)]
+    [Authorize]
     [HttpPost("{id:guid}/receipt")]
     public Task<ShipmentResult> ConfirmReceipt(
         Guid id,

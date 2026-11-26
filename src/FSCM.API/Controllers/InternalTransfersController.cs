@@ -9,11 +9,11 @@ namespace FSCM.API.Controllers;
 
 [ApiController]
 [NonController]
-[Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator},{SystemRoles.WarehouseKeeper}")]
+[Authorize]
 [Route("api/v1/internal-transfers")]
 public sealed class InternalTransfersController(InternalTransferService service) : ControllerBase
 {
-    [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator}")]
+    [Authorize]
     [HttpGet("suggestions")]
     public Task<IReadOnlyCollection<InternalTransferSuggestionResult>> Suggestions(
         [FromQuery] Guid? destinationWarehouseId, [FromQuery] Guid? productId,
@@ -30,7 +30,7 @@ public sealed class InternalTransfersController(InternalTransferService service)
     public Task<InternalTransferResult> Get(Guid id, CancellationToken cancellationToken) =>
         service.GetAsync(id, GetActorUserId(), GetActorRole(), cancellationToken);
 
-    [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator}")]
+    [Authorize]
     [HttpPost]
     public async Task<IActionResult> Create(
         CreateInternalTransferRequest request,
@@ -44,7 +44,7 @@ public sealed class InternalTransfersController(InternalTransferService service)
         return CreatedAtAction(nameof(Get), new { id = result.Id }, result);
     }
 
-    [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator}")]
+    [Authorize]
     [HttpPost("{id:guid}/approve")]
     public Task<InternalTransferResult> Approve(
         Guid id, TransferDecisionRequest request,
@@ -52,7 +52,7 @@ public sealed class InternalTransfersController(InternalTransferService service)
         CancellationToken cancellationToken) =>
         service.ApproveAsync(id, request.ExpectedVersion, operationKey, GetActorUserId(), cancellationToken);
 
-    [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator}")]
+    [Authorize]
     [HttpPost("{id:guid}/reject")]
     public Task<InternalTransferResult> Reject(
         Guid id, RejectInternalTransferRequest request,
@@ -60,7 +60,7 @@ public sealed class InternalTransfersController(InternalTransferService service)
         CancellationToken cancellationToken) =>
         service.RejectAsync(id, request.ExpectedVersion, operationKey, GetActorUserId(), request.Reason, cancellationToken);
 
-    [Authorize(Roles = SystemRoles.WarehouseKeeper)]
+    [Authorize]
     [HttpPost("{id:guid}/dispatch")]
     public Task<InternalTransferResult> Dispatch(
         Guid id, DispatchInternalTransferRequest request,
@@ -71,7 +71,7 @@ public sealed class InternalTransfersController(InternalTransferService service)
                 item.TransferItemId, item.QrCodes)).ToArray()), operationKey,
             GetActorUserId(), GetActorRole(), cancellationToken);
 
-    [Authorize(Roles = SystemRoles.WarehouseKeeper)]
+    [Authorize]
     [HttpPost("{id:guid}/receive")]
     public Task<InternalTransferResult> Receive(
         Guid id, ReceiveInternalTransferRequest request,

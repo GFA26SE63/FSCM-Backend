@@ -8,12 +8,14 @@ public sealed class RoleDefinitionConfiguration : IEntityTypeConfiguration<RoleD
 {
     public void Configure(EntityTypeBuilder<RoleDefinition> builder)
     {
-        builder.ToTable("SYS_ROLE");
+        builder.ToTable("SYS_ROLE", table => table.HasCheckConstraint("CK_SYS_ROLE_BaseRole",
+            "\"BaseRole\" IN ('Admin','Operator','WarehouseKeeper','SalesManager','Sales','Retailer') AND ((\"Code\" = 'Admin') = (\"BaseRole\" = 'Admin'))"));
         builder.HasKey(entity => entity.Id);
 
         builder.Property(entity => entity.Id).HasColumnType("uuid").IsRequired();
         builder.Property(entity => entity.Code).HasMaxLength(50).IsRequired();
         builder.Property(entity => entity.Name).HasMaxLength(100).IsRequired();
+        builder.Property(entity => entity.BaseRole).HasMaxLength(30).IsRequired();
         builder.Property(entity => entity.Description).HasMaxLength(500).IsRequired(false);
         builder.Property(entity => entity.IsSystem).IsRequired();
         builder.Property(entity => entity.CreatedAt).HasColumnType("timestamp with time zone").IsRequired();

@@ -8,7 +8,7 @@ namespace FSCM.API.Controllers;
 
 /// <summary>"Báo cáo kho vận": fleet size, current stock buckets and period movements of SKUs per warehouse.</summary>
 [ApiController]
-[Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator},{SystemRoles.WarehouseKeeper}")]
+[Authorize]
 [Route("api/v1/reports/warehouse-logistics")]
 public sealed class WarehouseLogisticsReportsController(IWarehouseLogisticsReportStore store, TimeProvider clock) : ControllerBase
 {

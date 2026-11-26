@@ -8,7 +8,7 @@ using Microsoft.AspNetCore.Mvc;
 namespace FSCM.API.Controllers;
 
 [ApiController]
-[Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator},{SystemRoles.WarehouseKeeper}")]
+[Authorize]
 [Route("api/v1/goods-receipts")]
 public sealed class GoodsReceiptsController(InventoryService service) : ControllerBase
 {
@@ -21,12 +21,12 @@ public sealed class GoodsReceiptsController(InventoryService service) : Controll
     public Task<GoodsReceiptResult> Get(Guid receiptId, CancellationToken cancellationToken) =>
         service.GetReceiptAsync(receiptId, GetActorUserId(), GetActorRole(), cancellationToken);
 
-    [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.WarehouseKeeper}")]
+    [Authorize]
     [HttpPost]
     public IActionResult Create(CreateGoodsReceiptRequest request) =>
         Conflict(new { code = "FACTORY_PALLET_REQUIRED", message = "Tạo phiếu nhập từ nhà máy tại /warehouse-work và quét pallet đã phát hành. Kho không sinh batch hoặc mã carton nhà máy." });
 
-    [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.WarehouseKeeper}")]
+    [Authorize]
     [HttpPost("{receiptId:guid}/approve")]
     public Task<GoodsReceiptResult> Approve(Guid receiptId, CancellationToken cancellationToken) =>
         service.ApproveReceiptAsync(receiptId, GetActorUserId(), GetActorRole(), cancellationToken);

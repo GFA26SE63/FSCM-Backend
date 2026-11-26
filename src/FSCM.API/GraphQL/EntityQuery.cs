@@ -25,6 +25,17 @@ namespace FSCM.API.GraphQL;
 /// </summary>
 public sealed class EntityQuery(EntityQueryAccess access)
 {
+    public Task<IReadOnlyList<FSCM.Application.Features.Roles.RoleSummaryDto>> RoleReads(
+        [Service] FSCM.Application.Features.Roles.RoleService service, string? search = null,
+        CancellationToken cancellationToken = default) => service.ListRolesAsync(search, cancellationToken);
+
+    public Task<FSCM.Application.Features.Roles.RoleDetailsDto> RoleRead(Guid id,
+        [Service] FSCM.Application.Features.Roles.RoleService service,
+        CancellationToken cancellationToken = default) => service.GetRoleByIdAsync(id, cancellationToken);
+
+    public IReadOnlyList<FSCM.Application.Features.Roles.ScreenFeatureDto> ScreenFeatures(
+        [Service] FSCM.Application.Features.Roles.RoleService service) => service.GetScreenFeatures();
+
     public Task<IReadOnlyCollection<ComplaintResult>> ComplaintReads(
         [Service] ComplaintService service, CancellationToken cancellationToken = default) =>
         service.ListAsync(access.UserId, access.Role, cancellationToken);
@@ -46,11 +57,12 @@ public sealed class EntityQuery(EntityQueryAccess access)
         CancellationToken cancellationToken = default) =>
         service.ListUsersAsync(new UserListQuery(search, role, isActive, page, pageSize, sort), cancellationToken);
 
+    public Task<AuthenticatedUser> UserRead(Guid id, [Service] IdentityService service,
+        CancellationToken cancellationToken = default) => service.GetCurrentUserAsync(id, cancellationToken);
+
     public Task<IReadOnlyCollection<RedemptionResult>> RedemptionReads(
         [Service] RedemptionService service, CancellationToken cancellationToken = default) =>
-        access.Role is SystemRoles.Admin or SystemRoles.Operator
-            ? service.ListForAdminAsync(cancellationToken)
-            : service.ListAsync(access.UserId, cancellationToken);
+        service.ListVisibleAsync(access.UserId, access.Role, cancellationToken);
 
     public Task<DisposalResult[]> DisposalReads(
         [Service] AppDbContext db, [Service] TimeProvider clock,

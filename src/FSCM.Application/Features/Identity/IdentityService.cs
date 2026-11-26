@@ -272,7 +272,7 @@ public sealed class IdentityService(
         var credential = await store.FindCredentialAsync(userId, cancellationToken);
         var scope = await store.GetScopeAsync(userId, cancellationToken);
         var scopeLabels = await store.GetScopeLabelsAsync(scope, cancellationToken);
-        var permissions = await store.GetRolePermissionsAsync(user.Role, cancellationToken);
+        var permissions = await store.GetUserPermissionsAsync(user.Id, cancellationToken);
 
         return ToAuthenticatedUser(user, credential?.MustChangePassword ?? false, scope, scopeLabels, permissions);
     }
@@ -289,7 +289,7 @@ public sealed class IdentityService(
             throw IdentityOperationException.Validation("User sort must be asc or desc.");
 
         var normalizedRole = string.IsNullOrWhiteSpace(query.Role) ? null : query.Role.Trim();
-        if (normalizedRole is not null && !SystemRoles.IsValid(normalizedRole))
+        if (normalizedRole is not null && !await store.RoleExistsAsync(normalizedRole, cancellationToken))
             throw IdentityOperationException.Validation("Role filter is invalid.");
         var normalizedQuery = query with { Search = query.Search?.Trim(), Role = normalizedRole };
         var result = await store.ListUsersAsync(normalizedQuery, cancellationToken);
@@ -336,7 +336,8 @@ public sealed class IdentityService(
         var normalizedEmail = NormalizeEmail(email);
         ValidateFullName(fullName);
         phone = ValidatePhone(phone);
-        await EnsureAssignableRoleAsync(role, cancellationToken);
+        var assignedRole = await EnsureAssignableRoleAsync(role, cancellationToken);
+        var businessRole = assignedRole?.BaseRole ?? role;
 
         if (await store.FindUserByEmailAsync(normalizedEmail, cancellationToken) is not null)
         {
@@ -354,17 +355,19 @@ public sealed class IdentityService(
             Email = normalizedEmail,
             Phone = phone,
             FullName = fullName.Trim(),
-            Role = role,
+            Role = businessRole,
+            RoleDefinitionId = assignedRole?.Id,
+            RoleDefinition = assignedRole,
             // A Retailer may only use the mobile app after the Admin has linked
             // this account to an approved retailer and the owner has completed
             // the OTP activation flow.  Other back-office accounts keep the
             // existing administrator-provisioned credential behaviour.
-            IsActive = role != SystemRoles.Retailer,
+            IsActive = businessRole != SystemRoles.Retailer,
             CreatedAt = now,
             UpdatedAt = now
         };
         store.AddUser(user);
-        if (role != SystemRoles.Retailer)
+        if (businessRole != SystemRoles.Retailer)
         {
             ValidatePassword(password);
             store.AddCredential(new UserCredential
@@ -386,7 +389,7 @@ public sealed class IdentityService(
         return new CreatedUserResult(
             user.Id,
             user.Email,
-            user.Role,
+            user.RoleDefinition?.Code ?? user.Role,
             user.IdentityProvider,
             null,
             null);
@@ -398,16 +401,19 @@ public sealed class IdentityService(
         Guid actorUserId,
         CancellationToken cancellationToken)
     {
-        await EnsureAssignableRoleAsync(role, cancellationToken);
+        var assignedRole = await EnsureAssignableRoleAsync(role, cancellationToken);
         var user = await GetManageableUserAsync(userId, cancellationToken);
         if (string.Equals(user.Role, SystemRoles.Admin, StringComparison.OrdinalIgnoreCase))
         {
             throw IdentityOperationException.Forbidden("Không thể thay đổi vai trò của tài khoản Quản trị viên.");
         }
-        var oldRole = user.Role;
-        user.Role = role;
+        var oldRole = user.RoleDefinition?.Code ?? user.Role;
+        user.Role = assignedRole?.BaseRole ?? role;
+        user.RoleDefinitionId = assignedRole?.Id;
+        user.RoleDefinition = assignedRole;
         user.UpdatedAt = timeProvider.GetUtcNow();
-        AddAudit(user.Id, actorUserId, "RoleUpdated", new { Role = oldRole }, new { user.Role });
+        AddAudit(user.Id, actorUserId, "RoleUpdated", new { Role = oldRole }, new { Role = role, user.RoleDefinitionId });
+        await RevokeActiveRefreshTokensAsync(user.Id, user.UpdatedAt, cancellationToken);
         await store.SaveChangesAsync(cancellationToken);
     }
 
@@ -658,7 +664,7 @@ public sealed class IdentityService(
         store.AddRefreshToken(refreshToken);
         await store.SaveChangesAsync(cancellationToken);
 
-        var permissions = await store.GetRolePermissionsAsync(user.Role, cancellationToken);
+        var permissions = await store.GetUserPermissionsAsync(user.Id, cancellationToken);
 
         return new AuthenticationResult(
             accessToken.Token,
@@ -738,10 +744,11 @@ public sealed class IdentityService(
         IdentityScopeLabels? scopeLabels = null,
         IReadOnlyCollection<string>? permissions = null) =>
         new(user.Id, user.Email, user.FullName, user.Role, mustChangePassword, scope,
-            scopeLabels ?? IdentityScopeLabels.Empty, permissions ?? Array.Empty<string>());
+            scopeLabels ?? IdentityScopeLabels.Empty, permissions ?? Array.Empty<string>(),
+            user.RoleDefinitionId, user.RoleDefinition?.Code ?? user.Role, user.RoleDefinition?.Name);
 
     private static UserSummary ToUserSummary(UserAccount user) =>
-        new(user.Id, user.Email, user.Phone, user.FullName, user.Role, user.IsActive,
+        new(user.Id, user.Email, user.Phone, user.FullName, user.RoleDefinition?.Code ?? user.Role, user.IsActive,
             user.IdentityProvider, user.CreatedAt, user.UpdatedAt);
 
     private void AddAudit(
@@ -826,7 +833,7 @@ public sealed class IdentityService(
         return normalized;
     }
 
-    private async Task EnsureAssignableRoleAsync(string role, CancellationToken cancellationToken)
+    private async Task<RoleDefinition?> EnsureAssignableRoleAsync(string role, CancellationToken cancellationToken)
     {
         if (string.Equals(role, SystemRoles.Admin, StringComparison.OrdinalIgnoreCase))
         {
@@ -839,6 +846,10 @@ public sealed class IdentityService(
             throw IdentityOperationException.Validation(
                 $"Vai trò '{role}' không tồn tại trong hệ thống.");
         }
+        var definition = await store.FindRoleAsync(role, cancellationToken);
+        if (definition?.BaseRole == SystemRoles.Admin)
+            throw IdentityOperationException.Forbidden("Không được gán phạm vi Quản trị viên qua API quản lý người dùng.");
+        return definition;
     }
 
     private static string NormalizeIdentityProvider(string identityProvider)

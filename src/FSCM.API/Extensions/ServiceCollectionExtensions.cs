@@ -25,7 +25,11 @@ public static class ServiceCollectionExtensions
         services.Configure<GoogleOptions>(configuration.GetSection(GoogleOptions.SectionName));
         services.Configure<OpenAiOptions>(configuration.GetSection(OpenAiOptions.SectionName));
 
-        services.AddControllers();
+        services.AddControllers(options =>
+        {
+            options.Filters.Add<ScreenPermissionFilter>();
+            options.Filters.Add<WarehouseScreenPermissionFilter>();
+        });
         services.AddEndpointsApiExplorer();
         services.AddSwaggerGen(options =>
             options.CustomSchemaIds(type => type.FullName?.Replace('+', '.') ?? type.Name));
@@ -86,8 +90,16 @@ public static class ServiceCollectionExtensions
 
         services.AddAuthenticationServices(configuration);
         services.AddScoped<IClaimsTransformation, ActiveAccountClaimsTransformation>();
+        services.AddScoped<IAuthorizationHandler, PermissionAuthorizationHandler>();
+        services.AddScoped<IAuthorizationHandler, ScreenResourceAuthorizationHandler>();
         services.AddAuthorization(options =>
         {
+            foreach (var resource in new[] { "Payments", "Reports", "RetailerReceivables" })
+                options.AddPolicy("screen-resource:" + resource, policy => policy.RequireAuthenticatedUser()
+                    .AddRequirements(new ScreenResourceRequirement(resource)));
+            foreach (var permission in FSCM.Domain.Authorization.SystemPermissionKeys.All)
+                options.AddPolicy("permission:" + permission, policy =>
+                    policy.RequireAuthenticatedUser().AddRequirements(new PermissionRequirement(permission)));
             options.DefaultPolicy = new AuthorizationPolicyBuilder(JwtBearerDefaults.AuthenticationScheme)
                 .RequireAuthenticatedUser()
                 .Build();
@@ -115,6 +127,7 @@ public static class ServiceCollectionExtensions
                 options.RequirePagingBoundaries = false;
             })
             .AddQueryType<SystemQuery>();
+        graphQl.AddType<EntityQueryType>();
 
         foreach (var method in typeof(EntityQuery).GetMethods(
                      System.Reflection.BindingFlags.Instance |

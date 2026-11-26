@@ -7,7 +7,7 @@ using Microsoft.AspNetCore.Mvc;
 namespace FSCM.API.Controllers;
 
 [ApiController]
-[Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator}")]
+[Authorize]
 [Route("api/v1/loyalty/redemptions")]
 public sealed class LoyaltyRedemptionWorkflowController(RedemptionWorkflowService service) : ControllerBase
 {

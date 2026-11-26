@@ -8,7 +8,7 @@ using Microsoft.AspNetCore.Mvc;
 namespace FSCM.API.Controllers;
 
 [ApiController]
-[Authorize(Roles = SystemRoles.Retailer)]
+[Authorize]
 [Route("api/v1/retailer/receivables")]
 public sealed class RetailerReceivablesController(
     RetailerReceivableService service,

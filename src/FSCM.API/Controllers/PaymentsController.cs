@@ -8,7 +8,7 @@ using Microsoft.AspNetCore.Mvc;
 namespace FSCM.API.Controllers;
 
 [ApiController]
-[Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator},{SystemRoles.SalesManager},{SystemRoles.Sales},{SystemRoles.Retailer}")]
+[Authorize]
 [Route("api/v1/payments")]
 [Route("api/v1/receivables")]
 public sealed class PaymentsController(PaymentService service) : ControllerBase
@@ -23,7 +23,7 @@ public sealed class PaymentsController(PaymentService service) : ControllerBase
     public Task<PaymentResult> GetByOrder(Guid orderId, CancellationToken cancellationToken) =>
         service.GetByOrderAsync(orderId, GetActorUserId(), GetActorRole(), cancellationToken);
 
-    [Authorize(Roles = $"{SystemRoles.Operator},{SystemRoles.Sales}")]
+    [Authorize]
     [HttpPost("orders/{orderId:guid}/collect")]
     public Task<PaymentResult> Collect(
         Guid orderId,
@@ -34,7 +34,7 @@ public sealed class PaymentsController(PaymentService service) : ControllerBase
             new(request.CollectionMethod, request.ExpectedVersion, request.Note),
             operationKey, GetActorUserId(), GetActorRole(), cancellationToken);
 
-    [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator}")]
+    [Authorize]
     [HttpPost("orders/{orderId:guid}/adjust")]
     public Task<PaymentResult> Adjust(
         Guid orderId,
@@ -45,7 +45,7 @@ public sealed class PaymentsController(PaymentService service) : ControllerBase
             new(request.Amount, request.Reason, request.ExpectedVersion),
             operationKey, GetActorUserId(), GetActorRole(), cancellationToken);
 
-    [Authorize(Roles = SystemRoles.Retailer)]
+    [Authorize]
     [HttpPost("orders/{orderId:guid}/switch-to-credit")]
     public Task<PaymentResult> SwitchToCredit(
         Guid orderId, SwitchToCreditRequest request, CancellationToken cancellationToken) =>
