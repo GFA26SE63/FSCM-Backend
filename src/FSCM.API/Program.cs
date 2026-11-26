@@ -23,6 +23,7 @@ builder.Services.AddApplicationServices();
 builder.Services.AddPersistenceServices(builder.Configuration);
 builder.Services.AddInfrastructureServices(builder.Configuration);
 builder.Services.AddHostedService<FSCM.API.Workers.FactoryReceiptSyncWorker>();
+builder.Services.AddHostedService<FSCM.API.Workers.OrderCompletionWorker>();
 
 var app = builder.Build();
 

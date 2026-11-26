@@ -683,11 +683,12 @@ public sealed class ShipmentService(
             var labels = await store.ListLabelsAsync(id, true, transactionCancellationToken);
             var expectedCodes = labels.Select(item => item.Label.QrCode.Trim().ToUpperInvariant())
                 .Order(StringComparer.Ordinal).ToArray();
-            if (expectedCodes.Length == 0 || !expectedCodes.SequenceEqual(qrCodes, StringComparer.Ordinal))
+            var expectedSet = expectedCodes.ToHashSet(StringComparer.Ordinal);
+            if (expectedCodes.Length == 0 || qrCodes.Any(code => !expectedSet.Contains(code)))
                 throw ShipmentOperationException.Validation(
-                    "Receipt must scan every QR label dispatched for this shipment exactly once.");
+                    "Every scanned QR label must belong to this shipment.");
             if (labels.Any(item => item.Label.Status != QrLabelStatuses.InTransit))
-                throw ShipmentOperationException.Conflict("Every scanned QR label must still be in transit.");
+                throw ShipmentOperationException.Conflict("Every dispatched QR label must still be in transit.");
             var expectedByBatch = expected.GroupBy(item => item.Key.BatchId)
                 .ToDictionary(group => group.Key, group => group.Sum(item => item.Value));
             var labelByBatch = labels.GroupBy(item => item.BatchId)
@@ -696,8 +697,24 @@ public sealed class ShipmentService(
                 throw ShipmentOperationException.Conflict(
                     "Dispatched QR quantities do not match the shipment line and batch quantities.");
 
+            var scannedSet = qrCodes.ToHashSet(StringComparer.Ordinal);
+            var scannedLabels = labels
+                .Where(item => scannedSet.Contains(item.Label.QrCode.Trim().ToUpperInvariant()))
+                .ToArray();
+            var missingLabels = labels
+                .Where(item => !scannedSet.Contains(item.Label.QrCode.Trim().ToUpperInvariant()))
+                .ToArray();
+            var scannedByBatch = scannedLabels.GroupBy(item => item.BatchId)
+                .ToDictionary(group => group.Key, group => group.Sum(item => item.Label.Quantity));
+            var receivedByBatch = lines.GroupBy(line => line.BatchId)
+                .ToDictionary(group => group.Key, group => group.Sum(line => line.ReceivedQuantity));
+            if (receivedByBatch.Any(item =>
+                item.Value > scannedByBatch.GetValueOrDefault(item.Key)))
+                throw ShipmentOperationException.Validation(
+                    "Received quantity cannot exceed the scanned QR label quantity.");
+
             var now = timeProvider.GetUtcNow();
-            var hasException = lines.Any(line =>
+            var hasException = missingLabels.Length > 0 || lines.Any(line =>
                 line.ReceivedQuantity < expected[(line.OrderLineId, line.BatchId)] || line.DamagedQuantity > 0);
             var receipt = new ReceiptConfirmation
             {
@@ -716,7 +733,8 @@ public sealed class ShipmentService(
             foreach (var line in lines)
             {
                 var issued = expected[(line.OrderLineId, line.BatchId)];
-                var representativeLabel = labels.First(item => item.BatchId == line.BatchId).Label;
+                var representativeLabel = (scannedLabels.FirstOrDefault(item => item.BatchId == line.BatchId)
+                    ?? labels.First(item => item.BatchId == line.BatchId)).Label;
                 store.AddReceiptLine(new ReceiptConfirmationItem
                 {
                     Id = Guid.NewGuid(), ReceiptConfirmationId = receipt.Id,
@@ -726,9 +744,9 @@ public sealed class ShipmentService(
                     MissingQuantity = issued - line.ReceivedQuantity, ScannedAt = now
                 });
             }
-            for (var index = 0; index < labels.Count; index++)
+            for (var index = 0; index < scannedLabels.Length; index++)
             {
-                var label = labels.ElementAt(index).Label;
+                var label = scannedLabels[index].Label;
                 store.AddReceiptQrLabel(new ReceiptConfirmationQrLabel
                 {
                     Id = Guid.NewGuid(), ReceiptConfirmationId = receipt.Id,
@@ -741,6 +759,25 @@ public sealed class ShipmentService(
                 store.AddLabelEvent(NewLabelEvent(label, retailerUserId,
                     $"shipment-receipt:{operationKey}:{index + 1}", fromStatus, view.Order.OrderCode, now));
             }
+            for (var index = 0; index < missingLabels.Length; index++)
+            {
+                var label = missingLabels[index].Label;
+                var fromStatus = label.Status;
+                label.Status = QrLabelStatuses.Missing;
+                label.Version++;
+                label.UpdatedAt = now;
+                store.AddLabelEvent(new QrLabelEvent
+                {
+                    Id = Guid.NewGuid(), BatchQrLabelId = label.Id, WarehouseId = label.CurrentWarehouseId,
+                    PerformedByUserId = retailerUserId,
+                    OperationKey = $"shipment-receipt-missing:{operationKey}:{index + 1}",
+                    EventType = QrLabelEventTypes.Missing, FromStatus = fromStatus,
+                    ToStatus = QrLabelStatuses.Missing, Quantity = label.Quantity,
+                    ReferenceCode = view.Order.OrderCode,
+                    Note = $"Thiếu tem khi nhà bán lẻ nhận phần giao {view.Shipment.ShipmentCode}",
+                    OccurredAt = now
+                });
+            }
 
             view.Shipment.ReceivedQuantity = lines.Sum(line => line.ReceivedQuantity);
             view.Shipment.ReceivedAt = now;
@@ -752,25 +789,30 @@ public sealed class ShipmentService(
             view.Shipment.UpdatedAt = now;
 
             var siblings = await store.ListByOrderAsync(view.Order.Id, transactionCancellationToken);
-            var allReceived = !hasException && siblings.All(item =>
-                item.Id == view.Shipment.Id || item.Status == ShipmentStatuses.Received);
+            var allReceived = siblings.All(item =>
+                item.Id == view.Shipment.Id ||
+                item.Status == ShipmentStatuses.Received ||
+                (item.Status == ShipmentStatuses.Exception && item.ReceivedAt.HasValue));
             if (allReceived)
             {
                 fullyReceivedOrderId = view.Order.Id;
                 var order = await store.FindOrderForUpdateAsync(view.Order.Id, transactionCancellationToken)
                     ?? throw ShipmentOperationException.NotFound("Order was not found.");
-                var fromStatus = order.Status;
-                order.Status = OrderStatuses.Delivered;
-                order.Version++;
-                order.UpdatedAt = now;
-                await paymentPlanService.CreateForDeliveredOrderAsync(
-                    order, retailerUserId, now, transactionCancellationToken);
-                store.AddOrderHistory(new OrderStatusHistory
+                if (order.Status != OrderStatuses.Delivered && order.Status != OrderStatuses.Completed)
                 {
-                    Id = Guid.NewGuid(), SalesOrderId = order.Id, FromStatus = fromStatus,
-                    ToStatus = OrderStatuses.Delivered, ChangedByUserId = retailerUserId,
-                    Reason = "Nhà bán lẻ đã nhận đủ mọi phần giao theo kho", ChangedAt = now
-                });
+                    var fromStatus = order.Status;
+                    order.Status = OrderStatuses.Delivered;
+                    order.Version++;
+                    order.UpdatedAt = now;
+                    await paymentPlanService.CreateForDeliveredOrderAsync(
+                        order, retailerUserId, now, transactionCancellationToken);
+                    store.AddOrderHistory(new OrderStatusHistory
+                    {
+                        Id = Guid.NewGuid(), SalesOrderId = order.Id, FromStatus = fromStatus,
+                        ToStatus = OrderStatuses.Delivered, ChangedByUserId = retailerUserId,
+                        Reason = "Nhà bán lẻ đã xác nhận nhận mọi phần giao theo kho", ChangedAt = now
+                    });
+                }
             }
             await store.SaveChangesAsync(transactionCancellationToken);
         }, cancellationToken);

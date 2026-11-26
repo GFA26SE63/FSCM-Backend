@@ -322,11 +322,79 @@ public sealed class ShipmentServiceTests
             "receipt-exception-1", fixture.RetailerUserId, SystemRoles.Retailer, default);
 
         Assert.Equal(ShipmentStatuses.Exception, result.Status);
-        Assert.Equal(OrderStatuses.Delivering, fixture.Order.Status);
+        Assert.Equal(OrderStatuses.Delivered, fixture.Order.Status);
         var actual = Assert.Single(result.Receipt!.Lines);
         Assert.Equal(6, actual.ReceivedQuantity);
         Assert.Equal(2, actual.DamagedQuantity);
         Assert.Equal(2, actual.MissingQuantity);
+    }
+
+    [Fact]
+    public async Task Receipt_with_partial_qr_labels_marks_scanned_delivered_and_unscanned_missing()
+    {
+        var fixture = new Fixture();
+        var (shipment, line, batchId, _) = fixture.AddDeliveringShipment(quantity: 10);
+        fixture.Store.Labels.Clear();
+        var codes = Enumerable.Range(1, 10).Select(i => $"CID-261126-{i:D6}").ToArray();
+        foreach (var code in codes)
+        {
+            fixture.Store.Labels.Add(new ShipmentLabelView(new BatchQrLabel
+            {
+                Id = Guid.NewGuid(), BatchId = batchId, CurrentWarehouseId = fixture.WarehouseA,
+                QrCode = code, Quantity = 1, Status = QrLabelStatuses.InTransit
+            }, batchId));
+        }
+
+        var scannedCodes = codes.Take(9).ToArray();
+        var missingCode = codes[9];
+
+        var result = await fixture.Service.ConfirmReceiptAsync(
+            shipment.Id,
+            new ConfirmShipmentReceiptData(scannedCodes,
+                [new ConfirmShipmentReceiptLineData(line.OrderLineId, batchId, 9, 0)],
+                shipment.Version, "Thiếu 1 thùng khi nhận"),
+            "receipt-partial-qr-1", fixture.RetailerUserId, SystemRoles.Retailer, default);
+
+        Assert.Equal(ShipmentStatuses.Exception, result.Status);
+        Assert.Equal(9, result.ReceivedQuantity);
+        Assert.Equal(OrderStatuses.Delivered, fixture.Order.Status);
+        Assert.Equal(FSCM.Application.Features.Deliveries.ReceiptConfirmationStatuses.Exception, result.Receipt!.Status);
+        var actual = Assert.Single(result.Receipt.Lines);
+        Assert.Equal(9, actual.ReceivedQuantity);
+        Assert.Equal(1, actual.MissingQuantity);
+        Assert.Equal(9, fixture.Store.Labels.Count(l => l.Label.Status == QrLabelStatuses.Delivered));
+        var missingLabel = Assert.Single(fixture.Store.Labels, l => l.Label.QrCode == missingCode);
+        Assert.Equal(QrLabelStatuses.Missing, missingLabel.Label.Status);
+        Assert.Contains(fixture.Store.LabelEvents,
+            e => e.BatchQrLabelId == missingLabel.Label.Id && e.EventType == QrLabelEventTypes.Missing && e.ToStatus == QrLabelStatuses.Missing);
+    }
+
+    [Fact]
+    public async Task Receipt_rejects_received_quantity_exceeding_scanned_qr_quantity()
+    {
+        var fixture = new Fixture();
+        var (shipment, line, batchId, _) = fixture.AddDeliveringShipment(quantity: 10);
+        fixture.Store.Labels.Clear();
+        var codes = Enumerable.Range(1, 10).Select(i => $"CID-261126-{i:D6}").ToArray();
+        foreach (var code in codes)
+        {
+            fixture.Store.Labels.Add(new ShipmentLabelView(new BatchQrLabel
+            {
+                Id = Guid.NewGuid(), BatchId = batchId, CurrentWarehouseId = fixture.WarehouseA,
+                QrCode = code, Quantity = 1, Status = QrLabelStatuses.InTransit
+            }, batchId));
+        }
+
+        var exception = await Assert.ThrowsAsync<ShipmentOperationException>(() =>
+            fixture.Service.ConfirmReceiptAsync(
+                shipment.Id,
+                new ConfirmShipmentReceiptData(codes.Take(9).ToArray(),
+                    [new ConfirmShipmentReceiptLineData(line.OrderLineId, batchId, 10, 0)],
+                    shipment.Version, null),
+                "receipt-exceed-scanned-1", fixture.RetailerUserId, SystemRoles.Retailer, default));
+
+        Assert.Equal("validation_error", exception.Code);
+        Assert.Empty(fixture.Store.Receipts);
     }
 
     [Fact]

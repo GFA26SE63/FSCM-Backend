@@ -6,6 +6,7 @@ public static class QrLabelStatuses
     public const string Picked = "Picked";
     public const string InTransit = "InTransit";
     public const string Delivered = "Delivered";
+    public const string Missing = "Missing";
     public const string Invalidated = "Invalidated";
     public const string Split = "Split";
 }
@@ -20,5 +21,6 @@ public static class QrLabelEventTypes
     public const string Received = "Received";
     public const string Dispatched = "Dispatched";
     public const string RetailerReceived = "RetailerReceived";
+    public const string Missing = "Missing";
     public const string Invalidated = "Invalidated";
 }
