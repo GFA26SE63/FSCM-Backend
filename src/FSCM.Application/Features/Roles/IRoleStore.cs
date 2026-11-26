@@ -15,4 +15,7 @@ public interface IRoleStore
     void RemoveRole(RoleDefinition role);
     void ReplacePermissions(RoleDefinition role, IEnumerable<string> newPermissionKeys, DateTimeOffset now);
     Task SaveChangesAsync(CancellationToken ct);
+    Task<IReadOnlyList<ScreenApiMapping>> GetScreenApiMappingsAsync(string businessRole, CancellationToken ct);
+    Task<IReadOnlyList<string>> GetApiScreenCodesAsync(string businessRole, string apiCode, CancellationToken ct);
+    Task<T> InTransactionAsync<T>(Func<Task<T>> operation, CancellationToken ct);
 }

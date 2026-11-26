@@ -28,13 +28,15 @@ public sealed record CreateRoleRequest(
     string Code,
     string Name,
     string? Description,
-    IReadOnlyList<string>? Permissions,
-    string BaseRole = "Operator");
+    IReadOnlyList<string>? Permissions = null,
+    string BaseRole = "Operator",
+    IReadOnlyList<string>? SelectedScreenCodes = null);
 
 public sealed record UpdateRoleRequest(
     string Name,
     string? Description,
-    IReadOnlyList<string>? Permissions);
+    IReadOnlyList<string>? Permissions = null,
+    IReadOnlyList<string>? SelectedScreenCodes = null);
 
 public sealed record ScreenFeatureDto(
     string Key,

@@ -127,7 +127,10 @@ public sealed class RoleService(
             role.UpdatedAt, role.BaseRole);
     }
 
-    public async Task<RoleDetailsDto> CreateRoleAsync(CreateRoleRequest request, Guid actorUserId, CancellationToken ct)
+    public Task<RoleDetailsDto> CreateRoleAsync(CreateRoleRequest request, Guid actorUserId, CancellationToken ct) =>
+        store.InTransactionAsync(() => CreateRoleCoreAsync(request, actorUserId, ct), ct);
+
+    private async Task<RoleDetailsDto> CreateRoleCoreAsync(CreateRoleRequest request, Guid actorUserId, CancellationToken ct)
     {
         var code = request.Code?.Trim() ?? string.Empty;
         var name = request.Name?.Trim() ?? string.Empty;
@@ -167,22 +170,15 @@ public sealed class RoleService(
             UpdatedAt = now
         };
 
-        var validKeys = SystemPermissionKeys.All.ToHashSet(StringComparer.OrdinalIgnoreCase);
-        if (request.Permissions is not null && request.Permissions.Count > 0)
+        foreach (var key in await BuildPermissionsAsync(request.SelectedScreenCodes ?? request.Permissions, role.BaseRole, ct))
         {
-            foreach (var key in request.Permissions.Distinct(StringComparer.OrdinalIgnoreCase))
+            role.Permissions.Add(new RolePermission
             {
-                if (validKeys.Contains(key))
-                {
-                    role.Permissions.Add(new RolePermission
-                    {
-                        Id = Guid.NewGuid(),
-                        RoleId = role.Id,
-                        PermissionKey = SystemPermissionKeys.All.First(k => k.Equals(key, StringComparison.OrdinalIgnoreCase)),
-                        CreatedAt = now
-                    });
-                }
-            }
+                Id = Guid.NewGuid(),
+                RoleId = role.Id,
+                PermissionKey = key,
+                CreatedAt = now
+            });
         }
 
         store.AddRole(role);
@@ -201,7 +197,10 @@ public sealed class RoleService(
             role.UpdatedAt, role.BaseRole);
     }
 
-    public async Task<RoleDetailsDto> UpdateRoleAsync(Guid roleId, UpdateRoleRequest request, Guid actorUserId, CancellationToken ct)
+    public Task<RoleDetailsDto> UpdateRoleAsync(Guid roleId, UpdateRoleRequest request, Guid actorUserId, CancellationToken ct) =>
+        store.InTransactionAsync(() => UpdateRoleCoreAsync(roleId, request, actorUserId, ct), ct);
+
+    private async Task<RoleDetailsDto> UpdateRoleCoreAsync(Guid roleId, UpdateRoleRequest request, Guid actorUserId, CancellationToken ct)
     {
         var role = await store.FindByIdAsync(roleId, ct)
             ?? throw new KeyNotFoundException("Không tìm thấy vai trò cần chỉnh sửa.");
@@ -225,12 +224,7 @@ public sealed class RoleService(
         // Admin role always has all permissions and cannot have its permissions stripped
         if (role.Code != SystemRoles.Admin)
         {
-            var validKeys = SystemPermissionKeys.All.ToHashSet(StringComparer.OrdinalIgnoreCase);
-            var filteredKeys = (request.Permissions ?? [])
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .Where(validKeys.Contains)
-                .Select(key => SystemPermissionKeys.All.First(k => k.Equals(key, StringComparison.OrdinalIgnoreCase)))
-                .ToList();
+            var filteredKeys = await BuildPermissionsAsync(request.SelectedScreenCodes ?? request.Permissions, role.BaseRole, ct);
 
             store.ReplacePermissions(role, filteredKeys, now);
         }
@@ -266,6 +260,19 @@ public sealed class RoleService(
         Audit(role, actorUserId, "Delete", Snapshot(role), timeProvider.GetUtcNow());
         store.RemoveRole(role);
         await store.SaveChangesAsync(ct);
+    }
+
+    private async Task<IReadOnlyList<string>> BuildPermissionsAsync(IEnumerable<string>? selectedScreenCodes, string businessRole, CancellationToken ct)
+    {
+        var canonical = SystemScreenKeys.All.ToDictionary(key => key, StringComparer.OrdinalIgnoreCase);
+        var selected = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var code in selectedScreenCodes ?? [])
+            if (code is not null && canonical.TryGetValue(code, out var screen)) selected.Add(screen);
+        var mapping = await store.GetScreenApiMappingsAsync(businessRole, ct);
+        var validApis = ApiPermissionCatalog.All.Select(operation => operation.Key).ToHashSet(StringComparer.Ordinal);
+        return selected.Concat(mapping.Where(row => selected.Contains(row.ScreenCode) && validApis.Contains(row.ApiCode))
+                .Select(row => row.ApiCode))
+            .Distinct(StringComparer.Ordinal).OrderBy(key => key, StringComparer.Ordinal).ToArray();
     }
 
     private static string Snapshot(RoleDefinition role) => JsonSerializer.Serialize(new

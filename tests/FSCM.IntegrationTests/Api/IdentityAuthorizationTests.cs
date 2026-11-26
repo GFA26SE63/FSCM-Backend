@@ -382,6 +382,8 @@ public sealed class IdentityAuthorizationTests : IClassFixture<IdentityAuthoriza
                              d.ImplementationType?.Namespace?.StartsWith("FSCM.", StringComparison.Ordinal) == true).ToArray())
                     services.Remove(hosted);
                 services.RemoveAll<IIdentityStore>();
+                services.RemoveAll<FSCM.Application.Features.Roles.IRoleStore>();
+                services.AddScoped<FSCM.Application.Features.Roles.IRoleStore, ScreenMappingTestStore>();
                 services.AddSingleton<IIdentityStore>(store);
                 services.RemoveAll<IIdentityTokenProvider>();
                 services.AddSingleton<IIdentityTokenProvider, TestIdentityTokenProvider>();

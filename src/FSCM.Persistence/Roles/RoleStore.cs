@@ -8,6 +8,25 @@ namespace FSCM.Persistence.Roles;
 
 public sealed class RoleStore(AppDbContext dbContext) : IRoleStore
 {
+    public async Task<IReadOnlyList<ScreenApiMapping>> GetScreenApiMappingsAsync(string businessRole, CancellationToken ct) =>
+        await dbContext.ScreenApiMappings.AsNoTracking().Where(row => row.BusinessRole == businessRole).ToArrayAsync(ct);
+
+    public async Task<IReadOnlyList<string>> GetApiScreenCodesAsync(string businessRole, string apiCode, CancellationToken ct) =>
+        await dbContext.ScreenApiMappings.AsNoTracking().Where(row => row.BusinessRole == businessRole && row.ApiCode == apiCode)
+            .Select(row => row.ScreenCode).ToArrayAsync(ct);
+
+    public async Task<T> InTransactionAsync<T>(Func<Task<T>> operation, CancellationToken ct)
+    {
+        if (dbContext.Database.CurrentTransaction is not null) return await operation();
+        return await dbContext.Database.CreateExecutionStrategy().ExecuteAsync(async () =>
+        {
+            await using var transaction = await dbContext.Database.BeginTransactionAsync(ct);
+            var result = await operation();
+            await transaction.CommitAsync(ct);
+            return result;
+        });
+    }
+
     public async Task<IReadOnlyList<(RoleDefinition Role, int UserCount)>> ListRolesAsync(string? search, CancellationToken ct)
     {
         var query = dbContext.RoleDefinitionRecords

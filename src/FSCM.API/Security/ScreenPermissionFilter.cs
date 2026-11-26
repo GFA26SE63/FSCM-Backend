@@ -7,7 +7,8 @@ using Microsoft.AspNetCore.Mvc.Filters;
 namespace FSCM.API.Security;
 
 /// <summary>Database screen grants supplement the domain's role and resource-scope rules.</summary>
-public sealed class ScreenPermissionFilter(IAuthorizationService authorization) : IAsyncAuthorizationFilter
+public sealed class ScreenPermissionFilter(IAuthorizationService authorization,
+    FSCM.Application.Features.Roles.IRoleStore roles) : IAsyncAuthorizationFilter
 {
     public async Task OnAuthorizationAsync(AuthorizationFilterContext context)
     {
@@ -15,9 +16,7 @@ public sealed class ScreenPermissionFilter(IAuthorizationService authorization) 
             context.HttpContext.GetEndpoint()?.Metadata.GetMetadata<IAllowAnonymous>() is not null)
             return;
 
-        var keys = ScreenPermissionMap.Rest(action.ControllerName, action.ActionName,
-            context.HttpContext.User.FindFirstValue(ClaimTypes.Role));
-        if (keys is null) return; // Explicit personal/session endpoint exemption.
+        if (action.ControllerName is "Auth" or "Notifications") return;
         if (context.HttpContext.User.Identity?.IsAuthenticated != true)
         {
             context.Result = new ChallengeResult();
@@ -34,6 +33,8 @@ public sealed class ScreenPermissionFilter(IAuthorizationService authorization) 
             context.Result = new ForbidResult();
             return;
         }
+        var keys = await roles.GetApiScreenCodesAsync(
+            context.HttpContext.User.FindFirstValue(ClaimTypes.Role) ?? "", operation, context.HttpContext.RequestAborted);
         foreach (var key in keys)
         {
             if ((await authorization.AuthorizeAsync(context.HttpContext.User, null, "permission:" + key)).Succeeded)

@@ -37,6 +37,16 @@ load the latest assigned grants.
 `ApiPermissionCatalog.InitialRoles` and `SystemRoleGrants` are initial provisioning
 metadata only. Runtime authorization never consults their role allowlists.
 Existing grants are maintained by role commands and are not re-seeded on reads.
+Create and update accept `selectedScreenCodes`. In one explicit transaction the
+service records those SCREEN grants, reads `SYS_SCREEN_API_MAPPING` for the role's
+business scope, computes the distinct union of API codes, and replaces the role's
+entire SCREEN + API set together with its audit snapshot. Client-supplied API keys
+are ignored. Legacy `permissions` requests are accepted as screen selections only;
+an explicit empty `selectedScreenCodes` wins over any stale legacy array.
+Shared APIs remain while another selected screen maps to them. REST authorization
+also reads this persisted mapping table; warehouse document scope checks still
+enforce the actual document type. Mobile mappings separate customer operations
+from staff approval operations even when both use a shared controller.
 Role create/update/delete operations write audit snapshots in the same SaveChanges
 transaction as the permission change.
 
@@ -46,7 +56,14 @@ GraphQL `entities.roleReads`, `roleRead`, `screenFeatures`, `userReads` and
 `userRead` provide typed role/user read contracts. The screen catalog includes
 screen keys and API operations grouped by controller. Role CRUD and user role
 assignment remain REST commands. The role editor exposes separate Web, Mobile,
-and operation selections plus the business scope for custom roles.
+selections plus the business scope for custom roles. API rights are derived by
+the server and are not edited independently in the screen editor. Screen counters
+only count known screen codes, never API codes or duplicates.
+
+There is no Redis/Memory permission cache. `GetUserPermissionsAsync` reads the
+database on every authenticated request with no tracking, so the next request
+uses committed grants immediately. `/auth/me` is also marked `no-store`; no
+cross-request cached permission state needs eviction after commit.
 
 ## Database and validation
 

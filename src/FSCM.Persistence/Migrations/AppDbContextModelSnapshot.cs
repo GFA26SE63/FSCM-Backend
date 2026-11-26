@@ -4891,6 +4891,27 @@ namespace FSCM.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("FSCM.Domain.Entities.ScreenApiMapping", b =>
+                {
+                    b.Property<string>("BusinessRole")
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)");
+
+                    b.Property<string>("ApiCode")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("ScreenCode")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.HasKey("BusinessRole", "ApiCode", "ScreenCode");
+
+                    b.HasIndex("BusinessRole", "ScreenCode");
+
+                    b.ToTable("SYS_SCREEN_API_MAPPING", (string)null);
+                });
+
             modelBuilder.Entity("FSCM.Domain.Entities.ShelfLifeDiscountTable", b =>
                 {
                     b.Property<Guid>("Id")
