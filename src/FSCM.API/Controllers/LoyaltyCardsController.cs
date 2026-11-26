@@ -7,11 +7,11 @@ using Microsoft.AspNetCore.Mvc;
 namespace FSCM.API.Controllers;
 
 [ApiController]
-[Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator},{SystemRoles.Retailer}")]
+[Authorize]
 [Route("api/v1/loyalty/cards")]
 public sealed class LoyaltyCardsController(LoyaltyCardService service) : ControllerBase
 {
-    [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator}")]
+    [Authorize]
     [HttpGet]
     public Task<IReadOnlyCollection<LoyaltyCardResult>> List(CancellationToken cancellationToken) =>
         service.ListAsync(ActorId(), Role(), cancellationToken);
@@ -20,12 +20,12 @@ public sealed class LoyaltyCardsController(LoyaltyCardService service) : Control
     public Task<LoyaltyCardResult> Me(CancellationToken cancellationToken) =>
         service.GetAsync(ActorId(), Role(), null, cancellationToken);
 
-    [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator}")]
+    [Authorize]
     [HttpGet("{retailerId:guid}")]
     public Task<LoyaltyCardResult> Get(Guid retailerId, CancellationToken cancellationToken) =>
         service.GetAsync(ActorId(), Role(), retailerId, cancellationToken);
 
-    [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator}")]
+    [Authorize]
     [HttpGet("by-code/{retailerCode}")]
     public Task<LoyaltyCardResult> GetByCode(string retailerCode, CancellationToken cancellationToken) =>
         service.GetByCodeAsync(ActorId(), Role(), retailerCode, cancellationToken);

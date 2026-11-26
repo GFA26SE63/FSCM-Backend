@@ -86,6 +86,8 @@ public sealed class RoleServiceTests
     private sealed class FakeRoleStore : IRoleStore
     {
         public List<RoleDefinition> Roles { get; } = [];
+        public List<AuditLog> Audits { get; } = [];
+        public void AddAuditLog(AuditLog audit) => Audits.Add(audit);
 
         public Task EnsureDefaultRolesSeededAsync(TimeProvider timeProvider, CancellationToken ct) =>
             Task.CompletedTask;

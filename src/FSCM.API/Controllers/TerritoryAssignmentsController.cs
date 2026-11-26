@@ -8,7 +8,7 @@ using Microsoft.AspNetCore.Mvc;
 namespace FSCM.API.Controllers;
 
 [ApiController]
-[Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.SalesManager}")]
+[Authorize]
 [Route("api/v1/territory-assignments")]
 public sealed class TerritoryAssignmentsController(TerritoryService service) : ControllerBase
 {
@@ -17,26 +17,26 @@ public sealed class TerritoryAssignmentsController(TerritoryService service) : C
         [FromQuery] Guid? salesGroupId, [FromQuery] Guid? userId,
         [FromQuery] bool includeInactive = false, CancellationToken cancellationToken = default) =>
         service.ListMembershipsAsync(salesGroupId, userId, includeInactive,
-            GetActorUserId(), User.IsInRole(SystemRoles.Admin), cancellationToken);
+            GetActorUserId(), User.HasClaim(FSCM.API.Security.PermissionAuthorizationHandler.GlobalScopeClaim, "true"), cancellationToken);
 
     [HttpPut("sales/{userId:guid}")]
     public Task<SalesGroupMembershipResult> TransferSales(
         Guid userId, TransferSalesRequest request, CancellationToken cancellationToken) =>
         service.TransferSalesAsync(userId, request.DestinationSalesGroupId,
-            GetActorUserId(), User.IsInRole(SystemRoles.Admin), cancellationToken);
+            GetActorUserId(), User.HasClaim(FSCM.API.Security.PermissionAuthorizationHandler.GlobalScopeClaim, "true"), cancellationToken);
 
     [HttpGet("retailers")]
     public Task<IReadOnlyCollection<RetailerTerritoryAssignmentResult>> ListRetailers(
         [FromQuery] Guid? retailerId, [FromQuery] Guid? salesGroupId,
         [FromQuery] bool includeInactive = false, CancellationToken cancellationToken = default) =>
         service.ListRetailerAssignmentsAsync(retailerId, salesGroupId, includeInactive,
-            GetActorUserId(), User.IsInRole(SystemRoles.Admin), cancellationToken);
+            GetActorUserId(), User.HasClaim(FSCM.API.Security.PermissionAuthorizationHandler.GlobalScopeClaim, "true"), cancellationToken);
 
     [HttpPut("retailers/{retailerId:guid}")]
     public Task<RetailerTerritoryAssignmentResult> AssignRetailer(
         Guid retailerId, AssignRetailerTerritoryRequest request, CancellationToken cancellationToken) =>
         service.AssignRetailerAsync(retailerId, request.DestinationSalesGroupId,
-            GetActorUserId(), User.IsInRole(SystemRoles.Admin), cancellationToken);
+            GetActorUserId(), User.HasClaim(FSCM.API.Security.PermissionAuthorizationHandler.GlobalScopeClaim, "true"), cancellationToken);
 
     private Guid GetActorUserId()
     {

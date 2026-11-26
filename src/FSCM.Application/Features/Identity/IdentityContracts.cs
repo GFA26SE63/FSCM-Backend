@@ -79,7 +79,10 @@ public sealed record AuthenticatedUser(
     bool MustChangePassword,
     IdentityScope Scope,
     IdentityScopeLabels ScopeLabels,
-    IReadOnlyCollection<string>? Permissions = null)
+    IReadOnlyCollection<string>? Permissions = null,
+    Guid? RoleDefinitionId = null,
+    string? RoleCode = null,
+    string? RoleName = null)
 {
     public IReadOnlyCollection<string> Permissions { get; init; } = Permissions ?? Array.Empty<string>();
 }

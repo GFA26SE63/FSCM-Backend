@@ -8,7 +8,7 @@ namespace FSCM.API.Controllers;
 
 [ApiController]
 [Route("api/v1/factory-traceability")]
-[Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator},{SystemRoles.WarehouseKeeper}")]
+[Authorize]
 public sealed class FactoryTraceabilityController(FactoryTraceabilityService service, IConfiguration configuration) : ControllerBase
 {
     [HttpGet("application")]

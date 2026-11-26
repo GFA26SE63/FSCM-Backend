@@ -1,5 +1,6 @@
 using FSCM.Domain.Authorization;
 using FSCM.Domain.Entities;
+using System.Text.Json;
 
 namespace FSCM.Application.Features.Roles;
 
@@ -83,12 +84,12 @@ public sealed class RoleService(
         new ScreenFeatureDto(SystemScreenKeys.MobileWkShipped, "Lịch sử phiếu đã xuất", "Tra cứu danh sách các phiếu xuất hàng đã hoàn tất giao dịch", "mobile-warehouse", "Kho vận di động (Mobile Warehouse)")
     };
 
-    public IReadOnlyList<ScreenFeatureDto> GetScreenFeatures() => ScreenCatalog;
+    public IReadOnlyList<ScreenFeatureDto> GetScreenFeatures() => ScreenCatalog.Concat(
+        ApiPermissionCatalog.All.Select(p => new ScreenFeatureDto(p.Key, p.Action,
+            $"API {p.Controller}.{p.Action}", "api:" + p.Controller, "API · " + p.Controller))).ToArray();
 
     public async Task<IReadOnlyList<RoleSummaryDto>> ListRolesAsync(string? search, CancellationToken ct)
     {
-        await store.EnsureDefaultRolesSeededAsync(timeProvider, ct);
-
         var list = await store.ListRolesAsync(search, ct);
 
         return list
@@ -103,14 +104,12 @@ public sealed class RoleService(
                 item.Role.Permissions.Select(p => p.PermissionKey).OrderBy(k => k).ToList(),
                 item.UserCount,
                 item.Role.CreatedAt,
-                item.Role.UpdatedAt))
+                item.Role.UpdatedAt, item.Role.BaseRole))
             .ToList();
     }
 
     public async Task<RoleDetailsDto> GetRoleByIdAsync(Guid roleId, CancellationToken ct)
     {
-        await store.EnsureDefaultRolesSeededAsync(timeProvider, ct);
-
         var role = await store.FindByIdAsync(roleId, ct)
             ?? throw new KeyNotFoundException("Không tìm thấy vai trò với ID đã cung cấp.");
 
@@ -125,16 +124,16 @@ public sealed class RoleService(
             role.Permissions.Select(p => p.PermissionKey).OrderBy(k => k).ToList(),
             userCount,
             role.CreatedAt,
-            role.UpdatedAt);
+            role.UpdatedAt, role.BaseRole);
     }
 
     public async Task<RoleDetailsDto> CreateRoleAsync(CreateRoleRequest request, Guid actorUserId, CancellationToken ct)
     {
-        await store.EnsureDefaultRolesSeededAsync(timeProvider, ct);
-
         var code = request.Code?.Trim() ?? string.Empty;
         var name = request.Name?.Trim() ?? string.Empty;
         var description = string.IsNullOrWhiteSpace(request.Description) ? null : request.Description.Trim();
+        if (!SystemRoles.IsValid(request.BaseRole) || request.BaseRole == SystemRoles.Admin)
+            throw new ArgumentException("Phạm vi nghiệp vụ phải là vai trò hệ thống không phải Admin.");
 
         if (string.IsNullOrWhiteSpace(code))
             throw new ArgumentException("Mã vai trò không được để trống.");
@@ -161,13 +160,14 @@ public sealed class RoleService(
             Id = Guid.NewGuid(),
             Code = code,
             Name = name,
+            BaseRole = request.BaseRole,
             Description = description,
             IsSystem = false,
             CreatedAt = now,
             UpdatedAt = now
         };
 
-        var validKeys = SystemScreenKeys.All.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var validKeys = SystemPermissionKeys.All.ToHashSet(StringComparer.OrdinalIgnoreCase);
         if (request.Permissions is not null && request.Permissions.Count > 0)
         {
             foreach (var key in request.Permissions.Distinct(StringComparer.OrdinalIgnoreCase))
@@ -178,7 +178,7 @@ public sealed class RoleService(
                     {
                         Id = Guid.NewGuid(),
                         RoleId = role.Id,
-                        PermissionKey = key,
+                        PermissionKey = SystemPermissionKeys.All.First(k => k.Equals(key, StringComparison.OrdinalIgnoreCase)),
                         CreatedAt = now
                     });
                 }
@@ -186,6 +186,7 @@ public sealed class RoleService(
         }
 
         store.AddRole(role);
+        Audit(role, actorUserId, "Create", null, now);
         await store.SaveChangesAsync(ct);
 
         return new RoleDetailsDto(
@@ -197,7 +198,7 @@ public sealed class RoleService(
             role.Permissions.Select(p => p.PermissionKey).OrderBy(k => k).ToList(),
             0,
             role.CreatedAt,
-            role.UpdatedAt);
+            role.UpdatedAt, role.BaseRole);
     }
 
     public async Task<RoleDetailsDto> UpdateRoleAsync(Guid roleId, UpdateRoleRequest request, Guid actorUserId, CancellationToken ct)
@@ -215,6 +216,7 @@ public sealed class RoleService(
         if (description?.Length > 500)
             throw new ArgumentException("Mô tả không được vượt quá 500 ký tự.");
 
+        var oldValues = Snapshot(role);
         var now = timeProvider.GetUtcNow();
         role.Name = name;
         role.Description = description;
@@ -223,15 +225,17 @@ public sealed class RoleService(
         // Admin role always has all permissions and cannot have its permissions stripped
         if (role.Code != SystemRoles.Admin)
         {
-            var validKeys = SystemScreenKeys.All.ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var validKeys = SystemPermissionKeys.All.ToHashSet(StringComparer.OrdinalIgnoreCase);
             var filteredKeys = (request.Permissions ?? [])
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .Where(validKeys.Contains)
+                .Select(key => SystemPermissionKeys.All.First(k => k.Equals(key, StringComparison.OrdinalIgnoreCase)))
                 .ToList();
 
             store.ReplacePermissions(role, filteredKeys, now);
         }
 
+        Audit(role, actorUserId, "Update", oldValues, now);
         await store.SaveChangesAsync(ct);
 
         var userCount = await store.CountUsersAssignedAsync(role.Code, ct);
@@ -245,7 +249,7 @@ public sealed class RoleService(
             role.Permissions.Select(p => p.PermissionKey).OrderBy(k => k).ToList(),
             userCount,
             role.CreatedAt,
-            role.UpdatedAt);
+            role.UpdatedAt, role.BaseRole);
     }
 
     public async Task DeleteRoleAsync(Guid roleId, Guid actorUserId, CancellationToken ct)
@@ -259,7 +263,22 @@ public sealed class RoleService(
         if (await store.HasUsersAssignedAsync(role.Code, ct))
             throw new InvalidOperationException($"Không thể xóa vai trò '{role.Name}' vì đang có người dùng được gán vai trò này. Hãy chuyển vai trò của người dùng trước khi xóa.");
 
+        Audit(role, actorUserId, "Delete", Snapshot(role), timeProvider.GetUtcNow());
         store.RemoveRole(role);
         await store.SaveChangesAsync(ct);
     }
+
+    private static string Snapshot(RoleDefinition role) => JsonSerializer.Serialize(new
+    {
+        role.Code, role.Name, role.Description, role.BaseRole,
+        Permissions = role.Permissions.Select(p => p.PermissionKey).OrderBy(k => k).ToArray()
+    });
+
+    private void Audit(RoleDefinition role, Guid actorUserId, string action, string? oldValues, DateTimeOffset now) =>
+        store.AddAuditLog(new AuditLog
+        {
+            Id = Guid.NewGuid(), UserAccountId = actorUserId, EntityName = "RoleDefinition",
+            EntityId = role.Id, Action = action, OldValues = oldValues,
+            NewValues = action == "Delete" ? null : Snapshot(role), CreatedAt = now
+        });
 }

@@ -26,8 +26,8 @@ public sealed class RoleStore(AppDbContext dbContext) : IRoleStore
         var roleCodes = roles.Select(r => r.Code).ToList();
 
         var userCounts = await dbContext.UserAccountRecords
-            .Where(u => roleCodes.Contains(u.Role))
-            .GroupBy(u => u.Role)
+            .Where(u => roleCodes.Contains(u.RoleDefinition == null ? u.Role : u.RoleDefinition.Code))
+            .GroupBy(u => u.RoleDefinition == null ? u.Role : u.RoleDefinition.Code)
             .Select(g => new { RoleCode = g.Key, Count = g.Count() })
             .ToDictionaryAsync(x => x.RoleCode, x => x.Count, StringComparer.OrdinalIgnoreCase, ct);
 
@@ -47,13 +47,14 @@ public sealed class RoleStore(AppDbContext dbContext) : IRoleStore
 
     public Task<bool> HasUsersAssignedAsync(string roleCode, CancellationToken ct) =>
         dbContext.UserAccountRecords
-            .AnyAsync(u => u.Role.ToLower() == roleCode.ToLower(), ct);
+            .AnyAsync(u => (u.RoleDefinition == null ? u.Role : u.RoleDefinition.Code).ToLower() == roleCode.ToLower(), ct);
 
     public Task<int> CountUsersAssignedAsync(string roleCode, CancellationToken ct) =>
         dbContext.UserAccountRecords
-            .CountAsync(u => u.Role.ToLower() == roleCode.ToLower(), ct);
+            .CountAsync(u => (u.RoleDefinition == null ? u.Role : u.RoleDefinition.Code).ToLower() == roleCode.ToLower(), ct);
 
     public void AddRole(RoleDefinition role) => dbContext.RoleDefinitionRecords.Add(role);
+    public void AddAuditLog(AuditLog audit) => dbContext.AuditLogRecords.Add(audit);
 
     public void RemoveRole(RoleDefinition role) => dbContext.RoleDefinitionRecords.Remove(role);
 
@@ -152,32 +153,14 @@ public sealed class RoleStore(AppDbContext dbContext) : IRoleStore
         bool changes = false;
         foreach (var def in defaultRoles)
         {
-            if (existingDict.TryGetValue(def.Code, out var existingRole))
-            {
-                // If system role has no permissions in DB (e.g. Sales, Retailer from earlier migration), seed defaults
-                if (existingRole.IsSystem && existingRole.Permissions.Count == 0 && def.Permissions.Length > 0)
-                {
-                    foreach (var perm in def.Permissions)
-                    {
-                        var p = new RolePermission
-                        {
-                            Id = Guid.NewGuid(),
-                            RoleId = existingRole.Id,
-                            PermissionKey = perm,
-                            CreatedAt = now
-                        };
-                        existingRole.Permissions.Add(p);
-                        dbContext.RolePermissionRecords.Add(p);
-                    }
-                    changes = true;
-                }
-            }
-            else
+            // Existing grants, including an intentional empty set, belong to administrators.
+            if (!existingDict.ContainsKey(def.Code))
             {
                 var role = new RoleDefinition
                 {
                     Id = Guid.NewGuid(),
                     Code = def.Code,
+                    BaseRole = def.Code,
                     Name = def.Name,
                     Description = def.Description,
                     IsSystem = def.IsSystem,
@@ -185,7 +168,7 @@ public sealed class RoleStore(AppDbContext dbContext) : IRoleStore
                     UpdatedAt = now
                 };
 
-                foreach (var perm in def.Permissions)
+                foreach (var perm in SystemRoleGrants.For(def.Code))
                 {
                     var p = new RolePermission
                     {

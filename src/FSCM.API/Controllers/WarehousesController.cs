@@ -20,7 +20,7 @@ public sealed class WarehousesController(WarehouseConfigurationService service) 
     public Task<WarehouseResult> Get(Guid warehouseId, CancellationToken cancellationToken) =>
         service.GetWarehouseAsync(warehouseId, cancellationToken);
 
-    [Authorize(Roles = SystemRoles.Admin)]
+    [Authorize]
     [HttpPost]
     public async Task<IActionResult> Create(CreateWarehouseRequest request, CancellationToken cancellationToken)
     {
@@ -31,7 +31,7 @@ public sealed class WarehousesController(WarehouseConfigurationService service) 
         return CreatedAtAction(nameof(Get), new { warehouseId = result.Id }, result);
     }
 
-    [Authorize(Roles = SystemRoles.Admin)]
+    [Authorize]
     [HttpPut("{warehouseId:guid}")]
     public Task<WarehouseResult> Update(
         Guid warehouseId, UpdateWarehouseRequest request, CancellationToken cancellationToken) =>
@@ -40,7 +40,7 @@ public sealed class WarehousesController(WarehouseConfigurationService service) 
             request.Latitude, request.Longitude, request.ProviderPlaceId,
             request.MinimumStockThresholdCartons), cancellationToken);
 
-    [Authorize(Roles = SystemRoles.Admin)]
+    [Authorize]
     [HttpPatch("{warehouseId:guid}/status")]
     public async Task<IActionResult> UpdateStatus(
         Guid warehouseId, UpdateWarehouseStatusRequest request, CancellationToken cancellationToken)

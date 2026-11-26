@@ -11,7 +11,7 @@ namespace FSCM.API.Controllers;
 
 [ApiController]
 [Route("api/v1/warehouse-documents")]
-[Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.WarehouseKeeper}")]
+[Authorize]
 public sealed class WarehouseDocumentsController(WarehouseWorkService service, IQrCodeRenderer qr, QrLabelService labels) : ControllerBase
 {
     private Guid Actor => Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
@@ -32,7 +32,7 @@ public sealed class WarehouseDocumentsController(WarehouseWorkService service, I
     public Task<FactoryInboundDispatch[]> FactoryPendingDispatches(CancellationToken ct) => service.PendingFactoryDispatchesAsync(Actor, Role, ct);
     /// <summary>Opens the single PNK that receives every pallet of one dispatch note.</summary>
     [HttpPost("factory-receipts/from-dispatch")]
-    [Authorize(Roles = SystemRoles.WarehouseKeeper)]
+    [Authorize]
     public async Task<WarehouseWorkResult> PrepareFactoryDispatch(PrepareFactoryDispatchReceiptRequest request, CancellationToken ct) =>
         await Get(await service.PrepareFactoryDispatchAsync(request, Actor, Role, ct), ct);
     /// <summary>Pallets a dispatch-note PNK must receive and which are already received; 204 for other receipts.</summary>
@@ -40,31 +40,31 @@ public sealed class WarehouseDocumentsController(WarehouseWorkService service, I
     public async Task<ActionResult<FactoryReceiptExpectation>> ExpectedPallets(Guid id, CancellationToken ct) =>
         await service.FactoryExpectationAsync(id, Actor, Role, ct) is { } expectation ? expectation : NoContent();
     [HttpPost("factory-receipts/from-pallet")]
-    [Authorize(Roles = SystemRoles.WarehouseKeeper)]
+    [Authorize]
     public async Task<WarehouseWorkResult> PrepareFactory(PrepareFactoryReceiptRequest request, CancellationToken ct) =>
         await Get(await service.PrepareFactoryAsync(request, Actor, Role, ct), ct);
     [HttpPost("requests")]
-    [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.WarehouseKeeper}")]
+    [Authorize]
     public async Task<WarehouseWorkResult> CreateRequest(CreateWarehouseRequest request,
         [FromHeader(Name = "Idempotency-Key")] string key, CancellationToken ct) =>
         await Get(await service.CreateRequestAsync(request, key, Actor, Role, ct), ct);
     [HttpPost("{id:guid}/create-document")]
-    [Authorize(Roles = SystemRoles.WarehouseKeeper)]
+    [Authorize]
     public async Task<WarehouseWorkResult> CreateChild(Guid id,
         [FromHeader(Name = "Idempotency-Key")] string key, CancellationToken ct) =>
         await Get(await service.CreateChildAsync(id, key, Actor, Role, ct), ct);
     [HttpPost("factory-receipts")]
-    [Authorize(Roles = SystemRoles.WarehouseKeeper)]
+    [Authorize]
     public async Task<WarehouseWorkResult> Factory(FactoryReceiptRequest request,
         [FromHeader(Name = "Idempotency-Key")] string key, CancellationToken ct) =>
         await Get(await service.CreateFactoryAsync(request, key, Actor, Role, ct), ct);
     [HttpGet("{id:guid}/pallet-preview")]
-    [Authorize(Roles = SystemRoles.WarehouseKeeper)]
+    [Authorize]
     public Task<PalletManifest> PreviewPallet(Guid id, string code, CancellationToken ct) => service.PreviewPalletAsync(id, code, Actor, Role, ct);
     [HttpGet("{id:guid}/receipt-reports")]
     public Task<PalletReceiptReport[]> ReceiptReports(Guid id, CancellationToken ct) => service.ReceiptReportsAsync(id, Actor, Role, ct);
     [HttpPost("{id:guid}/pallet-scans")]
-    [Authorize(Roles = SystemRoles.WarehouseKeeper)]
+    [Authorize]
     public Task<ReceiptPalletScan> ScanPallet(Guid id, ReceiptPalletScanRequest request, CancellationToken ct) =>
         service.ScanReceiptPalletAsync(id, request, Actor, Role, Request.Headers.UserAgent.ToString(), ct);
     [HttpGet("{id:guid}/pallet-scans")]
@@ -113,23 +113,23 @@ public sealed class WarehouseDocumentsController(WarehouseWorkService service, I
     }
     /// <summary>Dispatch-note PNK: records a pallet that never arrived as "Thiếu cả pallet" (all cartons Missing).</summary>
     [HttpPost("{id:guid}/missing-pallet")]
-    [Authorize(Roles = SystemRoles.WarehouseKeeper)]
+    [Authorize]
     public async Task<WarehouseWorkResult> MissingPallet(Guid id, MissingPalletRequest request, CancellationToken ct) =>
         await Get(await service.MarkPalletMissingAsync(id, request, Actor, Role, ct), ct);
     [HttpPost("{id:guid}/receive-pallet")]
-    [Authorize(Roles = SystemRoles.WarehouseKeeper)]
+    [Authorize]
     public async Task<WarehouseWorkResult> ReceivePallet(Guid id, InspectedPalletRequest request, CancellationToken ct) =>
         await Get(await service.ReceiveInspectedPalletAsync(id, request, Actor, Role, ct), ct);
     public sealed record ScanRequest(string CartonId, int ExpectedVersion);
     public sealed record PostRequest(int ExpectedVersion);
     public sealed record RemoveCartonRequest(string CartonCode, string? ReplacementCode, string Reason, int ExpectedVersion);
     [HttpPost("{id:guid}/remove-carton")]
-    [Authorize(Roles = SystemRoles.WarehouseKeeper)]
+    [Authorize]
     public async Task<WarehouseWorkResult> RemoveCarton(Guid id, RemoveCartonRequest request, CancellationToken ct) =>
         await Get(await service.RemoveCartonAsync(id, request.CartonCode, request.ReplacementCode,
             request.Reason, request.ExpectedVersion, Actor, Role, ct), ct);
     [HttpPost("{id:guid}/prepare-cartons")]
-    [Authorize(Roles = SystemRoles.WarehouseKeeper)]
+    [Authorize]
     public async Task<WarehouseWorkResult> PrepareCartons(Guid id, CancellationToken ct) =>
         await Get(await service.PrepareCartonsAsync(id, Actor, Role, ct), ct);
     [HttpGet("{id:guid}/stock-labels")]
@@ -144,15 +144,15 @@ public sealed class WarehouseDocumentsController(WarehouseWorkService service, I
         return Content(html.Append("</html>").ToString(), "text/html; charset=utf-8");
     }
     [HttpPost("{id:guid}/cancel")]
-    [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.WarehouseKeeper}")]
+    [Authorize]
     public async Task<WarehouseWorkResult> Cancel(Guid id, PostRequest request, CancellationToken ct) =>
         await Get(await service.CancelRequestAsync(id, request.ExpectedVersion, Actor, Role, ct), ct);
     [HttpPost("{id:guid}/scans")]
-    [Authorize(Roles = SystemRoles.WarehouseKeeper)]
+    [Authorize]
     public async Task<WarehouseWorkResult> Scan(Guid id, ScanRequest request, CancellationToken ct) =>
         await Get(await service.ScanAsync(id, request.CartonId, request.ExpectedVersion, Actor, Role, ct), ct);
     [HttpPost("{id:guid}/post")]
-    [Authorize(Roles = SystemRoles.WarehouseKeeper)]
+    [Authorize]
     public async Task<WarehouseWorkResult> Post(Guid id, PostRequest request, CancellationToken ct) =>
         await Get(await service.PostAsync(id, request.ExpectedVersion, Actor, Role, ct), ct);
     [HttpGet("{id:guid}/labels")]

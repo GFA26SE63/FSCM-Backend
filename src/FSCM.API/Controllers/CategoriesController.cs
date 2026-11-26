@@ -24,7 +24,7 @@ public sealed class CategoriesController(CatalogService catalogService, AppDbCon
     public Task<CategoryResult> Get(Guid categoryId, CancellationToken cancellationToken) =>
         catalogService.GetCategoryAsync(categoryId, cancellationToken);
 
-    [Authorize(Roles = SystemRoles.Admin)]
+    [Authorize]
     [HttpPost]
     [ProducesResponseType<CategoryResult>(StatusCodes.Status201Created)]
     public async Task<IActionResult> Create(
@@ -43,7 +43,7 @@ public sealed class CategoriesController(CatalogService catalogService, AppDbCon
         return CreatedAtAction(nameof(Get), new { categoryId = result.Id }, result);
     }
 
-    [Authorize(Roles = SystemRoles.Admin)]
+    [Authorize]
     [HttpPut("{categoryId:guid}")]
     [ProducesResponseType<CategoryResult>(StatusCodes.Status200OK)]
     public async Task<ActionResult<CategoryResult>> Update(
@@ -62,7 +62,7 @@ public sealed class CategoriesController(CatalogService catalogService, AppDbCon
             cancellationToken);
     }
 
-    [Authorize(Roles = SystemRoles.Admin)]
+    [Authorize]
     [HttpPatch("{categoryId:guid}/status")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     public async Task<IActionResult> UpdateStatus(
@@ -75,7 +75,7 @@ public sealed class CategoriesController(CatalogService catalogService, AppDbCon
     }
 
     /// <summary>Sets (or clears with null) the category default MLOR.</summary>
-    [Authorize(Roles = SystemRoles.Admin)]
+    [Authorize]
     [HttpPut("{categoryId:guid}/default-mlor")]
     [ProducesResponseType<CategoryResult>(StatusCodes.Status200OK)]
     public Task<CategoryResult> SetDefaultMlor(
@@ -84,7 +84,7 @@ public sealed class CategoriesController(CatalogService catalogService, AppDbCon
         CancellationToken cancellationToken) =>
         catalogService.SetCategoryDefaultMlorAsync(categoryId, request.MinimumLifeRatio, cancellationToken);
 
-    [Authorize(Roles = SystemRoles.Admin)]
+    [Authorize]
     [HttpDelete("{categoryId:guid}")]
     [ProducesResponseType<DeleteCategoryResult>(StatusCodes.Status200OK)]
     public Task<DeleteCategoryResult> Delete(Guid categoryId, CancellationToken cancellationToken) =>

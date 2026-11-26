@@ -20,7 +20,7 @@ public sealed class BusinessConfigurationsController(WarehouseConfigurationServi
     public Task<IReadOnlyCollection<ConfigurationResult>> History(string key, CancellationToken cancellationToken) =>
         service.ListConfigurationHistoryAsync(key, cancellationToken);
 
-    [Authorize(Roles = SystemRoles.Admin)]
+    [Authorize]
     [HttpPut("batch")]
     public Task<IReadOnlyCollection<ConfigurationResult>> UpdateBatch(
         UpdateConfigurationsRequest request, CancellationToken cancellationToken)
@@ -34,7 +34,7 @@ public sealed class BusinessConfigurationsController(WarehouseConfigurationServi
             new ConfigurationValueData(entry.Key, entry.Value.GetRawText())).ToArray(), userId, cancellationToken);
     }
 
-    [Authorize(Roles = SystemRoles.Admin)]
+    [Authorize]
     [HttpPut("{key}")]
     public Task<ConfigurationResult> Update(
         string key, UpdateBusinessConfigurationRequest request, CancellationToken cancellationToken)

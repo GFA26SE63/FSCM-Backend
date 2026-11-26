@@ -4398,6 +4398,11 @@ namespace FSCM.Persistence.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
+                    b.Property<string>("BaseRole")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)");
+
                     b.Property<string>("Code")
                         .IsRequired()
                         .HasMaxLength(50)
@@ -4426,7 +4431,10 @@ namespace FSCM.Persistence.Migrations
                     b.HasIndex("Code")
                         .IsUnique();
 
-                    b.ToTable("SYS_ROLE", (string)null);
+                    b.ToTable("SYS_ROLE", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_SYS_ROLE_BaseRole", "\"BaseRole\" IN ('Admin','Operator','WarehouseKeeper','SalesManager','Sales','Retailer') AND ((\"Code\" = 'Admin') = (\"BaseRole\" = 'Admin'))");
+                        });
                 });
 
             modelBuilder.Entity("FSCM.Domain.Entities.RolePermission", b =>
@@ -5327,6 +5335,9 @@ namespace FSCM.Persistence.Migrations
                         .HasMaxLength(30)
                         .HasColumnType("character varying(30)");
 
+                    b.Property<Guid?>("RoleDefinitionId")
+                        .HasColumnType("uuid");
+
                     b.Property<DateTimeOffset>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -5343,9 +5354,13 @@ namespace FSCM.Persistence.Migrations
                         .IsUnique()
                         .HasFilter("\"Phone\" IS NOT NULL");
 
+                    b.HasIndex("RoleDefinitionId");
+
                     b.ToTable("USER_ACCOUNT", null, t =>
                         {
                             t.HasCheckConstraint("CK_USER_ACCOUNT_PhoneCanonical", "\"Phone\" IS NULL OR (\"Phone\" = btrim(\"Phone\") AND \"Phone\" <> '')");
+
+                            t.HasCheckConstraint("CK_USER_ACCOUNT_RoleLinked", "\"RoleDefinitionId\" IS NOT NULL");
                         });
                 });
 
@@ -7449,6 +7464,16 @@ namespace FSCM.Persistence.Migrations
                         .HasForeignKey("WarehouseId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
+                });
+
+            modelBuilder.Entity("FSCM.Domain.Entities.UserAccount", b =>
+                {
+                    b.HasOne("FSCM.Domain.Entities.RoleDefinition", "RoleDefinition")
+                        .WithMany()
+                        .HasForeignKey("RoleDefinitionId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.Navigation("RoleDefinition");
                 });
 
             modelBuilder.Entity("FSCM.Domain.Entities.UserCredential", b =>

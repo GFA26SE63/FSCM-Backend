@@ -7,7 +7,7 @@ using Microsoft.AspNetCore.Mvc;
 namespace FSCM.API.Controllers;
 
 [ApiController]
-[Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator},{SystemRoles.SalesManager},{SystemRoles.Sales}")]
+[Authorize]
 [Route("api/v1/reports")]
 public sealed class ReportsController(ReportService service) : ControllerBase
 {

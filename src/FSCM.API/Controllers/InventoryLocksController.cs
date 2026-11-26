@@ -8,7 +8,7 @@ using Microsoft.AspNetCore.Mvc;
 namespace FSCM.API.Controllers;
 
 [ApiController]
-[Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator},{SystemRoles.WarehouseKeeper}")]
+[Authorize]
 [Route("api/v1/inventory-locks")]
 public sealed class InventoryLocksController(InventoryLockService service) : ControllerBase
 {
