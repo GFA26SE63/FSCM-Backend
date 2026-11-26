@@ -14,7 +14,7 @@ using FSCM.Domain.Entities;
 using FSCM.Infrastructure;
 using FSCM.Persistence;
 using FSCM.Persistence.DbContexts;
-using FSCM.Persistence.Seeding;
+using FSCM.IntegrationTests.Fixtures;
 using FSCM.Persistence.WarehouseWork;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
@@ -56,11 +56,12 @@ public sealed class WarehouseDocumentsPostgresTests
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> {
             ["ConnectionStrings:DefaultConnection"] = target.ConnectionString,
             ["ConnectionStrings:TraceabilityConnection"] = traceTarget.ConnectionString,
-            ["SeedData:DefaultPassword"] = "Local-E2e-Only!2049", ["Jwt:Secret"] = new string('w', 64),
+            ["TestFixtures:DefaultPassword"] = "Local-E2e-Only!2049", ["Jwt:Secret"] = new string('w', 64),
             ["Jwt:Issuer"] = "FSCM.API", ["Jwt:Audience"] = "FSCM.Clients"
         }).Build();
         var services = new ServiceCollection().AddLogging().AddSingleton<IConfiguration>(config);
         services.AddApplicationServices().AddPersistenceServices(config).AddInfrastructureServices(config);
+        services.AddScoped<WorkflowDatabaseFixture>();
         // Source service runs in-process through its real HTTP pipeline and its own database.
         IServiceProvider? providerForFactory = null;
         await using var factoryApp = new StandaloneFactoryFixture(traceTarget.ConnectionString, new TestFactoryFscmGateway(() => providerForFactory!));
@@ -77,7 +78,7 @@ public sealed class WarehouseDocumentsPostgresTests
                 "The freshly created test database must be reachable before migration/seeding.");
             await using var sourceContext = new FactoryDbContext(new DbContextOptionsBuilder<FactoryDbContext>().UseNpgsql(traceTarget.ConnectionString).Options);
             await sourceContext.Database.MigrateAsync();
-            await scope.ServiceProvider.GetRequiredService<DevelopmentDataSeeder>().SeedAsync();
+            await scope.ServiceProvider.GetRequiredService<WorkflowDatabaseFixture>().SeedAsync();
         }
         async Task<T> Call<T>(Func<WarehouseWorkService, Task<T>> action)
         { await using var scope = provider.CreateAsyncScope(); return await action(scope.ServiceProvider.GetRequiredService<WarehouseWorkService>()); }

@@ -12,7 +12,6 @@ internal sealed class ScreenMappingTestStore : IRoleStore
     public async Task<IReadOnlyList<string>> GetApiScreenCodesAsync(string role, string apiCode, CancellationToken ct) =>
         (await GetScreenApiMappingsAsync(role, ct)).Where(row => row.ApiCode == apiCode).Select(row => row.ScreenCode).ToArray();
     public Task<T> InTransactionAsync<T>(Func<Task<T>> operation, CancellationToken ct) => operation();
-    public Task EnsureDefaultRolesSeededAsync(TimeProvider clock, CancellationToken ct) => throw new NotSupportedException();
     public Task<IReadOnlyList<(RoleDefinition Role, int UserCount)>> ListRolesAsync(string? search, CancellationToken ct) => throw new NotSupportedException();
     public Task<RoleDefinition?> FindByIdAsync(Guid id, CancellationToken ct) => throw new NotSupportedException();
     public Task<bool> ExistsByCodeAsync(string code, CancellationToken ct) => throw new NotSupportedException();

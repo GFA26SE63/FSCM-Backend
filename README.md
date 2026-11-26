@@ -139,33 +139,9 @@ Configure `Google:ClientIds` (all accepted Google OAuth audiences), `Jwt:Issuer`
 
 Admin user management is available under `/api/v1/users`: filtered deterministic paging, detail/profile updates, role/status commands, and warehouse/region/Sales-group/Retailer scope assignment. Entity reads are available through `entities`; the former `users`, `user`, `userScope`, and `me` GraphQL roots are removed. User creation accepts `identityProvider` as `Local` or `Google` to select the initial provisioning flow: Google-first accounts bind their immutable `sub` on first exchange, while Local-first accounts use activation and may later bind Google without losing password login. Admin creation and promotion remain blocked in the public API.
 
-Create the first deployment Admin exactly once from the deployment secret store:
+Data provisioning is SQL-only, performed by the operator through DBeaver after applying migrations to the database configured in appsettings. The backend has no seed command, demo-data tool, or Admin bootstrap command. Retired `--seed` and `--bootstrap-admin` commands fail before the host starts.
 
-```powershell
-dotnet run --project src/FSCM.API/FSCM.API.csproj -- --bootstrap-admin
-```
-
-Supply `AdminBootstrap:Email`, `AdminBootstrap:FullName`, `AdminBootstrap:IdentityProvider`, and either `AdminBootstrap:GoogleSubject` or `AdminBootstrap:Password`. The command applies pending migrations, exits without changing an existing Admin, and never logs the password.
-
-Create the development-only identity dataset after applying migrations:
-
-```powershell
-dotnet user-secrets set "SeedData:DefaultPassword" "LogisticsThesis@123" --project src/FSCM.API/FSCM.API.csproj
-dotnet run --project src/FSCM.API/FSCM.API.csproj --launch-profile http -- --seed
-```
-
-The command is idempotent and creates active users for all six roles plus BE-02 catalog dump data. All seeded demo accounts use the canonical password shown above. It is for local development only and must not be used in a deployed environment.
-
-| Role | Email | Seeded scope |
-| --- | --- | --- |
-| Admin | `admin@fscm.local` | System-wide administration |
-| Operator | `operator@fscm.local` | All three demo warehouses |
-| SalesManager | `sales.manager@fscm.local` | `HCM-A`, `RTL-HCM-001` |
-| Sales | `sales@fscm.local` | `HCM-A`, `RTL-HCM-001` |
-| WarehouseKeeper | `warehouse.keeper@fscm.local` | All three demo warehouses |
-| Retailer | `retailer@fscm.local` | Retailer account only |
-
-Admin accounts are bootstrap-only: the user-management API rejects both Admin creation and Admin role promotion.
+Applied migrations retain their system reference data and required backfills. They must not be edited to remove historical data operations. See [the migration/provisioning audit](docs/MigrationProvisioningAudit.md). Admin creation and promotion remain blocked in the public user-management API; initial Admin provisioning is part of the reviewed SQL process.
 
 BE-02 exposes authenticated category and product reads under `/api/v1/categories` and `/api/v1/products`. Admin-only commands manage category relationships, Draft products, publication, inactivation, replacement SKUs, and effective price history. Publishing a replacement SKU automatically inactivates its predecessor. Published product master data is immutable; price changes are recorded as history instead of overwriting prior values.
 

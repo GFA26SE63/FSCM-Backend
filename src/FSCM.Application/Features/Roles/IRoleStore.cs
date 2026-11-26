@@ -4,7 +4,6 @@ namespace FSCM.Application.Features.Roles;
 
 public interface IRoleStore
 {
-    Task EnsureDefaultRolesSeededAsync(TimeProvider timeProvider, CancellationToken ct);
     Task<IReadOnlyList<(RoleDefinition Role, int UserCount)>> ListRolesAsync(string? search, CancellationToken ct);
     Task<RoleDefinition?> FindByIdAsync(Guid roleId, CancellationToken ct);
     Task<bool> ExistsByCodeAsync(string code, CancellationToken ct);

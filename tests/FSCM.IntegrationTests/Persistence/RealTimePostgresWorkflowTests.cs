@@ -13,7 +13,7 @@ using FSCM.Domain.Entities;
 using FSCM.Infrastructure;
 using FSCM.Persistence;
 using FSCM.Persistence.DbContexts;
-using FSCM.Persistence.Seeding;
+using FSCM.IntegrationTests.Fixtures;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
@@ -49,13 +49,14 @@ public sealed class RealTimePostgresWorkflowTests
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
             ["ConnectionStrings:DefaultConnection"] = target.ConnectionString,
-            ["SeedData:DefaultPassword"] = "Local-E2e-Only!2049",
+            ["TestFixtures:DefaultPassword"] = "Local-E2e-Only!2049",
             ["Jwt:Secret"] = new string('e', 64),
             ["Jwt:Issuer"] = "FSCM.API",
             ["Jwt:Audience"] = "FSCM.Clients"
         }).Build();
         var services = new ServiceCollection().AddLogging().AddSingleton<IConfiguration>(config);
         services.AddApplicationServices().AddPersistenceServices(config).AddInfrastructureServices(config);
+        services.AddScoped<WorkflowDatabaseFixture>();
         await using var provider = services.BuildServiceProvider();
         async Task<R> Call<T, R>(Func<T, Task<R>> action) where T : notnull
         { await using var scope = provider.CreateAsyncScope(); return await action(scope.ServiceProvider.GetRequiredService<T>()); }
@@ -65,7 +66,7 @@ public sealed class RealTimePostgresWorkflowTests
         {
             Assert.False(await scope.ServiceProvider.GetRequiredService<AppDbContext>().Database.CanConnectAsync(),
                 "Supply a new fscm_e2e_ database name; an existing database must not be modified.");
-            await scope.ServiceProvider.GetRequiredService<DevelopmentDataSeeder>().SeedAsync();
+            await scope.ServiceProvider.GetRequiredService<WorkflowDatabaseFixture>().SeedAsync();
         }
         Guid sales = default, op = default, retailerUser = default, keeper = default, retailer = default, product = default;
         await Db(async db =>

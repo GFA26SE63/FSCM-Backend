@@ -156,9 +156,6 @@ public sealed class RoleServiceTests
             (await GetScreenApiMappingsAsync(role, ct)).Where(row => row.ApiCode == apiCode).Select(row => row.ScreenCode).ToArray();
         public Task<T> InTransactionAsync<T>(Func<Task<T>> operation, CancellationToken ct) => operation();
 
-        public Task EnsureDefaultRolesSeededAsync(TimeProvider timeProvider, CancellationToken ct) =>
-            Task.CompletedTask;
-
         public Task<IReadOnlyList<(RoleDefinition Role, int UserCount)>> ListRolesAsync(string? search, CancellationToken ct) =>
             Task.FromResult<IReadOnlyList<(RoleDefinition, int)>>(Roles.Select(r => (r, 0)).ToList());
 
