@@ -40,10 +40,15 @@ public sealed class DisposalPostgresTests
         await using var db = Open();
         Assert.True(await db.Database.EnsureCreatedAsync());
         var region = new Region { Id = Guid.NewGuid(), Code = "TEST", Name = "Test", IsActive = true };
+        var adminRole = new RoleDefinition { Id = Guid.NewGuid(), Code = SystemRoles.Admin,
+            Name = "Admin", BaseRole = SystemRoles.Admin, IsSystem = true, CreatedAt = now, UpdatedAt = now };
+        var keeperRole = new RoleDefinition { Id = Guid.NewGuid(), Code = SystemRoles.WarehouseKeeper,
+            Name = "Keeper", BaseRole = SystemRoles.WarehouseKeeper, IsSystem = true, CreatedAt = now, UpdatedAt = now };
+        db.AddRange(adminRole, keeperRole);
         var admin = new UserAccount { Id = Guid.NewGuid(), Email = "admin@test.local", FullName = "Admin",
-            Role = SystemRoles.Admin, IsActive = true, IdentityProvider = "Local" };
+            Role = SystemRoles.Admin, RoleDefinition = adminRole, IsActive = true, IdentityProvider = "Local" };
         var keeper = new UserAccount { Id = Guid.NewGuid(), Email = "keeper@test.local", FullName = "Keeper",
-            Role = SystemRoles.WarehouseKeeper, IsActive = true, IdentityProvider = "Local" };
+            Role = SystemRoles.WarehouseKeeper, RoleDefinition = keeperRole, IsActive = true, IdentityProvider = "Local" };
         var warehouse = new Warehouse { Id = Guid.NewGuid(), Code = "WH-A", Name = "A", RegionId = region.Id, IsActive = true };
         var other = new Warehouse { Id = Guid.NewGuid(), Code = "WH-B", Name = "B", RegionId = region.Id, IsActive = true };
         var category = new ProductCategory { Id = Guid.NewGuid(), Code = "CAT", Name = "Category", IsActive = true };
