@@ -5,6 +5,7 @@ namespace FSCM.Domain.Entities;
 public sealed class WarehouseTransfer
 {
     public Guid Id { get; set; }
+    public Guid? SourceIssueDocumentId { get; set; }
     public string TransferCode { get; set; } = string.Empty;
     public Guid SourceWarehouseId { get; set; }
     public Guid DestinationWarehouseId { get; set; }
