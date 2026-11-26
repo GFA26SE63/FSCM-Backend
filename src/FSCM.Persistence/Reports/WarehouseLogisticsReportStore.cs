@@ -1,6 +1,7 @@
 using FSCM.Application.Features.Inventory;
 using FSCM.Application.Features.InventoryLocks;
 using FSCM.Application.Features.Reports;
+using FSCM.Domain.Authorization;
 using FSCM.Persistence.DbContexts;
 using Microsoft.EntityFrameworkCore;
 
@@ -11,12 +12,17 @@ public sealed class WarehouseLogisticsReportStore(AppDbContext db) : IWarehouseL
 {
     private static readonly TimeSpan Vietnam = TimeSpan.FromHours(7);
 
-    public async Task<WarehouseLogisticsReport> ReadAsync(WarehouseLogisticsReportQuery query, DateOnly today, CancellationToken ct)
+    public Task<WarehouseLogisticsReport> ReadAsync(WarehouseLogisticsReportQuery query, DateOnly today, CancellationToken ct) =>
+        ReadAsync(query, today, null, null, ct);
+
+    public async Task<WarehouseLogisticsReport> ReadAsync(WarehouseLogisticsReportQuery query, DateOnly today, Guid? actorUserId, string? actorRole, CancellationToken ct)
     {
         var start = new DateTimeOffset(query.FromDate.ToDateTime(TimeOnly.MinValue), Vietnam).ToUniversalTime();
         var end = new DateTimeOffset(query.ToDate.AddDays(1).ToDateTime(TimeOnly.MinValue), Vietnam).ToUniversalTime();
 
-        var warehouseQuery = db.WarehouseRecords.AsNoTracking().Where(w => w.IsActive);
+        var warehouseQuery = actorRole == SystemRoles.WarehouseKeeper && actorUserId.HasValue
+            ? ReportingScopeQueries.ManagedWarehouses(db, actorUserId.Value).Where(w => w.IsActive)
+            : db.WarehouseRecords.AsNoTracking().Where(w => w.IsActive);
         if (query.RegionId.HasValue) warehouseQuery = warehouseQuery.Where(w => w.RegionId == query.RegionId.Value);
         if (query.WarehouseIds is { Count: > 0 })
         {

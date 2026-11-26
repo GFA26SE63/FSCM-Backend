@@ -44,7 +44,7 @@ public sealed class WarehouseDocumentsController(WarehouseWorkService service, I
     public async Task<WarehouseWorkResult> PrepareFactory(PrepareFactoryReceiptRequest request, CancellationToken ct) =>
         await Get(await service.PrepareFactoryAsync(request, Actor, Role, ct), ct);
     [HttpPost("requests")]
-    [Authorize(Roles = SystemRoles.Admin)]
+    [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.WarehouseKeeper}")]
     public async Task<WarehouseWorkResult> CreateRequest(CreateWarehouseRequest request,
         [FromHeader(Name = "Idempotency-Key")] string key, CancellationToken ct) =>
         await Get(await service.CreateRequestAsync(request, key, Actor, Role, ct), ct);
@@ -144,7 +144,7 @@ public sealed class WarehouseDocumentsController(WarehouseWorkService service, I
         return Content(html.Append("</html>").ToString(), "text/html; charset=utf-8");
     }
     [HttpPost("{id:guid}/cancel")]
-    [Authorize(Roles = SystemRoles.Admin)]
+    [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.WarehouseKeeper}")]
     public async Task<WarehouseWorkResult> Cancel(Guid id, PostRequest request, CancellationToken ct) =>
         await Get(await service.CancelRequestAsync(id, request.ExpectedVersion, Actor, Role, ct), ct);
     [HttpPost("{id:guid}/scans")]
