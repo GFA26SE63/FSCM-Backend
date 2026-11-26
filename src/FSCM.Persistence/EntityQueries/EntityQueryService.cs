@@ -10,6 +10,31 @@ public sealed class EntityQueryService(AppDbContext dbContext) : IEntityQuerySer
 {
     public IQueryable<TEntity> Query<TEntity>(EntityQueryAccess access) where TEntity : class
     {
+        var query = QueryScoped<TEntity>(access);
+        if (access.Role == SystemRoles.Admin || access.Permissions is null) return query;
+        var grants = access.Permissions;
+        var operations = grants.Contains(SystemScreenKeys.MobileWkOperations);
+        var orders = grants.Contains(SystemScreenKeys.WarehouseOutbound) || grants.Contains(SystemScreenKeys.MobileWkPicking);
+        var shipped = grants.Contains(SystemScreenKeys.MobileWkShipped);
+        var transfers = grants.Contains(SystemScreenKeys.WarehouseTransfers);
+        var factoryRequests = grants.Contains(SystemScreenKeys.WarehouseFactoryRequests);
+        var inbound = grants.Contains(SystemScreenKeys.WarehouseInbound);
+        var documentIds = dbContext.WarehouseDocuments.Where(d => operations ||
+            (d.Reason == "Order" && (orders || (shipped && d.Status == "Posted"))) ||
+            (d.Reason == "Transfer" && transfers) ||
+            (d.Reason == "Factory" && ((d.Kind == "Request" && factoryRequests) || (d.Kind != "Request" && inbound))))
+            .Select(d => d.Id);
+        if (typeof(TEntity) == typeof(WarehouseDocument))
+            return Cast<TEntity, WarehouseDocument>(((IQueryable<WarehouseDocument>)(object)query).Where(d => documentIds.Contains(d.Id)));
+        if (typeof(TEntity) == typeof(WarehouseDocumentLine))
+            return Cast<TEntity, WarehouseDocumentLine>(((IQueryable<WarehouseDocumentLine>)(object)query).Where(d => documentIds.Contains(d.DocumentId)));
+        if (typeof(TEntity) == typeof(WarehouseDocumentCarton))
+            return Cast<TEntity, WarehouseDocumentCarton>(((IQueryable<WarehouseDocumentCarton>)(object)query).Where(d => documentIds.Contains(d.DocumentId)));
+        return query;
+    }
+
+    private IQueryable<TEntity> QueryScoped<TEntity>(EntityQueryAccess access) where TEntity : class
+    {
         var query = dbContext.Set<TEntity>().AsNoTracking();
         // Notifications are a private inbox.  Administrative access to other
         // entities must never turn this into a system-wide notification feed.

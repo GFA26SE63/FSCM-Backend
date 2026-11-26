@@ -13,16 +13,17 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 
-namespace FSCM.Persistence.Seeding;
+namespace FSCM.IntegrationTests.Fixtures;
 
-public sealed class DevelopmentDataSeeder(
+// Test-only fixture for guarded, disposable CI databases. Never registered by the production API.
+public sealed class WorkflowDatabaseFixture(
     AppDbContext dbContext,
     IPasswordHasher passwordHasher,
     IConfiguration configuration,
     TimeProvider timeProvider,
     OrderService orderService,
     IPaymentPlanService paymentPlanService,
-    ILogger<DevelopmentDataSeeder> logger)
+    ILogger<WorkflowDatabaseFixture> logger)
 {
     private const string DemoWarehouseCode = "WH-HCM-01";
     private const string DemoRegionCode = "HCM";
@@ -44,7 +45,7 @@ public sealed class DevelopmentDataSeeder(
 
     public async Task SeedAsync(CancellationToken cancellationToken = default)
     {
-        var password = configuration["SeedData:DefaultPassword"];
+        var password = configuration["TestFixtures:DefaultPassword"];
         ValidatePassword(password);
         await dbContext.Database.MigrateAsync(cancellationToken);
 
@@ -1532,7 +1533,7 @@ public sealed class DevelopmentDataSeeder(
             !password.Any(character => !char.IsLetterOrDigit(character)))
         {
             throw new InvalidOperationException(
-                "SeedData:DefaultPassword must be at least 12 characters and contain uppercase, lowercase, numeric, and special characters.");
+                "TestFixtures:DefaultPassword must be at least 12 characters and contain uppercase, lowercase, numeric, and special characters.");
         }
     }
 

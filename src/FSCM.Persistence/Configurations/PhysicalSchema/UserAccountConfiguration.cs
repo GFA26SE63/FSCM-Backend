@@ -8,8 +8,11 @@ public sealed class UserAccountConfiguration : IEntityTypeConfiguration<UserAcco
 {
     public void Configure(EntityTypeBuilder<UserAccount> builder)
     {
-        builder.ToTable("USER_ACCOUNT", table => table.HasCheckConstraint(
-            "CK_USER_ACCOUNT_PhoneCanonical", "\"Phone\" IS NULL OR (\"Phone\" = btrim(\"Phone\") AND \"Phone\" <> '')"));
+        builder.ToTable("USER_ACCOUNT", table =>
+        {
+            table.HasCheckConstraint("CK_USER_ACCOUNT_PhoneCanonical", "\"Phone\" IS NULL OR (\"Phone\" = btrim(\"Phone\") AND \"Phone\" <> '')");
+            table.HasCheckConstraint("CK_USER_ACCOUNT_RoleLinked", "\"RoleDefinitionId\" IS NOT NULL");
+        });
         builder.HasKey(entity => entity.Id);
         builder.Property(entity => entity.Id).HasColumnType("uuid").IsRequired();
         builder.Property(entity => entity.GoogleSubject).HasMaxLength(255).IsRequired(false);
@@ -18,6 +21,9 @@ public sealed class UserAccountConfiguration : IEntityTypeConfiguration<UserAcco
         builder.Property(entity => entity.Phone).HasMaxLength(20).IsRequired(false);
         builder.Property(entity => entity.FullName).HasMaxLength(150).IsRequired();
         builder.Property(entity => entity.Role).HasMaxLength(30).IsRequired();
+        builder.HasOne(entity => entity.RoleDefinition).WithMany()
+            .HasForeignKey(entity => entity.RoleDefinitionId).OnDelete(DeleteBehavior.Restrict);
+        builder.Navigation(entity => entity.RoleDefinition).AutoInclude();
         builder.Property(entity => entity.IsActive).IsRequired();
         builder.Property(entity => entity.CreatedAt).HasColumnType("timestamp with time zone").IsRequired();
         builder.Property(entity => entity.UpdatedAt).HasColumnType("timestamp with time zone").IsRequired();

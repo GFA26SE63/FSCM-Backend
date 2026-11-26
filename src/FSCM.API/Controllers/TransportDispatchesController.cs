@@ -8,7 +8,7 @@ namespace FSCM.API.Controllers;
 
 [ApiController]
 [Route("api/v1/transport-dispatches")]
-[Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator}")]
+[Authorize]
 public sealed class TransportDispatchesController(WarehouseWorkService service) : ControllerBase
 {
     public sealed record AssignTransferRequest(Guid DriverId, Guid VehicleId, int ExpectedVersion);

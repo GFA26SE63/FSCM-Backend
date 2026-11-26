@@ -38,7 +38,7 @@ public sealed class ShelfLifeDiscountsController(ShelfLifeDiscountService servic
         CancellationToken cancellationToken) =>
         service.MatchAsync(productId, productCategoryId, remainingPercent, baseNetUnitPrice, at, cancellationToken);
 
-    [Authorize(Roles = SystemRoles.Admin)]
+    [Authorize]
     [HttpPost]
     public async Task<IActionResult> Publish(
         PublishShelfLifeDiscountTableRequest request, CancellationToken cancellationToken)

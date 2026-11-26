@@ -2,6 +2,10 @@ namespace FSCM.Application.Features.Loyalty;
 
 public sealed class RedemptionService(IRedemptionStore store, TimeProvider timeProvider)
 {
+    public Task<IReadOnlyCollection<RedemptionResult>> ListVisibleAsync(Guid userAccountId, string businessRole,
+        CancellationToken cancellationToken) => businessRole is FSCM.Domain.Authorization.SystemRoles.Admin or FSCM.Domain.Authorization.SystemRoles.Operator
+            ? ListForAdminAsync(cancellationToken) : ListAsync(userAccountId, cancellationToken);
+
     public async Task<RedemptionResult> CreateAsync(Guid userAccountId, CreateRedemptionData data,
         CancellationToken cancellationToken) => ToResult(await store.CreateAsync(
             userAccountId, data, timeProvider.GetUtcNow(), cancellationToken));

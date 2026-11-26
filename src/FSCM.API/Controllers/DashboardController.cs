@@ -8,7 +8,7 @@ using Microsoft.AspNetCore.Mvc;
 namespace FSCM.API.Controllers;
 
 [ApiController]
-[Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator},{SystemRoles.WarehouseKeeper},{SystemRoles.SalesManager}")]
+[Authorize]
 [Route("api/v1/dashboard")]
 public sealed class DashboardController(DashboardService service) : ControllerBase
 {

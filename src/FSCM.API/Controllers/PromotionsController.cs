@@ -21,7 +21,7 @@ public sealed class PromotionsController(PromotionService service) : ControllerB
     public Task<PromotionResult> Get(Guid id, CancellationToken cancellationToken) =>
         service.GetAsync(id, cancellationToken);
 
-    [Authorize(Roles = SystemRoles.Admin)]
+    [Authorize]
     [HttpPost("campaigns")]
     public Task<IReadOnlyCollection<PromotionResult>> CreateCampaignGroup(
         CreateCampaignGroupRequest request, CancellationToken cancellationToken)
@@ -35,7 +35,7 @@ public sealed class PromotionsController(PromotionService service) : ControllerB
             request.ActivateOnSave), ActorId(), cancellationToken);
     }
 
-    [Authorize(Roles = SystemRoles.Admin)]
+    [Authorize]
     [HttpPost]
     public async Task<IActionResult> Create(CreatePromotionRequest request, CancellationToken cancellationToken)
     {
@@ -45,7 +45,7 @@ public sealed class PromotionsController(PromotionService service) : ControllerB
         return CreatedAtAction(nameof(Get), new { id = result.Id }, result);
     }
 
-    [Authorize(Roles = SystemRoles.Admin)]
+    [Authorize]
     [HttpPut("{id:guid}")]
     public Task<PromotionResult> Update(Guid id, UpdatePromotionRequest request,
         CancellationToken cancellationToken) =>
@@ -53,12 +53,12 @@ public sealed class PromotionsController(PromotionService service) : ControllerB
             request.DiscountPercent, request.StartAt, request.EndAt, request.ProductIds,
             request.CategoryIds, request.RetailerIds), ActorId(), cancellationToken);
 
-    [Authorize(Roles = SystemRoles.Admin)]
+    [Authorize]
     [HttpPost("{id:guid}/activate")]
     public Task<PromotionResult> Activate(Guid id, CancellationToken cancellationToken) =>
         service.ActivateAsync(id, ActorId(), cancellationToken);
 
-    [Authorize(Roles = SystemRoles.Admin)]
+    [Authorize]
     [HttpPost("{id:guid}/deactivate")]
     public Task<PromotionResult> Deactivate(Guid id, CancellationToken cancellationToken) =>
         service.DeactivateAsync(id, ActorId(), cancellationToken);

@@ -7,7 +7,7 @@ using Microsoft.AspNetCore.Mvc;
 namespace FSCM.API.Controllers;
 
 [ApiController]
-[Authorize(Roles = SystemRoles.Admin)]
+[Authorize]
 [Route("api/v1/eta")]
 public sealed class EtaController(DeliveryEtaService service) : ControllerBase
 {

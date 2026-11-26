@@ -7,7 +7,7 @@ using FSCM.Domain.Entities;
 using FSCM.Infrastructure;
 using FSCM.Persistence;
 using FSCM.Persistence.DbContexts;
-using FSCM.Persistence.Seeding;
+using FSCM.IntegrationTests.Fixtures;
 using FSCM.Persistence.TransitTables;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
@@ -27,18 +27,19 @@ public sealed class SettingsValidationPostgresTests
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
             ["ConnectionStrings:DefaultConnection"] = target.ConnectionString,
-            ["SeedData:DefaultPassword"] = "Local-E2e-Only!2049",
+            ["TestFixtures:DefaultPassword"] = "Local-E2e-Only!2049",
             ["Jwt:Secret"] = new string('s', 64), ["Jwt:Issuer"] = "FSCM.API", ["Jwt:Audience"] = "FSCM.Clients"
         }).Build();
         var clock = new MutableClock(DateTimeOffset.UtcNow);
         var services = new ServiceCollection().AddLogging().AddSingleton<IConfiguration>(config);
         services.AddApplicationServices().AddPersistenceServices(config).AddInfrastructureServices(config);
+        services.AddScoped<WorkflowDatabaseFixture>();
         services.AddSingleton<TimeProvider>(clock);
         await using var provider = services.BuildServiceProvider();
         await using var scope = provider.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         Assert.False(await db.Database.CanConnectAsync(), "Use a NEW disposable database. Existing databases must not be modified.");
-        await scope.ServiceProvider.GetRequiredService<DevelopmentDataSeeder>().SeedAsync();
+        await scope.ServiceProvider.GetRequiredService<WorkflowDatabaseFixture>().SeedAsync();
 
         async Task<T> Call<S, T>(Func<S, Task<T>> action) where S : notnull
         {

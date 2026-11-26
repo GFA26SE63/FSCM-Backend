@@ -8,7 +8,7 @@ using Microsoft.AspNetCore.Mvc;
 namespace FSCM.API.Controllers;
 
 [ApiController]
-[Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator},{SystemRoles.WarehouseKeeper}")]
+[Authorize]
 [Route("api/v1/qr-labels")]
 public sealed class QrLabelsController(QrLabelService service) : ControllerBase
 {
@@ -43,7 +43,7 @@ public sealed class QrLabelsController(QrLabelService service) : ControllerBase
     private FileContentResult PrintFile(QrLabelPrintDocument document) =>
         File(System.Text.Encoding.UTF8.GetBytes(document.Html), document.ContentType, document.FileName);
 
-    [Authorize(Roles = SystemRoles.WarehouseKeeper)]
+    [Authorize]
     [HttpPost]
     public async Task<IActionResult> Generate(
         GenerateQrLabelRequest request,
@@ -55,7 +55,7 @@ public sealed class QrLabelsController(QrLabelService service) : ControllerBase
         return CreatedAtAction(nameof(Get), new { qrCode = result.QrCode }, result);
     }
 
-    [Authorize(Roles = SystemRoles.WarehouseKeeper)]
+    [Authorize]
     [HttpPost("{qrCode}/split")]
     public async Task<IActionResult> Split(
         string qrCode, SplitQrLabelRequest request,
@@ -67,7 +67,7 @@ public sealed class QrLabelsController(QrLabelService service) : ControllerBase
         return CreatedAtAction(nameof(Get), new { qrCode = result.QrCode }, result);
     }
 
-    [Authorize(Roles = SystemRoles.WarehouseKeeper)]
+    [Authorize]
     [HttpPost("{qrCode}/scans")]
     [ProducesResponseType(StatusCodes.Status409Conflict)]
     public Task<QrLabelResult> Scan(

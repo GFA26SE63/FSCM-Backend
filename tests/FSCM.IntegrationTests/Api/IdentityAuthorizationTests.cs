@@ -320,6 +320,7 @@ public sealed class IdentityAuthorizationTests : IClassFixture<IdentityAuthoriza
         public TestEntityQueryService EntityQueries { get; } = new();
 
         public UserAccount AddTestUser(string email, string role) => AddUser(email, role, true);
+        public void SetPermissions(string role, params string[] permissions) => store.Grants[role] = permissions;
 
         public string CreateToken(UserAccount user)
         {
@@ -376,7 +377,13 @@ public sealed class IdentityAuthorizationTests : IClassFixture<IdentityAuthoriza
             builder.UseSetting("BackgroundJobs:InventoryOutbox:Enabled", "false");
             builder.ConfigureTestServices(services =>
             {
+                // API contract tests must not run scheduled business mutations on the configured database.
+                foreach (var hosted in services.Where(d => d.ServiceType == typeof(Microsoft.Extensions.Hosting.IHostedService) &&
+                             d.ImplementationType?.Namespace?.StartsWith("FSCM.", StringComparison.Ordinal) == true).ToArray())
+                    services.Remove(hosted);
                 services.RemoveAll<IIdentityStore>();
+                services.RemoveAll<FSCM.Application.Features.Roles.IRoleStore>();
+                services.AddScoped<FSCM.Application.Features.Roles.IRoleStore, ScreenMappingTestStore>();
                 services.AddSingleton<IIdentityStore>(store);
                 services.RemoveAll<IIdentityTokenProvider>();
                 services.AddSingleton<IIdentityTokenProvider, TestIdentityTokenProvider>();
@@ -476,6 +483,10 @@ public sealed class IdentityAuthorizationTests : IClassFixture<IdentityAuthoriza
 
     private sealed class TestIdentityStore : IIdentityStore
     {
+        // Existing API fixtures exercise domain/role scope with explicit grants.
+        // RBAC tests can replace any role's grants, including an empty list.
+        public Dictionary<string, string[]> Grants { get; } = SystemRoles.All
+            .ToDictionary(role => role, role => SystemRoleGrants.For(role).ToArray());
         public List<UserAccount> Users { get; } = [];
         public List<UserCredential> Credentials { get; } = [];
         public List<RefreshToken> RefreshTokens { get; } = [];
@@ -518,7 +529,7 @@ public sealed class IdentityAuthorizationTests : IClassFixture<IdentityAuthoriza
             Task.FromResult<IReadOnlyCollection<RefreshToken>>(RefreshTokens.Where(token =>
                 token.UserAccountId == userId && token.RevokedAt is null && token.ExpiresAt > now).ToArray());
         public Task<IReadOnlyCollection<string>> GetRolePermissionsAsync(string roleCode, CancellationToken cancellationToken) =>
-            Task.FromResult<IReadOnlyCollection<string>>([]);
+            Task.FromResult<IReadOnlyCollection<string>>(Grants.GetValueOrDefault(roleCode) ?? []);
         public Task<bool> RoleExistsAsync(string roleCode, CancellationToken cancellationToken) =>
             Task.FromResult(true);
         public void AddUser(UserAccount user) => Users.Add(user);

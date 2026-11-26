@@ -21,7 +21,7 @@ public sealed class LoyaltyController(LoyaltyService service) : ControllerBase
     public Task<LoyaltyProgramResult> Get(Guid id, CancellationToken cancellationToken) =>
         service.GetAsync(id, cancellationToken);
 
-    [Authorize(Roles = SystemRoles.Admin)]
+    [Authorize]
     [HttpPost]
     public async Task<IActionResult> Create(
         CreateLoyaltyProgramRequest request, CancellationToken cancellationToken)
@@ -32,7 +32,7 @@ public sealed class LoyaltyController(LoyaltyService service) : ControllerBase
         return CreatedAtAction(nameof(Get), new { id = result.Id }, result);
     }
 
-    [Authorize(Roles = SystemRoles.Admin)]
+    [Authorize]
     [HttpPut("{id:guid}")]
     public Task<LoyaltyProgramResult> Update(Guid id, UpdateLoyaltyProgramRequest request,
         CancellationToken cancellationToken) =>
@@ -40,12 +40,12 @@ public sealed class LoyaltyController(LoyaltyService service) : ControllerBase
             request.SpendAmountPerPoint, request.MinimumRedeemPoints,
             request.StartAt, request.EndAt, request.PointsExpireAt, request.RetailerIds), cancellationToken);
 
-    [Authorize(Roles = SystemRoles.Admin)]
+    [Authorize]
     [HttpPost("{id:guid}/activate")]
     public Task<LoyaltyProgramResult> Activate(Guid id, CancellationToken cancellationToken) =>
         service.ActivateAsync(id, cancellationToken);
 
-    [Authorize(Roles = SystemRoles.Admin)]
+    [Authorize]
     [HttpPost("{id:guid}/deactivate")]
     public Task<LoyaltyProgramResult> Deactivate(Guid id, CancellationToken cancellationToken) =>
         service.DeactivateAsync(id, cancellationToken);

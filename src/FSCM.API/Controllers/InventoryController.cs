@@ -10,7 +10,7 @@ using FSCM.Persistence.WarehouseWork;
 namespace FSCM.API.Controllers;
 
 [ApiController]
-[Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator},{SystemRoles.WarehouseKeeper}")]
+[Authorize]
 [Route("api/v1/inventory")]
 public sealed class InventoryController(InventoryService service, IOptions<DateTrackerOptions> dateTrackerOptions,
     FactoryQrInventoryService factoryQrInventory) : ControllerBase
@@ -43,7 +43,7 @@ public sealed class InventoryController(InventoryService service, IOptions<DateT
         CancellationToken cancellationToken) =>
         service.ListHistoryAsync(GetActorUserId(), GetActorRole(), warehouseId, batchId, cancellationToken);
 
-    [Authorize(Roles = SystemRoles.Admin)]
+    [Authorize]
     [HttpGet("expiry/health")]
     public Task<InventoryExpiryHealthResult> ExpiryHealth(CancellationToken cancellationToken)
     {

@@ -22,10 +22,11 @@ public sealed class SystemQuery
             cancellationToken);
 
         return new EntityQuery(
-            new EntityQueryAccess(current.Id, current.Role, current.Scope));
+            new EntityQueryAccess(current.Id, current.Role, current.Scope, current.Permissions));
     }
 
-    [Authorize(Roles = [SystemRoles.Retailer])]
+    [Authorize]
+    [Authorize(Policy = "screen-resource:RetailerReceivables")]
     public Task<RetailerReceivablePage> RetailerReceivables(
         RetailerReceivableFilter filter,
         [Service] RetailerReceivableService service,
@@ -33,7 +34,8 @@ public sealed class SystemQuery
         CancellationToken cancellationToken) =>
         service.ListAsync(CurrentUser.Id(accessor), filter, cancellationToken);
 
-    [Authorize(Roles = [SystemRoles.Retailer])]
+    [Authorize]
+    [Authorize(Policy = "screen-resource:RetailerReceivables")]
     public Task<RetailerReceivableResult> RetailerReceivable(
         Guid orderId,
         [Service] RetailerReceivableService service,
@@ -41,7 +43,8 @@ public sealed class SystemQuery
         CancellationToken cancellationToken) =>
         service.GetByOrderAsync(CurrentUser.Id(accessor), orderId, cancellationToken);
 
-    [Authorize(Roles = [SystemRoles.Admin, SystemRoles.Operator, SystemRoles.SalesManager, SystemRoles.Sales])]
+    [Authorize]
+    [Authorize(Policy = "screen-resource:Payments")]
     public Task<IReadOnlyCollection<PaymentResult>> Receivables(
         string? status,
         [Service] PaymentService service,
@@ -49,7 +52,8 @@ public sealed class SystemQuery
         CancellationToken cancellationToken) =>
         service.ListAsync(CurrentUser.Id(accessor), CurrentUser.Role(accessor), status, cancellationToken);
 
-    [Authorize(Roles = [SystemRoles.Admin, SystemRoles.Operator, SystemRoles.SalesManager, SystemRoles.Sales])]
+    [Authorize]
+    [Authorize(Policy = "screen-resource:Reports")]
     public Task<SalesKpiResult> SalesKpis(
         SalesKpiQuery query,
         [Service] ReportService service,
@@ -57,7 +61,8 @@ public sealed class SystemQuery
         CancellationToken cancellationToken) =>
         service.GetSalesKpiAsync(query, CurrentUser.Id(accessor), CurrentUser.Role(accessor), cancellationToken);
 
-    [Authorize(Roles = [SystemRoles.Admin, SystemRoles.Operator, SystemRoles.SalesManager, SystemRoles.Sales])]
+    [Authorize]
+    [Authorize(Policy = "screen-resource:Reports")]
     public Task<ProductRankingResult> BestSellingProducts(
         ProductRankingQuery query,
         [Service] ReportService service,

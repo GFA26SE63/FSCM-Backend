@@ -27,15 +27,17 @@ public sealed class ActiveAccountClaimsTransformation(IIdentityStore identitySto
         if (user is null || !user.IsActive || !string.Equals(user.Role, tokenRole, StringComparison.Ordinal))
             return Anonymous();
 
-        // Admin remains the actor role (first claim) for auditing and scoped
-        // service rules, but also satisfies every role-based endpoint policy.
+        // Rebuild grants from the database on every HTTP authentication, never from JWT grants.
+        principal = new ClaimsPrincipal(principal.Identities.Select(identity => new ClaimsIdentity(
+            identity.Claims.Where(claim => claim.Type != PermissionAuthorizationHandler.GrantClaim &&
+                claim.Type != PermissionAuthorizationHandler.GlobalScopeClaim),
+            identity.AuthenticationType, identity.NameClaimType, identity.RoleClaimType)));
+        var grants = new ClaimsIdentity();
         if (user.Role == SystemRoles.Admin)
-        {
-            var delegatedRoles = new ClaimsIdentity();
-            foreach (var role in SystemRoles.All.Where(role => role != SystemRoles.Admin))
-                delegatedRoles.AddClaim(new Claim(ClaimTypes.Role, role));
-            principal.AddIdentity(delegatedRoles);
-        }
+            grants.AddClaim(new Claim(PermissionAuthorizationHandler.GlobalScopeClaim, "true"));
+        foreach (var permission in await identityStore.GetUserPermissionsAsync(user.Id, CancellationToken.None))
+            grants.AddClaim(new Claim(PermissionAuthorizationHandler.GrantClaim, permission));
+        principal.AddIdentity(grants);
 
         return principal;
     }

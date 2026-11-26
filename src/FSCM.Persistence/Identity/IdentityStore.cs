@@ -45,7 +45,8 @@ public sealed class IdentityStore(AppDbContext dbContext) : IIdentityStore
                 EF.Functions.ILike(user.FullName, pattern));
         }
         if (!string.IsNullOrWhiteSpace(query.Role))
-            users = users.Where(user => user.Role == query.Role);
+            users = users.Where(user => user.RoleDefinition != null
+                ? user.RoleDefinition.Code == query.Role : user.Role == query.Role);
         if (query.IsActive.HasValue)
             users = users.Where(user => user.IsActive == query.IsActive.Value);
 
@@ -238,7 +239,7 @@ public sealed class IdentityStore(AppDbContext dbContext) : IIdentityStore
     {
         if (string.Equals(role, FSCM.Domain.Authorization.SystemRoles.Admin, StringComparison.OrdinalIgnoreCase))
         {
-            return FSCM.Domain.Authorization.SystemScreenKeys.All;
+            return FSCM.Domain.Authorization.SystemPermissionKeys.All;
         }
 
         var perms = await dbContext.RolePermissionRecords
@@ -246,57 +247,22 @@ public sealed class IdentityStore(AppDbContext dbContext) : IIdentityStore
             .Select(p => p.PermissionKey)
             .ToListAsync(cancellationToken);
 
-        if (perms.Count == 0)
-        {
-            if (string.Equals(role, FSCM.Domain.Authorization.SystemRoles.Operator, StringComparison.OrdinalIgnoreCase))
-            {
-                return new[]
-                {
-                    FSCM.Domain.Authorization.SystemScreenKeys.Dashboard,
-                    FSCM.Domain.Authorization.SystemScreenKeys.Reports,
-                    FSCM.Domain.Authorization.SystemScreenKeys.WarehouseReport,
-                    FSCM.Domain.Authorization.SystemScreenKeys.Orders,
-                    FSCM.Domain.Authorization.SystemScreenKeys.Allocation,
-                    FSCM.Domain.Authorization.SystemScreenKeys.Debts,
-                    FSCM.Domain.Authorization.SystemScreenKeys.Refunds,
-                    FSCM.Domain.Authorization.SystemScreenKeys.Complaints,
-                    FSCM.Domain.Authorization.SystemScreenKeys.Batches,
-                    FSCM.Domain.Authorization.SystemScreenKeys.Readiness,
-                    FSCM.Domain.Authorization.SystemScreenKeys.Retailers,
-                    FSCM.Domain.Authorization.SystemScreenKeys.Loyalty,
-                    FSCM.Domain.Authorization.SystemScreenKeys.Redeem,
-                    FSCM.Domain.Authorization.SystemScreenKeys.Kpi,
-                    FSCM.Domain.Authorization.SystemScreenKeys.Fleet
-                };
-            }
-
-            if (string.Equals(role, FSCM.Domain.Authorization.SystemRoles.WarehouseKeeper, StringComparison.OrdinalIgnoreCase))
-            {
-                return new[]
-                {
-                    FSCM.Domain.Authorization.SystemScreenKeys.Dashboard,
-                    FSCM.Domain.Authorization.SystemScreenKeys.WarehouseInbound,
-                    FSCM.Domain.Authorization.SystemScreenKeys.WarehouseFactoryRequests,
-                    FSCM.Domain.Authorization.SystemScreenKeys.WarehouseOutbound,
-                    FSCM.Domain.Authorization.SystemScreenKeys.WarehouseTransfers,
-                    FSCM.Domain.Authorization.SystemScreenKeys.Batches,
-                    FSCM.Domain.Authorization.SystemScreenKeys.WarehouseTrace,
-                    FSCM.Domain.Authorization.SystemScreenKeys.Disposal
-                };
-            }
-
-            if (string.Equals(role, FSCM.Domain.Authorization.SystemRoles.SalesManager, StringComparison.OrdinalIgnoreCase))
-            {
-                return new[]
-                {
-                    FSCM.Domain.Authorization.SystemScreenKeys.Dashboard,
-                    FSCM.Domain.Authorization.SystemScreenKeys.Regions,
-                    FSCM.Domain.Authorization.SystemScreenKeys.Kpi
-                };
-            }
-        }
-
         return perms;
+    }
+
+    public Task<RoleDefinition?> FindRoleAsync(string code, CancellationToken cancellationToken) =>
+        dbContext.RoleDefinitionRecords.SingleOrDefaultAsync(r => r.Code.ToLower() == code.ToLower(), cancellationToken);
+
+    public async Task<IReadOnlyCollection<string>> GetUserPermissionsAsync(Guid userId, CancellationToken cancellationToken)
+    {
+        var user = await dbContext.UserAccountRecords.AsNoTracking()
+            .Where(u => u.Id == userId && u.IsActive)
+            .Select(u => new { u.RoleDefinitionId, Code = u.RoleDefinition == null ? null : u.RoleDefinition.Code })
+            .SingleOrDefaultAsync(cancellationToken);
+        if (user?.RoleDefinitionId is null) return [];
+        if (user.Code == FSCM.Domain.Authorization.SystemRoles.Admin) return FSCM.Domain.Authorization.SystemPermissionKeys.All;
+        return await dbContext.RolePermissionRecords.Where(p => p.RoleId == user.RoleDefinitionId)
+            .Select(p => p.PermissionKey).ToArrayAsync(cancellationToken);
     }
 
     public async Task<bool> RoleExistsAsync(
