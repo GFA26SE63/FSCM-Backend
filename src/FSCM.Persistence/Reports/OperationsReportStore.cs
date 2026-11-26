@@ -170,9 +170,20 @@ public sealed class OperationsReportStore(AppDbContext db) : IOperationsReportSt
 
         if (kind == "disposals")
         {
+            var lineIds = items.Select(x => x.Id).ToArray();
+            var expByLineId = lineIds.Length == 0
+                ? new Dictionary<Guid, DateOnly>()
+                : await (from l in db.WriteOffItemRecords.AsNoTracking()
+                         join b in db.BatchRecords.AsNoTracking() on l.BatchId equals b.Id
+                         where lineIds.Contains(l.Id)
+                         select new { l.Id, b.ExpirationDate })
+                    .ToDictionaryAsync(x => x.Id, x => x.ExpirationDate, ct);
             items = items.Select(item =>
             {
                 var method = ExtractDisposalMethod(item.Note);
+                var expNote = expByLineId.TryGetValue(item.Id, out var exp)
+                    ? $"HSD: {exp:dd/MM/yyyy} · Kho {item.RetailerCode}"
+                    : $"Kho {item.RetailerCode}";
                 return new OperationsReportRow
                 {
                     Id = item.Id, At = item.At, RetailerId = item.RetailerId, RetailerCode = item.RetailerCode,
@@ -180,7 +191,32 @@ public sealed class OperationsReportStore(AppDbContext db) : IOperationsReportSt
                     ProgramCode = item.ProgramCode, ProgramName = item.ProgramName, ItemCode = item.ItemCode,
                     ItemName = item.ItemName, Status = method, Quantity = item.Quantity, GrossAmount = item.GrossAmount,
                     NetAmount = item.NetAmount, CreatedByUserId = item.CreatedByUserId, CreatedByName = item.CreatedByName,
-                    Note = item.ApprovedByName
+                    Note = expNote
+                };
+            }).ToArray();
+        }
+        else if (kind == "receivables" && items.Length > 0)
+        {
+            var paymentIds = items.Select(x => x.Id).ToArray();
+            var dates = await db.PaymentRecords.AsNoTracking()
+                .Where(p => paymentIds.Contains(p.Id))
+                .Select(p => new { p.Id, p.DueDate, p.DeliveredDate })
+                .ToDictionaryAsync(x => x.Id, ct);
+            items = items.Select(item =>
+            {
+                dates.TryGetValue(item.Id, out var d);
+                return new OperationsReportRow
+                {
+                    Id = item.Id, At = item.At, RetailerId = item.RetailerId, RetailerCode = item.RetailerCode,
+                    RetailerName = item.RetailerName, RegionId = item.RegionId, RegionName = item.RegionName,
+                    ProgramCode = item.ProgramCode, ProgramName = item.ProgramName, ItemCode = item.ItemCode,
+                    ItemName = d?.DueDate.HasValue == true ? $"Hạn thu: {d.DueDate.Value:dd/MM/yyyy}" : "Chưa có hạn thu",
+                    Status = item.Status, GrossAmount = item.GrossAmount, DiscountAmount = item.DiscountAmount,
+                    NetAmount = item.NetAmount, OrderId = item.OrderId, OrderCode = item.OrderCode,
+                    DeliveredAt = d?.DeliveredDate.HasValue == true
+                        ? new DateTimeOffset(d.DeliveredDate.Value.ToDateTime(TimeOnly.MinValue), Vietnam)
+                        : null,
+                    Note = item.Note
                 };
             }).ToArray();
         }
@@ -238,7 +274,7 @@ public sealed class OperationsReportStore(AppDbContext db) : IOperationsReportSt
         {
             Id = x.Id, At = x.CreatedAt, RetailerId = r.Id, RetailerCode = r.Code, RetailerName = r.Name,
             RegionId = r.RegionId, RegionName = db.RegionRecords.Where(z => z.Id == r.RegionId).Select(z => z.Name).FirstOrDefault() ?? "",
-            ProgramCode = p.Code, ProgramName = p.Name, Status = x.TransactionType,
+            ProgramCode = p.Code, ProgramName = p.Name, ItemCode = "", ItemName = "", Status = x.TransactionType,
             Points = x.Points, BalanceAfter = x.BalanceAfter, OrderId = x.SalesOrderId,
             TransactionId = x.Id, CreatedByUserId = x.CreatedByUserId, Note = x.Note,
             OrderCode = db.SalesOrderRecords.Where(o => o.Id == x.SalesOrderId).Select(o => o.OrderCode).FirstOrDefault(),
@@ -303,7 +339,6 @@ public sealed class OperationsReportStore(AppDbContext db) : IOperationsReportSt
             ItemCode = product.Sku, ItemName = product.Name, Status = "Completed",
             Quantity = line.Quantity, GrossAmount = line.Quantity * unitPrice, NetAmount = line.Quantity * unitPrice,
             CreatedByUserId = doc.CreatedByUserId, CreatedByName = user.FullName,
-            ApprovedByName = "HSD: " + batch.ExpirationDate.ToString("dd/MM/yyyy") + " · Kho " + wh.Code,
             Note = doc.Reason
         };
 
@@ -344,7 +379,7 @@ public sealed class OperationsReportStore(AppDbContext db) : IOperationsReportSt
             RegionId = r.RegionId, RegionName = db.RegionRecords.Where(z => z.Id == r.RegionId).Select(z => z.Name).FirstOrDefault() ?? "",
             ProgramCode = g.Code, ProgramName = g.Name,
             ItemCode = o.OrderCode,
-            ItemName = p.DueDate.HasValue ? "Hạn thu: " + p.DueDate.Value.ToString("dd/MM/yyyy") : "Chưa có hạn thu",
+            ItemName = "",
             Status = p.DueDate == null || p.DueDate >= today ? "Current"
                 : p.DueDate >= d7 ? "Overdue_1_7"
                 : p.DueDate >= d30 ? "Overdue_8_30" : "Overdue_31_Plus",
@@ -352,7 +387,6 @@ public sealed class OperationsReportStore(AppDbContext db) : IOperationsReportSt
             DiscountAmount = p.ConfirmedAmount,
             NetAmount = p.AdjustedAmount - p.ConfirmedAmount,
             OrderId = o.Id, OrderCode = o.OrderCode,
-            DeliveredAt = p.DeliveredDate.HasValue ? new DateTimeOffset(p.DeliveredDate.Value.ToDateTime(TimeOnly.MinValue), Vietnam) : null,
             Note = p.Note
         };
 }

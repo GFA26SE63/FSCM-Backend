@@ -62,7 +62,8 @@ public sealed partial class WarehouseWorkService(AppDbContext db, InventoryServi
     public Task<Guid> CreateRequestAsync(CreateWarehouseRequest data, string key, Guid actor, string role, CancellationToken ct) =>
         Atomic(async () =>
         {
-            if (role != SystemRoles.Admin) throw PickingOperationException.Forbidden("Chỉ admin được phát hành yêu cầu kho.");
+            if (role is not (SystemRoles.Admin or SystemRoles.WarehouseKeeper))
+                throw PickingOperationException.Forbidden("Chỉ admin hoặc thủ kho được phát hành yêu cầu kho.");
             var replay = await Replay(key, data, actor, ct);
             if (replay.HasValue) return replay.Value;
             await Access(data.WarehouseId, actor, role, ct);
@@ -482,8 +483,10 @@ public sealed partial class WarehouseWorkService(AppDbContext db, InventoryServi
     public Task<Guid> CancelRequestAsync(Guid id, int version, Guid actor, string role, CancellationToken ct) =>
         Atomic(async () =>
         {
-            if (role != SystemRoles.Admin) throw PickingOperationException.Forbidden("Chỉ admin được hủy yêu cầu kho.");
+            if (role is not (SystemRoles.Admin or SystemRoles.WarehouseKeeper))
+                throw PickingOperationException.Forbidden("Chỉ admin hoặc thủ kho được hủy yêu cầu kho.");
             var d = await Find(id, ct);
+            await Access(d.WarehouseId, actor, role, ct);
             if (d.Status == "Cancelled") return id;
             Version(d, version);
             if (d.Kind != "Request" || d.Status != "Open") throw PickingOperationException.Conflict("Chỉ hủy yêu cầu chưa xuất kho.");
