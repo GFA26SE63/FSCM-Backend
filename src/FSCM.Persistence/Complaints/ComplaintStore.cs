@@ -99,14 +99,6 @@ public sealed class ComplaintStore(AppDbContext db) : IComplaintStore
             ?? throw ComplaintOperationException.Forbidden("The account is not linked to an active retailer.");
         var order = await db.SalesOrderRecords.SingleOrDefaultAsync(x => x.OrderCode == data.OrderCode && x.RetailerId == retailer.Id, ct)
             ?? throw ComplaintOperationException.NotFound("The delivered order was not found for this retailer.");
-        if (data.RequestType == "Complaint" &&
-            string.Equals(order.PaymentMethod, "Credit", StringComparison.OrdinalIgnoreCase))
-        {
-            var paid = await db.PaymentRecords.AsNoTracking()
-                .AnyAsync(p => p.SalesOrderId == order.Id && p.Status == "Paid", ct);
-            if (paid)
-                throw ComplaintOperationException.Conflict("Đơn hàng công nợ đã thanh toán đủ; đã khóa tạo khiếu nại mới.");
-        }
         var line = await (from l in db.SalesOrderLineRecords join p in db.ProductRecords on l.ProductId equals p.Id
                           where l.SalesOrderId == order.Id && p.Sku == data.Sku select new { Line = l, Product = p }).SingleOrDefaultAsync(ct)
             ?? throw ComplaintOperationException.NotFound("The SKU was not found in this order.");
