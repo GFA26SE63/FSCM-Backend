@@ -34,7 +34,7 @@ public sealed class TransitTablesController(TransitTableService service) : Contr
         CancellationToken cancellationToken) =>
         service.LookupAsync(distanceMeters, at, cancellationToken);
 
-    [Authorize(Roles = SystemRoles.Admin)]
+    [Authorize]
     [HttpPost]
     public async Task<IActionResult> Publish(
         PublishTransitTableRequest request, CancellationToken cancellationToken)

@@ -21,7 +21,7 @@ public sealed class SalesGroupsController(TerritoryService service) : Controller
     public Task<SalesGroupResult> Get(Guid salesGroupId, CancellationToken cancellationToken) =>
         service.GetSalesGroupAsync(salesGroupId, cancellationToken);
 
-    [Authorize(Roles = SystemRoles.Admin)]
+    [Authorize]
     [HttpPost]
     public async Task<IActionResult> Create(CreateSalesGroupRequest request, CancellationToken cancellationToken)
     {
@@ -29,13 +29,13 @@ public sealed class SalesGroupsController(TerritoryService service) : Controller
         return CreatedAtAction(nameof(Get), new { salesGroupId = result.Id }, result);
     }
 
-    [Authorize(Roles = SystemRoles.Admin)]
+    [Authorize]
     [HttpPut("{salesGroupId:guid}")]
     public Task<SalesGroupResult> Update(
         Guid salesGroupId, UpdateSalesGroupRequest request, CancellationToken cancellationToken) =>
         service.UpdateSalesGroupAsync(salesGroupId, request.Name, cancellationToken);
 
-    [Authorize(Roles = SystemRoles.Admin)]
+    [Authorize]
     [HttpPatch("{salesGroupId:guid}/status")]
     public async Task<IActionResult> UpdateStatus(
         Guid salesGroupId, UpdateTerritoryStatusRequest request, CancellationToken cancellationToken)

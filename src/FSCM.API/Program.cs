@@ -2,8 +2,14 @@ using FSCM.API.Extensions;
 using FSCM.Application;
 using FSCM.Infrastructure;
 using FSCM.Persistence;
-using FSCM.Persistence.Seeding;
 using Serilog;
+
+// Reject retired provisioning commands before building the host or opening a database connection.
+if (args.Any(argument => argument.Equals("--seed", StringComparison.OrdinalIgnoreCase) ||
+        argument.StartsWith("--seed=", StringComparison.OrdinalIgnoreCase) ||
+        argument.Equals("--bootstrap-admin", StringComparison.OrdinalIgnoreCase) ||
+        argument.StartsWith("--bootstrap-admin=", StringComparison.OrdinalIgnoreCase)))
+    throw new NotSupportedException("Backend data seeding is disabled. Prepare data using reviewed SQL scripts in DBeaver.");
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -23,29 +29,9 @@ builder.Services.AddApplicationServices();
 builder.Services.AddPersistenceServices(builder.Configuration);
 builder.Services.AddInfrastructureServices(builder.Configuration);
 builder.Services.AddHostedService<FSCM.API.Workers.FactoryReceiptSyncWorker>();
+builder.Services.AddHostedService<FSCM.API.Workers.OrderCompletionWorker>();
 
 var app = builder.Build();
-
-if (args.Contains("--bootstrap-admin", StringComparer.OrdinalIgnoreCase))
-{
-    await using var scope = app.Services.CreateAsyncScope();
-    var bootstrapper = scope.ServiceProvider.GetRequiredService<AdminBootstrapper>();
-    await bootstrapper.BootstrapAsync();
-    return;
-}
-
-if (args.Contains("--seed", StringComparer.OrdinalIgnoreCase))
-{
-    if (!app.Environment.IsDevelopment())
-    {
-        throw new InvalidOperationException("Development data can only be seeded in the Development environment.");
-    }
-
-    await using var scope = app.Services.CreateAsyncScope();
-    var seeder = scope.ServiceProvider.GetRequiredService<DevelopmentDataSeeder>();
-    await seeder.SeedAsync();
-    return;
-}
 
 app.UseApiPipeline();
 

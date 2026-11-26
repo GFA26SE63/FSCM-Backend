@@ -4398,6 +4398,11 @@ namespace FSCM.Persistence.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
+                    b.Property<string>("BaseRole")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)");
+
                     b.Property<string>("Code")
                         .IsRequired()
                         .HasMaxLength(50)
@@ -4426,7 +4431,10 @@ namespace FSCM.Persistence.Migrations
                     b.HasIndex("Code")
                         .IsUnique();
 
-                    b.ToTable("SYS_ROLE", (string)null);
+                    b.ToTable("SYS_ROLE", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_SYS_ROLE_BaseRole", "\"BaseRole\" IN ('Admin','Operator','WarehouseKeeper','SalesManager','Sales','Retailer') AND ((\"Code\" = 'Admin') = (\"BaseRole\" = 'Admin'))");
+                        });
                 });
 
             modelBuilder.Entity("FSCM.Domain.Entities.RolePermission", b =>
@@ -4883,6 +4891,27 @@ namespace FSCM.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("FSCM.Domain.Entities.ScreenApiMapping", b =>
+                {
+                    b.Property<string>("BusinessRole")
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)");
+
+                    b.Property<string>("ApiCode")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("ScreenCode")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.HasKey("BusinessRole", "ApiCode", "ScreenCode");
+
+                    b.HasIndex("BusinessRole", "ScreenCode");
+
+                    b.ToTable("SYS_SCREEN_API_MAPPING", (string)null);
+                });
+
             modelBuilder.Entity("FSCM.Domain.Entities.ShelfLifeDiscountTable", b =>
                 {
                     b.Property<Guid>("Id")
@@ -5327,6 +5356,9 @@ namespace FSCM.Persistence.Migrations
                         .HasMaxLength(30)
                         .HasColumnType("character varying(30)");
 
+                    b.Property<Guid?>("RoleDefinitionId")
+                        .HasColumnType("uuid");
+
                     b.Property<DateTimeOffset>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -5343,9 +5375,13 @@ namespace FSCM.Persistence.Migrations
                         .IsUnique()
                         .HasFilter("\"Phone\" IS NOT NULL");
 
+                    b.HasIndex("RoleDefinitionId");
+
                     b.ToTable("USER_ACCOUNT", null, t =>
                         {
                             t.HasCheckConstraint("CK_USER_ACCOUNT_PhoneCanonical", "\"Phone\" IS NULL OR (\"Phone\" = btrim(\"Phone\") AND \"Phone\" <> '')");
+
+                            t.HasCheckConstraint("CK_USER_ACCOUNT_RoleLinked", "\"RoleDefinitionId\" IS NOT NULL");
                         });
                 });
 
@@ -5778,6 +5814,9 @@ namespace FSCM.Persistence.Migrations
                     b.Property<DateTimeOffset>("RequestedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<Guid?>("SourceIssueDocumentId")
+                        .HasColumnType("uuid");
+
                     b.Property<Guid>("SourceWarehouseId")
                         .HasColumnType("uuid");
 
@@ -5808,6 +5847,9 @@ namespace FSCM.Persistence.Migrations
                     b.HasIndex("CreatedByUserId");
 
                     b.HasIndex("DestinationWarehouseId");
+
+                    b.HasIndex("SourceIssueDocumentId")
+                        .IsUnique();
 
                     b.HasIndex("SourceWarehouseId");
 
@@ -7445,6 +7487,16 @@ namespace FSCM.Persistence.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("FSCM.Domain.Entities.UserAccount", b =>
+                {
+                    b.HasOne("FSCM.Domain.Entities.RoleDefinition", "RoleDefinition")
+                        .WithMany()
+                        .HasForeignKey("RoleDefinitionId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.Navigation("RoleDefinition");
+                });
+
             modelBuilder.Entity("FSCM.Domain.Entities.UserCredential", b =>
                 {
                     b.HasOne("FSCM.Domain.Entities.UserAccount", null)
@@ -7603,6 +7655,11 @@ namespace FSCM.Persistence.Migrations
                     b.HasOne("FSCM.Domain.Entities.Driver", null)
                         .WithMany()
                         .HasForeignKey("DriverId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("FSCM.Domain.Entities.WarehouseDocument", null)
+                        .WithMany()
+                        .HasForeignKey("SourceIssueDocumentId")
                         .OnDelete(DeleteBehavior.Restrict);
 
                     b.HasOne("FSCM.Domain.Entities.Warehouse", null)

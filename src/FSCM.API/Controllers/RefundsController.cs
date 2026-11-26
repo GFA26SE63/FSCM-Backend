@@ -10,7 +10,7 @@ using Microsoft.AspNetCore.Mvc;
 namespace FSCM.API.Controllers;
 
 [ApiController]
-[Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator},{SystemRoles.SalesManager},{SystemRoles.Sales},{SystemRoles.Retailer}")]
+[Authorize]
 [Route("api/v1/refunds")]
 public sealed class RefundsController(RefundService service, ImageUploadService images) : ControllerBase
 {
@@ -20,7 +20,7 @@ public sealed class RefundsController(RefundService service, ImageUploadService 
 
     /// <summary>S3-101-4: payments owed a refund that has not been raised as a refund record yet.</summary>
     [HttpGet("obligations")]
-    [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator}")]
+    [Authorize]
     public Task<IReadOnlyCollection<RefundObligationResult>> Obligations(CancellationToken ct) =>
         service.ListObligationsAsync(Role(), ct);
 
@@ -28,7 +28,7 @@ public sealed class RefundsController(RefundService service, ImageUploadService 
     public Task<RefundResult> Get(Guid id, CancellationToken ct) => service.GetAsync(id, UserId(), Role(), ct);
 
     [HttpPost]
-    [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator}")]
+    [Authorize]
     public async Task<IActionResult> Create(CreateRefundRequest request, CancellationToken ct)
     {
         var result = await service.CreateAsync(new(request.SalesOrderId, request.Amount, request.Recipient, request.Reason, request.ReceiptDiscrepancyId),
@@ -37,20 +37,20 @@ public sealed class RefundsController(RefundService service, ImageUploadService 
     }
 
     [HttpPost("{id:guid}/evidence")]
-    [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator}")]
+    [Authorize]
     public Task<RefundResult> Evidence(Guid id, SubmitRefundEvidenceRequest request, CancellationToken ct) =>
         service.SubmitEvidenceAsync(id, new(request.ExpectedVersion, request.TransferredAt,
             request.TransactionReference, request.EvidenceReference), Request.Headers["Idempotency-Key"].ToString(), UserId(), Role(), ct);
 
     [HttpPost("{id:guid}/verify")]
-    [Authorize(Roles = SystemRoles.Admin)]
+    [Authorize]
     public Task<RefundResult> Verify(Guid id, VerifyRefundRequest request, CancellationToken ct) =>
         service.VerifyAsync(id, new(request.ExpectedVersion, request.Approved, request.Note),
             Request.Headers["Idempotency-Key"].ToString(), UserId(), Role(), ct);
 
     /// <summary>F101: uploads one transfer-proof image; the returned reference goes into the evidence request.</summary>
     [HttpPost("evidence-files")]
-    [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator}")]
+    [Authorize]
     [RequestSizeLimit(ImageUploadLimits.MaxRequestBytes)]
     public async Task<RefundEvidenceFileResult> UploadEvidenceFile(IFormFile file, CancellationToken ct)
     {
@@ -61,7 +61,7 @@ public sealed class RefundsController(RefundService service, ImageUploadService 
 
     /// <summary>F101: short-lived read URL for an uploaded proof image (Admin/Operator only).</summary>
     [HttpGet("evidence-files/url")]
-    [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator}")]
+    [Authorize]
     public ActionResult<RefundEvidenceUrlResult> EvidenceUrl([FromQuery] string reference)
     {
         if (string.IsNullOrWhiteSpace(reference) || !reference.StartsWith(EvidencePrefix, StringComparison.Ordinal))

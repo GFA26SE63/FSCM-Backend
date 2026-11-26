@@ -8,7 +8,7 @@ using FSCM.Infrastructure;
 using FSCM.Persistence;
 using FSCM.Persistence.DbContexts;
 using FSCM.Persistence.Identity;
-using FSCM.Persistence.Seeding;
+using FSCM.IntegrationTests.Fixtures;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
@@ -29,11 +29,12 @@ public sealed class AtomicSettingsPhonePostgresTests
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
             ["ConnectionStrings:DefaultConnection"] = target.ConnectionString,
-            ["SeedData:DefaultPassword"] = "Local-E2e-Only!2049",
+            ["TestFixtures:DefaultPassword"] = "Local-E2e-Only!2049",
             ["Jwt:Secret"] = new string('a', 64), ["Jwt:Issuer"] = "FSCM.API", ["Jwt:Audience"] = "FSCM.Clients"
         }).Build();
         var services = new ServiceCollection().AddLogging().AddSingleton<IConfiguration>(config);
         services.AddApplicationServices().AddPersistenceServices(config).AddInfrastructureServices(config);
+        services.AddScoped<WorkflowDatabaseFixture>();
         await using var provider = services.BuildServiceProvider();
         await using var scope = provider.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -60,7 +61,7 @@ public sealed class AtomicSettingsPhonePostgresTests
         Assert.Equal("0900000091", await db.UserAccountRecords.Where(u => u.Id == current).Select(u => u.Phone).SingleAsync());
         Assert.Equal("0900000092", await db.UserAccountRecords.Where(u => u.Id == blocked).Select(u => u.Phone).SingleAsync());
         Assert.Single(await db.AuditLogRecords.Where(a => a.Action == "LegacyPlaceholderPhoneReleased" && a.EntityId == legacy).ToArrayAsync());
-        await scope.ServiceProvider.GetRequiredService<DevelopmentDataSeeder>().SeedAsync();
+        await scope.ServiceProvider.GetRequiredService<WorkflowDatabaseFixture>().SeedAsync();
         db.ChangeTracker.Clear();
 
         async Task<T> Call<S, T>(Func<S, Task<T>> action) where S : notnull

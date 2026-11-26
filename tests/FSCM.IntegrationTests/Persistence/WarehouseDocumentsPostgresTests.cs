@@ -10,10 +10,11 @@ using FSCM.Application.Features.QrLabels;
 using FSCM.Application.Features.Orders;
 using FSCM.Application.Features.Quotes;
 using FSCM.Domain.Authorization;
+using FSCM.Domain.Entities;
 using FSCM.Infrastructure;
 using FSCM.Persistence;
 using FSCM.Persistence.DbContexts;
-using FSCM.Persistence.Seeding;
+using FSCM.IntegrationTests.Fixtures;
 using FSCM.Persistence.WarehouseWork;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
@@ -55,11 +56,12 @@ public sealed class WarehouseDocumentsPostgresTests
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> {
             ["ConnectionStrings:DefaultConnection"] = target.ConnectionString,
             ["ConnectionStrings:TraceabilityConnection"] = traceTarget.ConnectionString,
-            ["SeedData:DefaultPassword"] = "Local-E2e-Only!2049", ["Jwt:Secret"] = new string('w', 64),
+            ["TestFixtures:DefaultPassword"] = "Local-E2e-Only!2049", ["Jwt:Secret"] = new string('w', 64),
             ["Jwt:Issuer"] = "FSCM.API", ["Jwt:Audience"] = "FSCM.Clients"
         }).Build();
         var services = new ServiceCollection().AddLogging().AddSingleton<IConfiguration>(config);
         services.AddApplicationServices().AddPersistenceServices(config).AddInfrastructureServices(config);
+        services.AddScoped<WorkflowDatabaseFixture>();
         // Source service runs in-process through its real HTTP pipeline and its own database.
         IServiceProvider? providerForFactory = null;
         await using var factoryApp = new StandaloneFactoryFixture(traceTarget.ConnectionString, new TestFactoryFscmGateway(() => providerForFactory!));
@@ -76,7 +78,7 @@ public sealed class WarehouseDocumentsPostgresTests
                 "The freshly created test database must be reachable before migration/seeding.");
             await using var sourceContext = new FactoryDbContext(new DbContextOptionsBuilder<FactoryDbContext>().UseNpgsql(traceTarget.ConnectionString).Options);
             await sourceContext.Database.MigrateAsync();
-            await scope.ServiceProvider.GetRequiredService<DevelopmentDataSeeder>().SeedAsync();
+            await scope.ServiceProvider.GetRequiredService<WorkflowDatabaseFixture>().SeedAsync();
         }
         async Task<T> Call<T>(Func<WarehouseWorkService, Task<T>> action)
         { await using var scope = provider.CreateAsyncScope(); return await action(scope.ServiceProvider.GetRequiredService<WarehouseWorkService>()); }
@@ -235,6 +237,16 @@ public sealed class WarehouseDocumentsPostgresTests
         var ready = await Call(s => s.GetAsync(issueId, keeper, SystemRoles.WarehouseKeeper, default));
         issueId = await Call(s => s.PostAsync(issueId, ready.Document.Version, keeper, SystemRoles.WarehouseKeeper, default));
         Assert.Equal(4, await Db(db => db.InventoryBalanceRecords.Where(b => b.BatchId == batchId).Select(b => b.PhysicalQuantity).SingleAsync()));
+        var dispatch = await Db(db => db.Set<WarehouseTransfer>().SingleAsync(x => x.SourceIssueDocumentId == issueId));
+        Assert.Equal("Approved", dispatch.Status);
+        Assert.Equal("Approved", (await Call(s => s.GetAsync(issueId, keeper, SystemRoles.WarehouseKeeper, default))).TransportStatus);
+        await Assert.ThrowsAsync<PickingOperationException>(() =>
+            Call(s => s.CreateChildAsync(issueId, "inbound-before-assignment", keeper, SystemRoles.WarehouseKeeper, default)));
+        var driver = await Db(db => db.DriverRecords.SingleAsync(x => x.WarehouseId == source && x.IsActive));
+        var vehicle = await Db(db => db.VehicleRecords.SingleAsync(x => x.WarehouseId == source && x.IsActive));
+        Assert.True(await Call(s => s.AssignTransferTransportAsync(
+            dispatch.Id, driver.Id, vehicle.Id, dispatch.Version, admin, SystemRoles.Admin, default)));
+        Assert.Equal("InTransit", (await Call(s => s.GetAsync(issueId, keeper, SystemRoles.WarehouseKeeper, default))).TransportStatus);
         var inboundId = await Call(s => s.CreateChildAsync(issueId, "inbound-key", keeper, SystemRoles.WarehouseKeeper, default));
         var inbound = await Call(s => s.GetAsync(inboundId, keeper, SystemRoles.WarehouseKeeper, default));
         foreach (var carton in inbound.Cartons)
@@ -245,6 +257,7 @@ public sealed class WarehouseDocumentsPostgresTests
         inbound = await Call(s => s.GetAsync(inboundId, keeper, SystemRoles.WarehouseKeeper, default));
         await Call(s => s.PostAsync(inboundId, inbound.Document.Version, keeper, SystemRoles.WarehouseKeeper, default));
         inbound = await Call(s => s.GetAsync(inboundId, keeper, SystemRoles.WarehouseKeeper, default));
+        Assert.Equal("Received", inbound.TransportStatus);
         Assert.Equal(today.AddDays(-1), inbound.Lines.Single().ProductionDate);
         var movedId = inbound.Lines.Single().BatchId!.Value;
         Assert.Equal(2, await Db(db => db.InventoryBalanceRecords.Where(b => b.BatchId == movedId).Select(b => b.PhysicalQuantity).SingleAsync()));

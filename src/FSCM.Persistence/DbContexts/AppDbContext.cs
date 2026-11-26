@@ -15,6 +15,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<RetailerActivationChallenge> RetailerActivationChallenges => Set<RetailerActivationChallenge>();
     public DbSet<RoleDefinition> RoleDefinitionRecords => Set<RoleDefinition>();
     public DbSet<RolePermission> RolePermissionRecords => Set<RolePermission>();
+    public DbSet<ScreenApiMapping> ScreenApiMappings => Set<ScreenApiMapping>();
 
     public DbSet<UserAccount> UserAccountRecords => Set<UserAccount>();
     public DbSet<Warehouse> WarehouseRecords => Set<Warehouse>();

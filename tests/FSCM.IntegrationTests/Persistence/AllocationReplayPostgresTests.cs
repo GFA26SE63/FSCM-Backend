@@ -5,7 +5,7 @@ using FSCM.Domain.Authorization;
 using FSCM.Infrastructure;
 using FSCM.Persistence;
 using FSCM.Persistence.DbContexts;
-using FSCM.Persistence.Seeding;
+using FSCM.IntegrationTests.Fixtures;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Configuration;
@@ -24,17 +24,18 @@ public sealed class AllocationReplayPostgresTests
         Assert.True(target.Host is "localhost" or "127.0.0.1");Assert.StartsWith("fscm_e2e_",target.Database);
         target.Database+="_replay";
         var config=new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string,string?> {
-            ["ConnectionStrings:DefaultConnection"]=target.ConnectionString,["SeedData:DefaultPassword"]="Local-E2e-Only!2049",
+            ["ConnectionStrings:DefaultConnection"]=target.ConnectionString,["TestFixtures:DefaultPassword"]="Local-E2e-Only!2049",
             ["Jwt:Secret"]=new string('r',64),["Jwt:Issuer"]="FSCM.API",["Jwt:Audience"]="FSCM.Clients" }).Build();
         var fault=new SerializationFault();
         var services=new ServiceCollection().AddLogging().AddSingleton<IConfiguration>(config);
         services.AddApplicationServices().AddPersistenceServices(config).AddInfrastructureServices(config);
+        services.AddScoped<WorkflowDatabaseFixture>();
         services.AddDbContext<AppDbContext>(o=>o.AddInterceptors(fault));
         await using var provider=services.BuildServiceProvider();
         await using(var setup=provider.CreateAsyncScope()) {
             var db=setup.ServiceProvider.GetRequiredService<AppDbContext>();
             Assert.False(await db.Database.CanConnectAsync(),"An existing database must not be modified.");
-            await setup.ServiceProvider.GetRequiredService<DevelopmentDataSeeder>().SeedAsync();
+            await setup.ServiceProvider.GetRequiredService<WorkflowDatabaseFixture>().SeedAsync();
         }
         Guid orderId;
         await using(var request=provider.CreateAsyncScope()) {

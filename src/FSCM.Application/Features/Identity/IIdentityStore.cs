@@ -65,6 +65,15 @@ public interface IIdentityStore
 
     Task<IReadOnlyCollection<string>> GetRolePermissionsAsync(string role, CancellationToken cancellationToken);
 
+    async Task<IReadOnlyCollection<string>> GetUserPermissionsAsync(Guid userId, CancellationToken cancellationToken)
+    {
+        var user = await FindUserByIdAsync(userId, cancellationToken);
+        return user is null ? [] : await GetRolePermissionsAsync(user.RoleDefinition?.Code ?? user.Role, cancellationToken);
+    }
+
+    Task<RoleDefinition?> FindRoleAsync(string code, CancellationToken cancellationToken) =>
+        Task.FromResult<RoleDefinition?>(null);
+
     Task<bool> RoleExistsAsync(string role, CancellationToken cancellationToken);
 
     void AddUser(UserAccount user);

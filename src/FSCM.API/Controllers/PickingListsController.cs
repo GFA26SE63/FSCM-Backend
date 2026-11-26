@@ -8,7 +8,7 @@ using Microsoft.AspNetCore.Mvc;
 namespace FSCM.API.Controllers;
 
 [ApiController]
-[Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator},{SystemRoles.WarehouseKeeper}")]
+[Authorize]
 [Route("api/v1/picking-lists")]
 public sealed class PickingListsController(CurrentPickingService service) : ControllerBase
 {
@@ -23,7 +23,7 @@ public sealed class PickingListsController(CurrentPickingService service) : Cont
     public Task<CurrentPickingResult> Get(string pickingCode, CancellationToken cancellationToken) =>
         service.GetAsync(pickingCode, GetActorUserId(), GetActorRole(), cancellationToken);
 
-    [Authorize(Roles = SystemRoles.WarehouseKeeper)]
+    [Authorize]
     [HttpPost("{pickingCode}/scans")]
     public Task<CurrentPickingResult> Scan(
         string pickingCode,
@@ -45,7 +45,7 @@ public sealed class PickingListsController(CurrentPickingService service) : Cont
             cancellationToken);
 
     /// <summary>Marks one warehouse portion Ready only after every approved gather/split is picked.</summary>
-    [Authorize(Roles = SystemRoles.WarehouseKeeper)]
+    [Authorize]
     [HttpPost("{pickingCode}/complete")]
     public Task<CurrentPickingResult> Complete(
         string pickingCode,

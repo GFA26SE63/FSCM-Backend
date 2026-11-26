@@ -8,7 +8,7 @@ using Microsoft.AspNetCore.Mvc;
 namespace FSCM.API.Controllers;
 
 [ApiController]
-[Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator},{SystemRoles.SalesManager},{SystemRoles.Sales},{SystemRoles.WarehouseKeeper},{SystemRoles.Retailer}")]
+[Authorize]
 [Route("api/v1/deliveries")]
 public sealed class DeliveriesController(DeliveryService service) : ControllerBase
 {
@@ -22,21 +22,21 @@ public sealed class DeliveriesController(DeliveryService service) : ControllerBa
     public Task<DeliveryResult> GetByOrder(Guid orderId, CancellationToken cancellationToken) =>
         service.GetByOrderAsync(orderId, GetActorUserId(), GetActorRole(), cancellationToken);
 
-    [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator}")]
+    [Authorize]
     [HttpGet("drivers")]
     public Task<IReadOnlyCollection<DriverResult>> Drivers(
         [FromQuery] bool includeInactive,
         CancellationToken cancellationToken) =>
         service.ListDriversAsync(GetActorRole(), includeInactive, cancellationToken);
 
-    [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator}")]
+    [Authorize]
     [HttpGet("vehicles")]
     public Task<IReadOnlyCollection<VehicleResult>> Vehicles(
         [FromQuery] bool includeInactive,
         CancellationToken cancellationToken) =>
         service.ListVehiclesAsync(GetActorRole(), includeInactive, cancellationToken);
 
-    [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator}")]
+    [Authorize]
     [HttpPost("drivers")]
     public async Task<ActionResult<DriverResult>> CreateDriver(
         [FromBody] CreateDriverRequest request, CancellationToken cancellationToken)
@@ -48,7 +48,7 @@ public sealed class DeliveriesController(DeliveryService service) : ControllerBa
         return CreatedAtAction(nameof(Drivers), new { }, result);
     }
 
-    [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator}")]
+    [Authorize]
     [HttpPut("drivers/{id:guid}")]
     public Task<DriverResult> UpdateDriver(
         Guid id, [FromBody] UpdateDriverRequest request, CancellationToken cancellationToken) =>
@@ -56,13 +56,13 @@ public sealed class DeliveriesController(DeliveryService service) : ControllerBa
             new UpdateDriverData(request.FullName, request.Phone, request.LicenseNumber),
             GetActorRole(), cancellationToken);
 
-    [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator}")]
+    [Authorize]
     [HttpPatch("drivers/{id:guid}/status")]
     public Task<DriverResult> SetDriverStatus(
         Guid id, [FromBody] SetActiveRequest request, CancellationToken cancellationToken) =>
         service.SetDriverActiveAsync(id, request.IsActive, GetActorRole(), cancellationToken);
 
-    [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator}")]
+    [Authorize]
     [HttpPost("vehicles")]
     public async Task<ActionResult<VehicleResult>> CreateVehicle(
         [FromBody] CreateVehicleRequest request, CancellationToken cancellationToken)
@@ -74,7 +74,7 @@ public sealed class DeliveriesController(DeliveryService service) : ControllerBa
         return CreatedAtAction(nameof(Vehicles), new { }, result);
     }
 
-    [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator}")]
+    [Authorize]
     [HttpPut("vehicles/{id:guid}")]
     public Task<VehicleResult> UpdateVehicle(
         Guid id, [FromBody] UpdateVehicleRequest request, CancellationToken cancellationToken) =>
@@ -82,7 +82,7 @@ public sealed class DeliveriesController(DeliveryService service) : ControllerBa
             new UpdateVehicleData(request.VehicleType, request.Capacity),
             GetActorRole(), cancellationToken);
 
-    [Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator}")]
+    [Authorize]
     [HttpPatch("vehicles/{id:guid}/status")]
     public Task<VehicleResult> SetVehicleStatus(
         Guid id, [FromBody] SetActiveRequest request, CancellationToken cancellationToken) =>

@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using FSCM.Application.Features.Reports;
 using FSCM.Domain.Authorization;
 using Microsoft.AspNetCore.Authorization;
@@ -6,7 +7,7 @@ using Microsoft.AspNetCore.Mvc;
 namespace FSCM.API.Controllers;
 
 [ApiController]
-[Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator}")]
+[Authorize]
 [Route("api/v1/reports/operations")]
 public sealed class OperationsReportsController(IOperationsReportStore store) : ControllerBase
 {
@@ -14,8 +15,13 @@ public sealed class OperationsReportsController(IOperationsReportStore store) : 
     public Task<OperationsReportResult> Read(string kind, [FromQuery] OperationsReportQuery query,
         CancellationToken ct)
     {
-        if (kind is not ("redemptions" or "loyalty" or "promotions"))
+        if (kind is not ("redemptions" or "loyalty" or "promotions" or "disposals" or "claims" or "receivables"))
             throw ReportOperationException.Validation("Unknown report kind.");
+        var role = User.FindFirstValue(ClaimTypes.Role) ?? string.Empty;
+        if (kind == "disposals" && role is not (SystemRoles.Admin or SystemRoles.Operator or SystemRoles.WarehouseKeeper))
+            throw ReportOperationException.Forbidden("Vai trò này không có quyền xem báo cáo hủy hàng.");
+        if (kind != "disposals" && role is not (SystemRoles.Admin or SystemRoles.Operator or SystemRoles.SalesManager))
+            throw ReportOperationException.Forbidden("Vai trò này không có quyền xem báo cáo kinh doanh / chăm sóc khách hàng.");
         if (query.FromDate == default || query.ToDate == default || query.ToDate < query.FromDate ||
             query.ToDate.DayNumber - query.FromDate.DayNumber > 366 || query.ToDate == DateOnly.MaxValue)
             throw ReportOperationException.Validation("Select a valid reporting period of at most 367 days.");
@@ -29,6 +35,7 @@ public sealed class OperationsReportsController(IOperationsReportStore store) : 
         if (kind == "promotions" && !string.IsNullOrWhiteSpace(query.Status) &&
             !new[] { "Allocating", "Quoted", "AllocationFailed", "OutOfStock", "AllocationConflict", "Withdrawn", "QuoteRejected", "QuoteExpired", "PaymentPending", "ConvertedToPo", "Picking", "Issued", "Delivering", "Delivered", "Completed" }.Contains(query.Status))
             throw ReportOperationException.Validation("Invalid order status.");
-        return store.ReadAsync(kind, query, ct);
+        Guid? actorId = Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var uid) ? uid : null;
+        return store.ReadAsync(kind, query, actorId, role, ct);
     }
 }

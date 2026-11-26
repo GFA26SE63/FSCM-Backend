@@ -11,4 +11,5 @@ public interface IEntityQueryService
     IQueryable<TEntity> Query<TEntity>(EntityQueryAccess access) where TEntity : class;
 }
 
-public sealed record EntityQueryAccess(Guid UserId, string Role, IdentityScope Scope);
+public sealed record EntityQueryAccess(Guid UserId, string Role, IdentityScope Scope,
+    IReadOnlyCollection<string>? Permissions = null);

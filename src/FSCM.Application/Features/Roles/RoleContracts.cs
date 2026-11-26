@@ -9,7 +9,8 @@ public sealed record RoleSummaryDto(
     IReadOnlyList<string> Permissions,
     int UserCount,
     DateTimeOffset CreatedAt,
-    DateTimeOffset UpdatedAt);
+    DateTimeOffset UpdatedAt,
+    string BaseRole = "Operator");
 
 public sealed record RoleDetailsDto(
     Guid Id,
@@ -20,18 +21,22 @@ public sealed record RoleDetailsDto(
     IReadOnlyList<string> Permissions,
     int UserCount,
     DateTimeOffset CreatedAt,
-    DateTimeOffset UpdatedAt);
+    DateTimeOffset UpdatedAt,
+    string BaseRole = "Operator");
 
 public sealed record CreateRoleRequest(
     string Code,
     string Name,
     string? Description,
-    IReadOnlyList<string>? Permissions);
+    IReadOnlyList<string>? Permissions = null,
+    string BaseRole = "Operator",
+    IReadOnlyList<string>? SelectedScreenCodes = null);
 
 public sealed record UpdateRoleRequest(
     string Name,
     string? Description,
-    IReadOnlyList<string>? Permissions);
+    IReadOnlyList<string>? Permissions = null,
+    IReadOnlyList<string>? SelectedScreenCodes = null);
 
 public sealed record ScreenFeatureDto(
     string Key,

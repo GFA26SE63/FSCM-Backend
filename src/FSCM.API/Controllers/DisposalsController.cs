@@ -10,7 +10,7 @@ namespace FSCM.API.Controllers;
 
 [ApiController]
 [Route("api/v1/disposals")]
-[Authorize(Roles = $"{SystemRoles.Admin},{SystemRoles.Operator},{SystemRoles.WarehouseKeeper}")]
+[Authorize]
 public sealed class DisposalsController(AppDbContext db, TimeProvider clock) : ControllerBase
 {
     private DisposalService Service => new(db, clock);

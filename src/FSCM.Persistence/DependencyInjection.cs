@@ -52,7 +52,6 @@ using FSCM.Persistence.Quotes;
 using FSCM.Persistence.QrLabels;
 using FSCM.Persistence.Promotions;
 using FSCM.Persistence.Reports;
-using FSCM.Persistence.Seeding;
 using FSCM.Persistence.Shipments;
 using FSCM.Persistence.ShelfLifeDiscounts;
 using FSCM.Persistence.Territory;
@@ -142,8 +141,6 @@ public static class DependencyInjection
         services.AddScoped<ITransitTableStore, TransitTableStore>();
         services.AddScoped<IDeliveryEtaStore, DeliveryEtaStore>();
         services.AddScoped<IWarehouseConfigurationStore, WarehouseConfigurationStore>();
-        services.AddScoped<DevelopmentDataSeeder>();
-        services.AddScoped<AdminBootstrapper>();
 
         return services;
     }

@@ -15,6 +15,7 @@ public sealed class WarehouseTransferConfiguration : IEntityTypeConfiguration<Wa
         builder.ToTable("WAREHOUSE_TRANSFER");
         builder.HasKey(entity => entity.Id);
         builder.Property(entity => entity.Id).HasColumnType("uuid").IsRequired();
+        builder.Property(entity => entity.SourceIssueDocumentId).HasColumnType("uuid").IsRequired(false);
         builder.Property(entity => entity.TransferCode).HasMaxLength(40).IsRequired();
         builder.Property(entity => entity.SourceWarehouseId).HasColumnType("uuid").IsRequired();
         builder.Property(entity => entity.DestinationWarehouseId).HasColumnType("uuid").IsRequired();
@@ -37,6 +38,7 @@ public sealed class WarehouseTransferConfiguration : IEntityTypeConfiguration<Wa
         builder.Property(entity => entity.CreatedAt).HasColumnType("timestamp with time zone").IsRequired();
         builder.Property(entity => entity.UpdatedAt).HasColumnType("timestamp with time zone").IsRequired();
         builder.HasIndex(entity => entity.TransferCode).IsUnique();
+        builder.HasIndex(entity => entity.SourceIssueDocumentId).IsUnique();
         builder.HasIndex(entity => entity.SourceWarehouseId);
         builder.HasIndex(entity => entity.DestinationWarehouseId);
         builder.HasIndex(entity => entity.CreatedByUserId);
@@ -44,6 +46,7 @@ public sealed class WarehouseTransferConfiguration : IEntityTypeConfiguration<Wa
         builder.HasIndex(entity => new { entity.DriverId, entity.Status });
         builder.HasIndex(entity => new { entity.VehicleId, entity.Status });
         builder.HasOne<Warehouse>().WithMany().HasForeignKey(entity => entity.SourceWarehouseId).OnDelete(DeleteBehavior.Restrict);
+        builder.HasOne<WarehouseDocument>().WithMany().HasForeignKey(entity => entity.SourceIssueDocumentId).OnDelete(DeleteBehavior.Restrict);
         builder.HasOne<Warehouse>().WithMany().HasForeignKey(entity => entity.DestinationWarehouseId).OnDelete(DeleteBehavior.Restrict);
         builder.HasOne<UserAccount>().WithMany().HasForeignKey(entity => entity.CreatedByUserId).OnDelete(DeleteBehavior.Restrict);
         builder.HasOne<UserAccount>().WithMany().HasForeignKey(entity => entity.ApprovedByUserId).OnDelete(DeleteBehavior.Restrict);

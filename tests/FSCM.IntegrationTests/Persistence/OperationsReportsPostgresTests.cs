@@ -5,7 +5,7 @@ using FSCM.Domain.Entities;
 using FSCM.Infrastructure;
 using FSCM.Persistence;
 using FSCM.Persistence.DbContexts;
-using FSCM.Persistence.Seeding;
+using FSCM.IntegrationTests.Fixtures;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -24,16 +24,17 @@ public sealed class OperationsReportsPostgresTests
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
             ["ConnectionStrings:DefaultConnection"] = target.ConnectionString,
-            ["SeedData:DefaultPassword"] = "Local-E2e-Only!2049", ["Jwt:Secret"] = new string('r', 64),
+            ["TestFixtures:DefaultPassword"] = "Local-E2e-Only!2049", ["Jwt:Secret"] = new string('r', 64),
             ["Jwt:Issuer"] = "FSCM.API", ["Jwt:Audience"] = "FSCM.Clients"
         }).Build();
         var services = new ServiceCollection().AddLogging().AddSingleton<IConfiguration>(config);
         services.AddApplicationServices().AddPersistenceServices(config).AddInfrastructureServices(config);
+        services.AddScoped<WorkflowDatabaseFixture>();
         await using var provider = services.BuildServiceProvider();
         await using var scope = provider.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         Assert.False(await db.Database.CanConnectAsync(), "Use a fresh disposable database.");
-        await scope.ServiceProvider.GetRequiredService<DevelopmentDataSeeder>().SeedAsync();
+        await scope.ServiceProvider.GetRequiredService<WorkflowDatabaseFixture>().SeedAsync();
         var now = DateTimeOffset.UtcNow;
         var today = DateOnly.FromDateTime(now.AddHours(7).DateTime);
         var retailer = await db.RetailerRecords.SingleAsync(r => r.Code == "10004127");
@@ -81,5 +82,8 @@ public sealed class OperationsReportsPostgresTests
         Assert.Empty(empty.Items); Assert.Equal(0, empty.TotalCount);
         // Exercise all joins, snapshots, enum conversions, filtering, aggregation and paging in PostgreSQL.
         await reports.ReadAsync("promotions", q with { Program = null, Status = "Completed" }, default);
+        await reports.ReadAsync("disposals", new OperationsReportQuery(today, today, Program: "WO"), default);
+        await reports.ReadAsync("claims", new OperationsReportQuery(today, today, Program: "KN"), default);
+        await reports.ReadAsync("receivables", new OperationsReportQuery(today, today, Program: "SO"), default);
     }
 }

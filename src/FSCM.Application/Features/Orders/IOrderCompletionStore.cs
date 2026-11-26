@@ -2,11 +2,19 @@ namespace FSCM.Application.Features.Orders;
 
 /// <summary>The three facts that decide whether an order is settled, read in one pass.</summary>
 public sealed record OrderCompletionView(
-    Guid SalesOrderId, string Status, bool PaymentSettled, bool HasOpenComplaint);
+    Guid SalesOrderId,
+    string Status,
+    bool PaymentSettled,
+    bool HasOpenComplaint,
+    DateTimeOffset? DeliveredAt = null,
+    int CompletionGraceDays = 0);
 
 public interface IOrderCompletionStore
 {
     Task<OrderCompletionView?> FindAsync(Guid salesOrderId, CancellationToken cancellationToken);
+
+    Task<IReadOnlyCollection<Guid>> ListDeliveredOrderIdsAsync(CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyCollection<Guid>>([]);
 
     /// <summary>
     /// Moves the order to Completed and records why, in one transaction.

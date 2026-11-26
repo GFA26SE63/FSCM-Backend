@@ -8,7 +8,7 @@ using Microsoft.AspNetCore.Mvc;
 namespace FSCM.API.Controllers;
 
 [ApiController]
-[Authorize(Roles = $"{SystemRoles.Sales},{SystemRoles.Retailer}")]
+[Authorize]
 [Route("api/v1/mobile")]
 public sealed class MobileController(MobileSnapshotService service) : ControllerBase
 {

@@ -20,7 +20,7 @@ public sealed class LoyaltyRewardsController(RewardService service) : Controller
     [HttpGet("{id:guid}")]
     public Task<RewardResult> Get(Guid id, CancellationToken cancellationToken) => service.GetAsync(id, cancellationToken);
 
-    [Authorize(Roles = SystemRoles.Admin)]
+    [Authorize]
     [HttpPost]
     public async Task<IActionResult> Create(CreateRewardRequest request, CancellationToken cancellationToken)
     {
@@ -30,13 +30,13 @@ public sealed class LoyaltyRewardsController(RewardService service) : Controller
         return CreatedAtAction(nameof(Get), new { id = result.Id }, result);
     }
 
-    [Authorize(Roles = SystemRoles.Admin)]
+    [Authorize]
     [HttpPut("{id:guid}")]
     public Task<RewardResult> Update(Guid id, UpdateRewardRequest request, CancellationToken cancellationToken) =>
         service.UpdateAsync(id, new(request.Name, request.Description, request.ImageUrl, request.RewardType,
             request.RequiredPoints, request.DiscountAmount, request.DiscountPercent, request.AvailableQuantity), cancellationToken);
 
-    [Authorize(Roles = SystemRoles.Admin)]
+    [Authorize]
     [HttpPost("{id:guid}/image")]
     [RequestSizeLimit(ImageUploadLimits.MaxRequestBytes)]
     [ProducesResponseType<RewardResult>(StatusCodes.Status200OK)]
@@ -46,11 +46,11 @@ public sealed class LoyaltyRewardsController(RewardService service) : Controller
         return await service.SetImageAsync(id, upload, cancellationToken);
     }
 
-    [Authorize(Roles = SystemRoles.Admin)]
+    [Authorize]
     [HttpPost("{id:guid}/activate")]
     public Task<RewardResult> Activate(Guid id, CancellationToken cancellationToken) => service.ActivateAsync(id, cancellationToken);
 
-    [Authorize(Roles = SystemRoles.Admin)]
+    [Authorize]
     [HttpPost("{id:guid}/deactivate")]
     public Task<RewardResult> Deactivate(Guid id, CancellationToken cancellationToken) => service.DeactivateAsync(id, cancellationToken);
 }
