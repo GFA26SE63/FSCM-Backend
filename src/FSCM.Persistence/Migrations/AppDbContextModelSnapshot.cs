@@ -5778,6 +5778,9 @@ namespace FSCM.Persistence.Migrations
                     b.Property<DateTimeOffset>("RequestedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<Guid?>("SourceIssueDocumentId")
+                        .HasColumnType("uuid");
+
                     b.Property<Guid>("SourceWarehouseId")
                         .HasColumnType("uuid");
 
@@ -5808,6 +5811,9 @@ namespace FSCM.Persistence.Migrations
                     b.HasIndex("CreatedByUserId");
 
                     b.HasIndex("DestinationWarehouseId");
+
+                    b.HasIndex("SourceIssueDocumentId")
+                        .IsUnique();
 
                     b.HasIndex("SourceWarehouseId");
 
@@ -7603,6 +7609,11 @@ namespace FSCM.Persistence.Migrations
                     b.HasOne("FSCM.Domain.Entities.Driver", null)
                         .WithMany()
                         .HasForeignKey("DriverId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("FSCM.Domain.Entities.WarehouseDocument", null)
+                        .WithMany()
+                        .HasForeignKey("SourceIssueDocumentId")
                         .OnDelete(DeleteBehavior.Restrict);
 
                     b.HasOne("FSCM.Domain.Entities.Warehouse", null)

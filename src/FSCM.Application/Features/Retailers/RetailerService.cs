@@ -626,6 +626,7 @@ public sealed class RetailerService(
             item.PurchasingCapacity ?? 0, item.PurchaseFrequencyPerMonth, item.CreditTermDays, item.CreditLimit,
             item.RequestedCreditTermDays,
             item.PotentialStatus ?? "C", item.AssessmentNote, item.DeclaredByUserId,
+            item.UserAccountId,
             item.ReviewedByUserId, item.ReviewedAt, item.ReviewReason, item.CreatedAt, item.UpdatedAt,
             storefrontImageUrl, generalInformation, declarations, declarations.Length > 0);
     }

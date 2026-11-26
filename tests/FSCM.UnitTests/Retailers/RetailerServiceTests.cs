@@ -47,6 +47,7 @@ public sealed class RetailerServiceTests
         Assert.Single(fixture.Store.ContactAccounts);
         Assert.Empty(fixture.Store.DeclarationContacts);
         Assert.Equal(fixture.Store.ContactAccounts[0].Id, fixture.Store.Retailers[0].UserAccountId);
+        Assert.Equal(fixture.Store.ContactAccounts[0].Id, result.UserAccountId);
     }
 
     [Fact]

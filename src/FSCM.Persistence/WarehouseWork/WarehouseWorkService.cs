@@ -22,7 +22,7 @@ public sealed record FactoryReceiptRequest(Guid WarehouseId, ReceiveGoodsLineDat
 public sealed record WarehousePalletMapping(string PalletCode, string CartonCode, int UnitsPerCarton);
 public sealed record WarehouseWorkResult(WarehouseDocument Document,
     IReadOnlyCollection<WarehouseDocumentLine> Lines, IReadOnlyCollection<WarehouseDocumentCarton> Cartons,
-    IReadOnlyCollection<WarehousePalletMapping>? Pallets = null);
+    IReadOnlyCollection<WarehousePalletMapping>? Pallets = null, string? TransportStatus = null);
 
 /// <summary>Document orchestration shares the allocation/picking stock ledger and QR event history.</summary>
 public sealed partial class WarehouseWorkService(AppDbContext db, InventoryService inventory,
@@ -43,9 +43,14 @@ public sealed partial class WarehouseWorkService(AppDbContext db, InventoryServi
         var lines = await Lines.AsNoTracking().Where(x => ids.Contains(x.DocumentId)).ToArrayAsync(ct);
         var cartons = await Cartons.AsNoTracking().Where(x => ids.Contains(x.DocumentId)).ToArrayAsync(ct);
         var mapping = await PalletMappings(cartons.Select(c => c.CartonId).ToArray(), ct);
+        var issueIds = docs.Select(d => d.Kind == "Receipt" && d.SourceDocumentId.HasValue
+            ? d.SourceDocumentId.Value : d.Id).Distinct().ToArray();
+        var transport = await db.Set<WarehouseTransfer>().AsNoTracking().Where(x => x.SourceIssueDocumentId.HasValue && issueIds.Contains(x.SourceIssueDocumentId.Value))
+            .ToDictionaryAsync(x => x.SourceIssueDocumentId!.Value, x => x.Status, ct);
         return docs.Select(d => new WarehouseWorkResult(d, lines.Where(x => x.DocumentId == d.Id).ToArray(),
             cartons.Where(x => x.DocumentId == d.Id).ToArray(),
-            mapping.Where(m => cartons.Any(c => c.DocumentId == d.Id && c.CartonId == m.CartonCode)).ToArray())).ToArray();
+            mapping.Where(m => cartons.Any(c => c.DocumentId == d.Id && c.CartonId == m.CartonCode)).ToArray(),
+            transport.GetValueOrDefault(d.Kind == "Receipt" && d.SourceDocumentId.HasValue ? d.SourceDocumentId.Value : d.Id))).ToArray();
     }
 
     public async Task<WarehouseWorkResult> GetAsync(Guid id, Guid actor, string role, CancellationToken ct)
@@ -55,8 +60,10 @@ public sealed partial class WarehouseWorkService(AppDbContext db, InventoryServi
             !(d.DestinationWarehouseId.HasValue && await HasAccess(d.DestinationWarehouseId.Value, actor, role, ct)))
             throw PickingOperationException.Forbidden("Phiếu không thuộc kho bạn quản lý.");
         var cartons = await Cartons.AsNoTracking().Where(x => x.DocumentId == id).ToArrayAsync(ct);
+        var issueId = d.Kind == "Receipt" && d.SourceDocumentId.HasValue ? d.SourceDocumentId.Value : d.Id;
+        var transportStatus = await db.Set<WarehouseTransfer>().AsNoTracking().Where(x => x.SourceIssueDocumentId == issueId).Select(x => x.Status).SingleOrDefaultAsync(ct);
         return new(d, await Lines.AsNoTracking().Where(x => x.DocumentId == id).ToArrayAsync(ct),
-            cartons, await PalletMappings(cartons.Select(c => c.CartonId).ToArray(), ct));
+            cartons, await PalletMappings(cartons.Select(c => c.CartonId).ToArray(), ct), transportStatus);
     }
 
     public Task<Guid> CreateRequestAsync(CreateWarehouseRequest data, string key, Guid actor, string role, CancellationToken ct) =>
@@ -132,6 +139,8 @@ public sealed partial class WarehouseWorkService(AppDbContext db, InventoryServi
                 source.Kind == "Issue" && (source.Status != "Posted" || source.Reason != "Transfer") ||
                 source.Kind is not ("Request" or "Issue"))
                 throw PickingOperationException.Conflict("Chứng từ nguồn không hợp lệ hoặc chưa được xuất.");
+            if (source.Kind == "Issue" && source.Reason == "Transfer")
+                await EnsureTransferMayReceiveAsync(source, ct);
             var wh = source.Kind == "Request" ? source.WarehouseId : source.DestinationWarehouseId!.Value;
             await Access(wh, actor, role, ct);
             if (await Documents.AnyAsync(x => x.SourceDocumentId == sourceId, ct))
@@ -368,6 +377,10 @@ public sealed partial class WarehouseWorkService(AppDbContext db, InventoryServi
                 }
             }
             d.Status = "Posted"; d.PostedAt = clock.GetUtcNow(); d.Version++;
+            if (d.Kind == "Issue" && d.Reason == "Transfer")
+                await CreateTransferDispatchAsync(d, lines, cartons, actor, ct);
+            if (d.Kind == "Receipt" && d.Reason == "Transfer" && d.SourceDocumentId.HasValue)
+                await CompleteTransferDispatchAsync(d.SourceDocumentId.Value, actor, ct);
             if (d.SourceDocumentId.HasValue)
             {
                 var source = await Find(d.SourceDocumentId.Value, ct);
