@@ -62,10 +62,13 @@ public sealed class OperationsReportStore(AppDbContext db) : IOperationsReportSt
         if (!string.IsNullOrWhiteSpace(q.Program))
         {
             var term = q.Program.Trim().ToLower();
-            source = source.Where(r => r.ProgramCode.ToLower().Contains(term)
-                || r.ProgramName.ToLower().Contains(term)
-                || r.ItemCode.ToLower().Contains(term)
-                || r.ItemName.ToLower().Contains(term));
+            source = kind == "claims"
+                ? source.Where(r => r.ItemCode.ToLower().Contains(term)
+                    || (r.OrderCode != null && r.OrderCode.ToLower().Contains(term)))
+                : source.Where(r => r.ProgramCode.ToLower().Contains(term)
+                    || r.ProgramName.ToLower().Contains(term)
+                    || r.ItemCode.ToLower().Contains(term)
+                    || r.ItemName.ToLower().Contains(term));
         }
         // Balance totals use the entire filtered ledger, regardless of transaction-type filter.
         var ledger = source.Where(r => r.Status != "PendingEarn" && r.Status != "PendingEarnCancelled" && r.Status != "Pending");
