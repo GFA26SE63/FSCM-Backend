@@ -114,7 +114,7 @@ public sealed class RoleStore(AppDbContext dbContext) : IRoleStore
                 true,
                 new[]
                 {
-                    SystemScreenKeys.Dashboard, SystemScreenKeys.WarehouseInbound, SystemScreenKeys.WarehouseOutbound,
+                    SystemScreenKeys.Dashboard, SystemScreenKeys.WarehouseInbound, SystemScreenKeys.WarehouseFactoryRequests, SystemScreenKeys.WarehouseOutbound,
                     SystemScreenKeys.WarehouseTransfers, SystemScreenKeys.Batches, SystemScreenKeys.WarehouseTrace, SystemScreenKeys.Disposal
                 }.Concat(SystemScreenKeys.MobileWarehouseScreens).ToArray()
             ),

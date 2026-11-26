@@ -17,6 +17,7 @@ public static class SystemScreenKeys
 
     // Warehouse & Logistics
     public const string WarehouseInbound = "warehouse-inbound";
+    public const string WarehouseFactoryRequests = "warehouse-factory-requests";
     public const string WarehouseOutbound = "warehouse-outbound";
     public const string WarehouseTransfers = "warehouse-transfers";
     public const string Batches = "batches";
@@ -49,7 +50,7 @@ public static class SystemScreenKeys
     {
         Dashboard, Reports, WarehouseReport, Kpi,
         Orders, Allocation, Debts, Refunds, Complaints,
-        WarehouseInbound, WarehouseOutbound, WarehouseTransfers, Batches, WarehouseTrace, Readiness, BatchPromo, Disposal, Fleet,
+        WarehouseInbound, WarehouseFactoryRequests, WarehouseOutbound, WarehouseTransfers, Batches, WarehouseTrace, Readiness, BatchPromo, Disposal, Fleet,
         Retailers, Promos, Loyalty, Redeem, Gifts,
         Regions, Cats, CatMlor, Skus, Whs,
         Users, Roles, Config
