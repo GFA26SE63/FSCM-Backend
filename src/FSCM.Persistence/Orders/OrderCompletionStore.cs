@@ -1,5 +1,7 @@
+using System.Text.Json;
 using FSCM.Application.Features.Orders;
 using FSCM.Application.Features.Payments;
+using FSCM.Application.Features.WarehouseConfiguration;
 using FSCM.Domain.Entities;
 using FSCM.Persistence.DbContexts;
 using Microsoft.EntityFrameworkCore;
@@ -26,12 +28,41 @@ public sealed class OrderCompletionStore(AppDbContext dbContext) : IOrderComplet
             .AnyAsync(item => item.SalesOrderId == salesOrderId && item.ResolvedAt == null,
                 cancellationToken);
 
+        DateTimeOffset? deliveredAt = null;
+        if (order.Status == OrderStatuses.Delivered)
+        {
+            deliveredAt = await dbContext.OrderStatusHistoryRecords.AsNoTracking()
+                .Where(item => item.SalesOrderId == salesOrderId && item.ToStatus == OrderStatuses.Delivered)
+                .OrderByDescending(item => item.ChangedAt)
+                .Select(item => (DateTimeOffset?)item.ChangedAt)
+                .FirstOrDefaultAsync(cancellationToken) ?? order.UpdatedAt;
+        }
+
+        var graceDays = 0;
+        var rawGrace = await dbContext.SystemConfigurationRecords.AsNoTracking()
+            .Where(item => item.ConfigKey == BusinessConfigurationKeys.OrderCompletionGraceDays && item.IsActive)
+            .OrderByDescending(item => item.Version)
+            .Select(item => item.ConfigValue)
+            .FirstOrDefaultAsync(cancellationToken);
+        if (!string.IsNullOrWhiteSpace(rawGrace) && int.TryParse(rawGrace, out var parsed) && parsed > 0)
+        {
+            graceDays = parsed;
+        }
+
         return new OrderCompletionView(
             salesOrderId,
             order.Status,
             payment is not null && payment.Status == PaymentStatuses.Paid,
-            openComplaint);
+            openComplaint,
+            deliveredAt,
+            graceDays);
     }
+
+    public async Task<IReadOnlyCollection<Guid>> ListDeliveredOrderIdsAsync(CancellationToken cancellationToken) =>
+        await dbContext.SalesOrderRecords.AsNoTracking()
+            .Where(item => item.Status == OrderStatuses.Delivered)
+            .Select(item => item.Id)
+            .ToArrayAsync(cancellationToken);
 
     public async Task CompleteAsync(
         Guid salesOrderId, Guid? actorUserId, DateTimeOffset now, CancellationToken cancellationToken)

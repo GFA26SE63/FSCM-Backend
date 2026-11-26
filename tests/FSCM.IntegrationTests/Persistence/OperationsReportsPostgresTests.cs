@@ -81,5 +81,8 @@ public sealed class OperationsReportsPostgresTests
         Assert.Empty(empty.Items); Assert.Equal(0, empty.TotalCount);
         // Exercise all joins, snapshots, enum conversions, filtering, aggregation and paging in PostgreSQL.
         await reports.ReadAsync("promotions", q with { Program = null, Status = "Completed" }, default);
+        await reports.ReadAsync("disposals", new OperationsReportQuery(today, today, Program: "WO"), default);
+        await reports.ReadAsync("claims", new OperationsReportQuery(today, today, Program: "KN"), default);
+        await reports.ReadAsync("receivables", new OperationsReportQuery(today, today, Program: "SO"), default);
     }
 }

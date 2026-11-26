@@ -98,6 +98,7 @@ public static class BusinessConfigurationKeys
     public const string DefaultMlorRatio = "mlor.default_ratio";
     public const string OrderBufferStockCartons = "order.buffer_stock_cartons";
     public const string OrderStepCartons = "order.order_step_cartons";
+    public const string OrderCompletionGraceDays = "order.completion_grace_days";
     public const string EtaSchedule = "eta.schedule";
     public const string SalesKpi = "reporting.sales_kpi";
 
@@ -110,6 +111,7 @@ public static class BusinessConfigurationKeys
             [EtaSchedule] = new("object", "Lịch ngày chạy đợt: khuyến nghị gửi đơn, nhắc duyệt đơn, giờ chốt, nhắc duyệt phương án, hạn duyệt, thời gian soạn, đệm và mốc xuất"),
             [SalesKpi] = new("object", "Mục tiêu và trọng số KPI Sales theo kỳ báo cáo"),
             [OrderBufferStockCartons] = new("integer", "Số thùng tồn kho đệm không dùng để phân bổ đơn hàng"),
-            [OrderStepCartons] = new("integer", "Bước số lượng thùng hợp lệ khi tạo đơn hàng")
+            [OrderStepCartons] = new("integer", "Bước số lượng thùng hợp lệ khi tạo đơn hàng"),
+            [OrderCompletionGraceDays] = new("integer", "Số ngày chờ không phát sinh khiếu nại sau khi giao trước khi hoàn tất đơn và cộng điểm")
         };
 }

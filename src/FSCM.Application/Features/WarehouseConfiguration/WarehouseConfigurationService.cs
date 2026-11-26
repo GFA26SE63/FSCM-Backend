@@ -431,6 +431,10 @@ public sealed partial class WarehouseConfigurationService(
                 if (value.ValueKind != JsonValueKind.Number || !value.TryGetInt32(out var step) || step <= 0)
                     throw WarehouseConfigurationOperationException.Validation("Order step must be a positive whole number of cartons.");
                 break;
+            case BusinessConfigurationKeys.OrderCompletionGraceDays:
+                if (value.ValueKind != JsonValueKind.Number || !value.TryGetInt32(out var graceDays) || graceDays < 0)
+                    throw WarehouseConfigurationOperationException.Validation("Order completion grace days must be a non-negative integer.");
+                break;
             case BusinessConfigurationKeys.EtaSchedule:
                 if (value.ValueKind != JsonValueKind.Object ||
                     !value.TryGetProperty("timeZone", out var timeZone) ||

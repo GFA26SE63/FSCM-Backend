@@ -19,6 +19,20 @@ public sealed class PhysicalSchemaModelTests
         Assert.All(new[] { document, carton, context.Model.FindEntityType(typeof(WarehouseDocumentLine))! }
             .SelectMany(e => e.GetForeignKeys()), fk => Assert.Equal(DeleteBehavior.Restrict, fk.DeleteBehavior));
     }
+
+    [Fact]
+    public void Warehouse_transfer_has_one_source_issue_document()
+    {
+        using var context = CreateContext();
+        var transfer = context.Model.FindEntityType(typeof(WarehouseTransfer))!;
+        var sourceIssue = transfer.FindProperty(nameof(WarehouseTransfer.SourceIssueDocumentId))!;
+        Assert.True(sourceIssue.IsNullable);
+        Assert.True(transfer.GetIndexes().Single(index => index.Properties.SequenceEqual([sourceIssue])).IsUnique);
+        var foreignKey = Assert.Single(transfer.GetForeignKeys(), candidate =>
+            candidate.Properties.SequenceEqual([sourceIssue]));
+        Assert.Equal(typeof(WarehouseDocument), foreignKey.PrincipalEntityType.ClrType);
+        Assert.Equal(DeleteBehavior.Restrict, foreignKey.DeleteBehavior);
+    }
     private static readonly string[] ExpectedTables =
     [
         "ALLOCATION",

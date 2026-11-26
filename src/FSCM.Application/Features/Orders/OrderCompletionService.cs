@@ -10,6 +10,7 @@ public enum OrderCompletionBlock
     NotDelivered,
     NotFullyPaid,
     ComplaintOpen,
+    ComplaintGracePending,
     AlreadyCompleted,
 }
 
@@ -68,6 +69,17 @@ public sealed class OrderCompletionService(
         {
             return await HoldAsync(salesOrderId, actorUserId, OrderCompletionBlock.ComplaintOpen,
                 "Đơn còn khiếu nại đang xử lý.", cancellationToken);
+        }
+
+        if (view.CompletionGraceDays > 0 && view.DeliveredAt is { } deliveredAt)
+        {
+            var eligibleAt = deliveredAt.AddDays(view.CompletionGraceDays);
+            if (timeProvider.GetUtcNow() < eligibleAt)
+            {
+                return await HoldAsync(salesOrderId, actorUserId, OrderCompletionBlock.ComplaintGracePending,
+                    $"Đang chờ hết {view.CompletionGraceDays} ngày không phát sinh khiếu nại trước khi hoàn tất đơn.",
+                    cancellationToken);
+            }
         }
 
         await store.CompleteAsync(
