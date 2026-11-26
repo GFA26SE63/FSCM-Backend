@@ -10,6 +10,7 @@ using FSCM.Application.Features.QrLabels;
 using FSCM.Application.Features.Orders;
 using FSCM.Application.Features.Quotes;
 using FSCM.Domain.Authorization;
+using FSCM.Domain.Entities;
 using FSCM.Infrastructure;
 using FSCM.Persistence;
 using FSCM.Persistence.DbContexts;
@@ -235,6 +236,16 @@ public sealed class WarehouseDocumentsPostgresTests
         var ready = await Call(s => s.GetAsync(issueId, keeper, SystemRoles.WarehouseKeeper, default));
         issueId = await Call(s => s.PostAsync(issueId, ready.Document.Version, keeper, SystemRoles.WarehouseKeeper, default));
         Assert.Equal(4, await Db(db => db.InventoryBalanceRecords.Where(b => b.BatchId == batchId).Select(b => b.PhysicalQuantity).SingleAsync()));
+        var dispatch = await Db(db => db.Set<WarehouseTransfer>().SingleAsync(x => x.SourceIssueDocumentId == issueId));
+        Assert.Equal("Approved", dispatch.Status);
+        Assert.Equal("Approved", (await Call(s => s.GetAsync(issueId, keeper, SystemRoles.WarehouseKeeper, default))).TransportStatus);
+        await Assert.ThrowsAsync<PickingOperationException>(() =>
+            Call(s => s.CreateChildAsync(issueId, "inbound-before-assignment", keeper, SystemRoles.WarehouseKeeper, default)));
+        var driver = await Db(db => db.DriverRecords.SingleAsync(x => x.WarehouseId == source && x.IsActive));
+        var vehicle = await Db(db => db.VehicleRecords.SingleAsync(x => x.WarehouseId == source && x.IsActive));
+        Assert.True(await Call(s => s.AssignTransferTransportAsync(
+            dispatch.Id, driver.Id, vehicle.Id, dispatch.Version, admin, SystemRoles.Admin, default)));
+        Assert.Equal("InTransit", (await Call(s => s.GetAsync(issueId, keeper, SystemRoles.WarehouseKeeper, default))).TransportStatus);
         var inboundId = await Call(s => s.CreateChildAsync(issueId, "inbound-key", keeper, SystemRoles.WarehouseKeeper, default));
         var inbound = await Call(s => s.GetAsync(inboundId, keeper, SystemRoles.WarehouseKeeper, default));
         foreach (var carton in inbound.Cartons)
@@ -245,6 +256,7 @@ public sealed class WarehouseDocumentsPostgresTests
         inbound = await Call(s => s.GetAsync(inboundId, keeper, SystemRoles.WarehouseKeeper, default));
         await Call(s => s.PostAsync(inboundId, inbound.Document.Version, keeper, SystemRoles.WarehouseKeeper, default));
         inbound = await Call(s => s.GetAsync(inboundId, keeper, SystemRoles.WarehouseKeeper, default));
+        Assert.Equal("Received", inbound.TransportStatus);
         Assert.Equal(today.AddDays(-1), inbound.Lines.Single().ProductionDate);
         var movedId = inbound.Lines.Single().BatchId!.Value;
         Assert.Equal(2, await Db(db => db.InventoryBalanceRecords.Where(b => b.BatchId == movedId).Select(b => b.PhysicalQuantity).SingleAsync()));
