@@ -15,8 +15,14 @@ public sealed class ComplaintStore(AppDbContext db) : IComplaintStore
     public async Task<IReadOnlyCollection<ComplaintTarget>> ListTargetsAsync(Guid actor, Guid orderId, CancellationToken ct)
     {
         var owned = await (from o in db.SalesOrderRecords join r in db.RetailerRecords on o.RetailerId equals r.Id
-            where o.Id == orderId && r.UserAccountId == actor select o.Id).AnyAsync(ct);
-        if (!owned) throw ComplaintOperationException.NotFound("Không tìm thấy đơn của cửa hàng.");
+            where o.Id == orderId && r.UserAccountId == actor select new { o.Id, o.PaymentMethod }).SingleOrDefaultAsync(ct);
+        if (owned is null) throw ComplaintOperationException.NotFound("Không tìm thấy đơn của cửa hàng.");
+        if (string.Equals(owned.PaymentMethod, "Credit", StringComparison.OrdinalIgnoreCase))
+        {
+            var paid = await db.PaymentRecords.AsNoTracking()
+                .AnyAsync(p => p.SalesOrderId == orderId && p.Status == "Paid", ct);
+            if (paid) return [];
+        }
         var rows = await (from receipt in db.ReceiptConfirmationRecords
             join part in db.ShipmentRecords on receipt.ShipmentId equals part.Id
             join item in db.ReceiptConfirmationItemRecords on receipt.Id equals item.ReceiptConfirmationId
@@ -99,6 +105,13 @@ public sealed class ComplaintStore(AppDbContext db) : IComplaintStore
             ?? throw ComplaintOperationException.Forbidden("The account is not linked to an active retailer.");
         var order = await db.SalesOrderRecords.SingleOrDefaultAsync(x => x.OrderCode == data.OrderCode && x.RetailerId == retailer.Id, ct)
             ?? throw ComplaintOperationException.NotFound("The delivered order was not found for this retailer.");
+        if (string.Equals(order.PaymentMethod, "Credit", StringComparison.OrdinalIgnoreCase))
+        {
+            var paid = await db.PaymentRecords.AsNoTracking()
+                .AnyAsync(p => p.SalesOrderId == order.Id && p.Status == "Paid", ct);
+            if (paid)
+                throw ComplaintOperationException.Conflict("Đơn hàng công nợ đã thanh toán đủ; đã khóa tạo khiếu nại mới.");
+        }
         var line = await (from l in db.SalesOrderLineRecords join p in db.ProductRecords on l.ProductId equals p.Id
                           where l.SalesOrderId == order.Id && p.Sku == data.Sku select new { Line = l, Product = p }).SingleOrDefaultAsync(ct)
             ?? throw ComplaintOperationException.NotFound("The SKU was not found in this order.");
