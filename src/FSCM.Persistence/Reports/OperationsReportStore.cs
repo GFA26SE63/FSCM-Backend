@@ -198,6 +198,33 @@ public sealed class OperationsReportStore(AppDbContext db) : IOperationsReportSt
                 };
             }).ToArray();
         }
+        else if (kind == "claims" && items.Length > 0)
+        {
+            var claimIds = items.Select(x => x.Id).ToArray();
+            var claimFields = await db.ReceiptDiscrepancyRecords.AsNoTracking()
+                .Where(d => claimIds.Contains(d.Id))
+                .Select(d => new { d.Id, d.RequestType, d.ApprovedSettlementMethod, d.SettlementMethod, d.ResolutionType })
+                .ToDictionaryAsync(x => x.Id, ct);
+            items = items.Select(item =>
+            {
+                claimFields.TryGetValue(item.Id, out var c);
+                return new OperationsReportRow
+                {
+                    Id = item.Id, At = item.At, RetailerId = item.RetailerId, RetailerCode = item.RetailerCode,
+                    RetailerName = item.RetailerName, RegionId = item.RegionId, RegionName = item.RegionName,
+                    ProgramCode = c?.RequestType ?? item.ProgramCode,
+                    ProgramName = c?.ApprovedSettlementMethod ?? c?.SettlementMethod ?? "",
+                    ItemCode = item.ItemCode,
+                    ItemName = c?.ResolutionType ?? c?.RequestType ?? "",
+                    Status = item.Status, Quantity = item.Quantity, GrossAmount = item.GrossAmount,
+                    CampaignDiscountAmount = item.CampaignDiscountAmount,
+                    ShelfLifeDiscountAmount = item.ShelfLifeDiscountAmount,
+                    NetAmount = item.NetAmount, OrderId = item.OrderId, OrderCode = item.OrderCode,
+                    ApprovedByUserId = item.ApprovedByUserId, ApprovedByName = item.ApprovedByName,
+                    ApprovedAt = item.ApprovedAt, CompletedAt = item.CompletedAt, Note = item.Note
+                };
+            }).ToArray();
+        }
         else if (kind == "receivables" && items.Length > 0)
         {
             var paymentIds = items.Select(x => x.Id).ToArray();
@@ -354,9 +381,9 @@ public sealed class OperationsReportStore(AppDbContext db) : IOperationsReportSt
             Id = d.Id, At = d.ReportedAt, RetailerId = r.Id,
             RetailerCode = o.RetailerCodeSnapshot, RetailerName = o.RetailerNameSnapshot,
             RegionId = r.RegionId, RegionName = db.RegionRecords.Where(z => z.Id == r.RegionId).Select(z => z.Name).FirstOrDefault() ?? "",
-            ProgramCode = d.RequestType, ProgramName = d.ApprovedSettlementMethod ?? d.SettlementMethod,
+            ProgramCode = d.RequestType, ProgramName = "",
             ItemCode = "KN-" + d.Id.ToString().Substring(0, 8).ToUpper(),
-            ItemName = d.ResolutionType ?? d.RequestType,
+            ItemName = "",
             Status = d.Status,
             Quantity = d.ApprovedQuantity ?? d.RequestedQuantity,
             GrossAmount = d.DebtOffsetAmount + d.RefundAmount,
