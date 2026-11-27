@@ -300,6 +300,28 @@ public sealed class PaymentServiceTests
     }
 
     [Fact]
+    public async Task Reading_a_paid_prepaid_payment_finishes_a_stranded_po_conversion()
+    {
+        // Paid was committed but the PO gate never finished: the order sat in PaymentPending.
+        var fixture = new Fixture(OrderPaymentMethods.Prepaid);
+        fixture.Order.Status = OrderStatuses.PaymentPending;
+        fixture.Payment!.Status = PaymentStatuses.Paid;
+        fixture.Payment.ConfirmedAmount = fixture.Payment.Amount;
+        var gateStore = new GateStore(fixture.Order, fixture.Payment);
+        var service = new PaymentService(fixture.Store, fixture.Gateway, new FixedTimeProvider(Now),
+            new PurchaseOrderGateService(gateStore, new FixedTimeProvider(Now)));
+
+        var result = await service.GetByOrderAsync(
+            fixture.Order.Id, fixture.RetailerUserId, SystemRoles.Retailer, default);
+        await service.GetByOrderAsync(
+            fixture.Order.Id, fixture.RetailerUserId, SystemRoles.Retailer, default);
+
+        Assert.Equal(PaymentStatuses.Paid, result.Status);
+        Assert.Equal(OrderStatuses.ConvertedToPo, fixture.Order.Status);
+        Assert.Equal(1, gateStore.PurchaseOrderAddCount);
+    }
+
+    [Fact]
     public async Task Manual_collection_is_blocked_after_payos_checkout_is_created()
     {
         var fixture = new Fixture(OrderPaymentMethods.Prepaid);
@@ -468,6 +490,33 @@ public sealed class PaymentServiceTests
             int expectedVersion = 0) => Service.CollectAsync(Order.Id,
             new(collectionMethod, expectedVersion, "Thu đủ công nợ"),
             "payment-test-001", actorUserId, role, default);
+    }
+
+    private sealed class GateStore(SalesOrder order, Payment payment) : IPurchaseOrderGateStore
+    {
+        private readonly SalesOrderQuote quote = new()
+        {
+            Id = Guid.NewGuid(), Status = FSCM.Application.Features.Quotes.SalesOrderQuoteStatuses.Accepted,
+            RevisionNumber = 1, AcceptedByUserId = Guid.NewGuid()
+        };
+        private readonly FSCM.Domain.Entities.Allocation allocation = new()
+        {
+            Id = Guid.NewGuid(), BatchId = Guid.NewGuid(), WarehouseId = Guid.NewGuid(), AllocatedQuantity = 1m
+        };
+        private PurchaseOrder? purchaseOrder;
+        public int PurchaseOrderAddCount { get; private set; }
+
+        public Task<PurchaseOrderGateView?> LoadForUpdateAsync(Guid orderId, CancellationToken cancellationToken) =>
+            Task.FromResult<PurchaseOrderGateView?>(new(order, quote, payment, purchaseOrder,
+                [allocation], new Dictionary<Guid, string> { [allocation.WarehouseId] = "WH-A" }));
+        public void AddPurchaseOrder(PurchaseOrder value) { purchaseOrder = value; PurchaseOrderAddCount++; }
+        public void AddPickingList(PickingList pickingList) { }
+        public void AddPickingItem(PickingItem pickingItem) { }
+        public void AddHistory(OrderStatusHistory history) { }
+        public Task SaveChangesAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+        public Task ExecuteInTransactionAsync(Func<CancellationToken, Task> operation, CancellationToken cancellationToken) =>
+            operation(cancellationToken);
+        public void ClearTracking() { }
     }
 
     private sealed class FakePaymentStore : IPaymentStore
