@@ -27,7 +27,7 @@ public sealed class ComplaintService(
     public Task<IReadOnlyCollection<ComplaintResult>> ListAsync(Guid actor, string role, CancellationToken ct) =>
         store.ListAsync(actor, role, ct);
     public Task<IReadOnlyCollection<ComplaintTarget>> ListTargetsAsync(Guid actor, Guid orderId, CancellationToken ct) =>
-        store.ListTargetsAsync(actor, orderId, ct);
+        store.ListTargetsAsync(actor, orderId, timeProvider.GetUtcNow(), ct);
     public async Task<ComplaintResult> ResolveAsync(Guid id, Guid actor, ResolveComplaintData data, CancellationToken ct)
     {
         ComplaintResult? result = null;
@@ -49,11 +49,7 @@ public sealed class ComplaintService(
                     throw ComplaintOperationException.Validation("Số thùng được duyệt phải nguyên, lớn hơn 0 và không vượt số yêu cầu.");
                 var amount = Math.Round(quantity * current.FinalUnitPrice, 0, MidpointRounding.AwayFromZero);
                 if (amount > payment.AdjustedAmount) throw ComplaintOperationException.Conflict("Số tiền yêu cầu vượt nghĩa vụ còn được điều chỉnh của đơn.");
-                var forecast = RequestSettlement.Calculate(amount, payment.AdjustedAmount, payment.ConfirmedAmount, payment.RefundedAmount);
-                if (data.SettlementMethod == "CashRefund" && forecast.Refund == 0)
-                    throw ComplaintOperationException.Validation("Chưa có tiền đã thu thừa để hoàn; hãy chọn cấn trừ công nợ.");
-                if (data.SettlementMethod == "DebtOffset" && forecast.DebtOffset == 0)
-                    throw ComplaintOperationException.Validation("Đơn đã thanh toán đủ; hãy chọn hoàn tiền.");
+                // The method is fixed by the order's payment method; settlement splits debt offset and refund itself.
             }
         }
         var resolved = await store.ResolveAsync(id, actor, data, timeProvider.GetUtcNow(), ct);
