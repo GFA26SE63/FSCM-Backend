@@ -25,6 +25,7 @@ public sealed class OperationsReportsApiTests
         Assert.Equal(HttpStatusCode.Unauthorized, (await client.GetAsync(path)).StatusCode);
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", identity.CreateToken(identity.Sales));
         Assert.Equal(HttpStatusCode.Forbidden, (await client.GetAsync(path)).StatusCode);
+        identity.SetPermissions("WarehouseKeeper");
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", identity.CreateToken(identity.WarehouseKeeper));
         Assert.Equal(HttpStatusCode.Forbidden, (await client.GetAsync(path)).StatusCode);
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", identity.CreateToken(identity.Admin));

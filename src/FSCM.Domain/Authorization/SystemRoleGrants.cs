@@ -11,7 +11,7 @@ public static class SystemRoleGrants
             SystemRoles.Sales => SystemScreenKeys.MobileSalesScreens,
             SystemRoles.Retailer => SystemScreenKeys.MobileRetailerScreens,
             SystemRoles.Operator => new[] { "dashboard", "reports", "warehouse-report", "orders", "allocation", "debts", "refunds", "complaints", "batches", "readiness", "retailers", "loyalty", "redeem", "kpi", "fleet" },
-            SystemRoles.WarehouseKeeper => new[] { "dashboard", "reports", "warehouse-inbound", "warehouse-factory-requests", "warehouse-outbound", "warehouse-transfers", "batches", "warehouse-trace", "disposal" }.Concat(SystemScreenKeys.MobileWarehouseScreens),
+            SystemRoles.WarehouseKeeper => new[] { "dashboard", "reports", "warehouse-inbound", "warehouse-factory-requests", "warehouse-outbound", "warehouse-transfers", "batches", "warehouse-trace", "disposal", "readiness" }.Concat(SystemScreenKeys.MobileWarehouseScreens),
             SystemRoles.SalesManager => new[] { "dashboard", "reports", "regions", "kpi" },
             _ => []
         };

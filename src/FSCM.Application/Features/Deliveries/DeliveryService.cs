@@ -19,7 +19,6 @@ public sealed class DeliveryService(
     public async Task<IReadOnlyCollection<DriverResult>> ListDriversAsync(
         string actorRole, bool includeInactive, CancellationToken cancellationToken)
     {
-        EnsureOperator(actorRole);
         return (await store.ListDriversAsync(includeInactive, cancellationToken))
             .Select(ToResult).ToArray();
     }
@@ -27,7 +26,6 @@ public sealed class DeliveryService(
     public async Task<IReadOnlyCollection<VehicleResult>> ListVehiclesAsync(
         string actorRole, bool includeInactive, CancellationToken cancellationToken)
     {
-        EnsureOperator(actorRole);
         return (await store.ListVehiclesAsync(includeInactive, cancellationToken))
             .Select(ToResult).ToArray();
     }
@@ -35,7 +33,6 @@ public sealed class DeliveryService(
     public async Task<DriverResult> CreateDriverAsync(
         CreateDriverData data, string actorRole, CancellationToken cancellationToken)
     {
-        EnsureOperator(actorRole);
         if (data.WarehouseId == Guid.Empty || !await store.WarehouseExistsAsync(data.WarehouseId, cancellationToken))
             throw DeliveryOperationException.Validation("A valid warehouse is required.");
         var fullName = NormalizeRequired(data.FullName, "Driver name", 150);
@@ -68,7 +65,6 @@ public sealed class DeliveryService(
     public async Task<DriverResult> UpdateDriverAsync(
         Guid id, UpdateDriverData data, string actorRole, CancellationToken cancellationToken)
     {
-        EnsureOperator(actorRole);
         var driver = await store.FindDriverForUpdateAsync(id, cancellationToken)
             ?? throw DeliveryOperationException.NotFound("Driver was not found.");
         driver.FullName = NormalizeRequired(data.FullName, "Driver name", 150);
@@ -82,7 +78,6 @@ public sealed class DeliveryService(
     public async Task<DriverResult> SetDriverActiveAsync(
         Guid id, bool isActive, string actorRole, CancellationToken cancellationToken)
     {
-        EnsureOperator(actorRole);
         var driver = await store.FindDriverForUpdateAsync(id, cancellationToken)
             ?? throw DeliveryOperationException.NotFound("Driver was not found.");
         if (driver.IsActive != isActive)
@@ -97,7 +92,6 @@ public sealed class DeliveryService(
     public async Task<VehicleResult> CreateVehicleAsync(
         CreateVehicleData data, string actorRole, CancellationToken cancellationToken)
     {
-        EnsureOperator(actorRole);
         if (data.WarehouseId == Guid.Empty || !await store.WarehouseExistsAsync(data.WarehouseId, cancellationToken))
             throw DeliveryOperationException.Validation("A valid warehouse is required.");
         var plateNumber = NormalizeRequired(data.PlateNumber, "Plate number", 30).ToUpperInvariant();
@@ -126,7 +120,6 @@ public sealed class DeliveryService(
     public async Task<VehicleResult> UpdateVehicleAsync(
         Guid id, UpdateVehicleData data, string actorRole, CancellationToken cancellationToken)
     {
-        EnsureOperator(actorRole);
         var vehicle = await store.FindVehicleForUpdateAsync(id, cancellationToken)
             ?? throw DeliveryOperationException.NotFound("Vehicle was not found.");
         vehicle.VehicleType = NormalizeRequired(data.VehicleType, "Vehicle type", 50);
@@ -140,7 +133,6 @@ public sealed class DeliveryService(
     public async Task<VehicleResult> SetVehicleActiveAsync(
         Guid id, bool isActive, string actorRole, CancellationToken cancellationToken)
     {
-        EnsureOperator(actorRole);
         var vehicle = await store.FindVehicleForUpdateAsync(id, cancellationToken)
             ?? throw DeliveryOperationException.NotFound("Vehicle was not found.");
         if (vehicle.IsActive != isActive)
@@ -155,7 +147,6 @@ public sealed class DeliveryService(
     public async Task<IReadOnlyCollection<DeliveryResult>> ListAsync(
         Guid actorUserId, string actorRole, string? status, CancellationToken cancellationToken)
     {
-        ValidateReadRole(actorRole);
         if (!string.IsNullOrWhiteSpace(status) &&
             status is not (DeliveryStatuses.Delivering or DeliveryStatuses.Delivered))
             throw DeliveryOperationException.Validation("Delivery status filter is invalid.");
@@ -166,7 +157,6 @@ public sealed class DeliveryService(
     public async Task<DeliveryResult> GetByOrderAsync(
         Guid orderId, Guid actorUserId, string actorRole, CancellationToken cancellationToken)
     {
-        ValidateReadRole(actorRole);
         var view = await store.FindByOrderAsync(orderId, false, cancellationToken)
             ?? throw DeliveryOperationException.NotFound("Delivery was not found.");
         if (!await store.CanViewAsync(view, actorUserId, actorRole, cancellationToken))
@@ -196,19 +186,6 @@ public sealed class DeliveryService(
             view.ReceiptItems.Select(item => new ReceiptItemResult(
                 item.Item.Id, item.Item.BatchId, item.Item.BatchQrLabelId, item.QrCode,
                 item.Item.ExpectedQuantity, item.Item.ReceivedQuantity, item.Item.ScannedAt)).ToArray()));
-
-    private static void EnsureOperator(string actorRole)
-    {
-        if (actorRole is not (SystemRoles.Admin or SystemRoles.Operator))
-            throw DeliveryOperationException.Forbidden("Only Admin or Operator can dispatch orders or view delivery master data.");
-    }
-
-    private static void ValidateReadRole(string role)
-    {
-        if (role is not (SystemRoles.Admin or SystemRoles.Operator or SystemRoles.SalesManager or
-            SystemRoles.Sales or SystemRoles.WarehouseKeeper or SystemRoles.Retailer))
-            throw DeliveryOperationException.Forbidden("Role cannot view deliveries.");
-    }
 
     private static string NormalizeOperationKey(string value)
     {

@@ -35,7 +35,7 @@ public sealed partial class WarehouseWorkService(AppDbContext db, InventoryServi
     public async Task<WarehouseWorkResult[]> ListAsync(Guid actor, string role, CancellationToken ct)
     {
         var q = Documents.AsNoTracking().AsQueryable();
-        if (role == SystemRoles.WarehouseKeeper)
+        if (role is not (SystemRoles.Admin or SystemRoles.Operator))
             q = q.Where(x => ReportingScopeQueries.ManagedWarehouses(db, actor).Any(w =>
                 w.Id == x.WarehouseId || w.Id == x.DestinationWarehouseId));
         var docs = await q.OrderByDescending(x => x.CreatedAt).ToArrayAsync(ct);
@@ -69,8 +69,6 @@ public sealed partial class WarehouseWorkService(AppDbContext db, InventoryServi
     public Task<Guid> CreateRequestAsync(CreateWarehouseRequest data, string key, Guid actor, string role, CancellationToken ct) =>
         Atomic(async () =>
         {
-            if (role is not (SystemRoles.Admin or SystemRoles.WarehouseKeeper))
-                throw PickingOperationException.Forbidden("Chỉ admin hoặc thủ kho được phát hành yêu cầu kho.");
             var replay = await Replay(key, data, actor, ct);
             if (replay.HasValue) return replay.Value;
             await Access(data.WarehouseId, actor, role, ct);
@@ -131,7 +129,6 @@ public sealed partial class WarehouseWorkService(AppDbContext db, InventoryServi
     public Task<Guid> CreateChildAsync(Guid sourceId, string key, Guid actor, string role, CancellationToken ct) =>
         Atomic(async () =>
         {
-            Keeper(role);
             var replay = await Replay(key, new { sourceId }, actor, ct);
             if (replay.HasValue) return replay.Value;
             var source = await Find(sourceId, ct);
@@ -169,7 +166,6 @@ public sealed partial class WarehouseWorkService(AppDbContext db, InventoryServi
     public Task<Guid> CreateFactoryAsync(FactoryReceiptRequest data, string key, Guid actor, string role, CancellationToken ct) =>
         Atomic(async () =>
         {
-            Keeper(role);
             var replay = await Replay(key, data, actor, ct);
             if (replay.HasValue) return replay.Value;
             await Access(data.WarehouseId, actor, role, ct);
@@ -186,7 +182,6 @@ public sealed partial class WarehouseWorkService(AppDbContext db, InventoryServi
 
     private async Task<Guid> ScanCore(Guid id, string cartonId, int version, Guid actor, string role, CancellationToken ct, Guid? preferredLineId = null)
         {
-            Keeper(role);
             var d = await Find(id, ct);
             await Access(d.WarehouseId, actor, role, ct);
             cartonId = cartonId.Trim();
@@ -266,7 +261,6 @@ public sealed partial class WarehouseWorkService(AppDbContext db, InventoryServi
         Atomic(async () =>
         {
             var workId = id;
-            Keeper(role);
             var d = await Find(workId, ct);
             await Access(d.WarehouseId, actor, role, ct);
             if (d.Status == "Posted") return workId;
@@ -496,8 +490,6 @@ public sealed partial class WarehouseWorkService(AppDbContext db, InventoryServi
     public Task<Guid> CancelRequestAsync(Guid id, int version, Guid actor, string role, CancellationToken ct) =>
         Atomic(async () =>
         {
-            if (role is not (SystemRoles.Admin or SystemRoles.WarehouseKeeper))
-                throw PickingOperationException.Forbidden("Chỉ admin hoặc thủ kho được hủy yêu cầu kho.");
             var d = await Find(id, ct);
             await Access(d.WarehouseId, actor, role, ct);
             if (d.Status == "Cancelled") return id;
@@ -538,7 +530,6 @@ public sealed partial class WarehouseWorkService(AppDbContext db, InventoryServi
     public Task<Guid> PrepareCartonsAsync(Guid id, Guid actor, string role, CancellationToken ct) =>
         Atomic(async () =>
         {
-            Keeper(role);
             var d = await Find(id, ct);
             await Access(d.WarehouseId, actor, role, ct);
             if (d.Kind is not ("Picking" or "Issue") || d.Status != "Open") throw PickingOperationException.Conflict("Chỉ chuẩn bị nhãn cho phiếu xuất đang mở.");
@@ -661,8 +652,8 @@ public sealed partial class WarehouseWorkService(AppDbContext db, InventoryServi
     private async Task<WarehouseDocument> Find(Guid id, CancellationToken ct) =>
         await Documents.SingleOrDefaultAsync(x => x.Id == id, ct)
         ?? throw PickingOperationException.NotFound("Không tìm thấy chứng từ kho.");
-    private async Task<bool> HasAccess(Guid wh, Guid actor, string role, CancellationToken ct) => role == SystemRoles.Admin ||
-        role == SystemRoles.WarehouseKeeper && await ReportingScopeQueries.ManagedWarehouses(db, actor).AnyAsync(x => x.Id == wh, ct);
+    private async Task<bool> HasAccess(Guid wh, Guid actor, string role, CancellationToken ct) => role is SystemRoles.Admin or SystemRoles.Operator ||
+        await ReportingScopeQueries.ManagedWarehouses(db, actor).AnyAsync(x => x.Id == wh, ct);
     private async Task Access(Guid wh, Guid actor, string role, CancellationToken ct)
     {
         if (!await HasAccess(wh, actor, role, ct)) throw PickingOperationException.Forbidden("Kho không thuộc phạm vi quản lý.");
@@ -675,7 +666,6 @@ public sealed partial class WarehouseWorkService(AppDbContext db, InventoryServi
         if (await db.InventoryLockRecords.AnyAsync(x => x.BatchId == batch.Id && x.Status == "Active", ct))
             throw PickingOperationException.Conflict("Batch đang bị khóa; giải quyết khóa trước khi lấy hàng.");
     }
-    private static void Keeper(string role) { if (role != SystemRoles.WarehouseKeeper) throw PickingOperationException.Forbidden("Chỉ thủ kho được lập và thực hiện phiếu kho."); }
     private static void Version(WarehouseDocument d, int v) { if (d.Version != v) throw PickingOperationException.Conflict("Phiếu đã thay đổi, tải lại trước khi thao tác."); }
     public static void WholeCartons(decimal quantity) { if (quantity <= 0 || quantity != decimal.Truncate(quantity)) throw PickingOperationException.Validation("Số carton phải là số nguyên dương."); }
     private void Event(BatchQrLabel label, WarehouseDocument d, Guid actor, string action, string from, string to) =>

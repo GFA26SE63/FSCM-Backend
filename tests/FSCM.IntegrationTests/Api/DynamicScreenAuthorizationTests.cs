@@ -41,7 +41,7 @@ public sealed class DynamicScreenAuthorizationTests
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", factory.CreateToken(factory.Sales));
         foreach (var granted in new[] { true, false, true })
         {
-            factory.SetPermissions(SystemRoles.Sales, granted ? ["mobile-sales-kpi", "mobile-sales-products", "api:Reports.SalesKpis"] : []);
+            factory.SetPermissions(SystemRoles.Sales, granted ? ["mobile-sales-kpi", "mobile-sales-products", "api:Reports.SalesKpis", "api:Products.List"] : []);
             var rest = await client.GetAsync("/api/v1/reports/sales-kpis?fromDate=invalid");
             Assert.Equal(granted ? HttpStatusCode.BadRequest : HttpStatusCode.Forbidden, rest.StatusCode);
             var response = await client.PostAsJsonAsync("/graphql", new
@@ -52,6 +52,32 @@ public sealed class DynamicScreenAuthorizationTests
             Assert.Equal(!granted, json.TryGetProperty("errors", out _));
             if (!granted) Assert.Contains("AUTH_NOT_AUTHORIZED", json.ToString());
         }
+    }
+
+    [Theory]
+    [InlineData(SystemRoles.Operator)]
+    [InlineData(SystemRoles.WarehouseKeeper)]
+    [InlineData(SystemRoles.SalesManager)]
+    [InlineData(SystemRoles.Sales)]
+    [InlineData(SystemRoles.Retailer)]
+    public async Task Exact_API_grant_and_mapped_screen_are_required_for_every_delegated_profile(string profile)
+    {
+        using var factory = new IdentityAuthorizationTests.IdentityApiFactory();
+        var user = factory.AddTestUser("delegation@test.invalid", profile);
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", factory.CreateToken(user));
+        foreach (var grants in new string[][] { [], ["skus"], ["api:Products.List"], ["skus", "api:Products.List"] })
+        {
+            factory.SetPermissions(profile, grants);
+            var response = await client.PostAsJsonAsync("/graphql", new
+            { query = "{ entities { delegated: products(first: 1) { nodes { id } } } }" });
+            var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+            Assert.Equal(grants.Length != 2, json.TryGetProperty("errors", out _));
+        }
+        factory.SetPermissions(profile, "skus", "api:Products.Create");
+        Assert.Equal(HttpStatusCode.BadRequest, (await client.PostAsJsonAsync("/api/v1/products", new { })).StatusCode);
+        factory.SetPermissions(profile, "skus");
+        Assert.Equal(HttpStatusCode.Forbidden, (await client.PostAsJsonAsync("/api/v1/products", new { })).StatusCode);
     }
 
     [Theory]
@@ -88,7 +114,14 @@ public sealed class DynamicScreenAuthorizationTests
             }
         }
         foreach (var method in typeof(EntityQuery).GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly))
-            Assert.NotEqual("Unmapped", EntityScreenResources.For(method.Name));
+        {
+            var resource = EntityScreenResources.For(method.Name);
+            Assert.NotEqual("Unmapped", resource);
+            if (resource == "Notifications") continue;
+            var operation = EntityReadOperations.For(method.Name, resource);
+            Assert.NotNull(operation);
+            Assert.Contains(ApiPermissionCatalog.All, p => p.Controller == operation.Value.Controller && p.Action == operation.Value.Action);
+        }
         Assert.Empty(ScreenPermissionMap.Rest("NewUnreviewedController", "List", SystemRoles.Admin)!);
     }
 }

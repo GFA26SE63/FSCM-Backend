@@ -45,13 +45,13 @@ public sealed class PaymentReceiptProposalTests
     }
 
     [Fact]
-    public async Task Proposal_requires_admin_or_operator()
+    public async Task Delegated_proposal_uses_the_same_allocation_contract()
     {
-        var service = new PaymentReceiptService(new FakeStore(Guid.NewGuid(), []), new Clock());
-        var error = await Assert.ThrowsAsync<PaymentOperationException>(() =>
-            service.ProposeAllocationAsync(
-                new ProposeReceiptAllocationData(Guid.NewGuid(), 10_000), Guid.NewGuid(), SystemRoles.Sales, default));
-        Assert.Equal("forbidden", error.Code);
+        var retailerId = Guid.NewGuid();
+        var service = new PaymentReceiptService(new FakeStore(retailerId, []), new Clock());
+        var result = await service.ProposeAllocationAsync(new ProposeReceiptAllocationData(retailerId, 10_000),
+            Guid.NewGuid(), SystemRoles.Sales, default);
+        Assert.NotNull(result);
     }
 
     private static OutstandingReceivableView Receivable(

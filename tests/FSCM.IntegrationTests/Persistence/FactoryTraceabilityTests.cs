@@ -84,12 +84,12 @@ public sealed partial class FactoryTraceabilityTests
         var adminSql = service.Query(Guid.NewGuid(), "Admin", null, null, null, "Synced").ToQueryString();
         Assert.DoesNotContain("USER_WAREHOUSE_ASSIGNMENT", adminSql);
         Assert.Contains("IS NOT NULL", adminSql);
-        Assert.Throws<FSCM.Application.Features.Inventory.InventoryOperationException>(() =>
-            service.Query(Guid.NewGuid(), "Retailer", null, null, null, null));
+        var delegatedSql = service.Query(Guid.NewGuid(), "Retailer", null, null, null, null).ToQueryString();
+        Assert.Contains("USER_WAREHOUSE_ASSIGNMENT", delegatedSql);
     }
 
     [Fact]
-    public async Task Current_pallet_count_counts_distinct_pallets_of_available_cartons_and_rejects_other_roles()
+    public void Current_pallet_count_counts_distinct_pallets_of_available_cartons()
     {
         using var db = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
             .UseNpgsql("Host=127.0.0.1;Database=unused;Username=unused").Options);
@@ -99,8 +99,7 @@ public sealed partial class FactoryTraceabilityTests
         Assert.Contains("FACTORY_CARTON", sql);
         Assert.Contains("Available", sql);
         Assert.DoesNotContain("FACTORY_PALLET\"", sql); // pallet status (always Received) is not used
-        await Assert.ThrowsAsync<FSCM.Application.Features.Inventory.InventoryOperationException>(() =>
-            service.CurrentPalletCountAsync(Guid.NewGuid(), "Retailer", Guid.NewGuid(), default));
+        Assert.Contains("CurrentWarehouseId", sql);
     }
 
     [Fact]

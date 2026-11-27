@@ -54,6 +54,7 @@ public sealed class PaymentStore(AppDbContext dbContext) : IPaymentStore
                 order.Id == item.SalesOrderId && dbContext.SalesGroupMemberRecords.Any(membership =>
                     membership.UserAccountId == actorUserId && membership.SalesGroupId == order.SalesGroupId &&
                     membership.IsActive))),
+            SystemRoles.WarehouseKeeper => query.Where(item => ReportingScopeQueries.WarehouseOrderIds(dbContext, actorUserId).Contains(item.SalesOrderId)),
             SystemRoles.Retailer => query.Where(item => dbContext.SalesOrderRecords.Any(order =>
                 order.Id == item.SalesOrderId && dbContext.RetailerRecords.Any(retailer =>
                     retailer.Id == order.RetailerId && retailer.UserAccountId == actorUserId))),
@@ -99,6 +100,8 @@ public sealed class PaymentStore(AppDbContext dbContext) : IPaymentStore
             SystemRoles.SalesManager => dbContext.SalesGroupMemberRecords.AsNoTracking().AnyAsync(item =>
                 item.UserAccountId == actorUserId && item.SalesGroupId == view.Order.SalesGroupId && item.IsActive,
                 cancellationToken),
+            SystemRoles.WarehouseKeeper => ReportingScopeQueries.WarehouseOrderIds(dbContext, actorUserId)
+                .AnyAsync(id => id == view.Order.Id, cancellationToken),
             SystemRoles.Retailer => Task.FromResult(view.Retailer.UserAccountId == actorUserId),
             _ => Task.FromResult(false)
         };

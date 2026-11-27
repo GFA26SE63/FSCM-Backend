@@ -35,7 +35,6 @@ public sealed partial class WarehouseWorkService
     public Task<Guid> RemoveCartonAsync(Guid id, string cartonCode, string? replacementCode, string reason,
         int version, Guid actor, string role, CancellationToken ct) => Atomic(async () =>
     {
-        Keeper(role);
         var d = await Find(id, ct);
         await Access(d.WarehouseId, actor, role, ct);
         Version(d, version);

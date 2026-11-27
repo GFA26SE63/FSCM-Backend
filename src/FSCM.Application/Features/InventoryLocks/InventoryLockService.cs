@@ -13,13 +13,9 @@ namespace FSCM.Application.Features.InventoryLocks;
 /// </summary>
 public sealed class InventoryLockService(IInventoryLockStore store, TimeProvider timeProvider)
 {
-    private static readonly string[] WriteRoles =
-        [SystemRoles.Admin, SystemRoles.Operator, SystemRoles.WarehouseKeeper];
-
     public async Task<InventoryLockResult> CreateAsync(
         Guid actorUserId, string actorRole, CreateInventoryLockData data, CancellationToken cancellationToken)
     {
-        EnsureWriteRole(actorRole);
         if (data.BatchId == Guid.Empty)
             throw InventoryLockOperationException.Validation("Batch identifier is required.");
         if (data.Quantity <= 0 || decimal.Truncate(data.Quantity) != data.Quantity)
@@ -69,7 +65,6 @@ public sealed class InventoryLockService(IInventoryLockStore store, TimeProvider
         Guid lockId, Guid actorUserId, string actorRole, ReleaseInventoryLockData data,
         CancellationToken cancellationToken)
     {
-        EnsureWriteRole(actorRole);
         var inventoryLock = await store.FindForUpdateAsync(lockId, cancellationToken)
             ?? throw InventoryLockOperationException.NotFound("Inventory lock was not found.");
         await EnsureWarehouseAccessAsync(actorUserId, actorRole, inventoryLock.WarehouseId, cancellationToken);
@@ -115,12 +110,6 @@ public sealed class InventoryLockService(IInventoryLockStore store, TimeProvider
     {
         if (!await store.CanAccessWarehouseAsync(userId, role, warehouseId, cancellationToken))
             throw InventoryLockOperationException.Forbidden("You cannot manage locks for this warehouse.");
-    }
-
-    private static void EnsureWriteRole(string role)
-    {
-        if (!WriteRoles.Contains(role, StringComparer.Ordinal))
-            throw InventoryLockOperationException.Forbidden("Only Admin, Operator or Warehouse Keeper can manage inventory locks.");
     }
 
     private static string NormalizeReason(string reason)

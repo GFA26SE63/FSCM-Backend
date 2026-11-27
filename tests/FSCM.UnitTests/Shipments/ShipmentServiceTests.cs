@@ -59,9 +59,10 @@ public sealed class ShipmentServiceTests
     }
 
     [Fact]
-    public async Task Sync_requires_operator_role()
+    public async Task Sync_rejects_orders_outside_the_actor_scope()
     {
         var fixture = new Fixture();
+        fixture.Store.ViewableOrders.Clear();
 
         var exception = await Assert.ThrowsAsync<ShipmentOperationException>(() =>
             fixture.Service.SyncOrderAsync(fixture.Order.Id, SystemRoles.Sales, default));
@@ -170,23 +171,22 @@ public sealed class ShipmentServiceTests
     }
 
     [Fact]
-    public async Task Assign_requires_operator_role()
+    public async Task Delegated_keeper_assignment_uses_the_same_business_validation()
     {
         var fixture = new Fixture();
         fixture.AddCompletedPickingList(fixture.WarehouseA, totalPicked: 8);
-        var created = (await fixture.Service.ListAsync(
-            Guid.Empty, SystemRoles.Operator, fixture.Order.Id, null, null, default)).Single();
-
-        var exception = await Assert.ThrowsAsync<ShipmentOperationException>(() =>
-            fixture.Service.AssignAsync(
-                created.Id, new AssignShipmentData(fixture.DriverA.Id, fixture.VehicleA.Id, created.Version),
-                SystemRoles.WarehouseKeeper, default));
-
-        Assert.Equal("forbidden", exception.Code);
+        var created = (await fixture.Service.ListAsync(Guid.Empty, SystemRoles.Operator, fixture.Order.Id, null, null, default)).Single();
+        var assigned = await fixture.Service.AssignAsync(created.Id,
+            new AssignShipmentData(fixture.DriverA.Id, fixture.VehicleA.Id, created.Version), SystemRoles.WarehouseKeeper, default);
+        Assert.Equal(fixture.DriverA.Id, assigned.DriverId);
+        Assert.Equal(fixture.VehicleA.Id, assigned.VehicleId);
     }
 
-    [Fact]
-    public async Task Dispatch_moves_picked_labels_and_order_without_deducting_stock_twice()
+    [Theory]
+    [InlineData(SystemRoles.Admin)]
+    [InlineData(SystemRoles.Operator)]
+    [InlineData(SystemRoles.WarehouseKeeper)]
+    public async Task Dispatch_moves_picked_labels_and_order_without_deducting_stock_twice(string actorRole)
     {
         var fixture = new Fixture();
         var (shipment, _, hold) = fixture.AddReadyShipment(fixture.WarehouseA, 8);
@@ -206,7 +206,7 @@ public sealed class ShipmentServiceTests
 
         var result = await fixture.Service.DispatchAsync(
             shipment.Id, new DispatchShipmentData(assigned.Version), Guid.NewGuid(),
-            SystemRoles.Operator, default);
+            actorRole, default);
 
         Assert.Equal(ShipmentStatuses.Delivering, result.Status);
         Assert.Equal(OrderStatuses.Delivering, fixture.Order.Status);
@@ -416,11 +416,12 @@ public sealed class ShipmentServiceTests
     }
 
     [Fact]
-    public async Task Receipt_rejects_wrong_role_and_wrong_qr_without_side_effects()
+    public async Task Receipt_rejects_out_of_scope_orders_and_wrong_qr_without_side_effects()
     {
         var fixture = new Fixture();
         var (shipment, line, batchId, _) = fixture.AddDeliveringShipment(quantity: 8);
 
+        fixture.Store.ViewableOrders.Clear();
         var role = await Assert.ThrowsAsync<ShipmentOperationException>(() =>
             fixture.Service.ConfirmReceiptAsync(
                 shipment.Id,
@@ -432,6 +433,7 @@ public sealed class ShipmentServiceTests
         Assert.Equal("forbidden", role.Code);
         Assert.Empty(fixture.Store.Receipts);
 
+        fixture.Store.ViewableOrders.Add(fixture.Order.Id);
         var qr = await Assert.ThrowsAsync<ShipmentOperationException>(() =>
             fixture.Service.ConfirmReceiptAsync(
                 shipment.Id,
@@ -681,6 +683,21 @@ public sealed class ShipmentServiceTests
     }
 
     [Fact]
+    public async Task Keeper_readiness_excludes_pending_warehouses_outside_scope()
+    {
+        var fixture = new Fixture();
+        fixture.Store.ViewableOrders.Add(fixture.Order.Id);
+        fixture.Store.DeniedWarehouseId = fixture.WarehouseB;
+        fixture.AddOpenPickingList(fixture.WarehouseA, "WH-A");
+        fixture.AddOpenPickingList(fixture.WarehouseB, "WH-B");
+        var result = await fixture.Service.GetOrderReadinessAsync(
+            fixture.Order.Id, Guid.NewGuid(), SystemRoles.WarehouseKeeper, CancellationToken.None);
+        Assert.Single(result.Parts);
+        Assert.Equal(fixture.WarehouseA, result.Parts.Single().WarehouseId);
+        Assert.DoesNotContain(result.BlockingReasons, reason => reason.Contains("WH-B"));
+    }
+
+    [Fact]
     public async Task Readiness_names_the_warehouse_that_is_holding_the_order_up()
     {
         var fixture = new Fixture();
@@ -711,6 +728,106 @@ public sealed class ShipmentServiceTests
             fixture.Order.Id, Guid.NewGuid(), SystemRoles.Operator, CancellationToken.None);
 
         Assert.True(readiness.IsReady);
+    }
+
+    [Theory]
+    [InlineData("Issued", "Issued", "AwaitingAssignment", false)]
+    [InlineData("Issued", "Delivering", "Delivering", false)]
+    [InlineData("Received", "Delivering", "Delivering", false)]
+    [InlineData("Received", "Ready", "Delivering", false)]
+    [InlineData("Received", "Exception", "Exception", false)]
+    [InlineData("Received", "Received", "Delivered", true)]
+    public async Task Dispatch_history_waits_for_every_expected_warehouse_trip(
+        string firstStatus, string secondStatus, string expectedStatus, bool history)
+    {
+        var fixture = new Fixture();
+        var (first, _, _) = fixture.AddReadyShipment(fixture.WarehouseA, 2);
+        var (second, _, _) = fixture.AddReadyShipment(fixture.WarehouseB, 3);
+        first.Status = firstStatus;
+        second.Status = secondStatus;
+        var result = await fixture.Service.GetOrderReadinessAsync(fixture.Order.Id,
+            Guid.NewGuid(), SystemRoles.Operator, default);
+        Assert.Equal(2, result.Parts.Count);
+        Assert.Equal(expectedStatus, result.DispatchStatus);
+        Assert.Equal(history, result.IsHistory);
+    }
+
+    [Fact]
+    public async Task A_received_trip_with_an_expected_warehouse_still_picking_stays_active()
+    {
+        var fixture = new Fixture();
+        var (first, _, _) = fixture.AddReadyShipment(fixture.WarehouseA, 2);
+        first.Status = ShipmentStatuses.Received;
+        fixture.AddOpenPickingList(fixture.WarehouseB);
+        var result = await fixture.Service.GetOrderReadinessAsync(fixture.Order.Id,
+            Guid.NewGuid(), SystemRoles.Operator, default);
+        Assert.Equal(2, result.Parts.Count);
+        Assert.False(result.IsHistory);
+    }
+
+    [Theory]
+    [InlineData(SystemRoles.Retailer)]
+    [InlineData(SystemRoles.WarehouseKeeper)]
+    [InlineData(SystemRoles.Sales)]
+    public async Task Busy_transport_accepts_delegated_profiles_at_the_application_boundary(string role)
+    {
+        var result = await new Fixture().Service.GetBusyTransportAsync(role, default);
+        Assert.NotNull(result);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Dispatch_rechecks_transport_that_changed_after_assignment(bool busy)
+    {
+        var fixture = new Fixture();
+        var (shipment, balance, _) = fixture.AddReadyShipment(fixture.WarehouseA, 8);
+        shipment.Status = ShipmentStatuses.Issued;
+        await fixture.Service.AssignAsync(shipment.Id,
+            new AssignShipmentData(fixture.DriverA.Id, fixture.VehicleA.Id, shipment.Version),
+            SystemRoles.Operator, default);
+        if (busy) fixture.Store.TransportBusy = true;
+        else fixture.DriverA.IsActive = false;
+        var originalVersion = shipment.Version;
+        var error = await Assert.ThrowsAsync<ShipmentOperationException>(() =>
+            fixture.Service.DispatchAsync(shipment.Id, new DispatchShipmentData(shipment.Version),
+                Guid.NewGuid(), SystemRoles.Operator, default));
+        Assert.Equal("conflict", error.Code);
+        Assert.Equal(ShipmentStatuses.Issued, shipment.Status);
+        Assert.Equal(originalVersion, shipment.Version);
+        Assert.Equal(100, balance.PhysicalQuantity);
+        Assert.Empty(fixture.Store.LabelEvents);
+    }
+
+    [Theory]
+    [InlineData(ShipmentStatuses.Issued)]
+    [InlineData(ShipmentStatuses.Delivering)]
+    public async Task Keeper_cannot_dispatch_or_replay_a_trip_from_an_unassigned_warehouse(string status)
+    {
+        var fixture = new Fixture();
+        var (shipment, balance, _) = fixture.AddReadyShipment(fixture.WarehouseB, 8);
+        shipment.Status = status;
+        fixture.Store.DeniedWarehouseId = fixture.WarehouseB;
+        var version = shipment.Version;
+        var error = await Assert.ThrowsAsync<ShipmentOperationException>(() => fixture.Service.DispatchAsync(
+            shipment.Id, new DispatchShipmentData(version), Guid.NewGuid(), SystemRoles.WarehouseKeeper, default));
+        Assert.Equal("forbidden", error.Code);
+        Assert.Equal(status, shipment.Status);
+        Assert.Equal(version, shipment.Version);
+        Assert.Equal(100, balance.PhysicalQuantity);
+        Assert.Empty(fixture.Store.LabelEvents);
+    }
+
+    [Theory]
+    [InlineData(SystemRoles.Retailer)]
+    [InlineData(SystemRoles.Sales)]
+    [InlineData(SystemRoles.SalesManager)]
+    public async Task Delegated_delivery_start_still_requires_an_existing_trip(string role)
+    {
+        var fixture = new Fixture();
+        var error = await Assert.ThrowsAsync<ShipmentOperationException>(() => fixture.Service.DispatchAsync(
+            Guid.NewGuid(), new DispatchShipmentData(0), Guid.NewGuid(), role, default));
+        Assert.Equal("not_found", error.Code);
     }
 
     private sealed class Fixture
@@ -859,6 +976,12 @@ public sealed class ShipmentServiceTests
 
     private sealed class FakeStore(SalesOrder order) : IShipmentStore
     {
+        public bool TransportBusy { get; set; }
+        public Guid? DeniedWarehouseId { get; set; }
+        public Task<BusyTransportResult> ListBusyTransportAsync(CancellationToken ct, Guid actorId, string scopeProfile) =>
+            Task.FromResult(new BusyTransportResult([], []));
+        public Task<bool> IsTransportResourceBusyAsync(Guid driverId, Guid vehicleId, Guid? excludedShipmentId, CancellationToken ct) =>
+            Task.FromResult(TransportBusy);
         public List<Shipment> Shipments { get; } = [];
         public List<ReceiptConfirmation> Receipts { get; } = [];
         public List<ReceiptConfirmationItem> ReceiptLines { get; } = [];
@@ -877,7 +1000,7 @@ public sealed class ShipmentServiceTests
         private int _nextCode = 1000;
 
         public Task<bool> CanAccessWarehouseAsync(Guid userId, string role, Guid warehouseId, CancellationToken cancellationToken) =>
-            Task.FromResult(true);
+            Task.FromResult(role is SystemRoles.Admin or SystemRoles.Operator || DeniedWarehouseId != warehouseId);
 
         public Task<bool> CanViewOrderAsync(Guid orderId, Guid userId, string role, CancellationToken cancellationToken) =>
             Task.FromResult(role is SystemRoles.Admin or SystemRoles.Operator || ViewableOrders.Contains(orderId));

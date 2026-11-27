@@ -4,21 +4,16 @@ using Microsoft.AspNetCore.Authorization;
 namespace FSCM.API.Security;
 
 public sealed record PermissionRequirement(string Key) : IAuthorizationRequirement;
-public sealed record ScreenResourceRequirement(string Resource) : IAuthorizationRequirement;
+public sealed record OperationRequirement(string Controller, string Action) : IAuthorizationRequirement;
 
-public sealed class ScreenResourceAuthorizationHandler : AuthorizationHandler<ScreenResourceRequirement>
+public sealed class OperationAuthorizationHandler(IServiceProvider services) : AuthorizationHandler<OperationRequirement>
 {
-    protected override Task HandleRequirementAsync(AuthorizationHandlerContext context, ScreenResourceRequirement requirement)
+    protected override async Task HandleRequirementAsync(AuthorizationHandlerContext context, OperationRequirement requirement)
     {
-        if (context.User.Identity?.IsAuthenticated == true)
-        {
-            var role = context.User.FindFirstValue(ClaimTypes.Role);
-            var keys = ScreenPermissionMap.Rest(requirement.Resource, "List", role);
-            if (role == FSCM.Domain.Authorization.SystemRoles.Admin || keys is null ||
-                keys.Any(key => context.User.HasClaim(PermissionAuthorizationHandler.GrantClaim, key)))
-                context.Succeed(requirement);
-        }
-        return Task.CompletedTask;
+        var access = services.GetRequiredService<OperationAccess>();
+        if (await access.AllowsAsync(context.User, requirement.Controller, requirement.Action,
+                services.GetRequiredService<IHttpContextAccessor>().HttpContext?.RequestAborted ?? default))
+            context.Succeed(requirement);
     }
 }
 

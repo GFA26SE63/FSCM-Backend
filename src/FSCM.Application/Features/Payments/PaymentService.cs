@@ -31,7 +31,6 @@ public sealed class PaymentService(
         string? status,
         CancellationToken cancellationToken)
     {
-        ValidateReadRole(actorRole);
         status = NormalizeStatus(status);
         var today = Today();
         return (await store.ListAsync(actorUserId, actorRole, cancellationToken))
@@ -48,7 +47,6 @@ public sealed class PaymentService(
         string actorRole,
         CancellationToken cancellationToken)
     {
-        ValidateReadRole(actorRole);
         var view = await store.FindByOrderAsync(orderId, false, cancellationToken)
             ?? throw PaymentOperationException.NotFound("Payment was not found.");
         if (!await store.CanViewAsync(view, actorUserId, actorRole, cancellationToken))
@@ -91,7 +89,6 @@ public sealed class PaymentService(
     {
         operationKey = NormalizeOperationKey(operationKey);
         var collectionMethod = NormalizeCollectionMethod(data.CollectionMethod);
-        ValidateCollectionAuthority(actorRole, collectionMethod);
         ValidateNote(data.Note);
         var requestHash = Hash(orderId, collectionMethod, data.ExpectedVersion, NormalizeNote(data.Note));
 
@@ -232,8 +229,6 @@ public sealed class PaymentService(
         string actorRole,
         CancellationToken cancellationToken)
     {
-        if (actorRole is not (SystemRoles.Admin or SystemRoles.Operator))
-            throw PaymentOperationException.Forbidden("Only Admin or Operator can adjust a receivable.");
         operationKey = NormalizeOperationKey(operationKey);
         var reason = string.IsNullOrWhiteSpace(data.Reason)
             ? throw PaymentOperationException.Validation("Adjustment reason is required.")
@@ -332,8 +327,6 @@ public sealed class PaymentService(
         Guid orderId, int expectedVersion, Guid actorUserId, string actorRole,
         CancellationToken cancellationToken)
     {
-        if (actorRole is not (SystemRoles.Admin or SystemRoles.Retailer))
-            throw PaymentOperationException.Forbidden("Chỉ chủ cửa hàng hoặc Admin được đổi phương thức thanh toán.");
         await store.ExecuteInTransactionAsync(async token =>
         {
             var view = await store.FindByOrderAsync(orderId, true, token)
@@ -396,7 +389,6 @@ public sealed class PaymentService(
         string actorRole,
         CancellationToken cancellationToken)
     {
-        ValidateReadRole(actorRole);
         var view = await store.FindByOrderAsync(orderId, false, cancellationToken)
             ?? throw PaymentOperationException.NotFound("Payment was not found.");
         if (!await store.CanViewAsync(view, actorUserId, actorRole, cancellationToken))
@@ -675,21 +667,6 @@ public sealed class PaymentService(
             view.Payment.ConfirmedByUserId,
             view.Payment.ConfirmedAt, view.Payment.Note, view.Payment.Version,
             view.Payment.CreatedAt, view.Payment.UpdatedAt);
-    }
-
-    private static void ValidateReadRole(string role)
-    {
-        if (role is not (SystemRoles.Admin or SystemRoles.Operator or SystemRoles.SalesManager or
-            SystemRoles.Sales or SystemRoles.Retailer))
-            throw PaymentOperationException.Forbidden("Role cannot view payments.");
-    }
-
-    private static void ValidateCollectionAuthority(string role, string collectionMethod)
-    {
-        if (role == SystemRoles.Sales && collectionMethod == PaymentCollectionMethods.Cash) return;
-        if (role == SystemRoles.Operator && collectionMethod == PaymentCollectionMethods.BankTransfer) return;
-        throw PaymentOperationException.Forbidden(
-            "Sales records cash collection; Operator records bank transfer collection.");
     }
 
     private static string? NormalizeStatus(string? value)

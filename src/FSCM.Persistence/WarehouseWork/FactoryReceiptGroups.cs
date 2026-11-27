@@ -68,10 +68,8 @@ public sealed partial class WarehouseWorkService
     /// <summary>Factory receipts in the caller's scope, grouped by dispatch note for the receipt history.</summary>
     public async Task<FactoryReceiptGroup[]> FactoryReceiptGroupsAsync(Guid actor, string role, CancellationToken ct)
     {
-        if (role is not (SystemRoles.Admin or SystemRoles.WarehouseKeeper))
-            throw PickingOperationException.Forbidden("Không có quyền xem phiếu nhập kho.");
         var q = Documents.AsNoTracking().Where(d => d.Kind == "Receipt" && d.Reason == "Factory");
-        if (role == SystemRoles.WarehouseKeeper)
+        if (role is not (SystemRoles.Admin or SystemRoles.Operator))
             q = q.Where(x => ReportingScopeQueries.ManagedWarehouses(db, actor).Any(w => w.Id == x.WarehouseId));
         var docs = await q.Select(d => new { d.Id, d.CreatedAt, d.WarehouseId, d.OperationKey }).ToArrayAsync(ct);
         if (docs.Length == 0) return [];

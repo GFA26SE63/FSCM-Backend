@@ -30,7 +30,6 @@ public sealed class CurrentPickingService(IPickingStore store, TimeProvider time
     public async Task<IReadOnlyCollection<CurrentPickingResult>> ListAsync(
         Guid actorId, string role, Guid? warehouseId, string? status, CancellationToken ct)
     {
-        ValidateReadRole(role);
         if (!string.IsNullOrWhiteSpace(status) && !Statuses.Contains(status))
             throw PickingOperationException.Validation("Picking status filter is invalid.");
         return (await store.ListAsync(actorId, role, warehouseId, status, ct)).Select(ToResult).ToArray();
@@ -44,7 +43,6 @@ public sealed class CurrentPickingService(IPickingStore store, TimeProvider time
         string code, ScanPickingLabelData data, string operationKey,
         Guid actorId, string role, CancellationToken ct, bool documentWorkflow = false)
     {
-        EnsureWarehouseKeeper(role);
         code = Required(code, "Picking code");
         operationKey = Required(operationKey, "Idempotency-Key");
         var qrCode = Required(data.QrCode, "QR code");
@@ -215,7 +213,6 @@ public sealed class CurrentPickingService(IPickingStore store, TimeProvider time
     public async Task<CurrentPickingResult> CompleteAsync(
         string code, CompleteRunPickingData data, Guid actorId, string role, CancellationToken ct, bool documentWorkflow = false)
     {
-        EnsureWarehouseKeeper(role);
         code = Required(code, "Picking code");
         await store.ExecuteInTransactionAsync(async token =>
         {
@@ -263,7 +260,6 @@ public sealed class CurrentPickingService(IPickingStore store, TimeProvider time
     private async Task<PickingView> FindAccessibleAsync(
         string code, Guid actorId, string role, bool update, CancellationToken ct)
     {
-        ValidateReadRole(role);
         var view = await store.FindAsync(Required(code, "Picking code"), update, ct)
             ?? throw PickingOperationException.NotFound("Picking list was not found.");
         if (!await store.CanAccessWarehouseAsync(actorId, role, view.List.WarehouseId, ct))
@@ -292,14 +288,4 @@ public sealed class CurrentPickingService(IPickingStore store, TimeProvider time
         string.IsNullOrWhiteSpace(value)
             ? throw PickingOperationException.Validation($"{name} is required.")
             : value.Trim();
-    private static void ValidateReadRole(string role)
-    {
-        if (role is not (SystemRoles.Admin or SystemRoles.Operator or SystemRoles.WarehouseKeeper))
-            throw PickingOperationException.Forbidden("Role cannot read picking lists.");
-    }
-    private static void EnsureWarehouseKeeper(string role)
-    {
-        if (role is not (SystemRoles.Admin or SystemRoles.WarehouseKeeper))
-            throw PickingOperationException.Forbidden("Only Warehouse Keeper or Admin can change picking work.");
-    }
 }

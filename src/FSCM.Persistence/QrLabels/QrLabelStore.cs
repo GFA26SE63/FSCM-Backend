@@ -32,7 +32,7 @@ public sealed class QrLabelStore(AppDbContext dbContext) : IQrLabelStore
         var labels = dbContext.BatchQrLabelRecords.AsNoTracking().AsQueryable();
         if (warehouseId.HasValue) labels = labels.Where(item => item.CurrentWarehouseId == warehouseId.Value);
         if (batchId.HasValue) labels = labels.Where(item => item.BatchId == batchId.Value);
-        if (role == SystemRoles.WarehouseKeeper)
+        if (role is not (SystemRoles.Admin or SystemRoles.Operator))
             labels = labels.Where(item => ReportingScopeQueries.ManagedWarehouses(dbContext, userId).Select(w => w.Id).Contains(item.CurrentWarehouseId));
         return await CreateViewQuery(labels.OrderBy(item => item.QrCode)).ToArrayAsync(cancellationToken);
     }

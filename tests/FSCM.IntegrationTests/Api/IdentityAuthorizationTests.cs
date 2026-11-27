@@ -12,10 +12,13 @@ using FSCM.Application.Features.Identity;
 using FSCM.Application.Features.EntityQueries;
 using FSCM.Domain.Authorization;
 using FSCM.Domain.Entities;
+using FSCM.Persistence.DbContexts;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.IdentityModel.Tokens;
@@ -365,6 +368,10 @@ public sealed class IdentityAuthorizationTests : IClassFixture<IdentityAuthoriza
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
             builder.UseEnvironment("Production");
+            // Exercise the same absence of local database configuration as a clean CI checkout.
+            builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(
+                new Dictionary<string, string?> { ["ConnectionStrings:DefaultConnection"] = null }));
+
             builder.UseSetting("ConnectionStrings:DefaultConnection",
                 "Host=localhost;Port=5432;Database=fscm_tests;Username=postgres;Password=test_only");
             builder.UseSetting("Jwt:Issuer", Issuer);
@@ -377,6 +384,13 @@ public sealed class IdentityAuthorizationTests : IClassFixture<IdentityAuthoriza
             builder.UseSetting("BackgroundJobs:InventoryOutbox:Enabled", "false");
             builder.ConfigureTestServices(services =>
             {
+                // API tests replace stores, but controller dependency graphs still require a
+                // DbContext registration. CI has no ignored appsettings.json, so production
+                // registration may omit it. Keep the fixture independent of local secrets;
+                // this context is never migrated or used to provision test data here.
+                services.AddDbContext<AppDbContext>(options => options.UseNpgsql(
+                    "Host=localhost;Port=5432;Database=fscm_tests;Username=postgres;Password=test_only"));
+
                 // API contract tests must not run scheduled business mutations on the configured database.
                 foreach (var hosted in services.Where(d => d.ServiceType == typeof(Microsoft.Extensions.Hosting.IHostedService) &&
                              d.ImplementationType?.Namespace?.StartsWith("FSCM.", StringComparison.Ordinal) == true).ToArray())

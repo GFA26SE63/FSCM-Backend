@@ -23,20 +23,10 @@ public sealed class RetailerDebtPayOsService(
         string actorRole,
         CancellationToken cancellationToken)
     {
-        if (actorRole is not (SystemRoles.Admin or SystemRoles.Retailer))
-            throw PaymentOperationException.Forbidden("Only a Retailer or Admin can create a debt checkout.");
         operationKey = NormalizeKey(operationKey);
         var mode = NormalizeMode(data.Mode);
         var ids = NormalizeIds(mode, data.PaymentIds);
         var requestHash = HashRequest(mode, ids);
-        var replay = await store.FindByOperationKeyAsync(operationKey, false, cancellationToken);
-        if (replay is not null)
-        {
-            if (replay.Checkout.RequestHash != requestHash)
-                throw PaymentOperationException.Conflict("Idempotency key was already used for another debt checkout request.");
-            return ToResult(replay);
-        }
-
         var retailer = await (actorRole == SystemRoles.Admin
                 ? data.RetailerId is { } retailerId
                     ? store.FindRetailerByIdAsync(retailerId, cancellationToken)
@@ -46,6 +36,16 @@ public sealed class RetailerDebtPayOsService(
                 actorRole == SystemRoles.Admin
                     ? "Admin must select a retailer for this debt checkout."
                     : "Retailer account was not found for the signed-in user.");
+        var replay = await store.FindByOperationKeyAsync(operationKey, false, cancellationToken);
+        if (replay is not null)
+        {
+            if (replay.Checkout.RetailerId != retailer.Id)
+                throw PaymentOperationException.Forbidden("Debt checkout belongs to another retailer.");
+            if (replay.Checkout.RequestHash != requestHash)
+                throw PaymentOperationException.Conflict("Idempotency key was already used for another debt checkout request.");
+            return ToResult(replay);
+        }
+
         var pending = await store.ListPendingForPaymentsAsync(
             retailer.Id, mode == RetailerDebtCheckoutModes.All ? null : ids, cancellationToken);
         foreach (var checkout in pending)
@@ -124,8 +124,6 @@ public sealed class RetailerDebtPayOsService(
     public async Task<RetailerDebtPayOsCheckoutResult> GetAsync(
         Guid checkoutId, Guid retailerUserId, string actorRole, CancellationToken cancellationToken)
     {
-        if (actorRole is not (SystemRoles.Admin or SystemRoles.Retailer))
-            throw PaymentOperationException.Forbidden("Only a Retailer or Admin can view a debt checkout.");
         var view = await (actorRole == SystemRoles.Admin
                 ? store.FindByIdAsync(checkoutId, cancellationToken)
                 : FindRetailerCheckoutAsync(checkoutId, retailerUserId, cancellationToken))

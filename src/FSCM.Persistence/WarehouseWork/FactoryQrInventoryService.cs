@@ -42,10 +42,8 @@ public sealed class FactoryQrInventoryService(AppDbContext db)
     public IQueryable<FactoryQrInventoryRow> Query(Guid actor, string role, Guid? warehouseId,
         string? search, string? status, string? syncStatus)
     {
-        if (role is not (SystemRoles.Admin or SystemRoles.Operator or SystemRoles.WarehouseKeeper))
-            throw InventoryOperationException.Forbidden("Không được xem tồn QR.");
         var labels = db.BatchQrLabelRecords.AsNoTracking().AsQueryable();
-        if (role == SystemRoles.WarehouseKeeper)
+        if (role is not (SystemRoles.Admin or SystemRoles.Operator))
             labels = labels.Where(l => ReportingScopeQueries.ManagedWarehouses(db, actor).Any(w => w.Id == l.CurrentWarehouseId));
         if (warehouseId.HasValue) labels = labels.Where(l => l.CurrentWarehouseId == warehouseId);
         if (!string.IsNullOrWhiteSpace(status)) labels = labels.Where(l => l.Status == status);
@@ -98,11 +96,9 @@ public sealed class FactoryQrInventoryService(AppDbContext db)
 
     public async Task<WarehousePalletCount> CurrentPalletCountAsync(Guid actor, string role, Guid warehouseId, CancellationToken ct)
     {
-        if (role is not (SystemRoles.Admin or SystemRoles.Operator or SystemRoles.WarehouseKeeper))
-            throw InventoryOperationException.Forbidden("Không được xem tồn QR.");
         if (!await db.WarehouseRecords.AnyAsync(w => w.Id == warehouseId, ct))
             throw InventoryOperationException.NotFound("Không tìm thấy kho.");
-        if (role == SystemRoles.WarehouseKeeper &&
+        if (role is not (SystemRoles.Admin or SystemRoles.Operator) &&
             !await ReportingScopeQueries.ManagedWarehouses(db, actor).AnyAsync(w => w.Id == warehouseId, ct))
             throw InventoryOperationException.Forbidden("Kho không thuộc phạm vi quản lý.");
         return new(warehouseId, await CurrentPalletIds(warehouseId).CountAsync(ct));
