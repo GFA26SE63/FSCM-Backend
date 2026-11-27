@@ -17,6 +17,9 @@ public static class ScreenOperationDependencies
         "Roles" when action == "List" => ["roles", "users"],
         "Roles" => ["roles"],
         "Users" => ["users"],
+        // Mobile order screens read only the order step; the controller filters other keys for them.
+        "BusinessConfigurations" when action == "List" && role == SystemRoles.Retailer => ["config", "mobile-rt-order-create"],
+        "BusinessConfigurations" when action == "List" && role == SystemRoles.Sales => ["config", "mobile-sales-order-create"],
         "BusinessConfigurations" => ["config"],
         "Categories" or "FmcgCategoryCatalog" => Catalog(role, "cats"),
         "Products" => Catalog(role, "skus"),
