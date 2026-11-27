@@ -114,6 +114,6 @@ public static class BusinessConfigurationKeys
             [OrderBufferStockCartons] = new("integer", "Số thùng tồn kho đệm không dùng để phân bổ đơn hàng"),
             [OrderStepCartons] = new("integer", "Bước số lượng thùng hợp lệ khi tạo đơn hàng"),
             [OrderCompletionGraceDays] = new("integer", "Số ngày chờ không phát sinh khiếu nại sau khi giao trước khi hoàn tất đơn và cộng điểm"),
-            [DemoFastScanEnabled] = new("boolean", "Hiện nút Quét nhanh (demo) ở màn nhập kho và màn nhận hàng của nhà bán lẻ")
+            [DemoFastScanEnabled] = new("boolean", "Hiện nút Quét nhanh (demo) ở màn nhập kho, xuất kho và màn nhận hàng của nhà bán lẻ")
         };
 }
