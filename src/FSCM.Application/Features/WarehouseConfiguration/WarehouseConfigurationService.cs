@@ -435,6 +435,10 @@ public sealed partial class WarehouseConfigurationService(
                 if (value.ValueKind != JsonValueKind.Number || !value.TryGetInt32(out var graceDays) || graceDays < 0)
                     throw WarehouseConfigurationOperationException.Validation("Order completion grace days must be a non-negative integer.");
                 break;
+            case BusinessConfigurationKeys.DemoFastScanEnabled:
+                if (value.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
+                    throw WarehouseConfigurationOperationException.Validation("Demo fast scan must be true or false.");
+                break;
             case BusinessConfigurationKeys.EtaSchedule:
                 if (value.ValueKind != JsonValueKind.Object ||
                     !value.TryGetProperty("timeZone", out var timeZone) ||

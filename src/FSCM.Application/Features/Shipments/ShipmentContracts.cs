@@ -136,7 +136,9 @@ public sealed record ShipmentResult(
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,
     IReadOnlyCollection<ShipmentLineResult> Lines,
-    ShipmentReceiptResult? Receipt);
+    ShipmentReceiptResult? Receipt,
+    // Only filled on the retailer delivery view while the admin demo fast-scan switch is on.
+    IReadOnlyCollection<string>? DemoQrCodes = null);
 
 public sealed record FlagShipmentExceptionData(string Reason, int ExpectedVersion);
 
