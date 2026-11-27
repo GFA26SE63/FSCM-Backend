@@ -4,12 +4,18 @@ namespace FSCM.Domain.Authorization;
 public static class ScreenOperationDependencies
 {
     /// <summary>Initial mapping only; role saves and REST authorization read the persisted table.</summary>
-    public static IReadOnlyList<FSCM.Domain.Entities.ScreenApiMapping> InitialMappings() =>
-        SystemRoles.All.SelectMany(role => ApiPermissionCatalog.All.SelectMany(operation =>
+    public static IReadOnlyList<FSCM.Domain.Entities.ScreenApiMapping> InitialMappings()
+    {
+        // Defaults describe screen dependencies, never a runtime role ceiling. A screen
+        // has the same operation contract for every business data-scope profile.
+        var dependencies = SystemRoles.All.SelectMany(role => ApiPermissionCatalog.All.SelectMany(operation =>
             (Rest(operation.Controller, operation.Action, role) ?? [])
                 .Where(screen => !screen.StartsWith("mobile-", StringComparison.Ordinal) || operation.InitialRoles.Contains(role))
-                .Select(screen => new FSCM.Domain.Entities.ScreenApiMapping
-            { BusinessRole = role, ApiCode = operation.Key, ScreenCode = screen }))).ToArray();
+                .Select(screen => (Screen: screen, Api: operation.Key)))).Distinct().ToArray();
+        return SystemRoles.All.SelectMany(role => dependencies.Select(mapping =>
+            new FSCM.Domain.Entities.ScreenApiMapping
+            { BusinessRole = role, ScreenCode = mapping.Screen, ApiCode = mapping.Api })).ToArray();
+    }
 
     public static string[]? Rest(string controller, string action, string? role) => controller switch
     {
@@ -24,7 +30,7 @@ public static class ScreenOperationDependencies
         "Categories" or "FmcgCategoryCatalog" => Catalog(role, "cats"),
         "Products" => Catalog(role, "skus"),
         "MlorConfigurations" => ["catmlor"],
-        "Warehouses" when action is "List" or "Get" => ["whs", "regions", "warehouse-inbound", "warehouse-outbound", "warehouse-transfers"],
+        "Warehouses" when action is "List" or "Get" => ["whs", "regions", "warehouse-inbound", "warehouse-outbound", "warehouse-transfers", "readiness"],
         "Warehouses" => ["whs"],
         "Regions" or "SalesGroups" when action is "List" or "Get" => role == SystemRoles.Sales
             ? ["mobile-sales-home", "mobile-sales-declare", "mobile-sales-retailers"] : ["regions", "users", "whs"],
@@ -58,6 +64,7 @@ public static class ScreenOperationDependencies
         "LoyaltyRewards" => role == SystemRoles.Retailer ? ["mobile-rt-gifts"] : ["gifts", "redeem"],
         "LoyaltyRedemptions" or "LoyaltyRedemptionWorkflow" => role == SystemRoles.Retailer ? ["mobile-rt-gifts"] : ["redeem"],
         "Disposals" or "WriteOffs" => ["disposal"],
+        "InternalTransfers" when action is "List" or "Get" => ["warehouse-transfers", "readiness"],
         "InternalTransfers" => ["warehouse-transfers"],
         "GoodsReceipts" => ["warehouse-inbound"],
         "Inventory" or "InventoryLocks" => ["batches"],
@@ -65,6 +72,7 @@ public static class ScreenOperationDependencies
         "QrLabels" => role == SystemRoles.Sales ? ["mobile-sales-scan"]
             : role == SystemRoles.Retailer ? ["mobile-rt-scan"]
             : role == SystemRoles.WarehouseKeeper ? ["mobile-wk-label", "warehouse-trace", "batches"] : ["batches"],
+        "PickingLists" when action is "List" or "Get" => ["warehouse-outbound", "mobile-wk-picking", "readiness"],
         "PickingLists" => role == SystemRoles.WarehouseKeeper ? ["warehouse-outbound", "mobile-wk-picking"] : ["warehouse-outbound"],
         "WarehouseDocuments" when action is "FactoryPending" or "FactoryPendingDispatches" or "FactoryReceiptGroups" or "PrepareFactoryDispatch" or "PrepareFactory" or "Factory" or "ReceivePallet" or "MissingPallet" or "ScanPallet" => ["warehouse-inbound", "mobile-wk-operations"],
         "WarehouseDocuments" when action is "IssueWorkflow" or "PrepareCartons" or "RemoveCarton" => ["warehouse-outbound", "mobile-wk-picking", "mobile-wk-operations"],
@@ -73,11 +81,15 @@ public static class ScreenOperationDependencies
             ? ["warehouse-inbound", "warehouse-factory-requests", "warehouse-outbound", "warehouse-transfers", "mobile-wk-operations", "mobile-wk-picking", "mobile-wk-shipped"]
             : ["warehouse-inbound", "warehouse-factory-requests", "warehouse-outbound", "warehouse-transfers"],
         "Shipments" when action == "ConfirmReceipt" => role == SystemRoles.Retailer ? ["mobile-rt-scan"] : ["orders"],
-        "Shipments" when action is "Assign" or "Sync" or "ResolveException" => ["readiness"],
+        "Shipments" when action is "Assign" or "Sync" or "ResolveException" => role == SystemRoles.WarehouseKeeper ? [] : ["readiness"],
+        "Shipments" when action == "Dispatch" => ["readiness", "warehouse-outbound", "mobile-wk-picking", "mobile-wk-operations"],
         "Shipments" when action is "ConfirmIssue" or "Dispatch" or "FlagException" => ["warehouse-outbound", "mobile-wk-picking", "mobile-wk-operations"],
         "Shipments" or "Deliveries" => role == SystemRoles.Retailer ? ["mobile-rt-orders", "mobile-rt-scan"]
             : role == SystemRoles.Sales ? ["mobile-sales-orders"]
-            : role == SystemRoles.WarehouseKeeper ? ["warehouse-outbound", "mobile-wk-picking", "mobile-wk-shipped"] : ["readiness", "orders"],
+            : role == SystemRoles.WarehouseKeeper ? controller == "Shipments"
+                ? ["warehouse-outbound", "mobile-wk-picking", "mobile-wk-shipped", "readiness"]
+                : ["warehouse-outbound", "mobile-wk-picking", "mobile-wk-shipped"] : ["readiness", "orders"],
+        "TransportDispatches" when action is "Read" or "AssignTransfer" => ["fleet", "readiness", "warehouse-transfers"],
         "TransportDispatches" => ["fleet"],
         "Map" => role == SystemRoles.Sales ? ["mobile-sales-retailers", "mobile-sales-declare"] : ["regions", "whs"],
         "Mobile" => role == SystemRoles.Retailer ? ["mobile-rt-order-create"] : ["mobile-sales-sync"],
@@ -90,7 +102,7 @@ public static class ScreenOperationDependencies
 
     private static string[] Orders(string? role) => role == SystemRoles.Sales
         ? ["mobile-sales-orders"] : role == SystemRoles.Retailer ? ["mobile-rt-orders"]
-        : role == SystemRoles.WarehouseKeeper ? ["orders", "warehouse-outbound", "mobile-wk-picking"] : ["orders"];
+        : role == SystemRoles.WarehouseKeeper ? ["orders", "warehouse-outbound", "mobile-wk-picking", "readiness"] : ["orders"];
 
     private static string[] Payments(string? role) => role == SystemRoles.Sales
         ? ["mobile-sales-debts"] : role == SystemRoles.Retailer ? ["mobile-rt-payments"] : ["debts"];

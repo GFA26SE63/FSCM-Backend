@@ -16,9 +16,6 @@ public sealed class ReportService(IReportStore store, TimeProvider timeProvider)
     public async Task<SalesRankingResult> GetSalesRankingAsync(
         SalesRankingQuery query, Guid actorUserId, string actorRole, CancellationToken cancellationToken)
     {
-        if (actorRole is not (SystemRoles.Admin or SystemRoles.Operator or
-            SystemRoles.SalesManager or SystemRoles.Sales))
-            throw ReportOperationException.Forbidden("Role cannot view the sales ranking.");
         if (query.ToDate < query.FromDate)
             throw ReportOperationException.Validation("The end date cannot be before the start date.");
         var today = DateOnly.FromDateTime(timeProvider.GetUtcNow().ToOffset(VietnamOffset).DateTime);

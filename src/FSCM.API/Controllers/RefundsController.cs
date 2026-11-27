@@ -22,7 +22,7 @@ public sealed class RefundsController(RefundService service, ImageUploadService 
     [HttpGet("obligations")]
     [Authorize]
     public Task<IReadOnlyCollection<RefundObligationResult>> Obligations(CancellationToken ct) =>
-        service.ListObligationsAsync(Role(), ct);
+        service.ListObligationsAsync(UserId(), Role(), ct);
 
     [HttpGet("{id:guid}")]
     public Task<RefundResult> Get(Guid id, CancellationToken ct) => service.GetAsync(id, UserId(), Role(), ct);

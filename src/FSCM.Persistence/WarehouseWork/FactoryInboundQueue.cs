@@ -19,9 +19,7 @@ public sealed partial class WarehouseWorkService
 
     public async Task<FactoryInboundPallet[]> PendingFactoryAsync(Guid actor, string role, CancellationToken ct)
     {
-        if (role is not (SystemRoles.Admin or SystemRoles.WarehouseKeeper))
-            throw PickingOperationException.Forbidden("Không có quyền xem hàng chờ nhận.");
-        var warehouses = role == SystemRoles.Admin ? db.WarehouseRecords.AsQueryable() : ReportingScopeQueries.ManagedWarehouses(db, actor);
+        var warehouses = role is SystemRoles.Admin or SystemRoles.Operator ? db.WarehouseRecords.AsQueryable() : ReportingScopeQueries.ManagedWarehouses(db, actor);
         var allowed = await warehouses.Where(w => w.IsActive).Select(w => w.Id).ToArrayAsync(ct);
         if (allowed.Length == 0) return [];
         var pending = await factory.DispatchedAsync(allowed, ct);
@@ -37,7 +35,6 @@ public sealed partial class WarehouseWorkService
 
     public Task<Guid> PrepareFactoryAsync(PrepareFactoryReceiptRequest request, Guid actor, string role, CancellationToken ct)
     {
-        Keeper(role);
         return Atomic(async () =>
         {
             if (string.IsNullOrWhiteSpace(request.PalletCode)) throw PickingOperationException.Validation("Chọn pallet cần nhận.");

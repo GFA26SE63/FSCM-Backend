@@ -47,7 +47,7 @@ public sealed class ShipmentsController(ShipmentService service) : ControllerBas
     [Authorize]
     [HttpPost("orders/{orderId:guid}/sync")]
     public Task<IReadOnlyCollection<ShipmentResult>> Sync(Guid orderId, CancellationToken cancellationToken) =>
-        service.SyncOrderAsync(orderId, GetActorRole(), cancellationToken);
+        service.SyncOrderAsync(orderId, GetActorRole(), cancellationToken, GetActorUserId());
 
     [Authorize]
     [HttpPatch("{id:guid}/exception")]

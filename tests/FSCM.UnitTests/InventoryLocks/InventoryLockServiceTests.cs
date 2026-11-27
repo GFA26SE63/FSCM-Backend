@@ -59,15 +59,12 @@ public sealed class InventoryLockServiceTests
     }
 
     [Fact]
-    public async Task Create_forbidden_for_sales_role()
+    public async Task Delegated_inventory_lock_uses_warehouse_scope()
     {
         var fixture = new Fixture(physical: 30, reserved: 0, activeLocked: 0);
-
-        var exception = await Assert.ThrowsAsync<InventoryLockOperationException>(() =>
-            fixture.Service.CreateAsync(Guid.NewGuid(), SystemRoles.Sales,
-                new CreateInventoryLockData(fixture.Batch.Id, 5, "Damaged", null), default));
-
-        Assert.Equal("forbidden", exception.Code);
+        var result = await fixture.Service.CreateAsync(Guid.NewGuid(), SystemRoles.Sales,
+            new CreateInventoryLockData(fixture.Batch.Id, 5, "Damaged", null), default);
+        Assert.Equal(InventoryLockStatuses.Active, result.Status);
     }
 
     [Fact]

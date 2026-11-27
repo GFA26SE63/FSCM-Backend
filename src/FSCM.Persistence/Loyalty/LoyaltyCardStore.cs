@@ -15,9 +15,13 @@ public sealed class LoyaltyCardStore(AppDbContext dbContext) : ILoyaltyCardStore
 
     public async Task<IReadOnlyCollection<LoyaltyCardData>> ListAsync(Guid actorUserId, string actorRole, CancellationToken cancellationToken)
     {
+        var visible = dbContext.RetailerRecords.AsNoTracking().Where(item => item.Status == "Active");
         if (actorRole is not (SystemRoles.Admin or SystemRoles.Operator))
-            throw LoyaltyOperationException.Forbidden("Only Admin or Operator can list retailer loyalty cards.");
-        var ids = await dbContext.RetailerRecords.AsNoTracking().Where(item => item.Status == "Active")
+        {
+            var scope = await new FSCM.Persistence.Identity.IdentityStore(dbContext).GetScopeAsync(actorUserId, cancellationToken);
+            visible = visible.Where(item => scope.RetailerIds.Contains(item.Id));
+        }
+        var ids = await visible
             .Select(item => item.Id).ToArrayAsync(cancellationToken);
         var results = new List<LoyaltyCardData>(ids.Length);
         foreach (var id in ids) results.Add(await GetAsync(actorUserId, actorRole, id, cancellationToken));
@@ -40,6 +44,12 @@ public sealed class LoyaltyCardStore(AppDbContext dbContext) : ILoyaltyCardStore
         }
         if (!retailerId.HasValue)
             throw LoyaltyOperationException.Validation("Retailer id is required for this role.");
+        if (actorRole is not (SystemRoles.Admin or SystemRoles.Operator))
+        {
+            var scope = await new FSCM.Persistence.Identity.IdentityStore(dbContext).GetScopeAsync(actorUserId, cancellationToken);
+            if (!scope.RetailerIds.Contains(retailerId.Value))
+                throw LoyaltyOperationException.Forbidden("Retailer is outside the assigned data scope.");
+        }
         var retailer = await dbContext.RetailerRecords.AsNoTracking()
             .SingleOrDefaultAsync(item => item.Id == retailerId.Value, cancellationToken)
             ?? throw LoyaltyOperationException.NotFound("Retailer was not found.");

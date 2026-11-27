@@ -63,7 +63,6 @@ public sealed partial class WarehouseWorkService
     /// <summary>Opens (or reopens) the single PNK that receives every pending pallet of one factory dispatch note.</summary>
     public Task<Guid> PrepareFactoryDispatchAsync(PrepareFactoryDispatchReceiptRequest request, Guid actor, string role, CancellationToken ct)
     {
-        Keeper(role);
         return Atomic(async () =>
         {
             if (request.DispatchNoteId == Guid.Empty) throw PickingOperationException.Validation("Chọn phiếu xuất nhà máy cần nhận.");
@@ -143,7 +142,6 @@ public sealed partial class WarehouseWorkService
     /// </summary>
     public Task<Guid> MarkPalletMissingAsync(Guid id, MissingPalletRequest request, Guid actor, string role, CancellationToken ct)
     {
-        Keeper(role);
         return Atomic(async () =>
         {
             var d = await Find(id, ct);

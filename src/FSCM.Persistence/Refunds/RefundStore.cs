@@ -1,3 +1,6 @@
+using FSCM.Application.Features.EntityQueries;
+using FSCM.Persistence.EntityQueries;
+using FSCM.Persistence.Identity;
 using FSCM.Application.Features.Refunds;
 using FSCM.Domain.Authorization;
 using FSCM.Domain.Entities;
@@ -36,6 +39,7 @@ public sealed class RefundStore(AppDbContext db) : IRefundStore
             SystemRoles.Admin or SystemRoles.Operator => query,
             SystemRoles.Sales => query.Where(x => db.SalesOrderRecords.Any(o => o.Id == x.SalesOrderId && o.CreatedByUserId == actorUserId)),
             SystemRoles.SalesManager => query.Where(x => db.SalesOrderRecords.Any(o => o.Id == x.SalesOrderId && db.SalesGroupMemberRecords.Any(m => m.UserAccountId == actorUserId && m.SalesGroupId == o.SalesGroupId && m.IsActive))),
+            SystemRoles.WarehouseKeeper => query.Where(x => ReportingScopeQueries.WarehouseOrderIds(db, actorUserId).Contains(x.SalesOrderId)),
             SystemRoles.Retailer => query.Where(x => db.SalesOrderRecords.Any(o => o.Id == x.SalesOrderId && db.RetailerRecords.Any(r => r.Id == o.RetailerId && r.UserAccountId == actorUserId))),
             _ => query.Where(_ => false)
         };
@@ -75,9 +79,11 @@ public sealed class RefundStore(AppDbContext db) : IRefundStore
             claim.ResolutionType, adjustment, linked);
     }
 
-    public async Task<IReadOnlyCollection<RefundObligationResult>> ListObligationsAsync(CancellationToken ct)
+    public async Task<IReadOnlyCollection<RefundObligationResult>> ListObligationsAsync(Guid actorUserId, string actorRole, CancellationToken ct)
     {
-        var rows = await (from payment in db.PaymentRecords.AsNoTracking()
+        var scope = await new IdentityStore(db).GetScopeAsync(actorUserId, ct);
+        var payments = new EntityQueryService(db).Query<Payment>(new EntityQueryAccess(actorUserId, actorRole, scope));
+        var rows = await (from payment in payments
                           where payment.ConfirmedAmount > payment.AdjustedAmount
                           join order in db.SalesOrderRecords.AsNoTracking() on payment.SalesOrderId equals order.Id
                           select new { payment, order.OrderCode, order.RetailerNameSnapshot }).ToArrayAsync(ct);

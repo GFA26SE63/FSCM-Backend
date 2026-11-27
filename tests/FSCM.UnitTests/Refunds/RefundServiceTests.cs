@@ -220,7 +220,7 @@ public sealed class RefundServiceTests
             return Task.FromResult<RefundClaimSource?>(claim with { AlreadyLinkedAmount = linked });
         }
 
-        public Task<IReadOnlyCollection<RefundObligationResult>> ListObligationsAsync(CancellationToken ct) =>
+        public Task<IReadOnlyCollection<RefundObligationResult>> ListObligationsAsync(Guid actorUserId, string actorRole, CancellationToken ct) =>
             Task.FromResult<IReadOnlyCollection<RefundObligationResult>>([]);
 
         public Task<(decimal Pending, decimal Refunded)> TotalsAsync(Guid paymentId, CancellationToken ct) =>
