@@ -17,6 +17,9 @@ public sealed class OperationAccess(IAuthorizationService authorization, IRoleSt
         if (user.Identity?.IsAuthenticated != true) return false;
         var operation = ApiPermissionCatalog.Key(controller, action);
         if (!ApiPermissionCatalog.All.Any(p => p.Key == operation)) return false;
+        // Admin owns every registered system operation, including operations whose
+        // delegated screen mapping is absent. Authentication/catalog checks remain.
+        if (user.FindFirstValue(ClaimTypes.Role) == SystemRoles.Admin) return true;
         if (!(await authorization.AuthorizeAsync(user, null, "permission:" + operation)).Succeeded) return false;
         Task<IReadOnlyList<ScreenApiMapping>> pending;
         lock (mappingLock)

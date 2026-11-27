@@ -448,6 +448,18 @@ available via the shared REST/GraphQL order read services.
 
 ## Completing an order, and the points it earns (F70, CH-14)
 
+Admin has all registered REST/GraphQL operations without delegated screen/API mappings.
+Refunds still require transfer evidence and `AwaitingVerification` before verification.
+Admin may create, submit evidence and verify the same refund; the self-verification
+restriction continues to apply to non-Admin submitters. Actor/timestamp audit,
+idempotency, version checks and the refund obligation cap remain enforced.
+
+Dispatch history (`isHistory` in REST readiness and GraphQL `shipmentReadinessRead`) is separate
+from order completion: all expected warehouse parts must have an actual shipment in `Received`
+or `Exception`. A picking exception with no shipment, or a trip still preparing/delivering,
+keeps dispatch in requests. Receipt discrepancies continue in their own workflow; dispatch
+history preserves the `Exception` status and does not require operator resolution in dispatch UI.
+
 An order is **Completed** when it has actually been delivered **and** paid for in full **and**
 nothing about it is in dispute. Which of those three is the last to happen depends on the payment
 method, so this is written as one evaluation that three callers ask rather than as three separate
