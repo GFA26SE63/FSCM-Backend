@@ -6,6 +6,7 @@ using FSCM.Application.Features.Inventory;
 using FSCM.Application.Features.Picking;
 using FSCM.Application.Features.QrLabels;
 using FSCM.Application.Features.Shipments;
+using FSCM.Application.Features.WarehouseConfiguration;
 using FSCM.Domain.Authorization;
 using FSCM.Domain.Entities;
 using FSCM.Persistence.DbContexts;
@@ -22,7 +23,9 @@ public sealed record FactoryReceiptRequest(Guid WarehouseId, ReceiveGoodsLineDat
 public sealed record WarehousePalletMapping(string PalletCode, string CartonCode, int UnitsPerCarton);
 public sealed record WarehouseWorkResult(WarehouseDocument Document,
     IReadOnlyCollection<WarehouseDocumentLine> Lines, IReadOnlyCollection<WarehouseDocumentCarton> Cartons,
-    IReadOnlyCollection<WarehousePalletMapping>? Pallets = null, string? TransportStatus = null);
+    IReadOnlyCollection<WarehousePalletMapping>? Pallets = null, string? TransportStatus = null,
+    // Only filled on open issue/picking documents while the admin demo fast-scan switch is on.
+    IReadOnlyCollection<string>? DemoCartonIds = null);
 
 /// <summary>Document orchestration shares the allocation/picking stock ledger and QR event history.</summary>
 public sealed partial class WarehouseWorkService(AppDbContext db, InventoryService inventory,
@@ -62,8 +65,36 @@ public sealed partial class WarehouseWorkService(AppDbContext db, InventoryServi
         var cartons = await Cartons.AsNoTracking().Where(x => x.DocumentId == id).ToArrayAsync(ct);
         var issueId = d.Kind == "Receipt" && d.SourceDocumentId.HasValue ? d.SourceDocumentId.Value : d.Id;
         var transportStatus = await db.Set<WarehouseTransfer>().AsNoTracking().Where(x => x.SourceIssueDocumentId == issueId).Select(x => x.Status).SingleOrDefaultAsync(ct);
-        return new(d, await Lines.AsNoTracking().Where(x => x.DocumentId == id).ToArrayAsync(ct),
-            cartons, await PalletMappings(cartons.Select(c => c.CartonId).ToArray(), ct), transportStatus);
+        var lines = await Lines.AsNoTracking().Where(x => x.DocumentId == id).ToArrayAsync(ct);
+        return new(d, lines, cartons, await PalletMappings(cartons.Select(c => c.CartonId).ToArray(), ct), transportStatus,
+            await DemoCartonIds(d, lines, cartons, actor, role, ct));
+    }
+
+    /// <summary>
+    /// Demo fast scan: available single-carton labels of each line's batch at the issuing warehouse,
+    /// enough to fill what is still unscanned. The real scan endpoint re-validates every code.
+    /// </summary>
+    private async Task<IReadOnlyCollection<string>?> DemoCartonIds(WarehouseDocument d, WarehouseDocumentLine[] lines,
+        WarehouseDocumentCarton[] cartons, Guid actor, string role, CancellationToken ct)
+    {
+        if (d.Kind is not ("Picking" or "Issue") || d.Status != "Open" || !await HasAccess(d.WarehouseId, actor, role, ct))
+            return null;
+        var flag = await db.SystemConfigurationRecords.AsNoTracking()
+            .Where(x => x.ConfigKey == BusinessConfigurationKeys.DemoFastScanEnabled && x.IsActive)
+            .Select(x => x.ConfigValue).FirstOrDefaultAsync(ct);
+        if (flag?.Trim() != "true") return null;
+        var codes = new List<string>();
+        foreach (var line in lines.Where(x => x.BatchId.HasValue))
+        {
+            var remaining = (int)line.Quantity - cartons.Count(c => c.LineId == line.Id);
+            if (remaining <= 0) continue;
+            var taken = codes.ToArray();
+            codes.AddRange(await db.BatchQrLabelRecords.AsNoTracking()
+                .Where(x => x.BatchId == line.BatchId && x.CurrentWarehouseId == d.WarehouseId &&
+                            x.Status == QrLabelStatuses.Available && x.Quantity == 1 && !taken.Contains(x.QrCode))
+                .OrderBy(x => x.QrCode).Select(x => x.QrCode).Take(remaining).ToArrayAsync(ct));
+        }
+        return codes;
     }
 
     public Task<Guid> CreateRequestAsync(CreateWarehouseRequest data, string key, Guid actor, string role, CancellationToken ct) =>
