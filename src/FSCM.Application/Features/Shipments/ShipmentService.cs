@@ -174,7 +174,8 @@ public sealed class ShipmentService(
                 : item.Status == ShipmentStatuses.Received);
             var order = await store.FindOrderForUpdateAsync(view.Order.Id, token)
                 ?? throw ShipmentOperationException.NotFound("Order was not found.");
-            if (allReceived && order.Status == OrderStatuses.Delivering)
+            if (allReceived && order.Status == OrderStatuses.Delivering &&
+                await EveryWarehouseHasPartAsync(view.Order.Id, siblings, token))
             {
                 var fromStatus = order.Status;
                 order.Status = OrderStatuses.Delivered;
@@ -226,10 +227,10 @@ public sealed class ShipmentService(
     /// The set of shipment parts is not the set of warehouses the order is waiting on. A part is
     /// created only when its warehouse closes its picking sheet, so a warehouse still picking has
     /// no row here at all - and reading the verdict from the rows alone meant an order whose first
-    /// warehouse had finished reported ready while the second had not started. Issuing is gated on
-    /// this same answer, so that was partial delivery: the first warehouse's goods left and the
-    /// retailer was left to chase the rest. The expected warehouses are therefore read from the
-    /// sheets the approved plan produced, and a missing one holds the order.
+    /// warehouse had finished reported ready while the second had not started. The expected
+    /// warehouses are therefore read from the sheets the approved plan produced, and a missing one
+    /// is reported. This is the whole-order view; since 2026-11-27 it no longer gates issuing a
+    /// single part (see <see cref="ConfirmIssueAsync"/>).
     /// </summary>
     private async Task<OrderShipmentReadinessResult> BuildReadinessAsync(
         SalesOrder order, IReadOnlyCollection<ShipmentView> views, CancellationToken cancellationToken)
@@ -293,6 +294,18 @@ public sealed class ShipmentService(
     }
 
     /// <summary>
+    /// Parts now leave one warehouse at a time, so "every part" read from the shipment rows alone
+    /// would miss a warehouse still picking (it has no row yet) and move the order on too early.
+    /// </summary>
+    private async Task<bool> EveryWarehouseHasPartAsync(
+        Guid orderId, IEnumerable<Shipment> parts, CancellationToken cancellationToken)
+    {
+        var covered = parts.Select(item => item.WarehouseId).ToHashSet();
+        var expected = await store.ListExpectedWarehousesAsync(orderId, cancellationToken);
+        return expected.All(item => covered.Contains(item.WarehouseId));
+    }
+
+    /// <summary>
     /// Only a prepaid order has to be paid before it moves. Credit is settled on terms, so demanding
     /// payment from it would stop orders that are in order. COD is not a supported method (BR-51).
     /// </summary>
@@ -314,8 +327,10 @@ public sealed class ShipmentService(
     /// warehouse keeper whose connection dropped mid-confirmation will press the button again, and
     /// a duplicated deduction would stay invisible until someone counted the shelf.
     ///
-    /// The order only becomes Issued once every part has left, which is the same all-or-nothing
-    /// rule the readiness check applies before the first one does.
+    /// Each warehouse part leaves on its own (owner decision 2026-11-27, amends baseline 3.9): a
+    /// warehouse still picking or in exception holds only its own part, never a sibling that is
+    /// ready. Payment is still checked per order. The order only becomes Issued once every
+    /// expected warehouse has a part and all of them have left.
     /// </summary>
     public async Task<ShipmentResult> ConfirmIssueAsync(
         Guid id, ConfirmShipmentIssueData data, Guid actorUserId, string actorRole,
@@ -358,13 +373,13 @@ public sealed class ShipmentService(
                     $"Shipment version is {view.Shipment.Version}; refresh and retry.");
             }
 
-            var siblings = await store.ListAsync(
-                actorUserId, SystemRoles.Admin, view.Order.Id, null, null, transactionCancellationToken);
-            var readiness = await BuildReadinessAsync(view.Order, siblings, transactionCancellationToken);
-            if (!readiness.IsReady)
+            if (!await IsPaymentSettledAsync(view.Order, transactionCancellationToken))
             {
-                throw ShipmentOperationException.Conflict(string.Join(" ", readiness.BlockingReasons));
+                throw ShipmentOperationException.Conflict(
+                    "Don tra truoc chua thanh toan du, chua du dieu kien xuat kho.");
             }
+
+            var siblings = await store.ListByOrderAsync(view.Order.Id, transactionCancellationToken);
 
             var now = timeProvider.GetUtcNow();
             var rows = await store.ListIssuableAsync(id, transactionCancellationToken);
@@ -423,10 +438,10 @@ public sealed class ShipmentService(
             view.Shipment.UpdatedAt = now;
 
             var allIssued = siblings.All(item =>
-                item.Shipment.Id == view.Shipment.Id ||
-                item.Shipment.Status is ShipmentStatuses.Issued or ShipmentStatuses.Delivering
+                item.Id == view.Shipment.Id ||
+                item.Status is ShipmentStatuses.Issued or ShipmentStatuses.Delivering
                     or ShipmentStatuses.Received);
-            if (allIssued)
+            if (allIssued && await EveryWarehouseHasPartAsync(view.Order.Id, siblings, transactionCancellationToken))
             {
                 var order = await store.FindOrderForUpdateAsync(view.Order.Id, transactionCancellationToken)
                     ?? throw ShipmentOperationException.NotFound("Order was not found.");
@@ -587,7 +602,7 @@ public sealed class ShipmentService(
             var siblings = await store.ListByOrderAsync(view.Order.Id, token);
             var allDispatched = siblings.All(item => item.Id == view.Shipment.Id ||
                 item.Status is ShipmentStatuses.Delivering or ShipmentStatuses.Received);
-            if (allDispatched)
+            if (allDispatched && await EveryWarehouseHasPartAsync(view.Order.Id, siblings, token))
             {
                 var order = await store.FindOrderForUpdateAsync(view.Order.Id, token)
                     ?? throw ShipmentOperationException.NotFound("Order was not found.");
@@ -793,7 +808,7 @@ public sealed class ShipmentService(
                 item.Id == view.Shipment.Id ||
                 item.Status == ShipmentStatuses.Received ||
                 (item.Status == ShipmentStatuses.Exception && item.ReceivedAt.HasValue));
-            if (allReceived)
+            if (allReceived && await EveryWarehouseHasPartAsync(view.Order.Id, siblings, transactionCancellationToken))
             {
                 fullyReceivedOrderId = view.Order.Id;
                 var order = await store.FindOrderForUpdateAsync(view.Order.Id, transactionCancellationToken)
