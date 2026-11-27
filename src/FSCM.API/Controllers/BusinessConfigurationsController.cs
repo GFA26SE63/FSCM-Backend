@@ -13,8 +13,15 @@ namespace FSCM.API.Controllers;
 public sealed class BusinessConfigurationsController(WarehouseConfigurationService service) : ControllerBase
 {
     [HttpGet]
-    public Task<IReadOnlyCollection<ConfigurationResult>> List(CancellationToken cancellationToken) =>
-        service.ListCurrentConfigurationsAsync(cancellationToken);
+    public async Task<IReadOnlyCollection<ConfigurationResult>> List(CancellationToken cancellationToken)
+    {
+        var all = await service.ListCurrentConfigurationsAsync(cancellationToken);
+        // Callers reaching this via a mobile order screen must not see allocation/MLOR settings.
+        return User.IsInRole(SystemRoles.Admin) ||
+               User.HasClaim(FSCM.API.Security.PermissionAuthorizationHandler.GrantClaim, SystemScreenKeys.Config)
+            ? all
+            : all.Where(item => item.Key == BusinessConfigurationKeys.OrderStepCartons).ToArray();
+    }
 
     [HttpGet("{key}/history")]
     public Task<IReadOnlyCollection<ConfigurationResult>> History(string key, CancellationToken cancellationToken) =>
