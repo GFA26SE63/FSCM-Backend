@@ -17,7 +17,8 @@ public sealed record ReturnHandlingDocumentResult(Guid Id, string Code, string K
 
 public sealed record ComplaintTarget(Guid ShipmentId, string ShipmentCode, Guid AllocationId,
     string Sku, string ProductName, string BatchCode, string LabelCode, decimal ExpectedQuantity,
-    decimal ReceivedQuantity = 0, decimal RemainingClaimableQuantity = 0, decimal RemainingReturnableQuantity = 0);
+    decimal ReceivedQuantity = 0, decimal RemainingClaimableQuantity = 0, decimal RemainingReturnableQuantity = 0,
+    DateTimeOffset? ClaimDeadline = null);
 
 /// <summary>One evidence image of a complaint. <see cref="Url"/> is a short-lived read SAS URL.</summary>
 public sealed record ComplaintEvidenceResult(
@@ -34,6 +35,7 @@ public sealed record ComplaintResult(Guid Id, string Code, string OrderCode, str
     public string RequestType { get; init; } = "Complaint";
     public string SettlementMethod { get; init; } = "DebtOffset";
     public string? ApprovedSettlementMethod { get; init; }
+    public string? OrderPaymentMethod { get; init; }
     public decimal RequestedQuantity { get; init; }
     public decimal? ApprovedQuantity { get; init; }
     public decimal? HandledQuantity { get; init; }
