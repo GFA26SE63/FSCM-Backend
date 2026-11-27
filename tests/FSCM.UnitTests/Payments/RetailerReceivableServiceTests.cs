@@ -1,5 +1,7 @@
 using FSCM.Application.Features.Payments;
+using FSCM.Application.Features.Storage;
 using FSCM.Domain.Entities;
+using FSCM.UnitTests.Storage;
 
 namespace FSCM.UnitTests.Payments;
 
@@ -48,11 +50,24 @@ public sealed class RetailerReceivableServiceTests
     }
 
     [Fact]
+    public async Task Refund_history_carries_a_signed_proof_url_but_never_an_unsafe_key()
+    {
+        var view = CreateView();
+        var service = CreateService(view);
+
+        var result = await service.GetByOrderAsync(RetailerUserId, view.Payment.Order.Id, default);
+
+        var refunds = result.Refunds.ToArray();
+        Assert.Equal("https://fake.blob/ClaimEvidence/claim/proof-1.jpg?sig=test", refunds[0].EvidenceUrl);
+        Assert.Null(refunds[1].EvidenceUrl);
+    }
+
+    [Fact]
     public async Task Does_not_expose_another_retailers_order()
     {
         var view = CreateView();
         var service = new RetailerReceivableService(new FakeStore([], null),
-            new FixedTimeProvider(Now));
+            new FixedTimeProvider(Now), new ImageUploadService(new FakeImageStorage()));
 
         var exception = await Assert.ThrowsAsync<PaymentOperationException>(() =>
             service.GetByOrderAsync(RetailerUserId, view.Payment.Order.Id, default));
@@ -61,7 +76,8 @@ public sealed class RetailerReceivableServiceTests
     }
 
     private static RetailerReceivableService CreateService(params RetailerReceivableView[] views) =>
-        new(new FakeStore(views, views.FirstOrDefault()), new FixedTimeProvider(Now));
+        new(new FakeStore(views, views.FirstOrDefault()), new FixedTimeProvider(Now),
+            new ImageUploadService(new FakeImageStorage()));
 
     private static RetailerReceivableView CreateView(
         string orderCode = "DH-000002", DateOnly? dueDate = null)
@@ -93,8 +109,10 @@ public sealed class RetailerReceivableServiceTests
             [new(Guid.NewGuid(), "BankTransfer", 700_000, PaymentStatuses.Paid, Now, "FT-001", null)],
             [new(Guid.NewGuid(), "Open", 50_000, Now.AddDays(-1), null, "Thiếu hàng")],
             [
-                new(Guid.NewGuid(), 40_000, "AwaitingVerification", Now, "RF-001", null, "Chờ xác minh"),
-                new(Guid.NewGuid(), 20_000, "Refunded", Now.AddDays(-1), "RF-000", Now, "Đã hoàn")
+                new(Guid.NewGuid(), 40_000, "AwaitingVerification", Now, "RF-001", null, "Chờ xác minh",
+                    "blob:claim/proof-1.jpg"),
+                new(Guid.NewGuid(), 20_000, "Refunded", Now.AddDays(-1), "RF-000", Now, "Đã hoàn",
+                    "blob:../secret.jpg")
             ]);
     }
 
