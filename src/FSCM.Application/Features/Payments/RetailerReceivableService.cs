@@ -1,8 +1,11 @@
-﻿namespace FSCM.Application.Features.Payments;
+﻿using FSCM.Application.Features.Storage;
+
+namespace FSCM.Application.Features.Payments;
 
 public sealed class RetailerReceivableService(
     IRetailerReceivableStore store,
-    TimeProvider timeProvider)
+    TimeProvider timeProvider,
+    ImageUploadService images)
 {
     private static readonly TimeSpan VietnamOffset = TimeSpan.FromHours(7);
 
@@ -60,7 +63,23 @@ public sealed class RetailerReceivableService(
     private DateOnly Today() =>
         DateOnly.FromDateTime(timeProvider.GetUtcNow().ToOffset(VietnamOffset).DateTime);
 
-    private static RetailerReceivableResult ToResult(RetailerReceivableView view, DateOnly today)
+    /// <summary>
+    /// Signs the refund's own transfer-proof image (same "blob:claim/…" rule as the refund
+    /// evidence URL endpoint). The view is already scoped to the caller's order.
+    /// </summary>
+    private string? EvidenceUrl(string? reference)
+    {
+        if (string.IsNullOrWhiteSpace(reference) || !reference.StartsWith(EvidencePrefix, StringComparison.Ordinal))
+            return null;
+        var key = reference[EvidencePrefix.Length..];
+        return key.Contains("..") || !key.StartsWith("claim/", StringComparison.Ordinal)
+            ? null
+            : images.GetReadUrl(ImageCategory.ClaimEvidence, key);
+    }
+
+    private const string EvidencePrefix = "blob:";
+
+    private RetailerReceivableResult ToResult(RetailerReceivableView view, DateOnly today)
     {
         var payment = view.Payment.Payment;
         var pendingDisputed = view.Disputes.Where(item => item.ResolvedAt == null)
@@ -80,7 +99,8 @@ public sealed class RetailerReceivableService(
             payment.ConfirmedAmount, outstanding, pendingDisputed, collectible,
             payment.DueDate, overdue, daysOverdue, view.Payment.PendingRefundAmount,
             view.Payment.RefundedAmount, refundDue, view.Collections, view.Disputes,
-            view.Refunds, payment.UpdatedAt);
+            view.Refunds.Select(item => item with { EvidenceUrl = EvidenceUrl(item.EvidenceUrl) }).ToArray(),
+            payment.UpdatedAt);
     }
 
     private static void Validate(RetailerReceivableFilter filter)
