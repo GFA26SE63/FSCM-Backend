@@ -415,6 +415,35 @@ public sealed class ShipmentServiceTests
         Assert.Empty(fixture.Store.Receipts);
     }
 
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public async Task Receipt_rejects_lines_or_batches_outside_the_selected_shipment_without_side_effects(
+        bool wrongLine, bool wrongBatch)
+    {
+        var fixture = new Fixture();
+        var (shipment, line, batchId, qrCode) = fixture.AddDeliveringShipment(quantity: 8);
+        var version = shipment.Version;
+
+        var exception = await Assert.ThrowsAsync<ShipmentOperationException>(() =>
+            fixture.Service.ConfirmReceiptAsync(shipment.Id,
+                new ConfirmShipmentReceiptData([qrCode],
+                    [new ConfirmShipmentReceiptLineData(
+                        wrongLine ? Guid.NewGuid() : line.OrderLineId,
+                        wrongBatch ? Guid.NewGuid() : batchId, 8, 0)],
+                    version, null),
+                "receipt-foreign-reference", fixture.RetailerUserId, SystemRoles.Retailer, default));
+
+        Assert.Equal("validation_error", exception.Code);
+        Assert.Empty(fixture.Store.Receipts);
+        Assert.Empty(fixture.Store.InventoryTransactions);
+        Assert.Empty(fixture.Store.LabelEvents);
+        Assert.Equal(ShipmentStatuses.Delivering, shipment.Status);
+        Assert.Equal(version, shipment.Version);
+        Assert.Equal(QrLabelStatuses.InTransit, fixture.Store.Labels.Single().Label.Status);
+    }
+
     [Fact]
     public async Task Receipt_rejects_out_of_scope_orders_and_wrong_qr_without_side_effects()
     {
