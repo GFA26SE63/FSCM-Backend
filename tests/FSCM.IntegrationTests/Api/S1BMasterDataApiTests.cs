@@ -234,6 +234,38 @@ public sealed class S1BMasterDataApiTests
 
     }
 
+    [Fact]
+    public async Task Mobile_order_screen_reads_only_order_step_configuration()
+    {
+        using var identity = new IdentityAuthorizationTests.IdentityApiFactory();
+        var warehouseStore = new TestWarehouseStore(identity.Admin.Id, identity.WarehouseKeeper);
+        foreach (var (key, value) in new[] { ("order.order_step_cartons", "5"), ("mlor.default_ratio", "0.3") })
+            warehouseStore.Current.Add(new SystemConfiguration
+            {
+                Id = Guid.NewGuid(), ConfigKey = key, ConfigValue = value, ValueType = "number", Version = 1,
+                IsActive = true, EffectiveFrom = TestMapStore.Now, CreatedAt = TestMapStore.Now, UpdatedAt = TestMapStore.Now
+            });
+        using var factory = identity.WithWebHostBuilder(builder => builder.ConfigureTestServices(services =>
+        {
+            services.RemoveAll<IWarehouseConfigurationStore>();
+            services.AddSingleton<IWarehouseConfigurationStore>(warehouseStore);
+        }));
+        var retailer = identity.AddTestUser("rt-order-step@test.local", FSCM.Domain.Authorization.SystemRoles.Retailer);
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization = Bearer(retailer, identity);
+
+        identity.SetPermissions(FSCM.Domain.Authorization.SystemRoles.Retailer, "mobile-rt-orders");
+        Assert.Equal(System.Net.HttpStatusCode.Forbidden, (await client.GetAsync("/api/v1/configurations")).StatusCode);
+
+        identity.SetPermissions(FSCM.Domain.Authorization.SystemRoles.Retailer,
+            "mobile-rt-order-create", "api:BusinessConfigurations.List");
+        var rows = await client.GetFromJsonAsync<JsonElement>("/api/v1/configurations");
+        Assert.Equal("order.order_step_cartons", Assert.Single(rows.EnumerateArray()).GetProperty("key").GetString());
+
+        client.DefaultRequestHeaders.Authorization = Bearer(identity.Admin, identity);
+        Assert.Equal(2, (await client.GetFromJsonAsync<JsonElement>("/api/v1/configurations")).GetArrayLength());
+    }
+
     private static AuthenticationHeaderValue Bearer(
         UserAccount user, IdentityAuthorizationTests.IdentityApiFactory factory) =>
         new("Bearer", factory.CreateToken(user));
@@ -334,7 +366,8 @@ public sealed class S1BMasterDataApiTests
         public Task<ProductCategory?> FindCategoryAsync(Guid categoryId, CancellationToken cancellationToken) => Task.FromResult<ProductCategory?>(null);
         public void AddMlor(RetailerProductMlor mlor) { }
         public void AddAuditLog(AuditLog auditLog) => AuditLogs.Add(auditLog);
-        public Task<IReadOnlyCollection<SystemConfiguration>> ListCurrentConfigurationsAsync(CancellationToken cancellationToken) => Task.FromResult<IReadOnlyCollection<SystemConfiguration>>([]);
+        public List<SystemConfiguration> Current { get; } = [];
+        public Task<IReadOnlyCollection<SystemConfiguration>> ListCurrentConfigurationsAsync(CancellationToken cancellationToken) => Task.FromResult<IReadOnlyCollection<SystemConfiguration>>(Current.ToArray());
         public Task<IReadOnlyCollection<SystemConfiguration>> ListConfigurationHistoryAsync(string key, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyCollection<SystemConfiguration>>([]);
         public Task<SystemConfiguration?> FindCurrentConfigurationAsync(string key, CancellationToken cancellationToken) => Task.FromResult<SystemConfiguration?>(null);
         public void AddConfiguration(SystemConfiguration configuration) { }
