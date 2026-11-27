@@ -219,7 +219,7 @@ public sealed class ShipmentService(
         var order = views.FirstOrDefault()?.Order
             ?? await store.FindOrderForUpdateAsync(orderId, cancellationToken)
             ?? throw ShipmentOperationException.NotFound("Order was not found.");
-        return await BuildReadinessAsync(order, views, cancellationToken);
+        return await BuildReadinessAsync(order, views, cancellationToken, actorUserId, actorRole);
     }
 
     /// <summary>
@@ -234,7 +234,8 @@ public sealed class ShipmentService(
     /// single part (see <see cref="ConfirmIssueAsync"/>).
     /// </summary>
     private async Task<OrderShipmentReadinessResult> BuildReadinessAsync(
-        SalesOrder order, IReadOnlyCollection<ShipmentView> views, CancellationToken cancellationToken)
+        SalesOrder order, IReadOnlyCollection<ShipmentView> views, CancellationToken cancellationToken,
+        Guid? actorUserId = null, string? actorRole = null)
     {
         var existing = views
             .Select(item => new ShipmentReadinessPartResult(
@@ -244,6 +245,14 @@ public sealed class ShipmentService(
 
         var covered = existing.Select(item => item.WarehouseId).ToHashSet();
         var expected = await store.ListExpectedWarehousesAsync(order.Id, cancellationToken);
+        if (actorRole == SystemRoles.WarehouseKeeper && actorUserId.HasValue)
+        {
+            var scoped = new List<ExpectedWarehousePart>();
+            foreach (var warehouse in expected)
+                if (await store.CanAccessWarehouseAsync(actorUserId.Value, actorRole, warehouse.WarehouseId, cancellationToken))
+                    scoped.Add(warehouse);
+            expected = scoped;
+        }
         var pending = expected
             .Where(item => !covered.Contains(item.WarehouseId))
             .Select(item => new ShipmentReadinessPartResult(

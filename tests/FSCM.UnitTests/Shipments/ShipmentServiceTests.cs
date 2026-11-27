@@ -683,6 +683,21 @@ public sealed class ShipmentServiceTests
     }
 
     [Fact]
+    public async Task Keeper_readiness_excludes_pending_warehouses_outside_scope()
+    {
+        var fixture = new Fixture();
+        fixture.Store.ViewableOrders.Add(fixture.Order.Id);
+        fixture.Store.DeniedWarehouseId = fixture.WarehouseB;
+        fixture.AddOpenPickingList(fixture.WarehouseA, "WH-A");
+        fixture.AddOpenPickingList(fixture.WarehouseB, "WH-B");
+        var result = await fixture.Service.GetOrderReadinessAsync(
+            fixture.Order.Id, Guid.NewGuid(), SystemRoles.WarehouseKeeper, CancellationToken.None);
+        Assert.Single(result.Parts);
+        Assert.Equal(fixture.WarehouseA, result.Parts.Single().WarehouseId);
+        Assert.DoesNotContain(result.BlockingReasons, reason => reason.Contains("WH-B"));
+    }
+
+    [Fact]
     public async Task Readiness_names_the_warehouse_that_is_holding_the_order_up()
     {
         var fixture = new Fixture();
