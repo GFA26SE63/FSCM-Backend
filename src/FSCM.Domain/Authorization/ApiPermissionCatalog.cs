@@ -230,7 +230,7 @@ public static class ApiPermissionCatalog
         new("Shipments", "FlagException", "Admin", "Operator"),
         new("Shipments", "ResolveException", "Admin", "Operator"),
         new("Shipments", "Assign", "Admin", "Operator"),
-        new("Shipments", "Dispatch", "Admin", "Operator"),
+        new("Shipments", "Dispatch", "Admin", "Operator", "WarehouseKeeper"),
         new("Shipments", "ConfirmReceipt", "Admin", "Retailer"),
         new("TerritoryAccess", "CheckOrderEligibility", "Admin", "Sales"),
         new("TerritoryAssignments", "ListSales", "Admin", "SalesManager"),

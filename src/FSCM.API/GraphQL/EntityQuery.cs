@@ -25,6 +25,11 @@ namespace FSCM.API.GraphQL;
 /// </summary>
 public sealed class EntityQuery(EntityQueryAccess access)
 {
+    public Task<IReadOnlyCollection<FSCM.Application.Features.Picking.CurrentPickingResult>> DeliveryPickingReads(
+        [Service] FSCM.Application.Features.Picking.CurrentPickingService service,
+        CancellationToken cancellationToken = default) =>
+        service.ListAsync(access.UserId, access.Role, null, null, cancellationToken);
+
     public Task<FSCM.Application.Features.Shipments.BusyTransportResult> BusyTransportRead(
         [Service] FSCM.Application.Features.Shipments.ShipmentService service,
         CancellationToken cancellationToken = default) => service.GetBusyTransportAsync(access.Role, cancellationToken);

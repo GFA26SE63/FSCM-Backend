@@ -64,7 +64,7 @@ public static class EntityScreenResources
         "ShelfLifeDiscountTables" or "ShelfLifeDiscountTiers" => "ShelfLifeDiscounts",
         "Batches" or "InventoryBalances" or "InventoryTransactions" or "ExpirySweepRuns" => "Inventory",
         "BatchQrLabels" or "QrLabelEvents" => "QrLabels",
-        "PickingLists" or "PickingItems" or "RunPickingLists" or "RunPickingGathers" or "RunPickingSplits" => "PickingLists",
+        "DeliveryPickingReads" or "PickingLists" or "PickingItems" or "RunPickingLists" or "RunPickingGathers" or "RunPickingSplits" => "PickingLists",
         "Payments" or "PaymentReceipts" or "PaymentReceiptAllocations" => "Payments",
         "RetailerDebtPayOsCheckouts" or "RetailerDebtPayOsAllocations" => "RetailerReceivables",
         "Deliveries" or "Shipments" or "ShipmentReadinessRead" or "BusyTransportRead" => "Shipments",

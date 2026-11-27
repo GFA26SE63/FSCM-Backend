@@ -17,6 +17,46 @@ namespace FSCM.IntegrationTests.Persistence;
 public sealed class ConfiguredTransportReadTests
 {
     [ConfiguredDatabaseFact]
+    public async Task Keeper_delivery_screen_grants_departure_but_enforces_live_warehouse_scope()
+    {
+        await using var db = new AppDbContextFactory().CreateDbContext([]);
+        Assert.Empty(await db.Database.GetPendingMigrationsAsync());
+        Assert.True(await db.ScreenApiMappings.AnyAsync(m => m.BusinessRole == SystemRoles.WarehouseKeeper &&
+            m.ScreenCode == "readiness" && m.ApiCode == "api:Shipments.Dispatch"));
+        Assert.False(await db.ScreenApiMappings.AnyAsync(m => m.BusinessRole == SystemRoles.WarehouseKeeper &&
+            m.ScreenCode == "readiness" && (m.ApiCode == "api:Shipments.Assign" || m.ApiCode == "api:Shipments.ResolveException")));
+        Assert.False(await db.RoleDefinitionRecords.AnyAsync(r => r.BaseRole == SystemRoles.WarehouseKeeper &&
+            db.RolePermissionRecords.Any(p => p.RoleId == r.Id && p.PermissionKey == "warehouse-outbound") &&
+            !db.RolePermissionRecords.Any(p => p.RoleId == r.Id && p.PermissionKey == "readiness")));
+        using var identity = new IdentityAuthorizationTests.IdentityApiFactory();
+        identity.SetPermissions(SystemRoles.WarehouseKeeper, "readiness", "api:Shipments.Dispatch");
+        using var factory = identity.WithWebHostBuilder(builder => builder.ConfigureTestServices(services =>
+        {
+            services.RemoveAll<AppDbContext>();
+            services.AddSingleton(db);
+        }));
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", identity.CreateToken(identity.WarehouseKeeper));
+        var read = await client.PostAsJsonAsync("/graphql", new
+        {
+            query = "query { entities { deliveryPickingReads { id orderId } shipments(first: 1) { nodes { id warehouseId status } } salesOrders(first: 1) { nodes { id orderCode } } warehouses(first: 1) { nodes { id code } } } }"
+        });
+        Assert.Equal(HttpStatusCode.OK, read.StatusCode);
+        using var json = JsonDocument.Parse(await read.Content.ReadAsStringAsync());
+        Assert.False(json.RootElement.TryGetProperty("errors", out _), json.RootElement.ToString());
+        var missing = await client.PostAsJsonAsync($"/api/v1/shipments/{Guid.NewGuid()}/dispatch", new { expectedVersion = 0 });
+        Assert.Equal(HttpStatusCode.NotFound, missing.StatusCode);
+        // This test account has no warehouse assignments. Even a known trip must be rejected
+        // before checking its status or returning an idempotent successful departure.
+        var trip = await db.ShipmentRecords.AsNoTracking().FirstOrDefaultAsync();
+        if (trip is not null)
+        {
+            var forbidden = await client.PostAsJsonAsync($"/api/v1/shipments/{trip.Id}/dispatch", new { expectedVersion = trip.Version });
+            Assert.Equal(HttpStatusCode.Forbidden, forbidden.StatusCode);
+        }
+    }
+
+    [ConfiguredDatabaseFact]
     public async Task Dispatch_screen_reads_resource_availability_and_lifecycle_without_transfer_screen_grants()
     {
         await using var db = new AppDbContextFactory().CreateDbContext([]);

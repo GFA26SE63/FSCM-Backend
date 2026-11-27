@@ -542,3 +542,12 @@ Assignment and dispatch remain REST commands. Transport eligibility and availabi
 checked again at departure. Migration `20261127100000_MapDeliveryDispatchScreen` adds the
 Dispatch API mapping to the readiness screen and backfills that permission for existing
 Admin/Operator roles which already have the screen. It changes no business data or schema.
+
+Warehouse keepers with the `readiness` screen may start already assigned delivery trips
+from their currently assigned warehouses. The server checks warehouse access before both
+initial departure and idempotent replay. Vehicle/driver assignment and shipment exception
+resolution remain Admin/Operator operations. This change adds no transfer-dispatch access. Migration
+`20261127110000_AllowWarehouseKeeperDeliveryDispatch` adds the screen to existing keeper
+roles with outbound access and grants its read/departure dependencies. Restricted custom
+roles without outbound/readiness access receive no additional screen access. No business
+data is seeded and no warehouse assignments are changed.

@@ -185,8 +185,11 @@ public sealed class ShipmentServiceTests
         Assert.Equal("forbidden", exception.Code);
     }
 
-    [Fact]
-    public async Task Dispatch_moves_picked_labels_and_order_without_deducting_stock_twice()
+    [Theory]
+    [InlineData(SystemRoles.Admin)]
+    [InlineData(SystemRoles.Operator)]
+    [InlineData(SystemRoles.WarehouseKeeper)]
+    public async Task Dispatch_moves_picked_labels_and_order_without_deducting_stock_twice(string actorRole)
     {
         var fixture = new Fixture();
         var (shipment, _, hold) = fixture.AddReadyShipment(fixture.WarehouseA, 8);
@@ -206,7 +209,7 @@ public sealed class ShipmentServiceTests
 
         var result = await fixture.Service.DispatchAsync(
             shipment.Id, new DispatchShipmentData(assigned.Version), Guid.NewGuid(),
-            SystemRoles.Operator, default);
+            actorRole, default);
 
         Assert.Equal(ShipmentStatuses.Delivering, result.Status);
         Assert.Equal(OrderStatuses.Delivering, fixture.Order.Status);
@@ -783,6 +786,37 @@ public sealed class ShipmentServiceTests
         Assert.Empty(fixture.Store.LabelEvents);
     }
 
+    [Theory]
+    [InlineData(ShipmentStatuses.Issued)]
+    [InlineData(ShipmentStatuses.Delivering)]
+    public async Task Keeper_cannot_dispatch_or_replay_a_trip_from_an_unassigned_warehouse(string status)
+    {
+        var fixture = new Fixture();
+        var (shipment, balance, _) = fixture.AddReadyShipment(fixture.WarehouseB, 8);
+        shipment.Status = status;
+        fixture.Store.DeniedWarehouseId = fixture.WarehouseB;
+        var version = shipment.Version;
+        var error = await Assert.ThrowsAsync<ShipmentOperationException>(() => fixture.Service.DispatchAsync(
+            shipment.Id, new DispatchShipmentData(version), Guid.NewGuid(), SystemRoles.WarehouseKeeper, default));
+        Assert.Equal("forbidden", error.Code);
+        Assert.Equal(status, shipment.Status);
+        Assert.Equal(version, shipment.Version);
+        Assert.Equal(100, balance.PhysicalQuantity);
+        Assert.Empty(fixture.Store.LabelEvents);
+    }
+
+    [Theory]
+    [InlineData(SystemRoles.Retailer)]
+    [InlineData(SystemRoles.Sales)]
+    [InlineData(SystemRoles.SalesManager)]
+    public async Task Delivery_start_rejects_non_transport_roles(string role)
+    {
+        var fixture = new Fixture();
+        var error = await Assert.ThrowsAsync<ShipmentOperationException>(() => fixture.Service.DispatchAsync(
+            Guid.NewGuid(), new DispatchShipmentData(0), Guid.NewGuid(), role, default));
+        Assert.Equal("forbidden", error.Code);
+    }
+
     private sealed class Fixture
     {
         public Guid WarehouseA { get; } = Guid.NewGuid();
@@ -930,6 +964,7 @@ public sealed class ShipmentServiceTests
     private sealed class FakeStore(SalesOrder order) : IShipmentStore
     {
         public bool TransportBusy { get; set; }
+        public Guid? DeniedWarehouseId { get; set; }
         public Task<BusyTransportResult> ListBusyTransportAsync(CancellationToken ct) =>
             Task.FromResult(new BusyTransportResult([], []));
         public Task<bool> IsTransportResourceBusyAsync(Guid driverId, Guid vehicleId, Guid? excludedShipmentId, CancellationToken ct) =>
@@ -952,7 +987,7 @@ public sealed class ShipmentServiceTests
         private int _nextCode = 1000;
 
         public Task<bool> CanAccessWarehouseAsync(Guid userId, string role, Guid warehouseId, CancellationToken cancellationToken) =>
-            Task.FromResult(true);
+            Task.FromResult(role is SystemRoles.Admin or SystemRoles.Operator || DeniedWarehouseId != warehouseId);
 
         public Task<bool> CanViewOrderAsync(Guid orderId, Guid userId, string role, CancellationToken cancellationToken) =>
             Task.FromResult(role is SystemRoles.Admin or SystemRoles.Operator || ViewableOrders.Contains(orderId));

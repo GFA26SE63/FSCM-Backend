@@ -558,11 +558,14 @@ public sealed class ShipmentService(
         Guid id, DispatchShipmentData data, Guid actorUserId, string actorRole,
         CancellationToken cancellationToken)
     {
-        EnsureOperator(actorRole);
+        if (actorRole is not (SystemRoles.Admin or SystemRoles.Operator or SystemRoles.WarehouseKeeper))
+            throw ShipmentOperationException.Forbidden("Only Admin, Operator or the assigned warehouse keeper can start delivery.");
         await store.ExecuteInTransactionAsync(async token =>
         {
             var view = await store.FindByIdAsync(id, true, token)
                 ?? throw ShipmentOperationException.NotFound("Shipment was not found.");
+            if (!await store.CanAccessWarehouseAsync(actorUserId, actorRole, view.Shipment.WarehouseId, token))
+                throw ShipmentOperationException.Forbidden("You cannot dispatch this warehouse shipments.");
             if (view.Shipment.Status == ShipmentStatuses.Delivering) return;
             if (view.Shipment.Status != ShipmentStatuses.Issued)
                 throw ShipmentOperationException.Conflict(
