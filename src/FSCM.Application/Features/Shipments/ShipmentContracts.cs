@@ -63,7 +63,19 @@ public sealed record OrderShipmentReadinessResult(
     bool PaymentSettled,
     bool HasException,
     IReadOnlyCollection<string> BlockingReasons,
-    IReadOnlyCollection<ShipmentReadinessPartResult> Parts);
+    IReadOnlyCollection<ShipmentReadinessPartResult> Parts)
+{
+    /// <summary>One dispatch per order; every expected warehouse remains represented in Parts.</summary>
+    public string DispatchStatus => Parts.Count == 0 ? "WaitingToPick"
+        : Parts.Any(part => part.Status == ShipmentStatuses.Exception) ? "Exception"
+        : Parts.All(part => part.Status == ShipmentStatuses.Received) ? "Delivered"
+        : Parts.Any(part => part.Status is ShipmentStatuses.Delivering or ShipmentStatuses.Received) ? "Delivering"
+        : Parts.All(part => part.Status == ShipmentStatuses.Issued) ? "AwaitingAssignment"
+        : Parts.Any(part => part.Status == ShipmentStatuses.WaitingToPick) ? "WaitingToPick"
+        : "Preparing";
+
+    public bool IsHistory => DispatchStatus == "Delivered";
+}
 
 public sealed record ConfirmShipmentReceiptLineData(
     Guid OrderLineId,
@@ -129,6 +141,8 @@ public sealed record ShipmentResult(
 public sealed record FlagShipmentExceptionData(string Reason, int ExpectedVersion);
 
 public sealed record AssignShipmentData(Guid DriverId, Guid VehicleId, int ExpectedVersion);
+
+public sealed record BusyTransportResult(IReadOnlyCollection<Guid> DriverIds, IReadOnlyCollection<Guid> VehicleIds);
 
 public sealed record DispatchShipmentData(int ExpectedVersion);
 

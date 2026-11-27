@@ -11,8 +11,6 @@ public sealed partial class WarehouseWorkService
     public Task<bool> AssignTransferTransportAsync(Guid id, Guid driverId, Guid vehicleId, int expectedVersion,
         Guid actor, string role, CancellationToken ct) => Atomic(async () =>
     {
-        if (role is not (SystemRoles.Admin or SystemRoles.Operator))
-            throw PickingOperationException.Forbidden("Chỉ Admin hoặc Operator được gán xe và tài xế.");
         var transfer = await db.Set<WarehouseTransfer>().SingleOrDefaultAsync(x => x.Id == id, ct)
             ?? throw PickingOperationException.NotFound("Không tìm thấy điều phối luân chuyển.");
         if (!transfer.SourceIssueDocumentId.HasValue || transfer.Status != "Approved")

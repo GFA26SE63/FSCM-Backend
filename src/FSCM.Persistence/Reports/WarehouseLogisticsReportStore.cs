@@ -20,9 +20,12 @@ public sealed class WarehouseLogisticsReportStore(AppDbContext db) : IWarehouseL
         var start = new DateTimeOffset(query.FromDate.ToDateTime(TimeOnly.MinValue), Vietnam).ToUniversalTime();
         var end = new DateTimeOffset(query.ToDate.AddDays(1).ToDateTime(TimeOnly.MinValue), Vietnam).ToUniversalTime();
 
-        var warehouseQuery = actorRole == SystemRoles.WarehouseKeeper && actorUserId.HasValue
-            ? ReportingScopeQueries.ManagedWarehouses(db, actorUserId.Value).Where(w => w.IsActive)
-            : db.WarehouseRecords.AsNoTracking().Where(w => w.IsActive);
+        // No-actor overload is reserved for internal system reads; HTTP supplies its actor.
+        var warehouseQuery = actorRole is SystemRoles.Admin or SystemRoles.Operator || (actorRole is null && !actorUserId.HasValue)
+            ? db.WarehouseRecords.AsNoTracking().Where(w => w.IsActive)
+            : actorUserId.HasValue
+                ? ReportingScopeQueries.ManagedWarehouses(db, actorUserId.Value).Where(w => w.IsActive)
+                : db.WarehouseRecords.Where(_ => false);
         if (query.RegionId.HasValue) warehouseQuery = warehouseQuery.Where(w => w.RegionId == query.RegionId.Value);
         if (query.WarehouseIds is { Count: > 0 })
         {

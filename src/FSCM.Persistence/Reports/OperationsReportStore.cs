@@ -1,3 +1,7 @@
+using FSCM.Application.Features.EntityQueries;
+using FSCM.Domain.Entities;
+using FSCM.Persistence.EntityQueries;
+using FSCM.Persistence.Identity;
 using System.Text.Json;
 using FSCM.Application.Features.Reports;
 using FSCM.Domain.Authorization;
@@ -33,24 +37,23 @@ public sealed class OperationsReportStore(AppDbContext db) : IOperationsReportSt
             _ => throw ReportOperationException.Validation("Unknown report kind.")
         };
 
-        if (actorRole == SystemRoles.SalesManager && actorUserId.HasValue)
+        // The legacy no-actor overload is an internal system read; HTTP always supplies its actor.
+        if (actorRole is not (SystemRoles.Admin or SystemRoles.Operator) && (actorRole is not null || actorUserId.HasValue))
         {
-            var groupIds = ReportingScopeQueries.ManagedGroups(db, actorUserId.Value).Select(g => g.Id);
-            if (kind is "redemptions" or "loyalty")
+            if (!actorUserId.HasValue) source = source.Where(_ => false);
+            else
             {
-                source = source.Where(r => db.RetailerSalesAssignmentRecords.Any(a =>
-                    a.RetailerId == r.RetailerId && a.IsActive && a.UnassignedAt == null && groupIds.Contains(a.SalesGroupId)));
+                var scope = await new IdentityStore(db).GetScopeAsync(actorUserId.Value, ct);
+                var access = new EntityQueryAccess(actorUserId.Value, actorRole ?? "", scope);
+                var entities = new EntityQueryService(db);
+                var orderIds = entities.Query<SalesOrder>(access).Select(o => o.Id);
+                var retailerIds = entities.Query<Retailer>(access).Select(r => r.Id);
+                source = kind == "disposals"
+                    ? source.Where(r => scope.WarehouseIds.Contains(r.RetailerId))
+                    : kind is "redemptions" or "loyalty"
+                        ? source.Where(r => retailerIds.Contains(r.RetailerId))
+                        : source.Where(r => r.OrderId.HasValue && orderIds.Contains(r.OrderId.Value));
             }
-            else if (kind is "promotions" or "claims" or "receivables")
-            {
-                source = source.Where(r => r.OrderId.HasValue && db.SalesOrderRecords.Any(o =>
-                    o.Id == r.OrderId.Value && groupIds.Contains(o.SalesGroupId)));
-            }
-        }
-        else if (actorRole == SystemRoles.WarehouseKeeper && actorUserId.HasValue && kind == "disposals")
-        {
-            var warehouseIds = ReportingScopeQueries.ManagedWarehouses(db, actorUserId.Value).Select(w => w.Id);
-            source = source.Where(r => warehouseIds.Contains(r.RetailerId));
         }
 
         if (q.RegionId.HasValue) source = source.Where(r => r.RegionId == q.RegionId);

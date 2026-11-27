@@ -41,7 +41,6 @@ public sealed class QuoteService(
         string role,
         CancellationToken ct)
     {
-        EnsureRetailer(role);
         if (role != SystemRoles.Admin && !await store.CanRetailerAccessAsync(id, actor, ct))
             throw QuoteOperationException.Forbidden("Retailer cannot access this quote.");
         var view = await store.FindAsync(id, true, ct) ?? throw QuoteOperationException.NotFound("Quote was not found.");
@@ -96,7 +95,6 @@ public sealed class QuoteService(
 
     public async Task<SalesOrderQuoteResult> RejectAsync(Guid id, int expectedVersion, string reason, Guid actor, string role, CancellationToken ct)
     {
-        EnsureRetailer(role);
         if (role != SystemRoles.Admin && !await store.CanRetailerAccessAsync(id, actor, ct))
             throw QuoteOperationException.Forbidden("Retailer cannot access this quote.");
         var view = await store.FindAsync(id, true, ct) ?? throw QuoteOperationException.NotFound("Quote was not found.");
@@ -119,11 +117,6 @@ public sealed class QuoteService(
     {
         if (order.Status != OrderStatuses.Quoted)
             throw QuoteOperationException.Conflict("Order is no longer awaiting a quote decision.");
-    }
-    private static void EnsureRetailer(string role)
-    {
-        if (role is not (SystemRoles.Admin or SystemRoles.Retailer))
-            throw QuoteOperationException.Forbidden("Only the retailer or Admin can decide a quote.");
     }
     private static string NormalizePaymentMethod(string value) => value?.Trim() switch
     {

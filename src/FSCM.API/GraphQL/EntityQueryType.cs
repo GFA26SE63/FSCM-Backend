@@ -17,24 +17,13 @@ public sealed class EntityQueryType : ObjectType<EntityQuery>
             descriptor.Field(method).Use(next => async context =>
             {
                 var principal = context.Service<IHttpContextAccessor>().HttpContext?.User;
-                var role = principal?.FindFirst(System.Security.Claims.ClaimTypes.Role)?.Value;
-                var keys = ScreenPermissionMap.Rest(resource, "List", role);
-                if (keys is not null)
-                {
-                    var authorization = context.Service<IAuthorizationService>();
-                    var allowed = false;
-                    foreach (var key in keys)
-                    {
-                        if (principal is not null && (await authorization.AuthorizeAsync(principal, null, "permission:" + key)).Succeeded)
-                        {
-                            allowed = true;
-                            break;
-                        }
-                    }
-                    if (!allowed)
-                        throw new GraphQLException(ErrorBuilder.New().SetMessage("Access denied.")
-                            .SetCode("AUTH_NOT_AUTHORIZED").Build());
-                }
+                // Notifications are an authenticated private inbox, not a delegated business screen.
+                var operation = EntityReadOperations.For(method.Name, resource);
+                if (principal?.Identity?.IsAuthenticated != true || (resource != "Notifications" &&
+                    (operation is null || !await context.Service<OperationAccess>().AllowsAsync(principal,
+                        operation.Value.Controller, operation.Value.Action, context.RequestAborted))))
+                    throw new GraphQLException(ErrorBuilder.New().SetMessage("Access denied.")
+                        .SetCode("AUTH_NOT_AUTHORIZED").Build());
                 await next(context);
             });
         }
@@ -64,10 +53,10 @@ public static class EntityScreenResources
         "ShelfLifeDiscountTables" or "ShelfLifeDiscountTiers" => "ShelfLifeDiscounts",
         "Batches" or "InventoryBalances" or "InventoryTransactions" or "ExpirySweepRuns" => "Inventory",
         "BatchQrLabels" or "QrLabelEvents" => "QrLabels",
-        "PickingLists" or "PickingItems" or "RunPickingLists" or "RunPickingGathers" or "RunPickingSplits" => "PickingLists",
+        "DeliveryPickingReads" or "PickingLists" or "PickingItems" or "RunPickingLists" or "RunPickingGathers" or "RunPickingSplits" => "PickingLists",
         "Payments" or "PaymentReceipts" or "PaymentReceiptAllocations" => "Payments",
         "RetailerDebtPayOsCheckouts" or "RetailerDebtPayOsAllocations" => "RetailerReceivables",
-        "Deliveries" or "Shipments" => "Shipments",
+        "Deliveries" or "Shipments" or "ShipmentReadinessRead" or "BusyTransportRead" => "Shipments",
         "Drivers" or "Vehicles" => "TransportDispatches",
         "Notifications" => "Notifications",
         "RetailerLoyalties" or "LoyaltyTransactions" or "LoyaltyPrograms" or "LoyaltyProgramRetailers" => "Loyalty",
@@ -80,4 +69,35 @@ public static class EntityScreenResources
         "Allocations" or "Reservations" or "StockHolds" or "AllocationRuns" or "AllocationRunOrders" or "AllocationRunLines" or "AllocationRunStocks" or "AllocationRunAllocations" or "AllocationPlanPrices" or "AllocationPlanVersions" or "AllocationLineTraces" or "AllocationTraceCandidates" or "AllocationTraceScores" => "Allocation",
         _ => "Unmapped"
     };
+}
+
+/// <summary>Explicit read contracts; never infer permission from a mutable method-name prefix.</summary>
+public static class EntityReadOperations
+{
+    public static (string Controller, string Action)? For(string field, string resource)
+    {
+        var special = field switch
+        {
+            "RoleRead" => ("Roles", "Get"),
+            "ScreenFeatures" => ("Roles", "GetScreens"),
+            "UserRead" => ("Users", "Get"),
+            "OrderRead" => ("Orders", "Get"),
+            "WarehouseProfile" => ("Warehouses", "Get"),
+            "RetailerProfile" => ("Retailers", "Get"),
+            "RetailerMlorResolution" => ("Retailers", "ResolveMlor"),
+            "PricingSnapshot" => ("Pricing", "Snapshot"),
+            "ShipmentReadinessRead" => ("Shipments", "OrderReadiness"),
+            "BusyTransportRead" => ("Shipments", "Assign"),
+            "Drivers" or "Vehicles" => ("TransportDispatches", "Read"),
+            _ => (resource, resource switch
+            {
+                "Allocation" => "Read",
+                "TransitTables" or "ShelfLifeDiscounts" => "Current",
+                "Map" => "GetLocation",
+                _ => "List"
+            })
+        };
+        return FSCM.Domain.Authorization.ApiPermissionCatalog.All.Any(p =>
+            p.Controller == special.Item1 && p.Action == special.Item2) ? special : null;
+    }
 }

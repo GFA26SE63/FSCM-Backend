@@ -19,4 +19,19 @@ public static class ReportingScopeQueries
             db.UserWarehouseAssignmentRecords.Any(a => a.UserAccountId == userId && a.WarehouseId == w.Id && a.IsActive)
             || (db.UserAccountRecords.Any(u => u.Id == userId && u.Role == SystemRoles.WarehouseKeeper && u.IsActive)
                 && db.UserRegionAssignmentRecords.Any(a => a.UserAccountId == userId && a.RegionId == w.RegionId && a.IsActive)));
+    /// <summary>Warehouse order scope survives allocation runs, picking and completed shipment history.</summary>
+    public static IQueryable<Guid> WarehouseOrderIds(AppDbContext db, Guid userId)
+    {
+        var warehouses = ManagedWarehouses(db, userId).Select(w => w.Id);
+        return db.SalesOrderRecords.Where(order =>
+            db.ShipmentRecords.Any(part => part.SalesOrderId == order.Id && warehouses.Contains(part.WarehouseId)) ||
+            db.PickingListRecords.Any(list => warehouses.Contains(list.WarehouseId) &&
+                db.PurchaseOrderRecords.Any(po => po.Id == list.PurchaseOrderId && po.SalesOrderId == order.Id)) ||
+            db.AllocationRecords.Any(allocation => warehouses.Contains(allocation.WarehouseId) &&
+                db.SalesOrderLineRecords.Any(line => line.Id == allocation.SalesOrderLineId && line.SalesOrderId == order.Id)) ||
+            db.AllocationRunAllocationRecords.Any(allocation => warehouses.Contains(allocation.WarehouseId) &&
+                db.AllocationRunLineRecords.Any(runLine => runLine.Id == allocation.AllocationRunLineId &&
+                    db.SalesOrderLineRecords.Any(line => line.Id == runLine.SalesOrderLineId && line.SalesOrderId == order.Id))))
+            .Select(order => order.Id);
+    }
 }

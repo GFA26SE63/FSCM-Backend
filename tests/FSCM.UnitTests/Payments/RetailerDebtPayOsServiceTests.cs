@@ -8,6 +8,19 @@ namespace FSCM.UnitTests.Payments;
 public sealed class RetailerDebtPayOsServiceTests
 {
     [Fact]
+    public async Task Checkout_replay_revalidates_the_linked_retailer_before_returning_the_payment_link()
+    {
+        var fixture = new Fixture();
+        var service = fixture.CreateService();
+        var request = new CreateRetailerDebtPayOsCheckoutData(RetailerDebtCheckoutModes.Selected, [fixture.Payment.Id]);
+        await service.CreateAsync(request, "private-key", fixture.UserId, SystemRoles.Retailer, default);
+        var error = await Assert.ThrowsAsync<PaymentOperationException>(() => service.CreateAsync(
+            request, "private-key", Guid.NewGuid(), SystemRoles.Retailer, default));
+        Assert.Equal("forbidden", error.Code);
+        Assert.Equal(1, fixture.Gateway.CreateCount);
+    }
+
+    [Fact]
     public async Task Selected_checkout_snapshots_server_collectible_and_replays_idempotently()
     {
         var fixture = new Fixture();

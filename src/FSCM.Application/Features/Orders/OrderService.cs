@@ -34,8 +34,6 @@ public sealed class OrderService(
         CancellationToken cancellationToken,
         string actorRole = SystemRoles.Sales)
     {
-        if (actorRole is not (SystemRoles.Admin or SystemRoles.Sales or SystemRoles.Retailer))
-            throw OrderOperationException.Forbidden("Role cannot create orders.");
         var normalized = Normalize(data);
         var requestHash = ComputeRequestHash(normalized, salesUserId);
         var existing = await store.FindByClientOrderKeyAsync(normalized.ClientOrderKey, cancellationToken);
@@ -219,8 +217,6 @@ public sealed class OrderService(
 
     public async Task<OrderDetailResult> RetryAllocationAsync(Guid orderId, int version, Guid actor, string role, CancellationToken ct)
     {
-        if (role is not (SystemRoles.Admin or SystemRoles.Operator or SystemRoles.Sales or SystemRoles.Retailer))
-            throw OrderOperationException.Forbidden("Role cannot retry allocation.");
         var view = await GetViewableAsync(orderId, actor, role, ct);
         if (view.Order.Status is not (OrderStatuses.Allocating or OrderStatuses.AllocationFailed or OrderStatuses.AllocationConflict))
             return MaskForRole(ToDetail(view), role);
@@ -236,7 +232,6 @@ public sealed class OrderService(
         OrderListQuery query,
         CancellationToken cancellationToken)
     {
-        ValidateReadRole(actorRole);
         if (!string.IsNullOrWhiteSpace(query.Status) && !OrderStatusSet.Contains(query.Status))
         {
             throw OrderOperationException.Validation("Order status filter is invalid.");
@@ -258,7 +253,6 @@ public sealed class OrderService(
         string actorRole,
         CancellationToken cancellationToken)
     {
-        ValidateReadRole(actorRole);
         var view = await store.FindAsync(orderId, false, cancellationToken)
             ?? throw OrderOperationException.NotFound("Order was not found.");
         if (!await store.CanViewAsync(view, actorUserId, actorRole, cancellationToken))
@@ -275,7 +269,6 @@ public sealed class OrderService(
         string actorRole,
         CancellationToken cancellationToken)
     {
-        ValidateReadRole(actorRole);
         var normalizedCode = orderCode.Trim().ToUpperInvariant();
         if (normalizedCode.Length is < 3 or > 50)
             throw OrderOperationException.Validation("Order code is invalid.");
@@ -305,8 +298,6 @@ public sealed class OrderService(
         CancellationToken cancellationToken)
     {
         if (actorRole is SystemRoles.Admin or SystemRoles.Operator) return;
-        if (actorRole is not (SystemRoles.Sales or SystemRoles.Retailer))
-            throw OrderOperationException.Forbidden("Role cannot request an order price snapshot.");
         if (actorRole == SystemRoles.Retailer && !retailerId.HasValue)
             throw OrderOperationException.Forbidden("Retailer pricing requires the linked store.");
         if (!retailerId.HasValue) return;
@@ -330,16 +321,14 @@ public sealed class OrderService(
         string? reason,
         CancellationToken cancellationToken)
     {
-        if (actorRole is not (SystemRoles.Sales or SystemRoles.Operator or SystemRoles.Admin))
-        {
-            throw OrderOperationException.Forbidden("Role cannot withdraw orders.");
-        }
 
         reason = CleanOptional(reason, 1_000);
         await store.ExecuteInTransactionAsync(async transactionCancellationToken =>
         {
             var view = await store.FindAsync(orderId, true, transactionCancellationToken)
                 ?? throw OrderOperationException.NotFound("Order was not found.");
+            if (!await store.CanViewAsync(view, actorUserId, actorRole, transactionCancellationToken))
+                throw OrderOperationException.Forbidden("User cannot access this order.");
             // Withdraw is idempotent and only valid before allocation commits a reservation.
             if (view.Order.Status == OrderStatuses.Withdrawn) return;
             if (actorRole == SystemRoles.Sales &&
@@ -587,7 +576,6 @@ public sealed class OrderService(
         string actorRole,
         CancellationToken cancellationToken)
     {
-        ValidateReadRole(actorRole);
         var order = await store.FindAsync(orderId, false, cancellationToken)
             ?? throw OrderOperationException.NotFound("Order was not found.");
         if (!await store.CanViewAsync(order, actorUserId, actorRole, cancellationToken))
@@ -698,15 +686,6 @@ public sealed class OrderService(
         if (paymentMethod == OrderPaymentMethods.Credit && retailerCreditTermDays is not (7 or 14 or 30))
         {
             throw OrderOperationException.Conflict("Retailer is not eligible for an approved credit term.");
-        }
-    }
-
-    private static void ValidateReadRole(string role)
-    {
-        if (role is not (SystemRoles.Admin or SystemRoles.Operator or SystemRoles.SalesManager or
-            SystemRoles.Sales or SystemRoles.WarehouseKeeper or SystemRoles.Retailer))
-        {
-            throw OrderOperationException.Forbidden("Role cannot read orders.");
         }
     }
 

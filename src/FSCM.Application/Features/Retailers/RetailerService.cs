@@ -32,10 +32,10 @@ public sealed class RetailerService(
         if (page < 1 || pageSize is < 1 or > 100)
             throw RetailerOperationException.Validation("Page must be at least 1 and page size must be between 1 and 100.");
         if (!string.IsNullOrWhiteSpace(scope) &&
-            (!scope.Equals("mine", StringComparison.OrdinalIgnoreCase) || actorRole != "Sales"))
-            throw RetailerOperationException.Validation("Scope 'mine' is only available to Sales users.");
+            !scope.Equals("mine", StringComparison.OrdinalIgnoreCase))
+            throw RetailerOperationException.Validation("Scope must be 'mine' when provided.");
         IReadOnlyCollection<RetailerDetails> items = await ListAsync(actorUserId, actorRole, status, cancellationToken);
-        // scope=mine: only the declarations this Sales user created (Mobile "Khai báo retailer" list).
+        // scope=mine: only the declarations the actor created (Mobile "Khai báo retailer" list).
         if (!string.IsNullOrWhiteSpace(scope))
             items = items.Where(item => item.DeclaredByUserId == actorUserId).ToArray();
         search = string.IsNullOrWhiteSpace(search) ? null : search.Trim();
@@ -210,8 +210,6 @@ public sealed class RetailerService(
         Guid retailerId, Guid actorUserId, string actorRole, UpdateRetailerProfileData data,
         CancellationToken cancellationToken)
     {
-        if (actorRole != SystemRoles.Admin)
-            throw RetailerOperationException.Forbidden("Only Admin can update a retailer profile.");
         var retailer = await store.FindForUpdateAsync(retailerId, cancellationToken)
             ?? throw RetailerOperationException.NotFound("Retailer was not found.");
         var input = Validate(data.Name, data.ContactName, data.Phone, data.Email, data.Address,

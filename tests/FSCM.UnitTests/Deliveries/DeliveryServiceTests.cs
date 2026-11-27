@@ -53,16 +53,12 @@ public sealed class DeliveryServiceTests
     }
 
     [Fact]
-    public async Task Create_driver_requires_operator_role()
+    public async Task Delegated_driver_creation_retains_warehouse_validation()
     {
         var fixture = new Fixture();
-
-        var exception = await Assert.ThrowsAsync<DeliveryOperationException>(() =>
-            fixture.Service.CreateDriverAsync(
-                new(fixture.Warehouse.Id, null, "Không đủ quyền", "0912000055", "GPLX-C-055"),
-                SystemRoles.Sales, default));
-
-        Assert.Equal("forbidden", exception.Code);
+        var result = await fixture.Service.CreateDriverAsync(
+            new(fixture.Warehouse.Id, null, "Tài xế", "0912000055", "GPLX-C-055"), SystemRoles.Sales, default);
+        Assert.Equal(fixture.Warehouse.Id, result.WarehouseId);
     }
 
     [Fact]

@@ -32,14 +32,8 @@ public sealed class PickingStore(AppDbContext dbContext) : IPickingStore
         var query = dbContext.PickingListRecords.AsNoTracking().AsQueryable();
         if (warehouseId.HasValue) query = query.Where(item => item.WarehouseId == warehouseId.Value);
         if (!string.IsNullOrWhiteSpace(status)) query = query.Where(item => item.Status == status);
-        if (role == SystemRoles.WarehouseKeeper)
-        {
-            query = query.Where(item => ReportingScopeQueries.ManagedWarehouses(dbContext, userId).Select(w => w.Id).Contains(item.WarehouseId));
-        }
-        else if (role is not (SystemRoles.Admin or SystemRoles.Operator))
-        {
-            query = query.Where(_ => false);
-        }
+        if (role is not (SystemRoles.Admin or SystemRoles.Operator))
+            query = query.Where(item => ReportingScopeQueries.ManagedWarehouses(dbContext, userId).Any(w => w.Id == item.WarehouseId));
 
         var codes = await query.OrderByDescending(item => item.CreatedAt)
             .Select(item => item.PickingCode).ToArrayAsync(cancellationToken);

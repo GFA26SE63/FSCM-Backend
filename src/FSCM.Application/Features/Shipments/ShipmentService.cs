@@ -33,11 +33,15 @@ public sealed class ShipmentService(
 {
     private static readonly TimeSpan VietnamOffset = TimeSpan.FromHours(7);
 
+    public Task<BusyTransportResult> GetBusyTransportAsync(string actorRole, CancellationToken ct, Guid actorId = default)
+    {
+        return store.ListBusyTransportAsync(ct, actorId, actorRole);
+    }
+
     public async Task<IReadOnlyCollection<ShipmentResult>> ListAsync(
         Guid actorUserId, string actorRole, Guid? orderId, Guid? warehouseId, string? status,
         CancellationToken cancellationToken)
     {
-        ValidateReadRole(actorRole);
         if (!string.IsNullOrWhiteSpace(status) && !ShipmentStatusSet.Contains(status))
             throw ShipmentOperationException.Validation("Shipment status filter is invalid.");
         var views = await store.ListAsync(actorUserId, actorRole, orderId, warehouseId, status, cancellationToken);
@@ -47,7 +51,6 @@ public sealed class ShipmentService(
     public async Task<ShipmentResult> GetAsync(
         Guid id, Guid actorUserId, string actorRole, CancellationToken cancellationToken)
     {
-        ValidateReadRole(actorRole);
         var view = await store.FindByIdAsync(id, false, cancellationToken)
             ?? throw ShipmentOperationException.NotFound("Shipment was not found.");
         if (!await store.CanViewOrderAsync(view.Order.Id, actorUserId, actorRole, cancellationToken))
@@ -63,7 +66,6 @@ public sealed class ShipmentService(
     public async Task<RetailerOrderDeliveryResult> GetRetailerOrderDeliveryAsync(
         Guid orderId, Guid actorUserId, string actorRole, CancellationToken cancellationToken)
     {
-        ValidateReadRole(actorRole);
         if (orderId == Guid.Empty)
             throw ShipmentOperationException.Validation("Order id is required.");
         if (!await store.CanViewOrderAsync(orderId, actorUserId, actorRole, cancellationToken))
@@ -101,20 +103,20 @@ public sealed class ShipmentService(
     /// data. This stays as an explicit Operator-triggered repair for a part that failed to appear.
     /// </summary>
     public async Task<IReadOnlyCollection<ShipmentResult>> SyncOrderAsync(
-        Guid orderId, string actorRole, CancellationToken cancellationToken)
+        Guid orderId, string actorRole, CancellationToken cancellationToken, Guid actorUserId = default)
     {
-        EnsureOperator(actorRole);
         if (orderId == Guid.Empty)
             throw ShipmentOperationException.Validation("Order id is required.");
-        await ReconcileAsync(orderId, cancellationToken);
-        var views = await store.ListAsync(Guid.Empty, SystemRoles.Operator, orderId, null, null, cancellationToken);
+        if (!await store.CanViewOrderAsync(orderId, actorUserId, actorRole, cancellationToken))
+            throw ShipmentOperationException.Forbidden("You cannot repair this order deliveries.");
+        await ReconcileAsync(orderId, actorUserId, actorRole, cancellationToken);
+        var views = await store.ListAsync(actorUserId, actorRole, orderId, null, null, cancellationToken);
         return views.Select(ToResult).ToArray();
     }
 
     public async Task<ShipmentResult> FlagExceptionAsync(
         Guid id, FlagShipmentExceptionData data, string actorRole, CancellationToken cancellationToken)
     {
-        EnsureOperator(actorRole);
         var reason = NormalizeReason(data.Reason);
         var view = await store.FindByIdAsync(id, true, cancellationToken)
             ?? throw ShipmentOperationException.NotFound("Shipment was not found.");
@@ -146,7 +148,6 @@ public sealed class ShipmentService(
         Guid id, ResolveShipmentExceptionData data, Guid actorUserId, string actorRole,
         CancellationToken cancellationToken)
     {
-        EnsureOperator(actorRole);
         var reason = NormalizeReason(data.Reason);
         Guid? deliveredOrderId = null;
         await store.ExecuteInTransactionAsync(async token =>
@@ -218,7 +219,7 @@ public sealed class ShipmentService(
         var order = views.FirstOrDefault()?.Order
             ?? await store.FindOrderForUpdateAsync(orderId, cancellationToken)
             ?? throw ShipmentOperationException.NotFound("Order was not found.");
-        return await BuildReadinessAsync(order, views, cancellationToken);
+        return await BuildReadinessAsync(order, views, cancellationToken, actorUserId, actorRole);
     }
 
     /// <summary>
@@ -233,7 +234,8 @@ public sealed class ShipmentService(
     /// single part (see <see cref="ConfirmIssueAsync"/>).
     /// </summary>
     private async Task<OrderShipmentReadinessResult> BuildReadinessAsync(
-        SalesOrder order, IReadOnlyCollection<ShipmentView> views, CancellationToken cancellationToken)
+        SalesOrder order, IReadOnlyCollection<ShipmentView> views, CancellationToken cancellationToken,
+        Guid? actorUserId = null, string? actorRole = null)
     {
         var existing = views
             .Select(item => new ShipmentReadinessPartResult(
@@ -243,6 +245,14 @@ public sealed class ShipmentService(
 
         var covered = existing.Select(item => item.WarehouseId).ToHashSet();
         var expected = await store.ListExpectedWarehousesAsync(order.Id, cancellationToken);
+        if (actorRole == SystemRoles.WarehouseKeeper && actorUserId.HasValue)
+        {
+            var scoped = new List<ExpectedWarehousePart>();
+            foreach (var warehouse in expected)
+                if (await store.CanAccessWarehouseAsync(actorUserId.Value, actorRole, warehouse.WarehouseId, cancellationToken))
+                    scoped.Add(warehouse);
+            expected = scoped;
+        }
         var pending = expected
             .Where(item => !covered.Contains(item.WarehouseId))
             .Select(item => new ShipmentReadinessPartResult(
@@ -336,9 +346,6 @@ public sealed class ShipmentService(
         Guid id, ConfirmShipmentIssueData data, Guid actorUserId, string actorRole,
         CancellationToken cancellationToken, bool documentWorkflow = false)
     {
-        if (actorRole is not (SystemRoles.Admin or SystemRoles.Operator or SystemRoles.WarehouseKeeper))
-            throw ShipmentOperationException.Forbidden(
-                "Only Admin, Operator or the warehouse keeper can confirm a shipment issue.");
 
         await store.ExecuteInTransactionAsync(async transactionCancellationToken =>
         {
@@ -469,13 +476,15 @@ public sealed class ShipmentService(
             ?? throw ShipmentOperationException.Conflict("Issue was committed but could not be reloaded."));
     }
 
-    private async Task ReconcileAsync(Guid? orderId, CancellationToken cancellationToken)
+    private async Task ReconcileAsync(Guid? orderId, Guid actorUserId, string actorRole, CancellationToken cancellationToken)
     {
         var sources = await store.ListPendingSourcesAsync(orderId, cancellationToken);
         if (sources.Count == 0) return;
         var now = timeProvider.GetUtcNow();
         foreach (var source in sources)
         {
+            if (!await store.CanAccessWarehouseAsync(actorUserId, actorRole, source.WarehouseId, cancellationToken))
+                continue;
             store.AddShipment(new Shipment
             {
                 Id = Guid.NewGuid(),
@@ -498,7 +507,6 @@ public sealed class ShipmentService(
     public async Task<ShipmentResult> AssignAsync(
         Guid id, AssignShipmentData data, string actorRole, CancellationToken cancellationToken)
     {
-        EnsureOperator(actorRole);
         if (data.DriverId == Guid.Empty || data.VehicleId == Guid.Empty)
             throw ShipmentOperationException.Validation("Driver and vehicle are required.");
         var view = await store.FindByIdAsync(id, true, cancellationToken)
@@ -552,11 +560,12 @@ public sealed class ShipmentService(
         Guid id, DispatchShipmentData data, Guid actorUserId, string actorRole,
         CancellationToken cancellationToken)
     {
-        EnsureOperator(actorRole);
         await store.ExecuteInTransactionAsync(async token =>
         {
             var view = await store.FindByIdAsync(id, true, token)
                 ?? throw ShipmentOperationException.NotFound("Shipment was not found.");
+            if (!await store.CanAccessWarehouseAsync(actorUserId, actorRole, view.Shipment.WarehouseId, token))
+                throw ShipmentOperationException.Forbidden("You cannot dispatch this warehouse shipments.");
             if (view.Shipment.Status == ShipmentStatuses.Delivering) return;
             if (view.Shipment.Status != ShipmentStatuses.Issued)
                 throw ShipmentOperationException.Conflict(
@@ -567,6 +576,15 @@ public sealed class ShipmentService(
             if (!view.Shipment.DriverId.HasValue || !view.Shipment.VehicleId.HasValue)
                 throw ShipmentOperationException.Conflict(
                     "Assign a driver and vehicle before dispatching the shipment.");
+
+            var driver = await store.FindDriverAsync(view.Shipment.DriverId.Value, token);
+            var vehicle = await store.FindVehicleAsync(view.Shipment.VehicleId.Value, token);
+            if (driver is null || vehicle is null || !driver.IsActive || !vehicle.IsActive ||
+                driver.WarehouseId != view.Shipment.WarehouseId || vehicle.WarehouseId != view.Shipment.WarehouseId ||
+                vehicle.Capacity < view.Shipment.TotalQuantity)
+                throw ShipmentOperationException.Conflict("Assigned transport is no longer eligible; refresh the assignment.");
+            if (await store.IsTransportResourceBusyAsync(driver.Id, vehicle.Id, id, token))
+                throw ShipmentOperationException.Conflict("Driver or vehicle is already assigned to an active delivery or transfer.");
 
             if (deliveryGuard is not null) await deliveryGuard.ValidateAsync(view.Order.Id, token);
             var labels = await store.ListLabelsAsync(id, true, token);
@@ -644,8 +662,6 @@ public sealed class ShipmentService(
         string actorRole,
         CancellationToken cancellationToken)
     {
-        if (actorRole is not (SystemRoles.Admin or SystemRoles.Retailer))
-            throw ShipmentOperationException.Forbidden("Only the order Retailer or Admin can confirm a shipment receipt.");
         operationKey = NormalizeOperationKey(operationKey);
         var note = NormalizeNote(data.Note);
         var qrCodes = NormalizeQrCodes(data.QrCodes);
@@ -935,19 +951,6 @@ public sealed class ShipmentService(
             ToStatus = QrLabelStatuses.Delivered, Quantity = label.Quantity,
             ReferenceCode = orderCode, Note = "Nhà bán lẻ xác nhận tem theo phần giao", OccurredAt = now
         };
-
-    private static void EnsureOperator(string actorRole)
-    {
-        if (actorRole is not (SystemRoles.Admin or SystemRoles.Operator))
-            throw ShipmentOperationException.Forbidden("Only Admin or Operator can manage shipments.");
-    }
-
-    private static void ValidateReadRole(string role)
-    {
-        if (role is not (SystemRoles.Admin or SystemRoles.Operator or SystemRoles.SalesManager or
-            SystemRoles.Sales or SystemRoles.WarehouseKeeper or SystemRoles.Retailer))
-            throw ShipmentOperationException.Forbidden("Role cannot view shipments.");
-    }
 
     private static string NormalizeReason(string reason)
     {

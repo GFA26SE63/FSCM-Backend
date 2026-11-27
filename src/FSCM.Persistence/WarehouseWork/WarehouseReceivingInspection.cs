@@ -12,7 +12,6 @@ public sealed partial class WarehouseWorkService
 {
     public async Task<PalletManifest> PreviewPalletAsync(Guid id, string code, Guid actor, string role, CancellationToken ct)
     {
-        Keeper(role);
         var d = await Find(id, ct);
         await Access(d.WarehouseId, actor, role, ct);
         if (d.Kind != "Receipt" || d.Reason != "Factory" || d.GoodsReceiptId != null || d.Status != "Open")
@@ -25,7 +24,6 @@ public sealed partial class WarehouseWorkService
     }
 
     public Task<Guid> ReceiveInspectedPalletAsync(Guid id, InspectedPalletRequest request, Guid actor, string role, CancellationToken ct) => Atomic(async () => {
-        Keeper(role);
         var d = await Find(id, ct);
         await Access(d.WarehouseId, actor, role, ct);
         if (d.Kind != "Receipt" || d.Reason != "Factory" || d.GoodsReceiptId != null)

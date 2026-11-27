@@ -196,10 +196,7 @@ public sealed class OrderStore(AppDbContext dbContext) : IOrderStore
             SystemRoles.SalesManager => query.Where(item =>
                 ReportingScopeQueries.ManagedGroups(dbContext, actorUserId).Select(g => g.Id).Contains(item.SalesGroupId)),
             SystemRoles.WarehouseKeeper => query.Where(item =>
-                dbContext.AllocationRecords.Any(allocation =>
-                    dbContext.SalesOrderLineRecords.Any(line => line.Id == allocation.SalesOrderLineId &&
-                        line.SalesOrderId == item.Id) &&
-                    ReportingScopeQueries.ManagedWarehouses(dbContext, actorUserId).Select(w => w.Id).Contains(allocation.WarehouseId))),
+                ReportingScopeQueries.WarehouseOrderIds(dbContext, actorUserId).Contains(item.Id)),
             SystemRoles.Retailer => query.Where(item =>
                 dbContext.RetailerRecords.Any(retailer => retailer.Id == item.RetailerId &&
                     retailer.UserAccountId == actorUserId)),
@@ -261,9 +258,8 @@ public sealed class OrderStore(AppDbContext dbContext) : IOrderStore
             SystemRoles.Admin or SystemRoles.Operator => Task.FromResult(true),
             SystemRoles.Sales => Task.FromResult(order.Order.CreatedByUserId == actorUserId),
             SystemRoles.SalesManager => ReportingScopeQueries.ManagedGroups(dbContext, actorUserId).AnyAsync(item => item.Id == order.Order.SalesGroupId, cancellationToken),
-            SystemRoles.WarehouseKeeper => ReportingScopeQueries.ManagedWarehouses(dbContext, actorUserId).AnyAsync(item =>
-                order.Lines.SelectMany(line => line.Allocations).Select(allocation => allocation.WarehouseId)
-                    .Contains(item.Id), cancellationToken),
+            SystemRoles.WarehouseKeeper => ReportingScopeQueries.WarehouseOrderIds(dbContext, actorUserId)
+                .AnyAsync(id => id == order.Order.Id, cancellationToken),
             SystemRoles.Retailer => dbContext.RetailerRecords.AsNoTracking().AnyAsync(item =>
                 item.Id == order.Order.RetailerId && item.UserAccountId == actorUserId, cancellationToken),
             _ => Task.FromResult(false)

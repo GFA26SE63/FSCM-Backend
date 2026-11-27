@@ -55,15 +55,16 @@ public sealed class FactoryInboundQueueTests
     }
 
     [Fact]
-    public async Task Admin_cannot_start_receiving_and_unrelated_roles_cannot_read_the_queue()
+    public async Task Receiving_and_queue_require_explicit_grants_before_running_services()
     {
-        var service = new WarehouseWorkService(null!, null!, null!, null!, null!, TimeProvider.System, null!);
-        var error = await Assert.ThrowsAsync<PickingOperationException>(() =>
-            service.PrepareFactoryAsync(new("PID-1"), Guid.NewGuid(), "Admin", default));
-        Assert.Equal("forbidden", error.Code);
-        error = await Assert.ThrowsAsync<PickingOperationException>(() =>
-            service.PendingFactoryAsync(Guid.NewGuid(), "Operator", default));
-        Assert.Equal("forbidden", error.Code);
+        using var factory = new FSCM.IntegrationTests.Api.IdentityAuthorizationTests.IdentityApiFactory();
+        factory.SetPermissions("WarehouseKeeper");
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue(
+            "Bearer", factory.CreateToken(factory.WarehouseKeeper));
+        Assert.Equal(HttpStatusCode.Forbidden, (await client.GetAsync("/api/v1/warehouse-documents/factory-pending")).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await client.PostAsJsonAsync(
+            "/api/v1/warehouse-documents/factory-receipts/from-pallet", new { palletCode = "PID-1" })).StatusCode);
     }
 
     private sealed class QueueHandler(Func<HttpRequestMessage, HttpResponseMessage> response) : HttpMessageHandler

@@ -1,3 +1,6 @@
+using System.Text.Json;
+using FSCM.Application.Features.EntityQueries;
+using FSCM.Persistence.EntityQueries;
 using FSCM.Application.Features.Roles;
 using FSCM.Domain.Authorization;
 using FSCM.Domain.Entities;
@@ -75,11 +78,47 @@ public sealed class ConfiguredDatabaseRbacTests
                 services.AddScoped<IIdentityStore, IdentityStore>();
                 services.RemoveAll<IRoleStore>();
                 services.AddScoped<IRoleStore, RoleStore>();
+                services.RemoveAll<IEntityQueryService>();
+                services.AddScoped<IEntityQueryService, EntityQueryService>();
             }));
             using var client = factory.CreateClient();
             client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", identityFactory.CreateToken(user));
             // Warehouse persona with an explicit API grant reaches validation on an erstwhile Admin-only command.
             Assert.Equal(HttpStatusCode.BadRequest, (await client.PostAsJsonAsync("/api/v1/products", new { })).StatusCode);
+
+            // A WarehouseKeeper data profile can receive a dispatch operation through the UI-selected screen.
+            await service.UpdateRoleAsync(role.Id, new(role.Name, null, SelectedScreenCodes: ["readiness"]), actor, default);
+            Assert.Contains("api:Shipments.Assign", await identities.GetUserPermissionsAsync(user.Id, default));
+            Assert.Equal(HttpStatusCode.BadRequest, (await client.PatchAsJsonAsync(
+                $"/api/v1/shipments/{Guid.Empty}/assignment",
+                new { driverId = Guid.Empty, vehicleId = Guid.Empty, expectedVersion = 0 })).StatusCode);
+            var dispatchMapping = await db.ScreenApiMappings.SingleAsync(m => m.BusinessRole == SystemRoles.WarehouseKeeper &&
+                m.ScreenCode == "readiness" && m.ApiCode == "api:Shipments.Assign");
+            db.ScreenApiMappings.Remove(dispatchMapping);
+            await db.SaveChangesAsync();
+            Assert.Equal(HttpStatusCode.Forbidden, (await client.PatchAsJsonAsync(
+                $"/api/v1/shipments/{Guid.Empty}/assignment",
+                new { driverId = Guid.Empty, vehicleId = Guid.Empty, expectedVersion = 0 })).StatusCode);
+            db.ScreenApiMappings.Add(dispatchMapping);
+            await db.SaveChangesAsync();
+
+            // Run the real EF GraphQL read with the live profile: no assigned warehouse means no trips.
+            var tripRead = await client.PostAsJsonAsync("/graphql", new
+            { query = "{ entities { shipments(first: 1) { totalCount nodes { id } } } }" });
+            var tripJson = await tripRead.Content.ReadFromJsonAsync<JsonElement>();
+            Assert.False(tripJson.TryGetProperty("errors", out _), tripJson.ToString());
+            Assert.Equal(0, tripJson.GetProperty("data").GetProperty("entities").GetProperty("shipments")
+                .GetProperty("totalCount").GetInt32());
+            await service.UpdateRoleAsync(role.Id, new(role.Name, null, SelectedScreenCodes: ["skus"]), actor, default);
+            var productsQuery = new { query = "{ entities { products(first: 1) { nodes { id sku } } } }" };
+            var productRead = await client.PostAsJsonAsync("/graphql", productsQuery);
+            var productJson = await productRead.Content.ReadFromJsonAsync<JsonElement>();
+            Assert.False(productJson.TryGetProperty("errors", out _), productJson.ToString());
+            var productGrant = await db.RolePermissionRecords.SingleAsync(p => p.RoleId == role.Id && p.PermissionKey == "api:Products.List");
+            db.RolePermissionRecords.Remove(productGrant);
+            await db.SaveChangesAsync();
+            var revokedRead = await client.PostAsJsonAsync("/graphql", productsQuery);
+            Assert.Contains("AUTH_NOT_AUTHORIZED", await revokedRead.Content.ReadAsStringAsync());
 
             // Exercise the actual Save button's PUT contract with a stale/malicious API grant list.
             await service.UpdateRoleAsync(role.Id, new(role.Name, null,

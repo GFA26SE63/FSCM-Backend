@@ -57,7 +57,7 @@ jobs:
         run: dotnet build FSCM.slnx --configuration Release --no-restore
 
       - name: Test
-        run: dotnet test FSCM.slnx --configuration Release --no-build --logger "trx;LogFileName=test-results.trx" --results-directory artifacts/test-results
+        run: dotnet test FSCM.slnx --configuration Release --no-build --logger "trx;LogFilePrefix=test-results" --results-directory artifacts/test-results
 
       - name: Publish API
         run: dotnet publish src/FSCM.API/FSCM.API.csproj --configuration Release --no-restore --output artifacts/publish

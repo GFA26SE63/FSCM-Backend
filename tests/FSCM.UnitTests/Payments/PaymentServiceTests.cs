@@ -143,14 +143,11 @@ public sealed class PaymentServiceTests
     }
 
     [Fact]
-    public async Task Sales_cannot_record_bank_transfer()
+    public async Task Delegated_collection_can_record_bank_transfer()
     {
         var fixture = new Fixture();
-
-        var exception = await Assert.ThrowsAsync<PaymentOperationException>(() => fixture.CollectAsync(
-            fixture.SalesUserId, SystemRoles.Sales, PaymentCollectionMethods.BankTransfer));
-
-        Assert.Equal("forbidden", exception.Code);
+        var result = await fixture.CollectAsync(fixture.SalesUserId, SystemRoles.Sales, PaymentCollectionMethods.BankTransfer);
+        Assert.NotNull(result);
     }
 
     [Fact]
@@ -394,16 +391,13 @@ public sealed class PaymentServiceTests
     }
 
     [Fact]
-    public async Task Adjustment_requires_admin_or_operator()
+    public async Task Delegated_adjustment_retains_amount_validation()
     {
         var fixture = new Fixture();
-
-        var exception = await Assert.ThrowsAsync<PaymentOperationException>(() =>
-            fixture.Service.AdjustReceivableAsync(
-                fixture.Order.Id, new AdjustReceivableData(100_000, "Không đủ quyền", 0),
-                "adjust-forbidden", fixture.SalesUserId, SystemRoles.Sales, default));
-
-        Assert.Equal("forbidden", exception.Code);
+        var result = await fixture.Service.AdjustReceivableAsync(fixture.Order.Id,
+            new AdjustReceivableData(100_000, "Điều chỉnh được cấp quyền", 0), "adjust-delegated",
+            fixture.SalesUserId, SystemRoles.Sales, default);
+        Assert.Equal(fixture.Order.FinalAmount - 100_000, result.AdjustedAmount);
     }
 
     private sealed class Fixture
