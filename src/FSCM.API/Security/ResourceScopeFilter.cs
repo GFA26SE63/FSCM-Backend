@@ -49,8 +49,17 @@ public sealed class ResourceScopeFilter(IIdentityStore identities, IEntityQueryS
                 : scoped.AsEnumerable().Any(x => (Guid?)x.GetType().GetProperty("Id")?.GetValue(x) == id);
             if (allowed) return true;
             // A missing resource must still reach its normal 404/validation contract.
-            return !await db.Set<T>().AsNoTracking().AnyAsync(x => EF.Property<Guid>(x, "Id") == id, ct);
+            return !await Exists<T>(id);
         }
+        async Task<bool> Exists<T>(Guid id) where T : class
+        {
+            // Global existence is only a boolean; no resource data is returned.
+            var existing = queries.Query<T>(access with { Role = SystemRoles.Admin });
+            return existing.Provider is IAsyncQueryProvider
+                ? await existing.AnyAsync(x => EF.Property<Guid>(x, "Id") == id, ct)
+                : existing.AsEnumerable().Any(x => (Guid?)x.GetType().GetProperty("Id")?.GetValue(x) == id);
+        }
+
         async Task<bool> ShipmentCommand(Guid id)
         {
             if (action.ActionName is not ("Assign" or "FlagException" or "ResolveException")) return await Check<Shipment>(id);
@@ -65,7 +74,7 @@ public sealed class ResourceScopeFilter(IIdentityStore identities, IEntityQueryS
             "receiptId" => await Check<PaymentReceipt>(id),
             "RetailerId" or "retailerId" => await Check<Retailer>(id),
             "WarehouseId" or "SourceWarehouseId" or "warehouseId" => id == Guid.Empty ||
-                access.Scope.WarehouseIds.Contains(id) || !await db.WarehouseRecords.AnyAsync(x => x.Id == id, ct),
+                access.Scope.WarehouseIds.Contains(id) || !await Exists<Warehouse>(id),
             "BatchId" => await Check<FSCM.Domain.Entities.Batch>(id),
             "ShipmentId" or "shipmentId" => await Check<Shipment>(id),
             "DriverId" => await Check<Driver>(id),
