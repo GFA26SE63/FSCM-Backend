@@ -74,6 +74,7 @@ public static class ScreenOperationDependencies
             : ["warehouse-inbound", "warehouse-factory-requests", "warehouse-outbound", "warehouse-transfers"],
         "Shipments" when action == "ConfirmReceipt" => role == SystemRoles.Retailer ? ["mobile-rt-scan"] : ["orders"],
         "Shipments" when action is "Assign" or "Sync" or "ResolveException" => ["readiness"],
+        "Shipments" when action == "Dispatch" => ["readiness", "warehouse-outbound", "mobile-wk-picking", "mobile-wk-operations"],
         "Shipments" when action is "ConfirmIssue" or "Dispatch" or "FlagException" => ["warehouse-outbound", "mobile-wk-picking", "mobile-wk-operations"],
         "Shipments" or "Deliveries" => role == SystemRoles.Retailer ? ["mobile-rt-orders", "mobile-rt-scan"]
             : role == SystemRoles.Sales ? ["mobile-sales-orders"]

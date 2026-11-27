@@ -527,3 +527,18 @@ dotnet test FSCM.slnx --configuration Release --no-build
 ## Delivery
 
 GitHub Actions validates pushes and pull requests. A separate workflow mirrors every GitHub branch to the `FSCM-Backend` Azure Repo. Azure Pipelines builds, tests, packages, and deploys `main` to the configured Azure App Service.
+
+### Delivery dispatch lifecycle
+
+One delivery dispatch groups every expected warehouse trip of an order. The Portal reads
+`entities.shipmentReadinessRead(orderId)` for the server-owned `dispatchStatus` and `isHistory`.
+Issued trips await transport; delivery remains active while any expected trip is outstanding.
+Only an aggregate `Delivered` dispatch appears in history; an unresolved shipment exception
+remains active. Retailer receipt commands and the order/warehouse grouping are unchanged.
+
+`entities.busyTransportRead` returns only busy driver/vehicle IDs to Admin and Operator.
+It includes active deliveries and transfers without requiring access to the transfer screen.
+Assignment and dispatch remain REST commands. Transport eligibility and availability are
+checked again at departure. Migration `20261127100000_MapDeliveryDispatchScreen` adds the
+Dispatch API mapping to the readiness screen and backfills that permission for existing
+Admin/Operator roles which already have the screen. It changes no business data or schema.

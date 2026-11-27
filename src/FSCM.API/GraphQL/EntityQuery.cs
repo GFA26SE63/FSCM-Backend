@@ -25,6 +25,15 @@ namespace FSCM.API.GraphQL;
 /// </summary>
 public sealed class EntityQuery(EntityQueryAccess access)
 {
+    public Task<FSCM.Application.Features.Shipments.BusyTransportResult> BusyTransportRead(
+        [Service] FSCM.Application.Features.Shipments.ShipmentService service,
+        CancellationToken cancellationToken = default) => service.GetBusyTransportAsync(access.Role, cancellationToken);
+
+    public Task<FSCM.Application.Features.Shipments.OrderShipmentReadinessResult> ShipmentReadinessRead(
+        Guid orderId, [Service] FSCM.Application.Features.Shipments.ShipmentService service,
+        CancellationToken cancellationToken = default) =>
+        service.GetOrderReadinessAsync(orderId, access.UserId, access.Role, cancellationToken);
+
     public Task<IReadOnlyList<FSCM.Application.Features.Roles.RoleSummaryDto>> RoleReads(
         [Service] FSCM.Application.Features.Roles.RoleService service, string? search = null,
         CancellationToken cancellationToken = default) => service.ListRolesAsync(search, cancellationToken);

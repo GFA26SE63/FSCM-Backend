@@ -14,6 +14,20 @@ namespace FSCM.Persistence.Shipments;
 
 public sealed class ShipmentStore(AppDbContext dbContext) : IShipmentStore
 {
+    public async Task<BusyTransportResult> ListBusyTransportAsync(CancellationToken ct)
+    {
+        var shipments = await dbContext.ShipmentRecords.AsNoTracking()
+            .Where(item => item.Status == ShipmentStatuses.Delivering)
+            .Select(item => new { item.DriverId, item.VehicleId }).ToArrayAsync(ct);
+        var transfers = await dbContext.WarehouseTransferRecords.AsNoTracking()
+            .Where(item => item.Status == InternalTransferStatuses.InTransit)
+            .Select(item => new { item.DriverId, item.VehicleId }).ToArrayAsync(ct);
+        var active = shipments.Concat(transfers).ToArray();
+        return new BusyTransportResult(
+            active.Where(item => item.DriverId.HasValue).Select(item => item.DriverId!.Value).Distinct().ToArray(),
+            active.Where(item => item.VehicleId.HasValue).Select(item => item.VehicleId!.Value).Distinct().ToArray());
+    }
+
     public Task<bool> IsDocumentControlledPickingAsync(Guid pickingListId, CancellationToken ct) =>
         dbContext.WarehouseDocumentLines.AnyAsync(l => l.PickingListId == pickingListId &&
             dbContext.WarehouseDocuments.Any(d => d.Id == l.DocumentId && d.Kind == "Request" && d.Status != "Cancelled"), ct);

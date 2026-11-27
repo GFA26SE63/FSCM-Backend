@@ -33,6 +33,12 @@ public sealed class ShipmentService(
 {
     private static readonly TimeSpan VietnamOffset = TimeSpan.FromHours(7);
 
+    public Task<BusyTransportResult> GetBusyTransportAsync(string actorRole, CancellationToken ct)
+    {
+        EnsureOperator(actorRole);
+        return store.ListBusyTransportAsync(ct);
+    }
+
     public async Task<IReadOnlyCollection<ShipmentResult>> ListAsync(
         Guid actorUserId, string actorRole, Guid? orderId, Guid? warehouseId, string? status,
         CancellationToken cancellationToken)
@@ -567,6 +573,15 @@ public sealed class ShipmentService(
             if (!view.Shipment.DriverId.HasValue || !view.Shipment.VehicleId.HasValue)
                 throw ShipmentOperationException.Conflict(
                     "Assign a driver and vehicle before dispatching the shipment.");
+
+            var driver = await store.FindDriverAsync(view.Shipment.DriverId.Value, token);
+            var vehicle = await store.FindVehicleAsync(view.Shipment.VehicleId.Value, token);
+            if (driver is null || vehicle is null || !driver.IsActive || !vehicle.IsActive ||
+                driver.WarehouseId != view.Shipment.WarehouseId || vehicle.WarehouseId != view.Shipment.WarehouseId ||
+                vehicle.Capacity < view.Shipment.TotalQuantity)
+                throw ShipmentOperationException.Conflict("Assigned transport is no longer eligible; refresh the assignment.");
+            if (await store.IsTransportResourceBusyAsync(driver.Id, vehicle.Id, id, token))
+                throw ShipmentOperationException.Conflict("Driver or vehicle is already assigned to an active delivery or transfer.");
 
             if (deliveryGuard is not null) await deliveryGuard.ValidateAsync(view.Order.Id, token);
             var labels = await store.ListLabelsAsync(id, true, token);

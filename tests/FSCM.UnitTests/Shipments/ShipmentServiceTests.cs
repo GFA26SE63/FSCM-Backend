@@ -713,6 +713,76 @@ public sealed class ShipmentServiceTests
         Assert.True(readiness.IsReady);
     }
 
+    [Theory]
+    [InlineData("Issued", "Issued", "AwaitingAssignment", false)]
+    [InlineData("Issued", "Delivering", "Delivering", false)]
+    [InlineData("Received", "Delivering", "Delivering", false)]
+    [InlineData("Received", "Ready", "Delivering", false)]
+    [InlineData("Received", "Exception", "Exception", false)]
+    [InlineData("Received", "Received", "Delivered", true)]
+    public async Task Dispatch_history_waits_for_every_expected_warehouse_trip(
+        string firstStatus, string secondStatus, string expectedStatus, bool history)
+    {
+        var fixture = new Fixture();
+        var (first, _, _) = fixture.AddReadyShipment(fixture.WarehouseA, 2);
+        var (second, _, _) = fixture.AddReadyShipment(fixture.WarehouseB, 3);
+        first.Status = firstStatus;
+        second.Status = secondStatus;
+        var result = await fixture.Service.GetOrderReadinessAsync(fixture.Order.Id,
+            Guid.NewGuid(), SystemRoles.Operator, default);
+        Assert.Equal(2, result.Parts.Count);
+        Assert.Equal(expectedStatus, result.DispatchStatus);
+        Assert.Equal(history, result.IsHistory);
+    }
+
+    [Fact]
+    public async Task A_received_trip_with_an_expected_warehouse_still_picking_stays_active()
+    {
+        var fixture = new Fixture();
+        var (first, _, _) = fixture.AddReadyShipment(fixture.WarehouseA, 2);
+        first.Status = ShipmentStatuses.Received;
+        fixture.AddOpenPickingList(fixture.WarehouseB);
+        var result = await fixture.Service.GetOrderReadinessAsync(fixture.Order.Id,
+            Guid.NewGuid(), SystemRoles.Operator, default);
+        Assert.Equal(2, result.Parts.Count);
+        Assert.False(result.IsHistory);
+    }
+
+    [Theory]
+    [InlineData(SystemRoles.Retailer)]
+    [InlineData(SystemRoles.WarehouseKeeper)]
+    [InlineData(SystemRoles.Sales)]
+    public async Task Busy_transport_is_limited_to_dispatch_operators(string role)
+    {
+        var error = await Assert.ThrowsAsync<ShipmentOperationException>(() =>
+            new Fixture().Service.GetBusyTransportAsync(role, default));
+        Assert.Equal("forbidden", error.Code);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Dispatch_rechecks_transport_that_changed_after_assignment(bool busy)
+    {
+        var fixture = new Fixture();
+        var (shipment, balance, _) = fixture.AddReadyShipment(fixture.WarehouseA, 8);
+        shipment.Status = ShipmentStatuses.Issued;
+        await fixture.Service.AssignAsync(shipment.Id,
+            new AssignShipmentData(fixture.DriverA.Id, fixture.VehicleA.Id, shipment.Version),
+            SystemRoles.Operator, default);
+        if (busy) fixture.Store.TransportBusy = true;
+        else fixture.DriverA.IsActive = false;
+        var originalVersion = shipment.Version;
+        var error = await Assert.ThrowsAsync<ShipmentOperationException>(() =>
+            fixture.Service.DispatchAsync(shipment.Id, new DispatchShipmentData(shipment.Version),
+                Guid.NewGuid(), SystemRoles.Operator, default));
+        Assert.Equal("conflict", error.Code);
+        Assert.Equal(ShipmentStatuses.Issued, shipment.Status);
+        Assert.Equal(originalVersion, shipment.Version);
+        Assert.Equal(100, balance.PhysicalQuantity);
+        Assert.Empty(fixture.Store.LabelEvents);
+    }
+
     private sealed class Fixture
     {
         public Guid WarehouseA { get; } = Guid.NewGuid();
@@ -859,6 +929,11 @@ public sealed class ShipmentServiceTests
 
     private sealed class FakeStore(SalesOrder order) : IShipmentStore
     {
+        public bool TransportBusy { get; set; }
+        public Task<BusyTransportResult> ListBusyTransportAsync(CancellationToken ct) =>
+            Task.FromResult(new BusyTransportResult([], []));
+        public Task<bool> IsTransportResourceBusyAsync(Guid driverId, Guid vehicleId, Guid? excludedShipmentId, CancellationToken ct) =>
+            Task.FromResult(TransportBusy);
         public List<Shipment> Shipments { get; } = [];
         public List<ReceiptConfirmation> Receipts { get; } = [];
         public List<ReceiptConfirmationItem> ReceiptLines { get; } = [];

@@ -67,7 +67,7 @@ public static class EntityScreenResources
         "PickingLists" or "PickingItems" or "RunPickingLists" or "RunPickingGathers" or "RunPickingSplits" => "PickingLists",
         "Payments" or "PaymentReceipts" or "PaymentReceiptAllocations" => "Payments",
         "RetailerDebtPayOsCheckouts" or "RetailerDebtPayOsAllocations" => "RetailerReceivables",
-        "Deliveries" or "Shipments" => "Shipments",
+        "Deliveries" or "Shipments" or "ShipmentReadinessRead" or "BusyTransportRead" => "Shipments",
         "Drivers" or "Vehicles" => "TransportDispatches",
         "Notifications" => "Notifications",
         "RetailerLoyalties" or "LoyaltyTransactions" or "LoyaltyPrograms" or "LoyaltyProgramRetailers" => "Loyalty",
