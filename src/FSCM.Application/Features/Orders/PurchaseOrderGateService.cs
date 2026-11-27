@@ -49,7 +49,10 @@ public sealed class PurchaseOrderGateService(IPurchaseOrderGateStore store, Time
             var eligible = view.Order.PaymentMethod == OrderPaymentMethods.Credit ||
                            view.Payment?.Status == PaymentStatuses.Paid;
             if (!eligible) return;
-            if (deliveryGuard is not null) await deliveryGuard.ValidateAsync(orderId, token);
+            // Owner decision 2026-11-27: money already received in full converts to PO (baseline
+            // 3.8). ETA/MLOR is re-checked at issue (3.9), so it must not strand a paid order here.
+            if (deliveryGuard is not null && view.Order.PaymentMethod == OrderPaymentMethods.Credit)
+                await deliveryGuard.ValidateAsync(orderId, token);
             if (view.Allocations.Count == 0)
                 throw new InvalidOperationException("Reserved allocations are required before PO conversion.");
 
