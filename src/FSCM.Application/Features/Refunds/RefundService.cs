@@ -123,7 +123,7 @@ public sealed class RefundService(IRefundStore store, IPaymentStore paymentStore
         {
             if (refund.Status != RefundStatuses.AwaitingVerification)
                 throw RefundOperationException.Conflict("Only a refund awaiting verification can be verified.");
-            if (refund.SubmittedByUserId == actorUserId)
+            if (refund.SubmittedByUserId == actorUserId && actorRole != SystemRoles.Admin)
                 throw RefundOperationException.Forbidden("The evidence submitter cannot verify the same refund.");
             // F5 step 18: rejecting evidence moves to EvidenceRejected (not back to PendingRefund).
             // The refund obligation and the prior evidence are kept on the same record for history;

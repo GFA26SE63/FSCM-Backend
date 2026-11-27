@@ -764,7 +764,9 @@ public sealed class ShipmentServiceTests
     [InlineData("Issued", "Delivering", "Delivering", false)]
     [InlineData("Received", "Delivering", "Delivering", false)]
     [InlineData("Received", "Ready", "Delivering", false)]
-    [InlineData("Received", "Exception", "Exception", false)]
+    [InlineData("Received", "Exception", "Exception", true)]
+    [InlineData("Exception", "Exception", "Exception", true)]
+    [InlineData("Exception", "Delivering", "Exception", false)]
     [InlineData("Received", "Received", "Delivered", true)]
     public async Task Dispatch_history_waits_for_every_expected_warehouse_trip(
         string firstStatus, string secondStatus, string expectedStatus, bool history)
@@ -779,6 +781,17 @@ public sealed class ShipmentServiceTests
         Assert.Equal(2, result.Parts.Count);
         Assert.Equal(expectedStatus, result.DispatchStatus);
         Assert.Equal(history, result.IsHistory);
+    }
+
+    [Fact]
+    public void Picking_exception_without_a_shipment_remains_in_dispatch_requests()
+    {
+        var result = new OrderShipmentReadinessResult(Guid.NewGuid(), "DH-TEST", false, true, true,
+            Array.Empty<string>(), new[] {
+                new ShipmentReadinessPartResult(Guid.NewGuid(), "SHIP-1", Guid.NewGuid(), "WH-A", ShipmentStatuses.Received, null),
+                new ShipmentReadinessPartResult(null, null, Guid.NewGuid(), "WH-B", ShipmentStatuses.Exception, "Picking exception")
+            });
+        Assert.False(result.IsHistory);
     }
 
     [Fact]
