@@ -502,23 +502,42 @@ public sealed class ShipmentServiceTests
     }
 
     [Fact]
-    public async Task A_part_cannot_leave_while_another_warehouse_is_still_picking()
+    public async Task A_part_leaves_while_another_warehouse_is_still_picking()
     {
         var fixture = new Fixture();
         var (ready, balance, _) = fixture.AddReadyShipment(fixture.WarehouseA, 12m, onHand: 50m);
         // The slow warehouse has no shipment part, because a part is only created when its sheet
-        // closes. That is the real shape of this situation, and it is what the check missed.
+        // closes.
         fixture.AddOpenPickingList(fixture.WarehouseB);
 
-        var error = await Assert.ThrowsAsync<ShipmentOperationException>(() =>
-            fixture.Service.ConfirmIssueAsync(
-                ready.Id, new ConfirmShipmentIssueData(ready.Version), Guid.NewGuid(),
-                SystemRoles.WarehouseKeeper, CancellationToken.None));
+        await fixture.Service.ConfirmIssueAsync(
+            ready.Id, new ConfirmShipmentIssueData(ready.Version), Guid.NewGuid(),
+            SystemRoles.WarehouseKeeper, CancellationToken.None);
 
-        Assert.Equal("conflict", error.Code);
-        // Nothing moved: the whole order waits, not just the slow warehouse.
-        Assert.Equal(50m, balance.PhysicalQuantity);
-        Assert.Equal(ShipmentStatuses.Ready, ready.Status);
+        // The ready warehouse ships on its own; the order is not Issued while WH-B is still picking.
+        Assert.Equal(38m, balance.PhysicalQuantity);
+        Assert.Equal(ShipmentStatuses.Issued, ready.Status);
+        Assert.Equal(OrderStatuses.ConvertedToPo, fixture.Order.Status);
+    }
+
+    [Fact]
+    public async Task Delivering_and_receiving_the_first_part_does_not_close_the_order_while_another_warehouse_picks()
+    {
+        var fixture = new Fixture();
+        var (shipment, line, batchId, qrCode) = fixture.AddDeliveringShipment(8);
+        fixture.Order.Status = OrderStatuses.ConvertedToPo;
+        fixture.AddOpenPickingList(fixture.WarehouseB, "WH-B");
+
+        var received = await fixture.Service.ConfirmReceiptAsync(
+            shipment.Id,
+            new ConfirmShipmentReceiptData([qrCode],
+                [new ConfirmShipmentReceiptLineData(line.OrderLineId, batchId, 8, 0)],
+                shipment.Version, null),
+            "receipt-first-part", fixture.RetailerUserId, SystemRoles.Retailer, CancellationToken.None);
+
+        // Retailer receives the first warehouse's goods now; the order waits for WH-B.
+        Assert.Equal(ShipmentStatuses.Received, received.Status);
+        Assert.Equal(OrderStatuses.ConvertedToPo, fixture.Order.Status);
     }
 
     [Fact]
@@ -590,10 +609,10 @@ public sealed class ShipmentServiceTests
     }
 
     [Fact]
-    public async Task One_warehouse_in_exception_stops_every_part_that_has_not_left()
+    public async Task One_warehouse_in_exception_holds_only_its_own_part()
     {
         var fixture = new Fixture();
-        var (ready, _, _) = fixture.AddReadyShipment(fixture.WarehouseA, 12m, onHand: 50m);
+        var (ready, balance, _) = fixture.AddReadyShipment(fixture.WarehouseA, 12m, onHand: 50m);
         fixture.Store.Shipments.Add(new Shipment
         {
             Id = Guid.NewGuid(), SalesOrderId = fixture.Order.Id, WarehouseId = fixture.WarehouseB,
@@ -602,12 +621,12 @@ public sealed class ShipmentServiceTests
             TotalQuantity = 5m, Version = 1
         });
 
-        var error = await Assert.ThrowsAsync<ShipmentOperationException>(() =>
-            fixture.Service.ConfirmIssueAsync(
-                ready.Id, new ConfirmShipmentIssueData(ready.Version), Guid.NewGuid(),
-                SystemRoles.WarehouseKeeper, CancellationToken.None));
+        await fixture.Service.ConfirmIssueAsync(
+            ready.Id, new ConfirmShipmentIssueData(ready.Version), Guid.NewGuid(),
+            SystemRoles.WarehouseKeeper, CancellationToken.None);
 
-        Assert.Contains("Hàng hỏng khi soạn", error.Message);
+        Assert.Equal(38m, balance.PhysicalQuantity);
+        Assert.NotEqual(OrderStatuses.Issued, fixture.Order.Status);
     }
 
     [Fact]
