@@ -33,7 +33,10 @@ public sealed record ReceivableRefundHistory(
     DateTimeOffset? TransferredAt,
     string? TransactionReference,
     DateTimeOffset? VerifiedAt,
-    string Reason);
+    string Reason,
+    // The store loads the stored "blob:" reference here; RetailerReceivableService always
+    // replaces it with a short-lived read URL (or null) before it leaves the Application layer.
+    string? EvidenceUrl = null);
 
 public sealed record RetailerReceivableView(
     PaymentView Payment,
