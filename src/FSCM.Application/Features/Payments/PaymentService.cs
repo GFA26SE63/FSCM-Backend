@@ -64,6 +64,20 @@ public sealed class PaymentService(
             view = await store.FindByOrderAsync(orderId, false, cancellationToken)
                 ?? throw PaymentOperationException.NotFound("Payment was not found.");
         }
+
+        // Paid is committed before the PO gate runs, so a gate that failed, or a read that landed
+        // between the two, left a paid order in PaymentPending with nothing to retry it. The gate
+        // is idempotent: finish the conversion here before reporting the payment as paid.
+        if (view.Payment.Method == OrderPaymentMethods.Prepaid &&
+            view.Payment.Status == PaymentStatuses.Paid &&
+            view.Order.Status == OrderStatuses.PaymentPending &&
+            purchaseOrderGateService is not null)
+        {
+            await purchaseOrderGateService.TryCreateAsync(orderId, cancellationToken);
+            store.ClearTracking();
+            view = await store.FindByOrderAsync(orderId, false, cancellationToken)
+                ?? throw PaymentOperationException.NotFound("Payment was not found.");
+        }
         return ToResult(view, Today());
     }
 
