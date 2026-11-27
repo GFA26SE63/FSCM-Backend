@@ -1,5 +1,6 @@
 using System.Collections;
 using System.Security.Claims;
+using FSCM.API.Contracts.Shipments;
 using FSCM.Application.Features.Deliveries;
 using FSCM.Application.Features.EntityQueries;
 using FSCM.Application.Features.Identity;
@@ -102,6 +103,13 @@ public sealed class ResourceScopeFilter(IIdentityStore identities, IEntityQueryS
         {
             if (value is Guid id) return await Named(name, id);
             if (value is null || value is string || depth > 4 || value.GetType().IsPrimitive || value.GetType().IsEnum) return true;
+            // Receipt lines reference stock delivered to the scoped parent shipment, not
+            // stock the recipient manages. ConfirmReceiptAsync checks the exact set of
+            // (OrderLineId, BatchId) pairs and every QR against that shipment in its
+            // transaction. Applying the independent warehouse Batch scope here denies
+            // legitimate retailer receipts. Do not expand Batch/QR read permissions.
+            if (action.ControllerName == "Shipments" && action.ActionName == "ConfirmReceipt" &&
+                value is ConfirmShipmentReceiptLineRequest) return true;
             if (value is IEnumerable list)
             {
                 foreach (var item in list) if (!await References(item, name, depth + 1)) return false;
