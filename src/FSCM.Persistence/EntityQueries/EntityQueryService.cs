@@ -47,6 +47,10 @@ public sealed class EntityQueryService(AppDbContext dbContext) : IEntityQuerySer
         if (access.Role == SystemRoles.Operator && !IsAdminOnlyEntity<TEntity>())
             return query;
 
+        // Administrative reads are global only when explicitly delegated. Without
+        // the corresponding operation grant the normal ownership scope still applies.
+        if (HasGlobalManagementGrant<TEntity>(access.Permissions)) return query;
+
         if (IsSharedMasterData<TEntity>())
             return query;
 
@@ -71,7 +75,7 @@ public sealed class EntityQueryService(AppDbContext dbContext) : IEntityQuerySer
         if (typeof(TEntity) == typeof(SalesGroupMember))
             return Cast<TEntity, SalesGroupMember>(dbContext.SalesGroupMemberRecords.Where(x => x.UserAccountId == access.UserId));
         if (typeof(TEntity) == typeof(Retailer))
-            return Cast<TEntity, Retailer>(dbContext.RetailerRecords.Where(x => retailerIds.Contains(x.Id)));
+            return Cast<TEntity, Retailer>(dbContext.RetailerRecords.Where(x => retailerIds.Contains(x.Id) || x.DeclaredByUserId == access.UserId));
         if (typeof(TEntity) == typeof(RetailerSalesAssignment))
             return Cast<TEntity, RetailerSalesAssignment>(dbContext.RetailerSalesAssignmentRecords.Where(x =>
                 retailerIds.Contains(x.RetailerId) || salesGroupIds.Contains(x.SalesGroupId)));
@@ -109,8 +113,9 @@ public sealed class EntityQueryService(AppDbContext dbContext) : IEntityQuerySer
             return Cast<TEntity, Delivery>(ScopedDeliveries(access, orderIds));
         if (typeof(TEntity) == typeof(Shipment))
             return Cast<TEntity, Shipment>(dbContext.ShipmentRecords.Where(x =>
-                orderIds.Contains(x.SalesOrderId) ||
-                (access.Role == SystemRoles.WarehouseKeeper && warehouseIds.Contains(x.WarehouseId))));
+                access.Role == SystemRoles.WarehouseKeeper
+                    ? warehouseIds.Contains(x.WarehouseId)
+                    : orderIds.Contains(x.SalesOrderId)));
         if (typeof(TEntity) == typeof(PickingList))
             return Cast<TEntity, PickingList>(dbContext.PickingListRecords.Where(x =>
                 dbContext.PurchaseOrderRecords.Any(po => po.Id == x.PurchaseOrderId && orderIds.Contains(po.SalesOrderId)) ||
@@ -314,6 +319,7 @@ public sealed class EntityQueryService(AppDbContext dbContext) : IEntityQuerySer
         SystemRoles.SalesManager => dbContext.SalesOrderRecords.Where(x => access.Scope.SalesGroupIds.Contains(x.SalesGroupId)),
         SystemRoles.Retailer => dbContext.SalesOrderRecords.Where(x => access.Scope.RetailerIds.Contains(x.RetailerId)),
         SystemRoles.WarehouseKeeper => dbContext.SalesOrderRecords.Where(order =>
+            dbContext.ShipmentRecords.Any(part => part.SalesOrderId == order.Id && access.Scope.WarehouseIds.Contains(part.WarehouseId)) ||
             dbContext.PickingListRecords.Any(list =>
                 dbContext.PurchaseOrderRecords.Any(po => po.Id == list.PurchaseOrderId && po.SalesOrderId == order.Id) &&
                 access.Scope.WarehouseIds.Contains(list.WarehouseId)) ||
@@ -347,6 +353,19 @@ public sealed class EntityQueryService(AppDbContext dbContext) : IEntityQuerySer
         typeof(TEntity) == typeof(TransitTableBand) || typeof(TEntity) == typeof(ShelfLifeDiscountTable) ||
         typeof(TEntity) == typeof(ShelfLifeDiscountTier) || typeof(TEntity) == typeof(LoyaltyProgram) ||
         typeof(TEntity) == typeof(LoyaltyReward);
+
+    private static bool HasGlobalManagementGrant<TEntity>(IReadOnlyCollection<string>? grants)
+    {
+        if (grants is null) return false;
+        if (typeof(TEntity) == typeof(UserAccount) || typeof(TEntity) == typeof(UserWarehouseAssignment) ||
+            typeof(TEntity) == typeof(UserRegionAssignment) || typeof(TEntity) == typeof(SalesGroupMember) ||
+            typeof(TEntity) == typeof(AuditLog))
+            return grants.Contains("api:Users.List") || grants.Contains("api:Users.Get");
+        if (typeof(TEntity) == typeof(RoleDefinition) || typeof(TEntity) == typeof(RolePermission))
+            return grants.Contains("api:Roles.List") || grants.Contains("api:Roles.Get");
+        return typeof(TEntity) == typeof(SystemConfiguration) && grants.Contains("config") &&
+            grants.Contains("api:BusinessConfigurations.List");
+    }
 
     private static bool IsAdminOnlyEntity<TEntity>() => typeof(TEntity) == typeof(UserAccount) ||
         typeof(TEntity) == typeof(UserWarehouseAssignment) || typeof(TEntity) == typeof(UserRegionAssignment) ||

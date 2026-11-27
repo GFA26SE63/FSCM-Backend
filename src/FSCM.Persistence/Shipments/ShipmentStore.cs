@@ -14,13 +14,17 @@ namespace FSCM.Persistence.Shipments;
 
 public sealed class ShipmentStore(AppDbContext dbContext) : IShipmentStore
 {
-    public async Task<BusyTransportResult> ListBusyTransportAsync(CancellationToken ct)
+    public async Task<BusyTransportResult> ListBusyTransportAsync(CancellationToken ct, Guid actorId, string scopeProfile)
     {
         var shipments = await dbContext.ShipmentRecords.AsNoTracking()
-            .Where(item => item.Status == ShipmentStatuses.Delivering)
+            .Where(item => item.Status == ShipmentStatuses.Delivering &&
+                (scopeProfile == SystemRoles.Admin || scopeProfile == SystemRoles.Operator ||
+                 ReportingScopeQueries.ManagedWarehouses(dbContext, actorId).Any(w => w.Id == item.WarehouseId)))
             .Select(item => new { item.DriverId, item.VehicleId }).ToArrayAsync(ct);
         var transfers = await dbContext.WarehouseTransferRecords.AsNoTracking()
-            .Where(item => item.Status == InternalTransferStatuses.InTransit)
+            .Where(item => item.Status == InternalTransferStatuses.InTransit &&
+                (scopeProfile == SystemRoles.Admin || scopeProfile == SystemRoles.Operator ||
+                 ReportingScopeQueries.ManagedWarehouses(dbContext, actorId).Any(w => w.Id == item.SourceWarehouseId)))
             .Select(item => new { item.DriverId, item.VehicleId }).ToArrayAsync(ct);
         var active = shipments.Concat(transfers).ToArray();
         return new BusyTransportResult(
@@ -44,12 +48,8 @@ public sealed class ShipmentStore(AppDbContext dbContext) : IShipmentStore
                 order.Id == orderId && order.CreatedByUserId == userId, cancellationToken),
             SystemRoles.SalesManager => dbContext.SalesOrderRecords.AsNoTracking().AnyAsync(order =>
                 order.Id == orderId && ReportingScopeQueries.ManagedGroups(dbContext, userId).Select(g => g.Id).Contains(order.SalesGroupId), cancellationToken),
-            SystemRoles.WarehouseKeeper => dbContext.SalesOrderLineRecords.AsNoTracking().AnyAsync(line =>
-                line.SalesOrderId == orderId &&
-                dbContext.AllocationRecords.Any(allocation =>
-                        allocation.SalesOrderLineId == line.Id &&
-                        ReportingScopeQueries.ManagedWarehouses(dbContext, userId).Select(w => w.Id).Contains(allocation.WarehouseId)),
-                cancellationToken),
+            SystemRoles.WarehouseKeeper => ReportingScopeQueries.WarehouseOrderIds(dbContext, userId)
+                .AnyAsync(id => id == orderId, cancellationToken),
             SystemRoles.Retailer => dbContext.SalesOrderRecords.AsNoTracking().AnyAsync(order =>
                 order.Id == orderId && dbContext.RetailerRecords.Any(retailer =>
                     retailer.Id == order.RetailerId && retailer.UserAccountId == userId), cancellationToken),

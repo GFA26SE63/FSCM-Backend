@@ -23,13 +23,13 @@ public sealed class ConfiguredTransportReadTests
         Assert.Empty(await db.Database.GetPendingMigrationsAsync());
         Assert.True(await db.ScreenApiMappings.AnyAsync(m => m.BusinessRole == SystemRoles.WarehouseKeeper &&
             m.ScreenCode == "readiness" && m.ApiCode == "api:Shipments.Dispatch"));
-        Assert.False(await db.ScreenApiMappings.AnyAsync(m => m.BusinessRole == SystemRoles.WarehouseKeeper &&
+        Assert.True(await db.ScreenApiMappings.AnyAsync(m => m.BusinessRole == SystemRoles.WarehouseKeeper &&
             m.ScreenCode == "readiness" && (m.ApiCode == "api:Shipments.Assign" || m.ApiCode == "api:Shipments.ResolveException")));
         Assert.False(await db.RoleDefinitionRecords.AnyAsync(r => r.BaseRole == SystemRoles.WarehouseKeeper &&
             db.RolePermissionRecords.Any(p => p.RoleId == r.Id && p.PermissionKey == "warehouse-outbound") &&
             !db.RolePermissionRecords.Any(p => p.RoleId == r.Id && p.PermissionKey == "readiness")));
         using var identity = new IdentityAuthorizationTests.IdentityApiFactory();
-        identity.SetPermissions(SystemRoles.WarehouseKeeper, "readiness", "api:Shipments.Dispatch");
+        identity.SetPermissions(SystemRoles.WarehouseKeeper, "readiness", "api:Shipments.Dispatch", "api:Shipments.Assign", "api:Shipments.OrderReadiness", "api:PickingLists.List", "api:Shipments.List", "api:Orders.List", "api:Warehouses.List", "api:TransportDispatches.Read");
         using var factory = identity.WithWebHostBuilder(builder => builder.ConfigureTestServices(services =>
         {
             services.RemoveAll<AppDbContext>();
@@ -39,7 +39,7 @@ public sealed class ConfiguredTransportReadTests
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", identity.CreateToken(identity.WarehouseKeeper));
         var read = await client.PostAsJsonAsync("/graphql", new
         {
-            query = "query { entities { deliveryPickingReads { id orderId } shipments(first: 1) { nodes { id warehouseId status } } salesOrders(first: 1) { nodes { id orderCode } } warehouses(first: 1) { nodes { id code } } } }"
+            query = "query { entities { deliveryPickingReads { id orderId } shipments(first: 1) { nodes { id warehouseId status } } salesOrders(first: 1) { nodes { id orderCode } } warehouses(first: 1) { nodes { id code } } drivers(first: 1) { nodes { id warehouseId code fullName isActive } } vehicles(first: 1) { nodes { id warehouseId plateNumber vehicleType capacity isActive } } } }"
         });
         Assert.Equal(HttpStatusCode.OK, read.StatusCode);
         using var json = JsonDocument.Parse(await read.Content.ReadAsStringAsync());
@@ -53,6 +53,9 @@ public sealed class ConfiguredTransportReadTests
         {
             var forbidden = await client.PostAsJsonAsync($"/api/v1/shipments/{trip.Id}/dispatch", new { expectedVersion = trip.Version });
             Assert.Equal(HttpStatusCode.Forbidden, forbidden.StatusCode);
+            var assignment = await client.PatchAsJsonAsync($"/api/v1/shipments/{trip.Id}/assignment",
+                new { driverId = Guid.Empty, vehicleId = Guid.Empty, expectedVersion = trip.Version });
+            Assert.Equal(HttpStatusCode.Forbidden, assignment.StatusCode);
         }
     }
 
@@ -70,7 +73,7 @@ public sealed class ConfiguredTransportReadTests
             !db.RolePermissionRecords.Any(p => p.RoleId == role.Id && p.PermissionKey == "api:Shipments.Dispatch")));
         using var identity = new IdentityAuthorizationTests.IdentityApiFactory();
         var actor = identity.AddTestUser("dispatch-read@test.invalid", SystemRoles.Operator);
-        identity.SetPermissions(SystemRoles.Operator, "readiness", "api:Shipments.Dispatch");
+        identity.SetPermissions(SystemRoles.Operator, "readiness", "api:Shipments.Dispatch", "api:Shipments.Assign", "api:Shipments.OrderReadiness", "api:PickingLists.List", "api:Shipments.List", "api:Orders.List", "api:Warehouses.List", "api:TransportDispatches.Read");
         using var factory = identity.WithWebHostBuilder(builder => builder.ConfigureTestServices(services =>
         {
             services.RemoveAll<AppDbContext>();
@@ -87,7 +90,7 @@ public sealed class ConfiguredTransportReadTests
         using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
         Assert.False(json.RootElement.TryGetProperty("errors", out _), json.RootElement.ToString());
         var busy = json.RootElement.GetProperty("data").GetProperty("entities").GetProperty("busyTransportRead");
-        var expected = await new ShipmentStore(db).ListBusyTransportAsync(default);
+        var expected = await new ShipmentStore(db).ListBusyTransportAsync(default, actor.Id, SystemRoles.Operator);
         Assert.Equal(expected.DriverIds.Order(), busy.GetProperty("driverIds").EnumerateArray().Select(x => x.GetGuid()).Order());
         Assert.Equal(expected.VehicleIds.Order(), busy.GetProperty("vehicleIds").EnumerateArray().Select(x => x.GetGuid()).Order());
 

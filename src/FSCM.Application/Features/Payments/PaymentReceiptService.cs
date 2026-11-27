@@ -71,8 +71,6 @@ public sealed class PaymentReceiptService(
     public async Task<PaymentReceiptResult> ConfirmAsync(ConfirmPaymentReceiptData data, string operationKey,
         Guid actorUserId, string actorRole, CancellationToken cancellationToken)
     {
-        if (actorRole is not (SystemRoles.Admin or SystemRoles.Operator))
-            throw PaymentOperationException.Forbidden("Only Admin or Operator can confirm a receipt.");
         operationKey = NormalizeKey(operationKey);
         Validate(data);
         var replay = await store.FindReceiptByOperationKeyAsync(operationKey, false, cancellationToken);
@@ -139,8 +137,6 @@ public sealed class PaymentReceiptService(
     public async Task<ReceiptAllocationProposalResult> ProposeAllocationAsync(
         ProposeReceiptAllocationData data, Guid actorUserId, string actorRole, CancellationToken cancellationToken)
     {
-        if (actorRole is not (SystemRoles.Admin or SystemRoles.Operator))
-            throw PaymentOperationException.Forbidden("Only Admin or Operator can propose a receipt allocation.");
         if (data.RetailerId == Guid.Empty)
             throw PaymentOperationException.Validation("Retailer is required.");
         if (data.ReceivedAmount <= 0 || decimal.Round(data.ReceivedAmount, 2) != data.ReceivedAmount)
@@ -200,8 +196,6 @@ public sealed class PaymentReceiptService(
         Guid receiptId, int expectedVersion, IReadOnlyCollection<ReceiptAllocationData> allocations,
         Guid actorUserId, string actorRole, CancellationToken cancellationToken)
     {
-        if (actorRole is not (SystemRoles.Admin or SystemRoles.Operator))
-            throw PaymentOperationException.Forbidden("Only Admin or Operator can apply unapplied credit.");
         if (allocations.Count == 0 || allocations.GroupBy(x => x.PaymentId).Any(x => x.Count() > 1) ||
             allocations.Any(x => x.PaymentId == Guid.Empty || x.Amount <= 0 || decimal.Round(x.Amount, 2) != x.Amount))
             throw PaymentOperationException.Validation("Allocations are invalid.");
@@ -258,7 +252,6 @@ public sealed class PaymentReceiptService(
 
     public async Task<PaymentReceiptResult> ReverseAsync(Guid receiptId, string reason, Guid actorUserId, string actorRole, CancellationToken cancellationToken)
     {
-        if (actorRole is not (SystemRoles.Admin or SystemRoles.Operator)) throw PaymentOperationException.Forbidden("Only Admin or Operator can reverse a receipt.");
         if (string.IsNullOrWhiteSpace(reason)) throw PaymentOperationException.Validation("A reversal reason is required.");
         await store.ExecuteInTransactionAsync(async token =>
         {

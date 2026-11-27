@@ -32,7 +32,7 @@ public sealed class EntityQuery(EntityQueryAccess access)
 
     public Task<FSCM.Application.Features.Shipments.BusyTransportResult> BusyTransportRead(
         [Service] FSCM.Application.Features.Shipments.ShipmentService service,
-        CancellationToken cancellationToken = default) => service.GetBusyTransportAsync(access.Role, cancellationToken);
+        CancellationToken cancellationToken = default) => service.GetBusyTransportAsync(access.Role, cancellationToken, access.UserId);
 
     public Task<FSCM.Application.Features.Shipments.OrderShipmentReadinessResult> ShipmentReadinessRead(
         Guid orderId, [Service] FSCM.Application.Features.Shipments.ShipmentService service,

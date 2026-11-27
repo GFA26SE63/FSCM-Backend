@@ -14,7 +14,6 @@ public sealed class RefundService(IRefundStore store, IPaymentStore paymentStore
     public async Task<RefundResult> CreateAsync(CreateRefundData data, string operationKey,
         Guid actorUserId, string actorRole, CancellationToken cancellationToken)
     {
-        EnsureOperator(actorRole);
         operationKey = Key(operationKey);
         ValidateAmount(data.Amount);
         var recipient = Required(data.Recipient, 200, "Recipient");
@@ -78,7 +77,6 @@ public sealed class RefundService(IRefundStore store, IPaymentStore paymentStore
     public async Task<RefundResult> SubmitEvidenceAsync(Guid id, SubmitRefundEvidenceData data,
         string operationKey, Guid actorUserId, string actorRole, CancellationToken cancellationToken)
     {
-        EnsureOperator(actorRole);
         operationKey = Key(operationKey);
         var transaction = Required(data.TransactionReference, 100, "Transaction reference");
         var evidence = Required(data.EvidenceReference, 500, "Evidence reference");
@@ -113,8 +111,6 @@ public sealed class RefundService(IRefundStore store, IPaymentStore paymentStore
     public async Task<RefundResult> VerifyAsync(Guid id, VerifyRefundData data, string operationKey,
         Guid actorUserId, string actorRole, CancellationToken cancellationToken)
     {
-        if (actorRole != SystemRoles.Admin)
-            throw RefundOperationException.Forbidden("Only Admin can verify a completed refund transfer.");
         operationKey = Key(operationKey);
         var note = Optional(data.Note, 500);
         if (!data.Approved && string.IsNullOrWhiteSpace(note))
@@ -158,16 +154,13 @@ public sealed class RefundService(IRefundStore store, IPaymentStore paymentStore
 
     /// <summary>S3-101-4: refund amounts owed after a claim adjustment that have no refund record yet.</summary>
     public async Task<IReadOnlyCollection<RefundObligationResult>> ListObligationsAsync(
-        string actorRole, CancellationToken ct)
+        Guid actorUserId, string actorRole, CancellationToken ct)
     {
-        if (actorRole is not (SystemRoles.Admin or SystemRoles.Operator))
-            throw RefundOperationException.Forbidden("Only Admin or Operator can list refund obligations.");
-        return await store.ListObligationsAsync(ct);
+        return await store.ListObligationsAsync(actorUserId, actorRole, ct);
     }
 
     public async Task<RefundResult> GetAsync(Guid id, Guid actorUserId, string actorRole, CancellationToken ct)
     {
-        EnsureRead(actorRole);
         var view = await store.FindAsync(id, false, ct) ?? throw RefundOperationException.NotFound("Refund was not found.");
         if (!await paymentStore.CanViewAsync(new(view.Payment, view.Order, view.Retailer), actorUserId, actorRole, ct))
             throw RefundOperationException.Forbidden("You cannot view this refund.");
@@ -177,7 +170,6 @@ public sealed class RefundService(IRefundStore store, IPaymentStore paymentStore
     public async Task<IReadOnlyCollection<RefundResult>> ListAsync(Guid? orderId, string? status,
         Guid actorUserId, string actorRole, CancellationToken ct)
     {
-        EnsureRead(actorRole);
         if (status is not null && !RefundStatuses.All.Contains(status))
             throw RefundOperationException.Validation("Refund status filter is invalid.");
         return (await store.ListAsync(orderId, status, actorUserId, actorRole, ct)).Select(ToResult).ToArray();
@@ -246,8 +238,6 @@ public sealed class RefundService(IRefundStore store, IPaymentStore paymentStore
         };
     }
 
-    private static void EnsureOperator(string role) { if (role is not (SystemRoles.Operator or SystemRoles.Admin)) throw RefundOperationException.Forbidden("Only Operator or Admin can create refunds and submit transfer evidence."); }
-    private static void EnsureRead(string role) { if (role is not (SystemRoles.Admin or SystemRoles.Operator or SystemRoles.SalesManager or SystemRoles.Sales or SystemRoles.Retailer)) throw RefundOperationException.Forbidden("Role cannot view refunds."); }
     private static void ValidateAmount(decimal amount) { if (amount <= 0 || decimal.Round(amount, 2) != amount) throw RefundOperationException.Validation("Refund amount must be positive with at most two decimal places."); }
     private static string Key(string value) => Required(value, 80, "Idempotency-Key");
     private static string Required(string? value, int max, string name) { value = value?.Trim(); if (string.IsNullOrWhiteSpace(value) || value.Length > max) throw RefundOperationException.Validation($"{name} is required and cannot exceed {max} characters."); return value; }

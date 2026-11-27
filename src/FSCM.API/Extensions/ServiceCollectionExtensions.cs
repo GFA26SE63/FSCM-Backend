@@ -28,8 +28,10 @@ public static class ServiceCollectionExtensions
         services.AddControllers(options =>
         {
             options.Filters.Add<ScreenPermissionFilter>();
+            options.Filters.Add<ResourceScopeFilter>();
             options.Filters.Add<WarehouseScreenPermissionFilter>();
         });
+        services.AddScoped<OperationAccess>();
         services.AddEndpointsApiExplorer();
         services.AddSwaggerGen(options =>
             options.CustomSchemaIds(type => type.FullName?.Replace('+', '.') ?? type.Name));
@@ -91,12 +93,13 @@ public static class ServiceCollectionExtensions
         services.AddAuthenticationServices(configuration);
         services.AddScoped<IClaimsTransformation, ActiveAccountClaimsTransformation>();
         services.AddScoped<IAuthorizationHandler, PermissionAuthorizationHandler>();
-        services.AddScoped<IAuthorizationHandler, ScreenResourceAuthorizationHandler>();
+        services.AddScoped<IAuthorizationHandler, OperationAuthorizationHandler>();
         services.AddAuthorization(options =>
         {
-            foreach (var resource in new[] { "Payments", "Reports", "RetailerReceivables" })
-                options.AddPolicy("screen-resource:" + resource, policy => policy.RequireAuthenticatedUser()
-                    .AddRequirements(new ScreenResourceRequirement(resource)));
+            foreach (var operation in FSCM.Domain.Authorization.ApiPermissionCatalog.All)
+                options.AddPolicy("operation:" + operation.Controller + "." + operation.Action,
+                    policy => policy.RequireAuthenticatedUser()
+                        .AddRequirements(new OperationRequirement(operation.Controller, operation.Action)));
             foreach (var permission in FSCM.Domain.Authorization.SystemPermissionKeys.All)
                 options.AddPolicy("permission:" + permission, policy =>
                     policy.RequireAuthenticatedUser().AddRequirements(new PermissionRequirement(permission)));

@@ -10,6 +10,8 @@ public static class ApiPermissionCatalog
 {
     public static readonly IReadOnlyList<ApiOperationPermission> All = new ApiOperationPermission[]
     {
+        new("Allocation", "Read", "Admin", "Operator", "Sales", "SalesManager", "WarehouseKeeper", "Retailer"),
+        new("TransportDispatches", "Read", "Admin", "Operator", "Sales", "SalesManager", "WarehouseKeeper", "Retailer"),
         new("BatchDiscounts", "Suggestions", "Admin"),
         new("BatchDiscounts", "List", "Admin", "Operator", "Retailer", "Sales", "SalesManager", "WarehouseKeeper"),
         new("BatchDiscounts", "Get", "Admin", "Operator", "Retailer", "Sales", "SalesManager", "WarehouseKeeper"),

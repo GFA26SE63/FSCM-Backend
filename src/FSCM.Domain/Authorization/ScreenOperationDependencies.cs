@@ -4,12 +4,18 @@ namespace FSCM.Domain.Authorization;
 public static class ScreenOperationDependencies
 {
     /// <summary>Initial mapping only; role saves and REST authorization read the persisted table.</summary>
-    public static IReadOnlyList<FSCM.Domain.Entities.ScreenApiMapping> InitialMappings() =>
-        SystemRoles.All.SelectMany(role => ApiPermissionCatalog.All.SelectMany(operation =>
+    public static IReadOnlyList<FSCM.Domain.Entities.ScreenApiMapping> InitialMappings()
+    {
+        // Defaults describe screen dependencies, never a runtime role ceiling. A screen
+        // has the same operation contract for every business data-scope profile.
+        var dependencies = SystemRoles.All.SelectMany(role => ApiPermissionCatalog.All.SelectMany(operation =>
             (Rest(operation.Controller, operation.Action, role) ?? [])
                 .Where(screen => !screen.StartsWith("mobile-", StringComparison.Ordinal) || operation.InitialRoles.Contains(role))
-                .Select(screen => new FSCM.Domain.Entities.ScreenApiMapping
-            { BusinessRole = role, ApiCode = operation.Key, ScreenCode = screen }))).ToArray();
+                .Select(screen => (Screen: screen, Api: operation.Key)))).Distinct().ToArray();
+        return SystemRoles.All.SelectMany(role => dependencies.Select(mapping =>
+            new FSCM.Domain.Entities.ScreenApiMapping
+            { BusinessRole = role, ScreenCode = mapping.Screen, ApiCode = mapping.Api })).ToArray();
+    }
 
     public static string[]? Rest(string controller, string action, string? role) => controller switch
     {
@@ -58,6 +64,7 @@ public static class ScreenOperationDependencies
         "LoyaltyRewards" => role == SystemRoles.Retailer ? ["mobile-rt-gifts"] : ["gifts", "redeem"],
         "LoyaltyRedemptions" or "LoyaltyRedemptionWorkflow" => role == SystemRoles.Retailer ? ["mobile-rt-gifts"] : ["redeem"],
         "Disposals" or "WriteOffs" => ["disposal"],
+        "InternalTransfers" when action is "List" or "Get" => ["warehouse-transfers", "readiness"],
         "InternalTransfers" => ["warehouse-transfers"],
         "GoodsReceipts" => ["warehouse-inbound"],
         "Inventory" or "InventoryLocks" => ["batches"],
@@ -82,6 +89,7 @@ public static class ScreenOperationDependencies
             : role == SystemRoles.WarehouseKeeper ? controller == "Shipments"
                 ? ["warehouse-outbound", "mobile-wk-picking", "mobile-wk-shipped", "readiness"]
                 : ["warehouse-outbound", "mobile-wk-picking", "mobile-wk-shipped"] : ["readiness", "orders"],
+        "TransportDispatches" when action is "Read" or "AssignTransfer" => ["fleet", "readiness", "warehouse-transfers"],
         "TransportDispatches" => ["fleet"],
         "Map" => role == SystemRoles.Sales ? ["mobile-sales-retailers", "mobile-sales-declare"] : ["regions", "whs"],
         "Mobile" => role == SystemRoles.Retailer ? ["mobile-rt-order-create"] : ["mobile-sales-sync"],

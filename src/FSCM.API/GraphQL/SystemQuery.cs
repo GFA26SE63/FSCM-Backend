@@ -26,7 +26,7 @@ public sealed class SystemQuery
     }
 
     [Authorize]
-    [Authorize(Policy = "screen-resource:RetailerReceivables")]
+    [Authorize(Policy = "operation:RetailerReceivables.List")]
     public Task<RetailerReceivablePage> RetailerReceivables(
         RetailerReceivableFilter filter,
         [Service] RetailerReceivableService service,
@@ -35,7 +35,7 @@ public sealed class SystemQuery
         service.ListAsync(CurrentUser.Id(accessor), filter, cancellationToken);
 
     [Authorize]
-    [Authorize(Policy = "screen-resource:RetailerReceivables")]
+    [Authorize(Policy = "operation:RetailerReceivables.GetByOrder")]
     public Task<RetailerReceivableResult> RetailerReceivable(
         Guid orderId,
         [Service] RetailerReceivableService service,
@@ -44,7 +44,7 @@ public sealed class SystemQuery
         service.GetByOrderAsync(CurrentUser.Id(accessor), orderId, cancellationToken);
 
     [Authorize]
-    [Authorize(Policy = "screen-resource:Payments")]
+    [Authorize(Policy = "operation:Payments.List")]
     public Task<IReadOnlyCollection<PaymentResult>> Receivables(
         string? status,
         [Service] PaymentService service,
@@ -53,7 +53,7 @@ public sealed class SystemQuery
         service.ListAsync(CurrentUser.Id(accessor), CurrentUser.Role(accessor), status, cancellationToken);
 
     [Authorize]
-    [Authorize(Policy = "screen-resource:Reports")]
+    [Authorize(Policy = "operation:Reports.SalesKpis")]
     public Task<SalesKpiResult> SalesKpis(
         SalesKpiQuery query,
         [Service] ReportService service,
@@ -62,7 +62,7 @@ public sealed class SystemQuery
         service.GetSalesKpiAsync(query, CurrentUser.Id(accessor), CurrentUser.Role(accessor), cancellationToken);
 
     [Authorize]
-    [Authorize(Policy = "screen-resource:Reports")]
+    [Authorize(Policy = "operation:Reports.BestSellingProducts")]
     public Task<ProductRankingResult> BestSellingProducts(
         ProductRankingQuery query,
         [Service] ReportService service,

@@ -174,14 +174,17 @@ public sealed class RetailerServiceTests
         Assert.Empty(fixture.EmailSender.AccountCreatedEmails);
     }
 
-    [Fact]
-    public async Task Search_scope_mine_returns_only_own_declarations()
+    [Theory]
+    [InlineData("Sales")]
+    [InlineData("SalesManager")]
+    [InlineData("WarehouseKeeper")]
+    public async Task Search_scope_mine_returns_only_own_declarations(string profile)
     {
         var fixture = new Fixture();
         await fixture.DeclareAsync(30_000_000, 20, 60);
 
-        var own = await fixture.Service.SearchAsync(fixture.SalesUserId, "Sales", null, null, "mine", 1, 20, CancellationToken.None);
-        var other = await fixture.Service.SearchAsync(Guid.NewGuid(), "Sales", null, null, "mine", 1, 20, CancellationToken.None);
+        var own = await fixture.Service.SearchAsync(fixture.SalesUserId, profile, null, null, "mine", 1, 20, CancellationToken.None);
+        var other = await fixture.Service.SearchAsync(Guid.NewGuid(), profile, null, null, "mine", 1, 20, CancellationToken.None);
 
         Assert.Equal(1, own.TotalCount);
         Assert.Equal(0, other.TotalCount);
@@ -436,14 +439,13 @@ public sealed class RetailerServiceTests
     [InlineData("SalesManager")]
     [InlineData("Retailer")]
     [InlineData("WarehouseKeeper")]
-    public async Task Profile_edit_is_admin_only_in_the_service_as_well_as_the_controller(string role)
+    public async Task Delegated_profile_edit_keeps_validation_and_audit(string role)
     {
         var fixture = new Fixture();
         var declared = await fixture.DeclareAsync(30_000_000, 20, 60);
-        var exception = await Assert.ThrowsAsync<RetailerOperationException>(() =>
-            fixture.Service.UpdateProfileAsync(declared.Id, fixture.SalesUserId, role, ProfileData(), default));
-        Assert.Equal("forbidden", exception.Code);
-        Assert.Equal(declared.Name, Assert.Single(fixture.Store.Retailers).Name);
+        var result = await fixture.Service.UpdateProfileAsync(declared.Id, fixture.SalesUserId, role, ProfileData(), default);
+        Assert.Equal("Updated store", result.Name);
+        Assert.Equal("updated@retailer.test", Assert.Single(fixture.Store.DeclarationContacts).Email);
     }
 
     [Fact]

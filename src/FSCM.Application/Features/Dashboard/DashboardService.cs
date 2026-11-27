@@ -7,8 +7,6 @@ public sealed class DashboardService(IDashboardStore store, TimeProvider clock, 
 {
     public async Task<DashboardResult> GetAsync(Guid actor, string role, DashboardQuery query, CancellationToken ct)
     {
-        if (role is not (SystemRoles.Admin or SystemRoles.Operator or SystemRoles.WarehouseKeeper or SystemRoles.SalesManager))
-            throw ReportOperationException.Forbidden("Vai trò này không có dashboard Portal.");
         var now = clock.GetUtcNow();
         var today = DateOnly.FromDateTime(now.ToOffset(TimeSpan.FromHours(7)).DateTime);
         var from = query.FromDate ?? new DateOnly(today.Year, today.Month, 1);

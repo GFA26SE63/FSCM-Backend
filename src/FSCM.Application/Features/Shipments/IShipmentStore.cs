@@ -70,7 +70,7 @@ public sealed record ShipmentIssueRow(
 
 public interface IShipmentStore
 {
-    Task<BusyTransportResult> ListBusyTransportAsync(CancellationToken ct);
+    Task<BusyTransportResult> ListBusyTransportAsync(CancellationToken ct, Guid actorId, string scopeProfile);
     Task<bool> IsDocumentControlledPickingAsync(Guid pickingListId, CancellationToken ct) => Task.FromResult(false);
     Task<bool> CanAccessWarehouseAsync(Guid userId, string role, Guid warehouseId, CancellationToken cancellationToken);
     Task<bool> CanViewOrderAsync(Guid orderId, Guid userId, string role, CancellationToken cancellationToken);
