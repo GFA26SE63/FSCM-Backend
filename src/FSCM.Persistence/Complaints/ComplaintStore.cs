@@ -1,4 +1,6 @@
 using FSCM.Application.Features.Complaints;
+using FSCM.Application.Features.Orders;
+using FSCM.Application.Features.WarehouseConfiguration;
 using FSCM.Domain.Authorization;
 using FSCM.Domain.Entities;
 using FSCM.Persistence.DbContexts;
@@ -12,11 +14,13 @@ namespace FSCM.Persistence.Complaints;
 
 public sealed class ComplaintStore(AppDbContext db) : IComplaintStore
 {
-    public async Task<IReadOnlyCollection<ComplaintTarget>> ListTargetsAsync(Guid actor, Guid orderId, CancellationToken ct)
+    public async Task<IReadOnlyCollection<ComplaintTarget>> ListTargetsAsync(Guid actor, Guid orderId, DateTimeOffset now, CancellationToken ct)
     {
         var owned = await (from o in db.SalesOrderRecords join r in db.RetailerRecords on o.RetailerId equals r.Id
-            where o.Id == orderId && r.UserAccountId == actor select o.Id).AnyAsync(ct);
-        if (!owned) throw ComplaintOperationException.NotFound("Không tìm thấy đơn của cửa hàng.");
+            where o.Id == orderId && r.UserAccountId == actor select new { o.Id, o.PaymentMethod }).SingleOrDefaultAsync(ct);
+        if (owned is null) throw ComplaintOperationException.NotFound("Không tìm thấy đơn của cửa hàng.");
+        if (IsCredit(owned.PaymentMethod) && await HasCollectedPaymentAsync(orderId, ct)) return [];
+        var windowDays = await ClaimWindowDaysAsync(ct);
         var rows = await (from receipt in db.ReceiptConfirmationRecords
             join part in db.ShipmentRecords on receipt.ShipmentId equals part.Id
             join item in db.ReceiptConfirmationItemRecords on receipt.Id equals item.ReceiptConfirmationId
@@ -32,7 +36,9 @@ public sealed class ComplaintStore(AppDbContext db) : IComplaintStore
                 && allocation.SalesOrderLineId == line.Id && pick.SourceBatchId == item.BatchId && label.BatchId == item.BatchId
             select new ComplaintTarget(part.Id, part.ShipmentCode, allocation.Id, product.Sku,
                 product.Name, batch.BatchCode, label.QrCode, item.ExpectedQuantity,
-                item.ReceivedQuantity + item.DamagedQuantity)).ToArrayAsync(ct);
+                item.ReceivedQuantity + item.DamagedQuantity, 0, 0, receipt.ConfirmedAt)).ToArrayAsync(ct);
+        rows = rows.Select(t => t with { ClaimDeadline = t.ClaimDeadline!.Value.AddDays(windowDays) })
+            .Where(t => now <= t.ClaimDeadline).ToArray();
         var allocationIds = rows.Select(x => x.AllocationId).Distinct().ToArray();
         var prior = await (from d in db.ReceiptDiscrepancyRecords join i in db.ReceiptDiscrepancyItemRecords on d.Id equals i.ReceiptDiscrepancyId
             where i.AllocationId.HasValue && allocationIds.Contains(i.AllocationId.Value) && d.Status != "Rejected" && d.Status != "Cancelled"
@@ -66,9 +72,7 @@ public sealed class ComplaintStore(AppDbContext db) : IComplaintStore
 
     private async Task<ReceiptDiscrepancy> CreateCoreAsync(Guid actor, CreateComplaintData data, DateTimeOffset now, CancellationToken ct)
     {
-        if (data.RequestType is not ("Complaint" or "Return" or "DamagedCollection") ||
-            data.SettlementMethod is not ("DebtOffset" or "CashRefund" or "None") ||
-            data.SettlementMethod == "None" && data.RequestType != "DamagedCollection")
+        if (data.RequestType is not ("Complaint" or "Return" or "DamagedCollection"))
             throw ComplaintOperationException.Validation("Loại yêu cầu hoặc phương án bồi hoàn không hợp lệ.");
         if (data.Note?.Length > 2000) throw ComplaintOperationException.Validation("Mô tả tối đa 2000 ký tự.");
         var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(data with { RequestId = null }))));
@@ -99,6 +103,10 @@ public sealed class ComplaintStore(AppDbContext db) : IComplaintStore
             ?? throw ComplaintOperationException.Forbidden("The account is not linked to an active retailer.");
         var order = await db.SalesOrderRecords.SingleOrDefaultAsync(x => x.OrderCode == data.OrderCode && x.RetailerId == retailer.Id, ct)
             ?? throw ComplaintOperationException.NotFound("The delivered order was not found for this retailer.");
+        if (IsCredit(order.PaymentMethod) && await HasCollectedPaymentAsync(order.Id, ct))
+            throw ComplaintOperationException.Conflict("Đơn công nợ đã phát sinh thanh toán, không thể tạo yêu cầu.");
+        if (data.SettlementMethod != RequiredSettlement(order.PaymentMethod))
+            throw ComplaintOperationException.Validation("Phương án bồi hoàn không đúng với phương thức thanh toán của đơn.");
         var line = await (from l in db.SalesOrderLineRecords join p in db.ProductRecords on l.ProductId equals p.Id
                           where l.SalesOrderId == order.Id && p.Sku == data.Sku select new { Line = l, Product = p }).SingleOrDefaultAsync(ct)
             ?? throw ComplaintOperationException.NotFound("The SKU was not found in this order.");
@@ -121,6 +129,8 @@ public sealed class ComplaintStore(AppDbContext db) : IComplaintStore
             throw ComplaintOperationException.Validation("Several shipment receipts match; specify the shipment part.");
         var receipt = receiptRows[0].Receipt;
         var receiptItem = receiptRows[0].Item;
+        if (now > receipt.ConfirmedAt.AddDays(await ClaimWindowDaysAsync(ct)))
+            throw ComplaintOperationException.Conflict("Đã quá hạn gửi yêu cầu cho phần giao này.");
         if (!await db.ReceiptConfirmationQrLabelRecords.AnyAsync(l => l.ReceiptConfirmationId == receipt.Id && l.BatchQrLabelId == label.Label.Id, ct))
             throw ComplaintOperationException.Validation("Tem không thuộc phiếu nhận của phần hàng này.");
         var shipment = await db.ShipmentRecords.SingleOrDefaultAsync(x => x.Id == receipt.ShipmentId && x.SalesOrderId == order.Id, ct)
@@ -218,6 +228,7 @@ public sealed class ComplaintStore(AppDbContext db) : IComplaintStore
             .GroupBy(a => a.EntityId).ToDictionary(g => g.Key, g => g.First().Reason);
         return rows.Select(x => ToResult(x.d, x.o.OrderCode, x.r.Code, x.r.Name, x.p?.Sku ?? "", x.p?.Name ?? "", x.i, x.l?.QrCode, x.i.EvidenceBlobUrl,
             x.d.Status == "UnderReview" ? requests.GetValueOrDefault(x.d.Id) : null) with {
+                OrderPaymentMethod = x.o.PaymentMethod,
                 Documents = documents.Where(d => d.ReceiptDiscrepancyId == x.d.Id).Select(DocumentResult).ToArray()
             }).ToArray();
     }
@@ -250,8 +261,8 @@ public sealed class ComplaintStore(AppDbContext db) : IComplaintStore
         var settlement = data.SettlementMethod ?? row.d.SettlementMethod;
         if (data.Approved && (approvedQuantity <= 0 || decimal.Truncate(approvedQuantity) != approvedQuantity || approvedQuantity > row.d.RequestedQuantity))
             throw ComplaintOperationException.Validation("Số thùng được duyệt phải nguyên, lớn hơn 0 và không vượt số yêu cầu.");
-        if (settlement is not ("DebtOffset" or "CashRefund" or "None") || settlement == "None" && row.d.RequestType != "DamagedCollection")
-            throw ComplaintOperationException.Validation("Phương án bồi hoàn không hợp lệ.");
+        if (data.Approved && settlement != RequiredSettlement(row.o.PaymentMethod))
+            throw ComplaintOperationException.Validation("Phương án bồi hoàn không đúng với phương thức thanh toán của đơn.");
         if (data.WaivePhysicalHandling && string.IsNullOrWhiteSpace(data.WaiverReason))
             throw ComplaintOperationException.Validation("Miễn xử lý hàng thực tế phải có lý do.");
         if (data.Result.Length > 2000 || data.WaiverReason?.Length > 1000)
@@ -358,6 +369,30 @@ public sealed class ComplaintStore(AppDbContext db) : IComplaintStore
     private async Task<ComplaintResult> ResultAsync(Guid id, CancellationToken ct) =>
         (await ListAsync(Guid.Empty, SystemRoles.Admin, ct)).Single(x => x.Id == id);
     private static decimal Money(decimal amount) => Math.Round(amount, 0, MidpointRounding.AwayFromZero);
+
+    private static bool IsCredit(string? paymentMethod) =>
+        string.Equals(paymentMethod, OrderPaymentMethods.Credit, StringComparison.OrdinalIgnoreCase);
+
+    // Prepaid money is returned; credit compensation only reduces the order debt.
+    private static string RequiredSettlement(string? paymentMethod) =>
+        string.Equals(paymentMethod, OrderPaymentMethods.Prepaid, StringComparison.OrdinalIgnoreCase) ? "CashRefund"
+        : IsCredit(paymentMethod) ? "DebtOffset"
+        : throw ComplaintOperationException.Conflict("Đơn chưa có phương thức thanh toán hợp lệ.");
+
+    // Any money collected on a credit order closes it to new requests, even a partial payment.
+    private Task<bool> HasCollectedPaymentAsync(Guid orderId, CancellationToken ct) =>
+        db.PaymentRecords.AsNoTracking().AnyAsync(p => p.SalesOrderId == orderId && p.ConfirmedAmount > 0, ct);
+
+    // Shared with order completion: 0 or missing means requests close at receipt confirmation.
+    private async Task<int> ClaimWindowDaysAsync(CancellationToken ct)
+    {
+        var raw = await db.SystemConfigurationRecords.AsNoTracking()
+            .Where(item => item.ConfigKey == BusinessConfigurationKeys.OrderCompletionGraceDays && item.IsActive)
+            .OrderByDescending(item => item.Version)
+            .Select(item => item.ConfigValue)
+            .FirstOrDefaultAsync(ct);
+        return int.TryParse(raw, out var days) && days > 0 ? days : 0;
+    }
     private static ReturnHandlingDocumentResult DocumentResult(ReturnHandlingDocument d) =>
         new(d.Id, d.Code, d.Kind, d.Status, d.ApprovedQuantity, d.ActualQuantity, d.CompletedAt, d.Note, d.EvidenceReference);
 

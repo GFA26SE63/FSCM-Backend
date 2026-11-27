@@ -8,6 +8,7 @@ using FSCM.Application.Features.Picking;
 using FSCM.Application.Features.QrLabels;
 using FSCM.Application.Features.Quotes;
 using FSCM.Application.Features.Shipments;
+using FSCM.Application.Features.WarehouseConfiguration;
 using FSCM.Domain.Authorization;
 using FSCM.Domain.Entities;
 using FSCM.Infrastructure;
@@ -161,7 +162,33 @@ public sealed class RealTimePostgresWorkflowTests
         ComplaintResult? earlyReturn = null;
         Guid earlyAllocation = default;
         var twoChildSplitVerified = false;
-        async Task Fulfill(Guid orderId)
+        // The claim window shares order.completion_grace_days; 0 closes requests at receipt confirmation.
+        async Task SetClaimWindowDays(int days) => await Db(async db =>
+        {
+            var row = await db.SystemConfigurationRecords.SingleOrDefaultAsync(c => c.ConfigKey == BusinessConfigurationKeys.OrderCompletionGraceDays && c.IsActive);
+            var now = DateTimeOffset.UtcNow;
+            if (row is null)
+                db.SystemConfigurationRecords.Add(new SystemConfiguration { Id = Guid.NewGuid(), ConfigKey = BusinessConfigurationKeys.OrderCompletionGraceDays,
+                    ConfigValue = days.ToString(), ValueType = "integer", Description = "E2E claim window", Version = 1, IsActive = true,
+                    EffectiveFrom = now, CreatedAt = now, UpdatedAt = now });
+            else row.ConfigValue = days.ToString();
+            await db.SaveChangesAsync();
+        });
+        async Task Collect(Guid orderId)
+        {
+            var payment = await Call<PaymentService, PaymentResult>(s => s.GetByOrderAsync(orderId, sales, SystemRoles.Sales, default));
+            Assert.NotNull(payment.DeliveredDate); Assert.Equal(payment.DeliveredDate.Value.AddDays(14), payment.DueDate);
+            var paid = await Call<PaymentService, PaymentResult>(s => s.CollectAsync(orderId, new("Cash", payment.Version, "E2E cash"), $"e2e:{orderId}", sales, SystemRoles.Sales, default));
+            Assert.Equal("Paid", paid.Status); Assert.Equal(0, paid.OutstandingAmount);
+            // Simulate a lost collection response: the same request must replay safely.
+            var replay = await Call<PaymentService, PaymentResult>(s => s.CollectAsync(orderId, new("Cash", payment.Version, "E2E cash"), $"e2e:{orderId}", sales, SystemRoles.Sales, default));
+            Assert.Equal(paid.Version, replay.Version);
+            await Db(async db =>
+            {
+                Assert.Single(await db.PaymentReceiptAllocationRecords.Where(x => db.PaymentRecords.Any(p => p.Id == x.PaymentId && p.SalesOrderId == orderId)).ToArrayAsync());
+            });
+        }
+        async Task Fulfill(Guid orderId, bool collect = true)
         {
             var lists = await Call<CurrentPickingService, IReadOnlyCollection<CurrentPickingResult>>(s => s.ListAsync(keeper, SystemRoles.WarehouseKeeper, null, null, default));
             foreach (var list in lists.Where(l => l.OrderId == orderId))
@@ -313,44 +340,37 @@ public sealed class RealTimePostgresWorkflowTests
                 Assert.Equal(earlyReturn.AdjustmentAmount,earlyReturn.DebtOffsetAmount);
                 Assert.Null(earlyReturn.RefundId);
             }
-            var payment = await Call<PaymentService, PaymentResult>(s => s.GetByOrderAsync(orderId, sales, SystemRoles.Sales, default));
-            Assert.NotNull(payment.DeliveredDate); Assert.Equal(payment.DeliveredDate.Value.AddDays(14), payment.DueDate);
-            var paid = await Call<PaymentService, PaymentResult>(s => s.CollectAsync(orderId, new("Cash", payment.Version, "E2E cash"), $"e2e:{orderId}", sales, SystemRoles.Sales, default));
-            Assert.Equal("Paid", paid.Status); Assert.Equal(0, paid.OutstandingAmount);
-            // Simulate a lost collection response: the same request must replay safely.
-            var replay = await Call<PaymentService, PaymentResult>(s => s.CollectAsync(orderId, new("Cash", payment.Version, "E2E cash"), $"e2e:{orderId}", sales, SystemRoles.Sales, default));
-            Assert.Equal(paid.Version, replay.Version);
-            await Db(async db =>
-            {
-                Assert.Single(await db.PaymentReceiptAllocationRecords.Where(x => db.PaymentRecords.Any(p => p.Id == x.PaymentId && p.SalesOrderId == orderId)).ToArrayAsync());
-            });
+            if (collect) await Collect(orderId);
         }
-        await Db(async db =>
-        {
-            db.LoyaltyProgramRecords.Add(new LoyaltyProgram { Id = Guid.NewGuid(), Code = "LP-E2E", Name = "E2E earning snapshot",
-                SpendAmountPerPoint = 10000, MinimumRedeemPoints = 1, StartAt = DateTimeOffset.UtcNow.AddDays(-1),
-                EndAt = DateTimeOffset.UtcNow.AddDays(10), IsActive = true, CreatedByUserId = op,
-                CreatedAt = DateTimeOffset.UtcNow, UpdatedAt = DateTimeOffset.UtcNow });
-            await db.SaveChangesAsync();
-        });
-        await Fulfill(main.Id);
+        await SetClaimWindowDays(1);
+        // A credit order accepts requests only while nothing is collected, so main is paid after its requests.
+        await Fulfill(main.Id, collect: false);
         Assert.NotNull(earlyReturn);
         Assert.Equal("Resolved",earlyReturn.Status);
         Assert.True(qrGenerationAfterIssueVerified, "Exercise 5- and 6-carton generation between issue and dispatch.");
         var targets = await Call<ComplaintService, IReadOnlyCollection<ComplaintTarget>>(s => s.ListTargetsAsync(retailerUser, main.Id, default));
         Assert.Equal(2, targets.Count);
+        Assert.All(targets, t => Assert.NotNull(t.ClaimDeadline));
         var returnTarget = targets.Single(t => t.AllocationId == earlyAllocation);
         var beforeReturn = await Call<PaymentService, PaymentResult>(s => s.GetByOrderAsync(main.Id, op, SystemRoles.Operator, default));
         var returnRequest = new CreateComplaintData(main.OrderCode, returnTarget.Sku, returnTarget.LabelCode, 0,
             "Return received goods", null, returnTarget.ShipmentId, AllocationId: returnTarget.AllocationId,
-            RequestType: "Return", SettlementMethod: "CashRefund", AffectedQuantity: 2, RequiresCollection: true, RequestId: Guid.NewGuid());
+            RequestType: "Return", SettlementMethod: "DebtOffset", AffectedQuantity: 2, RequiresCollection: true, RequestId: Guid.NewGuid());
+        // Credit compensation only reduces debt, and collect-only requests are no longer accepted.
+        await Assert.ThrowsAsync<ComplaintOperationException>(() => Call<ComplaintService, ReceiptDiscrepancy>(s =>
+            s.CreateAsync(retailerUser, returnRequest with { RequestId = Guid.NewGuid(), SettlementMethod = "CashRefund" }, default)));
+        await Assert.ThrowsAsync<ComplaintOperationException>(() => Call<ComplaintService, ReceiptDiscrepancy>(s =>
+            s.CreateAsync(retailerUser, returnRequest with { RequestId = Guid.NewGuid(), RequestType = "DamagedCollection", SettlementMethod = "None" }, default)));
         var createdReturn = await Call<ComplaintService, ReceiptDiscrepancy>(s => s.CreateAsync(retailerUser, returnRequest, default));
         var replayReturn = await Call<ComplaintService, ReceiptDiscrepancy>(s => s.CreateAsync(retailerUser, returnRequest, default));
         Assert.Equal(createdReturn.Id, replayReturn.Id);
         await Assert.ThrowsAsync<ComplaintOperationException>(() => Call<ComplaintService, ReceiptDiscrepancy>(s =>
             s.CreateAsync(retailerUser, returnRequest with { Note = "changed request" }, default)));
         var returnView = await Call<ComplaintService, ComplaintResult>(s => s.GetAsync(createdReturn.Id, retailerUser, SystemRoles.Retailer, default));
-        var returnApproval = new ResolveComplaintData("Approved return", true, 2, "CashRefund", returnView.Version);
+        Assert.Equal(OrderPaymentMethods.Credit, returnView.OrderPaymentMethod);
+        var returnApproval = new ResolveComplaintData("Approved return", true, 2, "DebtOffset", returnView.Version);
+        await Assert.ThrowsAsync<ComplaintOperationException>(() => Call<ComplaintService, ComplaintResult>(s =>
+            s.ResolveAsync(createdReturn.Id, op, returnApproval with { SettlementMethod = "CashRefund" }, default)));
         var approvedReturn = await Call<ComplaintService, ComplaintResult>(s => s.ResolveAsync(createdReturn.Id, op, returnApproval, default));
         Assert.False(approvedReturn.FinancialAdjustmentApplied);
         Assert.Null(approvedReturn.RefundId);
@@ -365,22 +385,22 @@ public sealed class RealTimePostgresWorkflowTests
         var returned = completedReturns[0];
         Assert.Equal("Resolved", returned.Status);
         Assert.True(returned.FinancialAdjustmentApplied);
-        Assert.NotNull(returned.RefundId);
-        Assert.Equal(returned.RefundId, completedReturns[1].RefundId);
-        Assert.Equal(returned.FinalUnitPrice, returned.RefundAmount);
-        Assert.Equal(0, returned.DebtOffsetAmount);
-        await Db(async db => Assert.Single(await db.ManualRefundRecords.Where(r => r.ReceiptDiscrepancyId == createdReturn.Id).ToArrayAsync()));
+        Assert.Null(returned.RefundId);
+        Assert.Equal(returned.FinalUnitPrice, returned.DebtOffsetAmount);
+        Assert.Equal(returned.DebtOffsetAmount, completedReturns[1].DebtOffsetAmount);
+        Assert.Equal(0, returned.RefundAmount);
+        await Db(async db => Assert.Empty(await db.ManualRefundRecords.Where(r => r.ReceiptDiscrepancyId == createdReturn.Id).ToArrayAsync()));
         var collection = await Call<ComplaintService, ReceiptDiscrepancy>(s => s.CreateAsync(retailerUser,
-            returnRequest with { RequestId = Guid.NewGuid(), RequestType = "DamagedCollection", SettlementMethod = "None", AffectedQuantity = 1 }, default));
+            returnRequest with { RequestId = Guid.NewGuid(), RequestType = "DamagedCollection", AffectedQuantity = 1 }, default));
         var collectionView = await Call<ComplaintService, ComplaintResult>(s => s.GetAsync(collection.Id,retailerUser,SystemRoles.Retailer,default));
-        var collectionApproval = await Call<ComplaintService, ComplaintResult>(s => s.ResolveAsync(collection.Id, op, new("Collect only",true,1,"None",collectionView.Version),default));
-        Assert.Equal("CollectionOrder", Assert.Single(collectionApproval.Documents).Kind);
+        var collectionApproval = await Call<ComplaintService, ComplaintResult>(s => s.ResolveAsync(collection.Id, op, new("Collect damaged",true,1,"DebtOffset",collectionView.Version),default));
+        Assert.Contains(collectionApproval.Documents, d => d.Kind == "CollectionOrder");
         var collected = await Call<ComplaintService, ComplaintResult>(s => s.CompleteHandlingAsync(collection.Id,op,
             new(collectionApproval.Version,1,DateTimeOffset.UtcNow,"Disposed externally","disposal-proof-01"),default));
         Assert.Equal("Resolved", collected.Status);
         Assert.Null(collected.RefundId);
-        Assert.False(collected.FinancialAdjustmentApplied);
-        Assert.Equal(0, collected.AdjustmentAmount);
+        Assert.True(collected.FinancialAdjustmentApplied);
+        Assert.Equal(collected.AdjustmentAmount, collected.DebtOffsetAmount);
         var complaintTarget = targets.Single(t => t.AllocationId != returnTarget.AllocationId);
         var rejectedClaim = await Call<ComplaintService, ReceiptDiscrepancy>(s => s.CreateAsync(retailerUser,
             new(main.OrderCode, complaintTarget.Sku, complaintTarget.LabelCode, complaintTarget.ExpectedQuantity - 1, "reject test", null, complaintTarget.ShipmentId, AllocationId: complaintTarget.AllocationId), default));
@@ -391,16 +411,49 @@ public sealed class RealTimePostgresWorkflowTests
             new(main.OrderCode, complaintTarget.Sku, complaintTarget.LabelCode, complaintTarget.ExpectedQuantity - 1, "missing one", null, complaintTarget.ShipmentId, AllocationId: complaintTarget.AllocationId), default));
         await Assert.ThrowsAsync<ComplaintOperationException>(() => Call<ComplaintService, ReceiptDiscrepancy>(s => s.CreateAsync(retailerUser,
             new(main.OrderCode, complaintTarget.Sku, complaintTarget.LabelCode, complaintTarget.ExpectedQuantity - 1, "different note", null, complaintTarget.ShipmentId, AllocationId: complaintTarget.AllocationId), default)));
-        await Db(async db => { var program = await db.LoyaltyProgramRecords.SingleAsync(p => p.Code == "LP-E2E");
-            program.SpendAmountPerPoint = 1; program.IsActive = false; program.EndAt = DateTimeOffset.UtcNow.AddMinutes(-1);
-            program.UpdatedAt = DateTimeOffset.UtcNow; await db.SaveChangesAsync(); });
         var approvedClaim = await Call<ComplaintService, ComplaintResult>(s => s.ResolveAsync(claim.Id, op, new("Approved", true), default));
         Assert.True(approvedClaim.FinancialAdjustmentApplied);
         var afterClaim = await Call<PaymentService, PaymentResult>(s => s.GetByOrderAsync(main.Id, op, SystemRoles.Operator, default));
         await Call<ComplaintService, ComplaintResult>(s => s.ResolveAsync(claim.Id, op, new("Replay with different note", true), default));
         Assert.Equal(afterClaim.Version, (await Call<PaymentService, PaymentResult>(s => s.GetByOrderAsync(main.Id, op, SystemRoles.Operator, default))).Version);
+        // Claim window: a part confirmed longer ago than the window, and a 0-day window, both close requests.
+        var lateRequest = new CreateComplaintData(main.OrderCode, complaintTarget.Sku, complaintTarget.LabelCode, complaintTarget.ExpectedQuantity - 1,
+            "after window", null, complaintTarget.ShipmentId, AllocationId: complaintTarget.AllocationId, RequestId: Guid.NewGuid());
+        await Db(async db =>
+        {
+            foreach (var receipt in await db.ReceiptConfirmationRecords.Where(r => r.SalesOrderId == main.Id && r.ShipmentId == complaintTarget.ShipmentId).ToArrayAsync())
+                receipt.ConfirmedAt = receipt.ConfirmedAt.AddDays(-2);
+            await db.SaveChangesAsync();
+        });
+        Assert.DoesNotContain(await Call<ComplaintService, IReadOnlyCollection<ComplaintTarget>>(s => s.ListTargetsAsync(retailerUser, main.Id, default)),
+            t => t.ShipmentId == complaintTarget.ShipmentId);
+        await Assert.ThrowsAsync<ComplaintOperationException>(() => Call<ComplaintService, ReceiptDiscrepancy>(s => s.CreateAsync(retailerUser, lateRequest, default)));
+        await SetClaimWindowDays(0);
+        Assert.Empty(await Call<ComplaintService, IReadOnlyCollection<ComplaintTarget>>(s => s.ListTargetsAsync(retailerUser, main.Id, default)));
+        await Assert.ThrowsAsync<ComplaintOperationException>(() => Call<ComplaintService, ReceiptDiscrepancy>(s =>
+            s.CreateAsync(retailerUser, returnRequest with { RequestId = Guid.NewGuid(), AffectedQuantity = 1 }, default)));
+        await Db(async db =>
+        {
+            db.LoyaltyProgramRecords.Add(new LoyaltyProgram { Id = Guid.NewGuid(), Code = "LP-E2E", Name = "E2E earning snapshot",
+                SpendAmountPerPoint = 10000, MinimumRedeemPoints = 1, StartAt = DateTimeOffset.UtcNow.AddDays(-1),
+                EndAt = DateTimeOffset.UtcNow.AddDays(10), IsActive = true, CreatedByUserId = op,
+                CreatedAt = DateTimeOffset.UtcNow, UpdatedAt = DateTimeOffset.UtcNow });
+            await db.SaveChangesAsync();
+        });
+        // A 0-day window also means no completion hold, so collecting completes the order and earns points.
+        await Collect(main.Id);
+        await SetClaimWindowDays(1);
+        // Any collected money on a credit order closes it to new requests, even inside the window.
+        Assert.Empty(await Call<ComplaintService, IReadOnlyCollection<ComplaintTarget>>(s => s.ListTargetsAsync(retailerUser, main.Id, default)));
+        await Assert.ThrowsAsync<ComplaintOperationException>(() => Call<ComplaintService, ReceiptDiscrepancy>(s =>
+            s.CreateAsync(retailerUser, returnRequest with { RequestId = Guid.NewGuid(), AffectedQuantity = 1 }, default)));
+        await SetClaimWindowDays(0);
+        await Db(async db => { var program = await db.LoyaltyProgramRecords.SingleAsync(p => p.Code == "LP-E2E");
+            program.SpendAmountPerPoint = 1; program.IsActive = false; program.EndAt = DateTimeOffset.UtcNow.AddMinutes(-1);
+            program.UpdatedAt = DateTimeOffset.UtcNow; await db.SaveChangesAsync(); });
+        var paidMain = await Call<PaymentService, PaymentResult>(s => s.GetByOrderAsync(main.Id, op, SystemRoles.Operator, default));
         var adjusted = await Call<PaymentService, PaymentResult>(s => s.AdjustReceivableAsync(main.Id,
-            new(10000, "direct adjustment", afterClaim.Version), "e2e-direct-adjust", op, SystemRoles.Operator, default));
+            new(10000, "direct adjustment", paidMain.Version), "e2e-direct-adjust", op, SystemRoles.Operator, default));
         await Db(async db =>
         {
             var ledger = await db.LoyaltyTransactionRecords.Where(l => l.SalesOrderId == main.Id &&
