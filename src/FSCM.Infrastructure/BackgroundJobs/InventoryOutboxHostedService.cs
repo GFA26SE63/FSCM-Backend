@@ -1,59 +1,38 @@
 using FSCM.Application.Features.Inventory;
+using FSCM.Application.Features.WarehouseConfiguration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 
 namespace FSCM.Infrastructure.BackgroundJobs;
 
-public sealed class InventoryOutboxHostedService(
-    IServiceScopeFactory scopeFactory,
-    IOptions<InventoryOutboxOptions> options,
-    TimeProvider timeProvider,
+public sealed class InventoryOutboxHostedService(IServiceScopeFactory scopes, TimeProvider clock,
     ILogger<InventoryOutboxHostedService> logger) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        var settings = options.Value;
-        if (!settings.Enabled)
-        {
-            logger.LogInformation("Inventory outbox dispatcher is disabled by configuration.");
-            return;
-        }
-
-        var interval = TimeSpan.FromSeconds(Math.Clamp(settings.PollIntervalSeconds, 1, 300));
-        var batchSize = Math.Clamp(settings.BatchSize, 1, 500);
+        DateTimeOffset? lastRun = null;
         while (!stoppingToken.IsCancellationRequested)
         {
+            var delaySeconds = 15;
             try
             {
-                await using var scope = scopeFactory.CreateAsyncScope();
-                var dispatcher = scope.ServiceProvider.GetRequiredService<InventoryOutboxDispatcher>();
-                var result = await dispatcher.DispatchAsync(batchSize, stoppingToken);
-                if (result.MessagesRead > 0)
+                await using var scope = scopes.CreateAsyncScope();
+                var settings = await scope.ServiceProvider.GetRequiredService<BackgroundJobSettings>()
+                    .ReadAsync<InventoryOutboxSettings>(BackgroundJobSettings.InventoryOutboxKey, stoppingToken);
+                delaySeconds = Math.Min(settings.PollIntervalSeconds, 15);
+                if (settings.Enabled && (lastRun is null ||
+                    clock.GetUtcNow() >= lastRun.Value.AddSeconds(settings.PollIntervalSeconds)))
                 {
-                    logger.LogInformation(
-                        "Inventory outbox dispatch completed: {Read} read, {Processed} processed, {Failed} failed.",
-                        result.MessagesRead, result.MessagesProcessed, result.MessagesFailed);
+                    await scope.ServiceProvider.GetRequiredService<InventoryOutboxDispatcher>()
+                        .DispatchAsync(settings.BatchSize, stoppingToken);
+                    lastRun = clock.GetUtcNow();
                 }
             }
-            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-            {
-                break;
-            }
-            catch (Exception exception)
-            {
-                logger.LogError(exception, "Inventory outbox dispatch failed; the polling loop will retry.");
-            }
-
-            try
-            {
-                await Task.Delay(interval, timeProvider, stoppingToken);
-            }
-            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-            {
-                break;
-            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { break; }
+            catch (Exception e) { logger.LogError(e, "Inventory outbox failed; retrying on next settings poll."); }
+            try { await Task.Delay(TimeSpan.FromSeconds(delaySeconds), clock, stoppingToken); }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { break; }
         }
     }
 }

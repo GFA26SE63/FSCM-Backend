@@ -99,6 +99,7 @@ public static class DependencyInjection
         services.AddScoped<TransitTableService>();
         services.AddScoped<DeliveryEtaService>();
         services.AddScoped<WarehouseConfigurationService>();
+        services.AddScoped<BackgroundJobSettings>();
 
         return services;
     }

@@ -1,4 +1,7 @@
 using System.Security.Claims;
+using FSCM.Application.Features.WarehouseConfiguration;
+using FSCM.Application.Features.TransitTables;
+using FSCM.Application.Features.DeliveryEta;
 using FSCM.Application.Features.EntityQueries;
 using FSCM.Application.Features.Identity;
 using FSCM.Application.Features.Notifications;
@@ -11,6 +14,30 @@ namespace FSCM.API.GraphQL;
 
 public sealed class SystemQuery
 {
+    [Authorize(Policy = "operation:BusinessConfigurations.List")]
+    public async Task<IReadOnlyCollection<ConfigurationResult>> BusinessConfigurations(
+        [Service] WarehouseConfigurationService service, [Service] IHttpContextAccessor accessor, CancellationToken ct)
+    {
+        var all = await service.ListCurrentConfigurationsAsync(ct);
+        var user = accessor.HttpContext!.User;
+        return user.IsInRole(SystemRoles.Admin) ||
+            user.HasClaim(FSCM.API.Security.PermissionAuthorizationHandler.GrantClaim, SystemScreenKeys.Config)
+            ? all : all.Where(item => item.Key is BusinessConfigurationKeys.OrderStepCartons
+                or BusinessConfigurationKeys.DemoFastScanEnabled).ToArray();
+    }
+
+    [Authorize(Policy = "operation:TransitTables.Current")]
+    public Task<TransitTableResult> CurrentTransitTable(
+        [Service] TransitTableService service, CancellationToken ct) => service.GetCurrentAsync(ct);
+
+    [Authorize(Policy = "operation:TransitTables.History")]
+    public Task<IReadOnlyCollection<TransitTableResult>> TransitTableHistory(
+        [Service] TransitTableService service, CancellationToken ct) => service.ListHistoryAsync(ct);
+
+    [Authorize(Policy = "operation:Eta.Schedule")]
+    public Task<AllocationScheduleResult> DeliverySchedule(
+        [Service] DeliveryEtaService service, CancellationToken ct) => service.GetScheduleAsync(null, ct);
+
     [Authorize]
     public async Task<EntityQuery> Entities(
         [Service] IdentityService identityService,
