@@ -43,10 +43,23 @@ public sealed class RefundStore(AppDbContext db) : IRefundStore
             SystemRoles.Retailer => query.Where(x => db.SalesOrderRecords.Any(o => o.Id == x.SalesOrderId && db.RetailerRecords.Any(r => r.Id == o.RetailerId && r.UserAccountId == actorUserId))),
             _ => query.Where(_ => false)
         };
-        var ids = await query.OrderByDescending(x => x.CreatedAt).Select(x => x.Id).ToArrayAsync(ct);
-        var result = new List<RefundView>(ids.Length);
-        foreach (var id in ids) { var view = await FindAsync(id, false, ct); if (view is not null) result.Add(view); }
-        return result;
+        var rows = await (from refund in query
+            join payment in db.PaymentRecords.AsNoTracking() on refund.PaymentId equals payment.Id
+            join order in db.SalesOrderRecords.AsNoTracking() on refund.SalesOrderId equals order.Id
+            join retailer in db.RetailerRecords.AsNoTracking() on order.RetailerId equals retailer.Id
+            orderby refund.CreatedAt descending
+            select new { Refund = refund, Payment = payment, Order = order, Retailer = retailer }).ToArrayAsync(ct);
+        var paymentIds = rows.Select(r => r.Payment.Id).Distinct().ToArray();
+        // Totals must include every obligation for each payment, even when the displayed list is status-filtered.
+        var totals = await db.ManualRefundRecords.AsNoTracking().Where(r => paymentIds.Contains(r.PaymentId))
+            .GroupBy(r => r.PaymentId).Select(g => new {
+                PaymentId = g.Key,
+                Pending = g.Sum(r => r.Status == RefundStatuses.PendingRefund || r.Status == RefundStatuses.AwaitingVerification ||
+                    r.Status == RefundStatuses.EvidenceRejected ? r.Amount : 0m),
+                Refunded = g.Sum(r => r.Status == RefundStatuses.Refunded ? r.Amount : 0m)
+            }).ToDictionaryAsync(t => t.PaymentId, ct);
+        return rows.Select(r => new RefundView(r.Refund, r.Payment, r.Order, r.Retailer,
+            totals[r.Payment.Id].Pending, totals[r.Payment.Id].Refunded)).ToArray();
     }
 
     public async Task<(decimal Pending, decimal Refunded)> TotalsAsync(Guid paymentId, CancellationToken ct)

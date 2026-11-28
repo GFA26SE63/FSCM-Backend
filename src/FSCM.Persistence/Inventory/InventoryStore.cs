@@ -69,14 +69,26 @@ public sealed class InventoryStore(AppDbContext dbContext) : IInventoryStore, II
         if (warehouseId.HasValue) receipts = receipts.Where(item => item.WarehouseId == warehouseId.Value);
         if (actorRole == SystemRoles.WarehouseKeeper)
             receipts = receipts.Where(item => ReportingScopeQueries.ManagedWarehouses(dbContext, actorUserId).Select(w => w.Id).Contains(item.WarehouseId));
-        var ids = await receipts.OrderByDescending(item => item.CreatedAt).Select(item => item.Id).ToArrayAsync(cancellationToken);
-        var results = new List<GoodsReceiptView>(ids.Length);
-        foreach (var id in ids)
-        {
-            var view = await FindReceiptAsync(id, cancellationToken);
-            if (view is not null) results.Add(view);
-        }
-        return results;
+        var headers = await (from receipt in receipts
+            join warehouse in dbContext.WarehouseRecords.AsNoTracking() on receipt.WarehouseId equals warehouse.Id
+            orderby receipt.CreatedAt descending
+            select new { Receipt = receipt, WarehouseCode = warehouse.Code, WarehouseName = warehouse.Name })
+            .ToArrayAsync(cancellationToken);
+        var ids = headers.Select(h => h.Receipt.Id).ToArray();
+        var lines = await (from line in dbContext.GoodsReceiptLineRecords.AsNoTracking()
+            join receipt in dbContext.GoodsReceiptRecords on line.GoodsReceiptId equals receipt.Id
+            join product in dbContext.ProductRecords on line.ProductId equals product.Id
+            join batch in dbContext.BatchRecords
+                on new { receipt.WarehouseId, line.ProductId, line.ExpirationDate }
+                equals new { batch.WarehouseId, batch.ProductId, batch.ExpirationDate } into batches
+            from batch in batches.DefaultIfEmpty()
+            where ids.Contains(line.GoodsReceiptId) && (batch == null || batch.FactoryProductionBatchId == null)
+            orderby product.Sku, line.CreatedAt
+            select new { line.GoodsReceiptId, View = new GoodsReceiptLineView(line, product.Sku, product.Name,
+                batch == null ? null : batch.Id, batch == null ? null : batch.BatchCode) }).ToArrayAsync(cancellationToken);
+        var byReceipt = lines.ToLookup(l => l.GoodsReceiptId, l => l.View);
+        return headers.Select(h => new GoodsReceiptView(h.Receipt, h.WarehouseCode, h.WarehouseName,
+            byReceipt[h.Receipt.Id].ToArray())).ToArray();
     }
 
     public Task<Batch?> FindBatchForUpdateAsync(
