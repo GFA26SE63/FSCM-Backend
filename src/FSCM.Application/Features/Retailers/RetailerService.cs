@@ -27,24 +27,32 @@ public sealed class RetailerService(
 
     public async Task<RetailerPage> SearchAsync(
         Guid actorUserId, string actorRole, string? status, string? search, string? scope,
-        int page, int pageSize, CancellationToken cancellationToken)
+        int page, int pageSize, CancellationToken cancellationToken, Guid[]? ids = null)
     {
         if (page < 1 || pageSize is < 1 or > 100)
             throw RetailerOperationException.Validation("Page must be at least 1 and page size must be between 1 and 100.");
         if (!string.IsNullOrWhiteSpace(scope) &&
             !scope.Equals("mine", StringComparison.OrdinalIgnoreCase))
             throw RetailerOperationException.Validation("Scope must be 'mine' when provided.");
-        IReadOnlyCollection<RetailerDetails> items = await ListAsync(actorUserId, actorRole, status, cancellationToken);
+        if (ids?.Length > 100) throw RetailerOperationException.Validation("At most 100 retailer IDs may be requested.");
+        var normalizedStatus = NormalizeStatusFilter(status);
+        var views = ids is null
+            ? await store.ListAsync(actorUserId, actorRole, normalizedStatus, cancellationToken)
+            : await store.ListSelectedAsync(actorUserId, actorRole, ids.Distinct().ToArray(), cancellationToken);
+        IReadOnlyCollection<RetailerView> items = normalizedStatus is null ? views
+            : views.Where(v => v.Retailer.Status == normalizedStatus).ToArray();
         // scope=mine: only the declarations the actor created (Mobile "Khai báo retailer" list).
         if (!string.IsNullOrWhiteSpace(scope))
-            items = items.Where(item => item.DeclaredByUserId == actorUserId).ToArray();
+            items = items.Where(item => item.Retailer.DeclaredByUserId == actorUserId).ToArray();
         search = string.IsNullOrWhiteSpace(search) ? null : search.Trim();
         if (search is not null)
-            items = items.Where(item => item.Code.Contains(search, StringComparison.OrdinalIgnoreCase) ||
-                item.Name.Contains(search, StringComparison.OrdinalIgnoreCase) ||
-                (item.Address?.Contains(search, StringComparison.OrdinalIgnoreCase) ?? false)).ToArray();
-        var ordered = items.OrderBy(item => item.Code, StringComparer.Ordinal).ToArray();
-        return new RetailerPage(ordered.Skip((page - 1) * pageSize).Take(pageSize).ToArray(),
+            items = items.Where(item => item.Retailer.Code.Contains(search, StringComparison.OrdinalIgnoreCase) ||
+                item.Retailer.Name.Contains(search, StringComparison.OrdinalIgnoreCase) ||
+                (item.Retailer.Address?.Contains(search, StringComparison.OrdinalIgnoreCase) ?? false)).ToArray();
+        var ordered = items.OrderBy(item => item.Retailer.Code, StringComparer.Ordinal).ToArray();
+        var pageViews = ordered.Skip((page - 1) * pageSize).Take(pageSize).ToArray();
+        var mlors = await ListMlorLookupAsync(pageViews.Select(v => v.Retailer.Id), false, cancellationToken);
+        return new RetailerPage(pageViews.Select(v => ToDetails(v, mlors.GetValueOrDefault(v.Retailer.Id, []))).ToArray(),
             page, pageSize, ordered.Length);
     }
 

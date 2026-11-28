@@ -4,6 +4,12 @@ namespace FSCM.Application.Features.Identity;
 
 public interface IIdentityStore
 {
+    async Task<IReadOnlyDictionary<Guid, IdentityScope>> GetScopesAsync(Guid[] ids, CancellationToken ct)
+    {
+        var result = new Dictionary<Guid, IdentityScope>();
+        foreach (var id in ids.Distinct()) result[id] = await GetScopeAsync(id, ct);
+        return result;
+    }
     Task<UserAccount?> FindUserByEmailAsync(string normalizedEmail, CancellationToken cancellationToken);
 
     Task<UserAccount?> FindUserByPhoneAsync(string normalizedPhone, CancellationToken cancellationToken);

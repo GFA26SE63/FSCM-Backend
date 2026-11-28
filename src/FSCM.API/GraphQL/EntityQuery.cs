@@ -14,6 +14,7 @@ using FSCM.Persistence.DbContexts;
 using FSCM.Persistence.Inventory;
 using HotChocolate.Data;
 using HotChocolate.Types;
+using Microsoft.EntityFrameworkCore;
 using InventoryBatchEntity = FSCM.Domain.Entities.Batch;
 
 namespace FSCM.API.GraphQL;
@@ -25,6 +26,31 @@ namespace FSCM.API.GraphQL;
 /// </summary>
 public sealed class EntityQuery(EntityQueryAccess access)
 {
+    public async Task<UserScopeRead[]> UserScopeBatchReads(Guid[] ids, [Service] IIdentityStore store,
+        [Service] IEntityQueryService source, CancellationToken cancellationToken = default)
+    {
+        if (ids.Length > 100) throw IdentityOperationException.Validation("At most 100 user IDs may be requested.");
+        var unique = ids.Distinct().ToArray();
+        if (unique.Length == 0) return [];
+        var visible = await source.Query<UserAccount>(access).Where(u => unique.Contains(u.Id)).Select(u => u.Id).ToArrayAsync(cancellationToken);
+        if (visible.Length != unique.Length) throw IdentityOperationException.Forbidden("You cannot view all requested user scopes.");
+        var scopes = await store.GetScopesAsync(unique, cancellationToken);
+        return unique.Select(id => new UserScopeRead(id, scopes[id])).ToArray();
+    }
+
+    public Task<FSCM.Application.Features.Loyalty.RewardRedemptionTotalRead[]> RewardRedemptionTotals(
+        Guid[] ids, [Service] IEntityQueryService source, CancellationToken cancellationToken = default)
+    {
+        if (ids.Length > 50) throw FSCM.Application.Features.Loyalty.LoyaltyOperationException.Validation("At most 50 reward IDs may be requested.");
+        var quantities = source.Query<RewardRedemption>(access)
+            .Where(r => ids.Contains(r.LoyaltyRewardId) && r.Status == "Completed")
+            .Select(r => new { r.LoyaltyRewardId, Quantity = r.Quantity.HasValue ? (decimal?)r.Quantity.Value
+                : r.RequiredPointsSnapshot > 0 ? (decimal?)r.RedeemedPoints / r.RequiredPointsSnapshot : null });
+        return quantities.GroupBy(r => r.LoyaltyRewardId).Select(g => new FSCM.Application.Features.Loyalty.RewardRedemptionTotalRead(
+            g.Key, g.Any(r => r.Quantity == null || r.Quantity % 1 != 0) ? null : g.Sum(r => r.Quantity)))
+            .ToArrayAsync(cancellationToken);
+    }
+
     public Task<IReadOnlyCollection<FSCM.Application.Features.Shipments.DispatchPickingRead>> DeliveryDispatchPickingReads(
         [Service] FSCM.Application.Features.Shipments.ShipmentDispatchReadService service,
         CancellationToken cancellationToken = default) => service.ListPickingAsync(access.UserId, access.Role, cancellationToken);
@@ -155,8 +181,9 @@ public sealed class EntityQuery(EntityQueryAccess access)
         string? scope = null,
         int page = 1,
         int pageSize = 20,
+        Guid[]? ids = null,
         CancellationToken cancellationToken = default) =>
-        service.SearchAsync(access.UserId, access.Role, status, search, scope, page, pageSize, cancellationToken);
+        service.SearchAsync(access.UserId, access.Role, status, search, scope, page, pageSize, cancellationToken, ids);
 
     public Task<RetailerDetails> RetailerProfile(
         Guid retailerId,
