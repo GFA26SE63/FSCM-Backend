@@ -42,7 +42,8 @@ public sealed class PayOsGateway : IPayOsGateway
                 Description = data.Description.Length <= 25 ? data.Description : data.Description[..25],
                 BuyerName = data.BuyerName,
                 ReturnUrl = returnUrl,
-                CancelUrl = cancelUrl
+                CancelUrl = cancelUrl,
+                ExpiredAt = data.ExpiredAt
             }, new RequestOptions<CreatePaymentLinkRequest> { CancellationToken = cancellationToken });
             return new(response.OrderCode, response.Amount, response.PaymentLinkId,
                 response.CheckoutUrl, response.QrCode,
@@ -95,6 +96,25 @@ public sealed class PayOsGateway : IPayOsGateway
         {
             throw PaymentOperationException.Gateway(
                 $"payOS could not retrieve payment-link status: {exception.Message}");
+        }
+    }
+
+    public async Task<PayOsPaymentLinkStatus> CancelPaymentLinkAsync(
+        long orderCode, string reason, CancellationToken cancellationToken)
+    {
+        ValidateConfiguration(requireRedirectUrls: false);
+        try
+        {
+            using var client = CreateClient();
+            var link = await client.PaymentRequests.CancelAsync(orderCode, reason,
+                new RequestOptions<CancelPaymentLinkRequest> { CancellationToken = cancellationToken });
+            return new PayOsPaymentLinkStatus(link.OrderCode, link.Id,
+                PaymentLinkStatusConverter.ToSerializedString(link.Status), null);
+        }
+        catch (PayOSException exception)
+        {
+            throw PaymentOperationException.Gateway(
+                $"payOS could not cancel the payment link: {exception.Message}");
         }
     }
 

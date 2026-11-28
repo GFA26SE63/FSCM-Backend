@@ -12,7 +12,7 @@ public sealed class RoleService(
     {
         // 1. Tổng quan
         new ScreenFeatureDto(SystemScreenKeys.Dashboard, "Tổng quan & báo cáo", "Xem dashboard hiệu suất kinh doanh, số liệu vận hành và biểu đồ doanh thu", "overview", "Tổng quan"),
-        new ScreenFeatureDto(SystemScreenKeys.Reports, "Báo cáo đổi quà & CTKM", "Báo cáo chi tiết đổi quà, tích điểm và chương trình khuyến mãi", "overview", "Tổng quan"),
+        new ScreenFeatureDto(SystemScreenKeys.Reports, "Báo cáo nghiệp vụ & tài chính", "Báo cáo tài chính, công nợ, khuyến mãi, loyalty & đổi quà, khiếu nại, giao nhận SLA và rủi ro tồn kho", "overview", "Tổng quan"),
         new ScreenFeatureDto(SystemScreenKeys.WarehouseReport, "Báo cáo kho vận", "Báo cáo nhập xuất tồn, lưu lượng luân chuyển và hiệu suất kho", "overview", "Tổng quan"),
         new ScreenFeatureDto(SystemScreenKeys.Kpi, "KPI & Xếp hạng", "Theo dõi KPI doanh số, chỉ tiêu bán hàng và xếp hạng đại lý / nhân viên", "overview", "Tổng quan"),
 

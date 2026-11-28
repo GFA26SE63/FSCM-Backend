@@ -1,4 +1,5 @@
 using FSCM.Application.Features.AllocationRuns;
+using FSCM.Application.Features.Loyalty;
 using FSCM.Application.Features.Inventory;
 using FSCM.Application.Features.Orders;
 using FSCM.Application.Features.Picking;
@@ -60,6 +61,28 @@ public sealed class OrderServiceTests
     }
 
     private static readonly DateTimeOffset Now = new(2026, 10, 14, 3, 0, 0, TimeSpan.Zero);
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Capture_freezes_loyalty_candidates_once_for_online_and_offline_replays(bool offline)
+    {
+        var f = new Fixture();
+        var original = new LoyaltyProgram { Id = Guid.NewGuid(), Code = "LP-001", SpendAmountPerPoint = 100m };
+        f.Store.LoyaltyPrograms.Add(original);
+        if (offline) await f.SubmitOfflineAsync(10, 900m); else await f.CreateAsync(10);
+        var order = Assert.Single(f.Store.Orders);
+        var json = Assert.Single(f.Store.Audits).NewValues;
+        var captured = OrderLoyaltyEligibility.Read(json, order.RetailerId, order.ServerReceivedAt)!;
+        Assert.Equal(Now, captured.CapturedAt);
+        Assert.Equal(100m, Assert.Single(captured.Programs).SpendAmountPerPoint);
+        original.SpendAmountPerPoint = 5m;
+        f.Store.LoyaltyPrograms.Clear();
+        if (offline) await f.SubmitOfflineAsync(10, 900m); else await f.CreateAsync(10);
+        Assert.Single(f.Store.Audits);
+        Assert.Equal(json, f.Store.Audits[0].NewValues);
+        Assert.Equal(10m, LoyaltyProgramSelection.PointsFor(1_000, captured.BestForAmount(1_000)!.SpendAmountPerPoint));
+    }
 
     [Fact]
     public async Task Price_contract_separates_quantity_promotion_from_final_shelf_life_discount()
@@ -629,6 +652,9 @@ public sealed class OrderServiceTests
         public List<OrderPromotion> Promotions { get; } = [];
         public List<OrderStatusHistory> History { get; } = [];
         public List<AuditLog> Audits { get; } = [];
+        public List<LoyaltyProgram> LoyaltyPrograms { get; } = [];
+        public Task<IReadOnlyCollection<LoyaltyProgram>> ListEligibleLoyaltyProgramsAsync(Guid retailerId, DateTimeOffset at, CancellationToken ct) =>
+            Task.FromResult<IReadOnlyCollection<LoyaltyProgram>>(LoyaltyPrograms.ToArray());
         public OrderAllocationReadContext? ReadContext { get; set; }
 
         public FakeStore(Guid salesUserId, decimal physicalQuantity)

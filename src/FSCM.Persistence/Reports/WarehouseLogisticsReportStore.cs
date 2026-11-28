@@ -48,7 +48,8 @@ public sealed class WarehouseLogisticsReportStore(AppDbContext db) : IWarehouseL
                 && (t.TransactionType == InventoryTransactionTypes.PurchaseReceipt
                     || t.TransactionType == InventoryTransactionTypes.TransferReceipt
                     || t.TransactionType == InventoryTransactionTypes.SalesIssue
-                    || t.TransactionType == InventoryTransactionTypes.TransferDispatch))
+                    || t.TransactionType == InventoryTransactionTypes.TransferDispatch
+                    || t.TransactionType == InventoryTransactionTypes.WriteOff))
             .GroupBy(t => new { t.WarehouseId, t.ProductId, t.TransactionType })
             .Select(g => new WarehouseLogisticsMovementRow(g.Key.WarehouseId, g.Key.ProductId, g.Key.TransactionType,
                 g.Sum(t => t.PhysicalQuantityDelta)))
