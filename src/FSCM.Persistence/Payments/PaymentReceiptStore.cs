@@ -62,7 +62,14 @@ public sealed class PaymentReceiptStore(AppDbContext db) : IPaymentReceiptStore
     public void AddAllocations(IEnumerable<PaymentReceiptAllocation> items) => db.PaymentReceiptAllocationRecords.AddRange(items);
     public void AddAuditLog(AuditLog item) => db.AuditLogRecords.Add(item);
     public Task SaveChangesAsync(CancellationToken ct) => db.SaveChangesAsync(ct);
-    public async Task ExecuteInTransactionAsync(Func<CancellationToken, Task> operation, CancellationToken ct) { await using var tx = await db.Database.BeginTransactionAsync(ct); try { await operation(ct); await tx.CommitAsync(ct); } catch { await tx.RollbackAsync(ct); throw; } }
+    public Task ExecuteInTransactionAsync(Func<CancellationToken, Task> operation, CancellationToken ct) =>
+        db.Database.CreateExecutionStrategy().ExecuteAsync(async token =>
+        {
+            db.ChangeTracker.Clear();
+            await using var transaction = await db.Database.BeginTransactionAsync(token);
+            await operation(token);
+            await transaction.CommitAsync(token);
+        }, ct);
     public void ClearTracking() => db.ChangeTracker.Clear();
 }
 

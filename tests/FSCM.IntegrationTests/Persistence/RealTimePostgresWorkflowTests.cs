@@ -7,6 +7,7 @@ using FSCM.Application.Features.Payments;
 using FSCM.Application.Features.Picking;
 using FSCM.Application.Features.QrLabels;
 using FSCM.Application.Features.Quotes;
+using FSCM.Application.Features.Reports;
 using FSCM.Application.Features.Shipments;
 using FSCM.Application.Features.WarehouseConfiguration;
 using FSCM.Domain.Authorization;
@@ -148,6 +149,16 @@ public sealed class RealTimePostgresWorkflowTests
         async Task<SalesOrderQuoteResult> Quote(Guid order) => (await Call<QuoteService, IReadOnlyCollection<SalesOrderQuoteResult>>(s => s.ListForOrderAsync(order, retailerUser, SystemRoles.Retailer, default))).Single();
         var q = await Quote(main.Id);
         await Call<QuoteService, SalesOrderQuoteResult>(s => s.AcceptAsync(q.Id, q.Version, OrderPaymentMethods.Credit, retailerUser, SystemRoles.Retailer, default));
+        var businessDate = DateOnly.FromDateTime(DateTimeOffset.UtcNow.ToOffset(TimeSpan.FromHours(7)).DateTime);
+        var promotionReport = await Call<IBusinessReportStore, PromotionsReportResult>(s => s.GetPromotionsAsync(
+            new(businessDate.AddDays(-1), businessDate.AddDays(1), Program: main.OrderCode), op, SystemRoles.Operator, default));
+        decimal actualDiscount = 0;
+        await Db(async db => actualDiscount = await db.AllocationRecords.Where(allocation =>
+            db.SalesOrderLineRecords.Any(line => line.Id == allocation.SalesOrderLineId && line.SalesOrderId == main.Id))
+            .SumAsync(allocation => allocation.DiscountAmount));
+        Assert.True(actualDiscount > 0);
+        Assert.Equal(1, promotionReport.Summary.AppliedOrderCount);
+        Assert.Equal(actualDiscount, promotionReport.Summary.TotalDiscountAmount);
         var qr = await Quote(rejected.Id);
         await Call<QuoteService, SalesOrderQuoteResult>(s => s.RejectAsync(qr.Id, qr.Version, "E2E reject", retailerUser, SystemRoles.Retailer, default));
         var qe = await Quote(expired.Id);
@@ -178,6 +189,22 @@ public sealed class RealTimePostgresWorkflowTests
         {
             var payment = await Call<PaymentService, PaymentResult>(s => s.GetByOrderAsync(orderId, op, SystemRoles.Operator, default));
             Assert.NotNull(payment.DeliveredDate); Assert.Equal(payment.DeliveredDate.Value.AddDays(14), payment.DueDate);
+            var receiptCount = 1;
+            if (orderId == late.Id)
+            {
+                var partialAmount = Math.Floor(payment.OutstandingAmount / 2);
+                var request = new ConfirmPaymentReceiptData(payment.RetailerId, partialAmount, $"partial:{orderId}",
+                    null, [new ReceiptAllocationData(payment.Id, partialAmount)]);
+                var receipt = await Call<PaymentReceiptService, PaymentReceiptResult>(s => s.ConfirmAsync(request,
+                    $"e2e:partial:{orderId}", op, SystemRoles.Operator, default));
+                var receiptReplay = await Call<PaymentReceiptService, PaymentReceiptResult>(s => s.ConfirmAsync(request,
+                    $"e2e:partial:{orderId}", op, SystemRoles.Operator, default));
+                Assert.Equal(receipt.Id, receiptReplay.Id);
+                payment = await Call<PaymentService, PaymentResult>(s => s.GetByOrderAsync(orderId, op, SystemRoles.Operator, default));
+                Assert.Equal(PaymentStatuses.PartiallyPaid, payment.Status);
+                Assert.Equal(partialAmount, payment.ConfirmedAmount);
+                receiptCount++;
+            }
             var paid = await Call<PaymentService, PaymentResult>(s => s.CollectAsync(orderId, new("BankTransfer", payment.Version, "E2E bank transfer"), $"e2e:{orderId}", op, SystemRoles.Operator, default));
             Assert.Equal("Paid", paid.Status); Assert.Equal(0, paid.OutstandingAmount);
             // Simulate a lost collection response: the same request must replay safely.
@@ -185,7 +212,8 @@ public sealed class RealTimePostgresWorkflowTests
             Assert.Equal(paid.Version, replay.Version);
             await Db(async db =>
             {
-                Assert.Single(await db.PaymentReceiptAllocationRecords.Where(x => db.PaymentRecords.Any(p => p.Id == x.PaymentId && p.SalesOrderId == orderId)).ToArrayAsync());
+                Assert.Equal(receiptCount, await db.PaymentReceiptAllocationRecords.CountAsync(x =>
+                    db.PaymentRecords.Any(p => p.Id == x.PaymentId && p.SalesOrderId == orderId)));
             });
         }
         async Task Fulfill(Guid orderId, bool collect = true)

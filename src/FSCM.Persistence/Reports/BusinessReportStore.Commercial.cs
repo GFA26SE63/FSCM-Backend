@@ -1,3 +1,4 @@
+using FSCM.Application.Features.Inventory;
 using FSCM.Application.Features.Orders;
 using FSCM.Application.Features.Reports;
 using Microsoft.EntityFrameworkCore;
@@ -6,68 +7,75 @@ namespace FSCM.Persistence.Reports;
 
 public sealed partial class BusinessReportStore
 {
+    private sealed record PromotionReportPrice(Guid Id, DateTimeOffset AcceptedAt, Guid OrderId, string OrderCode,
+        string OrderStatus, Guid RetailerId, string RetailerCode, string RetailerName, string RegionName,
+        string? CampaignCode, string? CampaignName, decimal BaseNetUnitPrice, decimal ListUnitPrice,
+        decimal ShelfLifeDiscountPerUnit, int DiscountTableVersion, string SkuSnapshot, string ProductNameSnapshot,
+        string BatchCode, decimal Quantity, decimal Amount, string? Explanation);
+
     public async Task<PromotionsReportResult> GetPromotionsAsync(
         PromotionsReportQuery q, Guid actorUserId, string actorRole, CancellationToken ct)
     {
         var (start, end) = PeriodBounds(q.FromDate, q.ToDate);
         var (groupSet, scope) = await ResolveGroupScopeAsync(null, actorUserId, actorRole, ct);
 
-        var rawLines = await (
+        var quotedLines =
             from quote in db.SalesOrderQuoteRecords.AsNoTracking()
             where quote.AcceptedAt != null
                 && quote.AcceptedAt >= start && quote.AcceptedAt < end
                 && !db.SalesOrderQuoteRecords.Any(other =>
                     other.SalesOrderId == quote.SalesOrderId && other.AcceptedAt != null && other.RevisionNumber > quote.RevisionNumber)
-            join price in db.AllocationPlanPriceRecords.AsNoTracking() on quote.AllocationRunId equals price.AllocationRunId
-            join frozenLine in db.AllocationRunLineRecords.AsNoTracking() on price.AllocationRunLineId equals frozenLine.Id
-            join line in db.SalesOrderLineRecords.AsNoTracking() on frozenLine.SalesOrderLineId equals line.Id
-            where line.SalesOrderId == quote.SalesOrderId && price.ListUnitPrice > price.FinalNetUnitPrice
             join order in db.SalesOrderRecords.AsNoTracking() on quote.SalesOrderId equals order.Id
+            join line in db.SalesOrderLineRecords.AsNoTracking() on order.Id equals line.SalesOrderId
             join r in db.RetailerRecords.AsNoTracking() on order.RetailerId equals r.Id
             join reg in db.RegionRecords.AsNoTracking() on r.RegionId equals reg.Id into regRows
             from reg in regRows.DefaultIfEmpty()
-            join batch in db.BatchRecords.AsNoTracking() on price.BatchId equals batch.Id
             where !q.RegionId.HasValue || r.RegionId == q.RegionId.Value
+            where groupSet == null || groupSet.Contains(order.SalesGroupId)
             let campaignCode = db.OrderPromotionRecords
                 .Where(p => p.SalesOrderLineId == line.Id && p.AppliedAt <= quote.AcceptedAt)
                 .OrderByDescending(p => p.AppliedAt).Select(p => p.PromotionCodeSnapshot).FirstOrDefault()
             let campaignName = db.OrderPromotionRecords
                 .Where(p => p.SalesOrderLineId == line.Id && p.AppliedAt <= quote.AcceptedAt)
                 .OrderByDescending(p => p.AppliedAt).Select(p => p.PromotionNameSnapshot).FirstOrDefault()
-            select new
-            {
-                price.Id,
-                AcceptedAt = quote.AcceptedAt!.Value,
-                OrderId = order.Id,
-                order.OrderCode,
-                OrderStatus = order.Status,
-                order.SalesGroupId,
-                RetailerId = r.Id,
-                RetailerCode = order.RetailerCodeSnapshot,
-                RetailerName = order.RetailerNameSnapshot,
-                RegionName = reg != null ? reg.Name : "",
-                CampaignCode = campaignCode,
-                CampaignName = campaignName,
-                price.BaseNetUnitPrice,
-                price.ListUnitPrice,
-                price.ShelfLifeDiscountPerUnit,
-                price.DiscountTableVersion,
-                line.SkuSnapshot,
-                line.ProductNameSnapshot,
-                batch.BatchCode,
-                price.Quantity,
-                price.Amount,
-                price.Explanation
-            }).ToArrayAsync(ct);
+            select new { Quote = quote, Order = order, Line = line, RegionName = reg != null ? reg.Name : "", campaignCode, campaignName };
 
-        if (groupSet != null)
-            rawLines = rawLines.Where(x => groupSet.Contains(x.SalesGroupId)).ToArray();
+        var planPrices = await (
+            from x in quotedLines
+            join price in db.AllocationPlanPriceRecords.AsNoTracking() on x.Quote.AllocationRunId equals price.AllocationRunId
+            join frozenLine in db.AllocationRunLineRecords.AsNoTracking() on price.AllocationRunLineId equals frozenLine.Id
+            join batch in db.BatchRecords.AsNoTracking() on price.BatchId equals batch.Id
+            where frozenLine.SalesOrderLineId == x.Line.Id && price.ListUnitPrice > price.FinalNetUnitPrice
+            select new PromotionReportPrice(price.Id, x.Quote.AcceptedAt!.Value, x.Order.Id, x.Order.OrderCode, x.Order.Status,
+                x.Order.RetailerId, x.Order.RetailerCodeSnapshot, x.Order.RetailerNameSnapshot, x.RegionName,
+                x.campaignCode, x.campaignName, price.BaseNetUnitPrice, price.ListUnitPrice, price.ShelfLifeDiscountPerUnit,
+                price.DiscountTableVersion, x.Line.SkuSnapshot, x.Line.ProductNameSnapshot, batch.BatchCode, price.Quantity,
+                price.Amount, price.Explanation)).ToArrayAsync(ct);
+
+        // The reservation ledger ties a real-time allocation to its exact quote run, including after stock is released.
+        var realTimePrices = await (
+            from x in quotedLines
+            join run in db.AllocationRunRecords.AsNoTracking() on x.Quote.AllocationRunId equals run.Id
+            join allocation in db.AllocationRecords.AsNoTracking() on x.Line.Id equals allocation.SalesOrderLineId
+            join batch in db.BatchRecords.AsNoTracking() on allocation.BatchId equals batch.Id
+            where allocation.DiscountAmount > 0 && allocation.PostPromotionUnitPrice.HasValue
+                && db.InventoryTransactionRecords.Any(entry => entry.SourceId == allocation.Id
+                    && entry.SourceType == InventoryTransactionSourceTypes.Allocation
+                    && entry.TransactionType == InventoryTransactionTypes.OrderReserve && entry.ReferenceCode == run.RunCode)
+                && !db.AllocationPlanPriceRecords.Any(price => price.AllocationRunId == run.Id
+                    && db.AllocationRunLineRecords.Any(line => line.Id == price.AllocationRunLineId && line.SalesOrderLineId == x.Line.Id))
+            select new PromotionReportPrice(allocation.Id, x.Quote.AcceptedAt!.Value, x.Order.Id, x.Order.OrderCode, x.Order.Status,
+                x.Order.RetailerId, x.Order.RetailerCodeSnapshot, x.Order.RetailerNameSnapshot, x.RegionName,
+                x.campaignCode, x.campaignName, allocation.PostPromotionUnitPrice!.Value, allocation.UnitPrice,
+                allocation.ShelfLifeDiscountPerUnit ?? 0, allocation.ShelfLifeDiscountTableVersion ?? 0, x.Line.SkuSnapshot,
+                x.Line.ProductNameSnapshot, batch.BatchCode, allocation.AllocatedQuantity, allocation.NetAmount,
+                allocation.PricingExplanation)).ToArrayAsync(ct);
 
         var retailerTerm = q.Retailer?.Trim().ToLowerInvariant();
         var programTerm = q.Program?.Trim().ToLowerInvariant();
         var exactCode = q.ExactProgramCode?.Trim();
 
-        var mapped = rawLines.Select(x =>
+        var mapped = planPrices.Concat(realTimePrices).Select(x =>
         {
             var hasCampaign = x.BaseNetUnitPrice < x.ListUnitPrice;
             var hasShelf = x.ShelfLifeDiscountPerUnit > 0;
@@ -91,7 +99,7 @@ public sealed partial class BusinessReportStore
                     x.RetailerId, x.RetailerCode, x.RetailerName, x.RegionName,
                     discountType, programCode, programName, x.SkuSnapshot, x.ProductNameSnapshot,
                     x.BatchCode, x.Quantity, x.ListUnitPrice, gross, campaignDiscount, shelfDiscount,
-                    totalDiscount, x.Amount, x.Explanation)
+                    totalDiscount, x.Amount, x.Explanation ?? string.Empty)
             };
         })
         .Where(x => string.IsNullOrWhiteSpace(retailerTerm) ||
