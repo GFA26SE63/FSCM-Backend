@@ -510,6 +510,8 @@ public sealed class OrderCaptureApiTests
 
     private sealed class TestOrderStore(Guid salesUserId) : IOrderStore
     {
+        public Task<IReadOnlyCollection<LoyaltyProgram>> ListEligibleLoyaltyProgramsAsync(Guid retailerId, DateTimeOffset at, CancellationToken ct) =>
+            Task.FromResult<IReadOnlyCollection<LoyaltyProgram>>([]);
         public Retailer Retailer { get; } = new()
         {
             Id = Guid.NewGuid(),
