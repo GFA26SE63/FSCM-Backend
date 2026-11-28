@@ -8,7 +8,8 @@ namespace FSCM.Application.Features.Inventory;
 /// </summary>
 public sealed record BatchExpiryCandidate(
     Batch Batch, int NearDateThresholdHours,
-    decimal PhysicalQuantity, decimal ReservedQuantity, decimal ActiveLockedQuantity);
+    decimal PhysicalQuantity, decimal ReservedQuantity, decimal ActiveLockedQuantity,
+    bool HasExpiryEvent = false);
 
 /// <summary>Persistence contract for the nightly date-tracker job (BE Sprint 1).</summary>
 public interface IBatchExpiryStore
@@ -27,4 +28,7 @@ public interface IBatchExpiryStore
     void AddInventoryLock(InventoryLock inventoryLock);
 
     Task SaveChangesAsync(CancellationToken cancellationToken);
+
+    /// <summary>Discard failed business changes before persisting the failed run.</summary>
+    Task SaveFailedSweepAsync(ExpirySweepRun run, CancellationToken cancellationToken);
 }

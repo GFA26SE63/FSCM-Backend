@@ -176,10 +176,23 @@ public sealed class InventoryStore(AppDbContext dbContext) : IInventoryStore, II
                 balance.PhysicalQuantity, balance.ReservedQuantity,
                 dbContext.InventoryLockRecords.AsNoTracking()
                     .Where(item => item.BatchId == batch.Id && item.Status == "Active")
-                    .Sum(item => (decimal?)item.LockedQuantity) ?? 0m))
+                    .Sum(item => (decimal?)item.LockedQuantity) ?? 0m,
+                dbContext.OutboxMessageRecords.AsNoTracking().Any(message =>
+                    message.AggregateId == batch.Id &&
+                    message.AggregateType == OutboxAggregateTypes.Batch &&
+                    message.EventType == InventoryOutboxEventTypes.BatchExpired)))
             .ToArrayAsync(cancellationToken);
 
     public void AddSweepRun(ExpirySweepRun run) => dbContext.ExpirySweepRunRecords.Add(run);
+
+    public async Task SaveFailedSweepAsync(ExpirySweepRun run, CancellationToken cancellationToken)
+    {
+        // SaveChanges leaves failed inserts/updates tracked. Replaying them while logging the
+        // failure masks the original exception and repeats the same constraint violation.
+        dbContext.ChangeTracker.Clear();
+        dbContext.ExpirySweepRunRecords.Update(run);
+        await dbContext.SaveChangesAsync(cancellationToken);
+    }
 
     public void AddOutboxMessage(OutboxMessage message) => dbContext.OutboxMessageRecords.Add(message);
 

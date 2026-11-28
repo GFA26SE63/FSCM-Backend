@@ -69,7 +69,7 @@ public sealed class OrderCompletionStore(AppDbContext dbContext) : IOrderComplet
     {
         var order = await dbContext.SalesOrderRecords
             .SingleOrDefaultAsync(item => item.Id == salesOrderId, cancellationToken);
-        if (order is null || order.Status == OrderStatuses.Completed) return;
+        if (order is null || order.Status != OrderStatuses.Delivered) return;
 
         var from = order.Status;
         order.Status = OrderStatuses.Completed;
@@ -80,7 +80,7 @@ public sealed class OrderCompletionStore(AppDbContext dbContext) : IOrderComplet
         {
             Id = Guid.NewGuid(),
             SalesOrderId = salesOrderId,
-            ChangedByUserId = actorUserId ?? Guid.Empty,
+            ChangedByUserId = actorUserId,
             FromStatus = from,
             ToStatus = OrderStatuses.Completed,
             Reason = "Đã nhận đủ, đã thanh toán đủ và không còn khiếu nại đang xử lý.",
