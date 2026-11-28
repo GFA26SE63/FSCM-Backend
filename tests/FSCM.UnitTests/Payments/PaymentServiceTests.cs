@@ -279,6 +279,51 @@ public sealed class PaymentServiceTests
         Assert.Empty(fixture.Store.Receipts);
     }
 
+    [Theory]
+    [InlineData("CANCELLED")]
+    [InlineData("EXPIRED")]
+    public async Task Closed_prepaid_link_is_replaced_and_only_the_new_link_can_pay(string closedStatus)
+    {
+        var fixture = new Fixture(OrderPaymentMethods.Prepaid);
+        var first = await fixture.Service.CreatePayOsCheckoutAsync(
+            fixture.Order.Id, new(0), fixture.RetailerUserId, SystemRoles.Retailer, default);
+        fixture.Gateway.LinkStatus = closedStatus;
+        var read = await fixture.Service.GetByOrderAsync(
+            fixture.Order.Id, fixture.RetailerUserId, SystemRoles.Retailer, default);
+
+        var second = await fixture.Service.CreatePayOsCheckoutAsync(
+            fixture.Order.Id, new(read.Version), fixture.RetailerUserId, SystemRoles.Retailer, default);
+
+        Assert.Equal(closedStatus, read.PayOsLinkStatus);
+        Assert.NotEqual(first.PaymentLinkId, second.PaymentLinkId);
+        Assert.NotEqual(first.OrderCode, second.OrderCode);
+        Assert.Equal("PENDING", second.Status);
+        Assert.Equal(2, fixture.Gateway.CreateCount);
+
+        var stale = await fixture.Service.HandlePayOsWebhookAsync(fixture.Gateway.CreateWebhook(first), default);
+        Assert.False(stale.Processed);
+        Assert.Equal(PaymentStatuses.Unpaid, fixture.Payment!.Status);
+
+        await fixture.Service.HandlePayOsWebhookAsync(fixture.Gateway.CreateWebhook(second), default);
+        Assert.Equal(PaymentStatuses.Paid, fixture.Payment.Status);
+    }
+
+    [Fact]
+    public async Task Pending_prepaid_link_is_reused_without_creating_another()
+    {
+        var fixture = new Fixture(OrderPaymentMethods.Prepaid);
+        var first = await fixture.Service.CreatePayOsCheckoutAsync(
+            fixture.Order.Id, new(0), fixture.RetailerUserId, SystemRoles.Retailer, default);
+        var read = await fixture.Service.GetByOrderAsync(
+            fixture.Order.Id, fixture.RetailerUserId, SystemRoles.Retailer, default);
+
+        var again = await fixture.Service.CreatePayOsCheckoutAsync(
+            fixture.Order.Id, new(read.Version), fixture.RetailerUserId, SystemRoles.Retailer, default);
+
+        Assert.Equal(first.CheckoutUrl, again.CheckoutUrl);
+        Assert.Equal(1, fixture.Gateway.CreateCount);
+    }
+
     [Fact]
     public async Task Reading_prepaid_payment_reconciles_paid_link_when_webhook_is_delayed()
     {
@@ -573,11 +618,16 @@ public sealed class PaymentServiceTests
     private sealed class FakePayOsGateway : IPayOsGateway
     {
         public string LinkStatus { get; set; } = "PENDING";
+        public int CreateCount { get; private set; }
         public Task<PayOsLinkData> CreatePaymentLinkAsync(
             PayOsCreateLinkData data,
-            CancellationToken cancellationToken) => Task.FromResult(new PayOsLinkData(
-                data.OrderCode, data.Amount, "test-link", "https://pay.payos.vn/web/test-link",
+            CancellationToken cancellationToken)
+        {
+            var linkId = ++CreateCount == 1 ? "test-link" : $"test-link-{CreateCount}";
+            return Task.FromResult(new PayOsLinkData(
+                data.OrderCode, data.Amount, linkId, $"https://pay.payos.vn/web/{linkId}",
                 "PAYOS-QR", "PENDING", 1_797_000_000));
+        }
 
         public Task<PayOsVerifiedWebhook> VerifyWebhookAsync(
             PayOsWebhookEnvelope webhook,
@@ -588,6 +638,10 @@ public sealed class PaymentServiceTests
             long orderCode,
             CancellationToken cancellationToken) => Task.FromResult(
                 new PayOsPaymentLinkStatus(orderCode, "test-link", LinkStatus, null));
+
+        public Task<PayOsPaymentLinkStatus> CancelPaymentLinkAsync(
+            long orderCode, string reason, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
 
         public PayOsWebhookEnvelope CreateWebhook(PayOsCheckoutResult checkout) => new(
             "00", "success", true,

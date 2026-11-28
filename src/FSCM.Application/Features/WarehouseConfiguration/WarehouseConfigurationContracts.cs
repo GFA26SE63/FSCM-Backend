@@ -102,6 +102,8 @@ public static class BusinessConfigurationKeys
     public const string EtaSchedule = "eta.schedule";
     public const string SalesKpi = "reporting.sales_kpi";
     public const string DemoFastScanEnabled = "demo.fast_scan_enabled";
+    public const string PayOsLinkLifetimeMinutes = "payment.payos_link_lifetime_minutes";
+    public const int MaxPayOsLinkLifetimeMinutes = 10080;
 
     public static readonly IReadOnlyDictionary<string, BusinessConfigurationDefinition> Supported =
         new Dictionary<string, BusinessConfigurationDefinition>(StringComparer.Ordinal)
@@ -114,6 +116,7 @@ public static class BusinessConfigurationKeys
             [OrderBufferStockCartons] = new("integer", "Số thùng tồn kho đệm không dùng để phân bổ đơn hàng"),
             [OrderStepCartons] = new("integer", "Bước số lượng thùng hợp lệ khi tạo đơn hàng"),
             [OrderCompletionGraceDays] = new("integer", "Số ngày chờ không phát sinh khiếu nại sau khi giao trước khi hoàn tất đơn và cộng điểm"),
-            [DemoFastScanEnabled] = new("boolean", "Hiện nút Quét nhanh (demo) ở màn nhập kho, xuất kho và màn nhận hàng của nhà bán lẻ")
+            [PayOsLinkLifetimeMinutes] = new("integer", "Thời hạn link/QR thanh toán PayOS tính bằng phút; 0 là không đặt hạn"),
+            [DemoFastScanEnabled] = new("boolean","Hiện nút Quét nhanh (demo) ở màn nhập kho, xuất kho và màn nhận hàng của nhà bán lẻ")
         };
 }

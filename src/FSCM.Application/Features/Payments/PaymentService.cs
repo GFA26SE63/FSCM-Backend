@@ -21,7 +21,8 @@ public sealed class PaymentService(
     LoyaltyAccrualService? loyalty = null,
     AllocationDeliveryGuard? deliveryGuard = null,
     RetailerDebtPayOsService? debtPayOsService = null,
-    RetailerCreditPolicy? creditPolicy = null)
+    RetailerCreditPolicy? creditPolicy = null,
+    IPayOsLinkLifetimeSource? linkLifetime = null)
 {
     private static readonly TimeSpan VietnamOffset = TimeSpan.FromHours(7);
 
@@ -399,15 +400,20 @@ public sealed class PaymentService(
             throw PaymentOperationException.Conflict("Payment was already collected in full.");
         if (view.Payment.Status == PaymentStatuses.Cancelled)
             throw PaymentOperationException.Conflict("Payment deadline has passed and the order was cancelled.");
-        if (view.Payment.PayOsPaymentLinkId is not null) return ToCheckoutResult(view.Payment);
+        // A cancelled/expired link cannot be reopened, so it is replaced; a live one is reused.
+        var replacedLinkId = IsClosedPayOsLink(view.Payment) ? view.Payment.PayOsPaymentLinkId : null;
+        if (view.Payment.PayOsPaymentLinkId is not null && replacedLinkId is null)
+            return ToCheckoutResult(view.Payment);
         ValidatePayOsEligible(view, data.ExpectedVersion);
 
-        var orderCode = CreatePayOsOrderCode(view.Payment.Id);
+        // PayOS rejects a reused orderCode, so a replacement link needs a fresh one.
+        var orderCode = CreatePayOsOrderCode(replacedLinkId is null ? view.Payment.Id : Guid.NewGuid());
         var link = await payOsGateway.CreatePaymentLinkAsync(new(
             orderCode,
             ToPayOsAmount(view.Payment.Amount - view.Payment.ConfirmedAmount),
             $"FSCM {view.Order.OrderCode}",
-            view.Order.RetailerNameSnapshot), cancellationToken);
+            view.Order.RetailerNameSnapshot,
+            await PayOsLinkLifetime.ExpiredAtAsync(linkLifetime, timeProvider, cancellationToken)), cancellationToken);
         if (link.OrderCode != orderCode ||
             link.Amount != ToPayOsAmount(view.Payment.Amount - view.Payment.ConfirmedAmount) ||
             string.IsNullOrWhiteSpace(link.PaymentLinkId) || string.IsNullOrWhiteSpace(link.CheckoutUrl))
@@ -417,7 +423,10 @@ public sealed class PaymentService(
         {
             var current = await store.FindByOrderAsync(orderId, true, transactionCancellationToken)
                 ?? throw PaymentOperationException.NotFound("Payment was not found.");
-            if (current.Payment.PayOsPaymentLinkId is not null) return;
+            if (current.Payment.PayOsPaymentLinkId is not null &&
+                !(replacedLinkId is not null && current.Payment.PayOsPaymentLinkId == replacedLinkId &&
+                  IsClosedPayOsLink(current.Payment)))
+                return;
             ValidatePayOsEligible(current, data.ExpectedVersion);
 
             var now = timeProvider.GetUtcNow();
@@ -441,7 +450,8 @@ public sealed class PaymentService(
                     current.Payment.PayOsOrderCode,
                     current.Payment.PayOsPaymentLinkId,
                     current.Payment.PayOsLinkStatus,
-                    current.Payment.Version
+                    current.Payment.Version,
+                    ReplacedPaymentLinkId = replacedLinkId
                 }),
                 Reason = "Tạo link thanh toán payOS cho công nợ",
                 CreatedAt = now
@@ -745,6 +755,10 @@ public sealed class PaymentService(
             payment.Amount, payment.PayOsPaymentLinkId, payment.PayOsCheckoutUrl,
             payment.PayOsQrCode, payment.PayOsLinkStatus, payment.PayOsExpiredAt, payment.Version);
     }
+
+    private static bool IsClosedPayOsLink(Payment payment) =>
+        payment.PayOsPaymentLinkId is not null &&
+        payment.PayOsLinkStatus?.ToUpperInvariant() is "CANCELLED" or "EXPIRED";
 
     private static long CreatePayOsOrderCode(Guid paymentId)
     {

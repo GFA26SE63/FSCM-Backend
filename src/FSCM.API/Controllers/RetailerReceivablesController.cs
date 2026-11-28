@@ -44,6 +44,18 @@ public sealed class RetailerReceivablesController(
         debtPayOsService.CreateAsync(new(request.Mode, request.PaymentIds, request.RetailerId), operationKey,
             UserId(), Role(), cancellationToken);
 
+    [HttpGet("payos-checkouts/pending")]
+    [ProducesResponseType<IReadOnlyCollection<RetailerDebtPayOsCheckoutResult>>(StatusCodes.Status200OK)]
+    public Task<IReadOnlyCollection<RetailerDebtPayOsCheckoutResult>> ListPendingPayOsCheckouts(
+        CancellationToken cancellationToken) =>
+        debtPayOsService.ListPendingAsync(UserId(), cancellationToken);
+
+    [HttpPost("payos-checkouts/{checkoutId:guid}/cancel")]
+    [ProducesResponseType<RetailerDebtPayOsCheckoutResult>(StatusCodes.Status200OK)]
+    public Task<RetailerDebtPayOsCheckoutResult> CancelPayOsCheckout(
+        Guid checkoutId, CancellationToken cancellationToken) =>
+        debtPayOsService.CancelAsync(checkoutId, UserId(), cancellationToken);
+
     [HttpGet("payos-checkouts/{checkoutId:guid}")]
     [ProducesResponseType<RetailerDebtPayOsCheckoutResult>(StatusCodes.Status200OK)]
     public Task<RetailerDebtPayOsCheckoutResult> GetPayOsCheckout(

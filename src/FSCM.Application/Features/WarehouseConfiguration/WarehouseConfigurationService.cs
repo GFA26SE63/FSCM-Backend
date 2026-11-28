@@ -435,6 +435,12 @@ public sealed partial class WarehouseConfigurationService(
                 if (value.ValueKind != JsonValueKind.Number || !value.TryGetInt32(out var graceDays) || graceDays < 0)
                     throw WarehouseConfigurationOperationException.Validation("Order completion grace days must be a non-negative integer.");
                 break;
+            case BusinessConfigurationKeys.PayOsLinkLifetimeMinutes:
+                if (value.ValueKind != JsonValueKind.Number || !value.TryGetInt32(out var linkMinutes) ||
+                    linkMinutes < 0 || linkMinutes > BusinessConfigurationKeys.MaxPayOsLinkLifetimeMinutes)
+                    throw WarehouseConfigurationOperationException.Validation(
+                        $"PayOS link lifetime must be a whole number of minutes from 0 to {BusinessConfigurationKeys.MaxPayOsLinkLifetimeMinutes}.");
+                break;
             case BusinessConfigurationKeys.DemoFastScanEnabled:
                 if (value.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
                     throw WarehouseConfigurationOperationException.Validation("Demo fast scan must be true or false.");
