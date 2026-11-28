@@ -1,4 +1,6 @@
 using System.Net.Http.Json;
+using System.Net;
+using System.Text.Json;
 using FSCM.Application.Features.Picking;
 using FSCM.Domain.Entities;
 
@@ -28,11 +30,15 @@ public sealed class FactoryHttpGateway(HttpClient http) : IFactoryGateway
         {
             using var response = await http.SendAsync(request, ct);
             if (response.StatusCode == System.Net.HttpStatusCode.NotFound) throw PickingOperationException.NotFound("Không tìm thấy mã trong hệ thống traceability.");
-            if (!response.IsSuccessStatusCode) throw PickingOperationException.Conflict("Traceability từ chối yêu cầu. Kiểm tra dịch vụ và khóa tích hợp.");
-            return await response.Content.ReadFromJsonAsync<T>(ct) ?? throw PickingOperationException.Conflict("Manifest traceability không hợp lệ.");
+            if (response.StatusCode == HttpStatusCode.Conflict)
+                throw PickingOperationException.Conflict("Traceability từ chối thao tác do trạng thái dữ liệu đã thay đổi. Làm mới và thử lại.");
+            if (!response.IsSuccessStatusCode)
+                throw PickingOperationException.ServiceUnavailable("Dịch vụ nhà máy chưa sẵn sàng. Vui lòng thử lại sau hoặc liên hệ quản trị viên.");
+            return await response.Content.ReadFromJsonAsync<T>(ct) ?? throw PickingOperationException.BadGateway("Dữ liệu phản hồi từ nhà máy không hợp lệ.");
         }
-        catch (HttpRequestException) { throw PickingOperationException.Conflict("Không kết nối được API traceability. Thử lại sau."); }
-        catch (OperationCanceledException) when (!ct.IsCancellationRequested) { throw PickingOperationException.Conflict("API traceability phản hồi quá thời gian chờ."); }
+        catch (HttpRequestException) { throw PickingOperationException.ServiceUnavailable("Không kết nối được dịch vụ nhà máy. Vui lòng thử lại sau."); }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested) { throw PickingOperationException.ServiceUnavailable("Dịch vụ nhà máy phản hồi quá thời gian chờ. Vui lòng thử lại sau."); }
+        catch (JsonException) { throw PickingOperationException.BadGateway("Dữ liệu phản hồi từ nhà máy không hợp lệ."); }
     }
     public Task<PalletManifest> ManifestAsync(string code, CancellationToken ct) => Send<PalletManifest>(HttpMethod.Get, $"api/integration/pallets/{Uri.EscapeDataString(code)}/manifest", null, ct);
     public Task<FactoryInboundPallet[]> DispatchedAsync(Guid[] warehouseIds, CancellationToken ct) =>

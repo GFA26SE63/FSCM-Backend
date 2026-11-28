@@ -50,9 +50,12 @@ public sealed partial class WarehouseWorkService(AppDbContext db, InventoryServi
             ? d.SourceDocumentId.Value : d.Id).Distinct().ToArray();
         var transport = await db.Set<WarehouseTransfer>().AsNoTracking().Where(x => x.SourceIssueDocumentId.HasValue && issueIds.Contains(x.SourceIssueDocumentId.Value))
             .ToDictionaryAsync(x => x.SourceIssueDocumentId!.Value, x => x.Status, ct);
-        return docs.Select(d => new WarehouseWorkResult(d, lines.Where(x => x.DocumentId == d.Id).ToArray(),
-            cartons.Where(x => x.DocumentId == d.Id).ToArray(),
-            mapping.Where(m => cartons.Any(c => c.DocumentId == d.Id && c.CartonId == m.CartonCode)).ToArray(),
+        var linesByDocument = lines.ToLookup(x => x.DocumentId);
+        var cartonsByDocument = cartons.ToLookup(x => x.DocumentId);
+        var mappingsByCarton = mapping.ToLookup(x => x.CartonCode);
+        return docs.Select(d => new WarehouseWorkResult(d, linesByDocument[d.Id].ToArray(),
+            cartonsByDocument[d.Id].ToArray(),
+            cartonsByDocument[d.Id].SelectMany(c => mappingsByCarton[c.CartonId]).ToArray(),
             transport.GetValueOrDefault(d.Kind == "Receipt" && d.SourceDocumentId.HasValue ? d.SourceDocumentId.Value : d.Id))).ToArray();
     }
 

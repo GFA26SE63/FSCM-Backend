@@ -18,11 +18,21 @@ public sealed class OrderCompletionWorker(
             {
                 await using var scope = scopes.CreateAsyncScope();
                 var store = scope.ServiceProvider.GetRequiredService<IOrderCompletionStore>();
-                var completion = scope.ServiceProvider.GetRequiredService<OrderCompletionService>();
                 var orderIds = await store.ListDeliveredOrderIdsAsync(stoppingToken);
                 foreach (var orderId in orderIds)
                 {
-                    await completion.EvaluateAsync(orderId, null, stoppingToken);
+                    // A failed order must not poison the DbContext or starve the remaining orders.
+                    await using var orderScope = scopes.CreateAsyncScope();
+                    try
+                    {
+                        var completion = orderScope.ServiceProvider.GetRequiredService<OrderCompletionService>();
+                        await completion.EvaluateAsync(orderId, null, stoppingToken);
+                    }
+                    catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { throw; }
+                    catch (Exception exception)
+                    {
+                        logger.LogWarning(exception, "Order completion failed for {OrderId}; retrying on next tick.", orderId);
+                    }
                 }
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { break; }

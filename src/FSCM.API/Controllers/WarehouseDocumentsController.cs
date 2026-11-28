@@ -23,12 +23,16 @@ public sealed class WarehouseDocumentsController(WarehouseWorkService service, I
     [HttpGet("{id:guid}")]
     public Task<WarehouseWorkResult> Get(Guid id, CancellationToken ct) => service.GetAsync(id, Actor, Role, ct);
     [HttpGet("factory-pending")]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status502BadGateway)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status503ServiceUnavailable)]
     public Task<FactoryInboundPallet[]> FactoryPending(CancellationToken ct) => service.PendingFactoryAsync(Actor, Role, ct);
     /// <summary>Receipt history: factory PNKs grouped by dispatch note (older per-pallet PNKs of one note form one group).</summary>
     [HttpGet("factory-receipt-groups")]
     public Task<FactoryReceiptGroup[]> FactoryReceiptGroups(CancellationToken ct) => service.FactoryReceiptGroupsAsync(Actor, Role, ct);
     /// <summary>Pending factory goods grouped by dispatch note (PXN): one row per note with all its pallets.</summary>
     [HttpGet("factory-pending-dispatches")]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status502BadGateway)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status503ServiceUnavailable)]
     public Task<FactoryInboundDispatch[]> FactoryPendingDispatches(CancellationToken ct) => service.PendingFactoryDispatchesAsync(Actor, Role, ct);
     /// <summary>Opens the single PNK that receives every pallet of one dispatch note.</summary>
     [HttpPost("factory-receipts/from-dispatch")]
