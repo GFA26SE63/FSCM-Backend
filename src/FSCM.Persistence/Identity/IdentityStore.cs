@@ -8,6 +8,52 @@ namespace FSCM.Persistence.Identity;
 
 public sealed class IdentityStore(AppDbContext dbContext) : IIdentityStore
 {
+    public async Task<IReadOnlyDictionary<Guid, IdentityScope>> GetScopesAsync(Guid[] ids, CancellationToken ct)
+    {
+        var users = await dbContext.UserAccountRecords.AsNoTracking().Where(u => ids.Contains(u.Id))
+            .Select(u => new { u.Id, u.Role, u.IsActive }).ToArrayAsync(ct);
+        var warehouses = await dbContext.UserWarehouseAssignmentRecords.AsNoTracking()
+            .Where(a => ids.Contains(a.UserAccountId) && a.IsActive).ToArrayAsync(ct);
+        var regions = await dbContext.UserRegionAssignmentRecords.AsNoTracking()
+            .Where(a => ids.Contains(a.UserAccountId) && a.IsActive).ToArrayAsync(ct);
+        var members = await dbContext.SalesGroupMemberRecords.AsNoTracking()
+            .Where(a => ids.Contains(a.UserAccountId) && a.IsActive).ToArrayAsync(ct);
+        var groupIds = members.Select(m => m.SalesGroupId).Distinct().ToArray();
+        var regionIds = regions.Select(r => r.RegionId).Distinct().ToArray();
+        var groups = await dbContext.SalesGroupRecords.AsNoTracking()
+            .Where(g => g.IsActive && (groupIds.Contains(g.Id) || regionIds.Contains(g.RegionId))).ToArrayAsync(ct);
+        var warehouseIds = warehouses.Select(a => a.WarehouseId).Distinct().ToArray();
+        var warehouseRows = await dbContext.WarehouseRecords.AsNoTracking()
+            .Where(w => warehouseIds.Contains(w.Id) || regionIds.Contains(w.RegionId)).ToArrayAsync(ct);
+        var allGroupIds = groups.Select(g => g.Id).ToArray();
+        var retailers = await dbContext.RetailerSalesAssignmentRecords.AsNoTracking()
+            .Where(a => allGroupIds.Contains(a.SalesGroupId) && a.IsActive).ToArrayAsync(ct);
+        var owned = await dbContext.RetailerRecords.AsNoTracking()
+            .Where(r => r.UserAccountId.HasValue && ids.Contains(r.UserAccountId.Value))
+            .Select(r => new { r.Id, r.UserAccountId, r.RegionId }).ToArrayAsync(ct);
+        var result = new Dictionary<Guid, IdentityScope>();
+        foreach (var user in users)
+        {
+            var assigned = regions.Where(r => r.UserAccountId == user.Id).Select(r => r.RegionId).ToHashSet();
+            var ownGroups = groups.Where(g => members.Any(m => m.UserAccountId == user.Id && m.SalesGroupId == g.Id) ||
+                (user.Role == FSCM.Domain.Authorization.SystemRoles.SalesManager && user.IsActive && assigned.Contains(g.RegionId))).ToArray();
+            if (user.Role is not (FSCM.Domain.Authorization.SystemRoles.Sales or FSCM.Domain.Authorization.SystemRoles.SalesManager)) ownGroups = [];
+            var ownWarehouses = user.Role == FSCM.Domain.Authorization.SystemRoles.WarehouseKeeper
+                ? warehouseRows.Where(w => warehouses.Any(a => a.UserAccountId == user.Id && a.WarehouseId == w.Id) ||
+                    (user.IsActive && assigned.Contains(w.RegionId))).ToArray() : [];
+            var ownRetailers = user.Role == FSCM.Domain.Authorization.SystemRoles.Retailer
+                ? owned.Where(r => r.UserAccountId == user.Id).ToArray() : [];
+            result[user.Id] = new IdentityScope(ownWarehouses.Select(w => w.Id).Distinct().ToArray(),
+                (user.Role is FSCM.Domain.Authorization.SystemRoles.SalesManager or FSCM.Domain.Authorization.SystemRoles.WarehouseKeeper
+                    ? assigned : Enumerable.Empty<Guid>()).Concat(ownGroups.Select(g => g.RegionId))
+                    .Concat(ownWarehouses.Select(w => w.RegionId)).Concat(ownRetailers.Select(r => r.RegionId)).Distinct().ToArray(),
+                ownGroups.Select(g => g.Id).ToArray(),
+                retailers.Where(a => ownGroups.Any(g => g.Id == a.SalesGroupId)).Select(a => a.RetailerId)
+                    .Concat(ownRetailers.Select(r => r.Id)).Distinct().ToArray());
+        }
+        return result;
+    }
+
     public Task<UserAccount?> FindUserByEmailAsync(
         string normalizedEmail,
         CancellationToken cancellationToken) =>

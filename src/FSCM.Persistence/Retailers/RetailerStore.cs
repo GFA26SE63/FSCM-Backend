@@ -9,8 +9,15 @@ namespace FSCM.Persistence.Retailers;
 public sealed class RetailerStore(AppDbContext dbContext) : IRetailerStore
 {
     public async Task<IReadOnlyCollection<RetailerView>> ListAsync(Guid actorUserId, string actorRole, string? status, CancellationToken cancellationToken)
+        => await ListCoreAsync(actorUserId, actorRole, status, null, cancellationToken);
+
+    public Task<IReadOnlyCollection<RetailerView>> ListSelectedAsync(Guid actor, string role, Guid[] ids, CancellationToken ct) =>
+        ListCoreAsync(actor, role, null, ids, ct);
+
+    private async Task<IReadOnlyCollection<RetailerView>> ListCoreAsync(Guid actorUserId, string actorRole, string? status, Guid[]? ids, CancellationToken cancellationToken)
     {
         var retailers = dbContext.RetailerRecords.AsNoTracking().AsQueryable();
+        if (ids is not null) retailers = retailers.Where(r => ids.Contains(r.Id));
         if (!string.IsNullOrWhiteSpace(status)) retailers = retailers.Where(item => item.Status == status);
         var query =
             from retailer in retailers
