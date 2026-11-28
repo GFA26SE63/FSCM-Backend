@@ -137,8 +137,8 @@ public sealed class ReportServiceTests
     {
         var fixture = new Fixture();
         fixture.Store.ProductRows.AddRange([
-            new(Guid.NewGuid(), "SKU-A", "Sữa chua", 30, 300_000),
-            new(Guid.NewGuid(), "SKU-B", "Nước ép", 20, 500_000)
+            new(Guid.NewGuid(), "SKU-A", "Sữa chua", 30, 300_000, "Sữa", 4, 340_000, 40_000),
+            new(Guid.NewGuid(), "SKU-B", "Nước ép", 20, 500_000, "Đồ uống", 3, 520_000, 20_000)
         ]);
 
         var result = await fixture.Service.GetProductRankingAsync(
@@ -149,6 +149,8 @@ public sealed class ReportServiceTests
         Assert.Equal([1, 2], result.Entries.Select(entry => entry.Rank));
         Assert.All(result.Entries, entry => Assert.Equal("carton", entry.QuantityUnit));
         Assert.Equal("All", result.Scope);
+        Assert.True(result.Entries.First().OrderCount > 0);
+        Assert.False(string.IsNullOrEmpty(result.Entries.First().CategoryName));
     }
 
     [Fact]

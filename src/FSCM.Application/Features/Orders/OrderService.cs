@@ -7,6 +7,7 @@ using FSCM.Application.Features.Inventory;
 using FSCM.Application.Features.Picking;
 using FSCM.Application.Features.Payments;
 using FSCM.Application.Features.Notifications;
+using FSCM.Application.Features.Loyalty;
 using FSCM.Domain.Authorization;
 using FSCM.Domain.Entities;
 
@@ -527,6 +528,8 @@ public sealed class OrderService(
         }
         var history = NewHistory(order.Id, null, OrderStatuses.Allocating,
             salesUserId, source == OrderSources.Offline ? "Sales gửi đơn nháp offline" : "Sales tạo đơn hỗ trợ", now);
+        var loyaltyEligibility = OrderLoyaltyEligibility.Capture(order.RetailerId, order.ServerReceivedAt,
+            await store.ListEligibleLoyaltyProgramsAsync(order.RetailerId, order.ServerReceivedAt, cancellationToken));
         var audit = new AuditLog
         {
             Id = Guid.NewGuid(),
@@ -538,6 +541,7 @@ public sealed class OrderService(
             {
                 order.OrderCode,
                 order.RetailerId,
+                LoyaltyEligibility = loyaltyEligibility,
                 order.PaymentMethod,
                 order.RequestedDeliveryDate,
                 order.SubtotalAmount,

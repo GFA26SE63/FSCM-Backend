@@ -21,7 +21,8 @@ public sealed record SalesKpiConfigurationRow(string Json, int Version, DateTime
 
 public sealed record ProductSalesRow(
     Guid ProductId, string Sku, string ProductName,
-    decimal NormalizedSoldQuantity, decimal AdjustedNetRevenue);
+    decimal NormalizedSoldQuantity, decimal AdjustedNetRevenue,
+    string CategoryName = "", int OrderCount = 0, decimal GrossRevenue = 0m, decimal DiscountAmount = 0m);
 
 public interface IReportStore
 {

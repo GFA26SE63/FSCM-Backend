@@ -9,10 +9,19 @@ public sealed record LoyaltyLedgerEntry(
 
 public sealed record LoyaltyCardData(
     Retailer Retailer, RetailerLoyalty? Balance, LoyaltyProgram? Program,
-    IReadOnlyCollection<LoyaltyLedgerEntry> Ledger);
+    IReadOnlyCollection<LoyaltyLedgerEntry> Ledger)
+{
+    public IReadOnlyCollection<LoyaltyProgram> EligiblePrograms { get; init; } = [];
+}
+
+public sealed record LoyaltyCardProgram(Guid Id, string Code, string Name, decimal SpendAmountPerPoint,
+    bool IsActive, DateTimeOffset StartAt, DateTimeOffset EndAt, DateTimeOffset? PointsExpireAt);
 
 public sealed record LoyaltyCardResult(
     Guid RetailerId, string RetailerCode, string RetailerName,
     Guid? ProgramId, string? ProgramCode, string? ProgramName,
     int AvailablePoints, int HeldPoints, int PendingPoints, int ExpiredPoints,
-    DateTimeOffset? PointsExpireAt, IReadOnlyCollection<LoyaltyLedgerEntry> Ledger);
+    DateTimeOffset? PointsExpireAt, IReadOnlyCollection<LoyaltyLedgerEntry> Ledger)
+{
+    public IReadOnlyCollection<LoyaltyCardProgram> EligiblePrograms { get; init; } = [];
+}

@@ -28,7 +28,8 @@ public sealed record WarehouseLogisticsProduct(Guid ProductId, string Sku, strin
 public sealed record WarehouseLogisticsProductStock(
     Guid ProductId, string Sku, string Name, int Rank,
     decimal OnHand, decimal Valid, decimal NearExpiry, decimal Expired, decimal Locked, decimal Disposed,
-    decimal FactoryReceipt, decimal TransferReceipt, decimal SalesIssue, decimal TransferIssue);
+    decimal FactoryReceipt, decimal TransferReceipt, decimal SalesIssue, decimal TransferIssue,
+    decimal DisposedInPeriod = 0m);
 
 public sealed record WarehouseLogisticsWarehouse(
     Guid Id, string Code, string Name, Guid RegionId, string RegionName,
@@ -134,7 +135,8 @@ public static class WarehouseLogisticsReportBuilder
                     Moved(moves, InventoryTransactionTypes.PurchaseReceipt),
                     Moved(moves, InventoryTransactionTypes.TransferReceipt),
                     Moved(moves, InventoryTransactionTypes.SalesIssue),
-                    Moved(moves, InventoryTransactionTypes.TransferDispatch));
+                    Moved(moves, InventoryTransactionTypes.TransferDispatch),
+                    Moved(moves, InventoryTransactionTypes.WriteOff));
             }).ToArray();
             return new WarehouseLogisticsWarehouse(w.Id, w.Code, w.Name, w.RegionId, w.RegionName,
                 w.DriverCount, w.VehicleCount, rows);

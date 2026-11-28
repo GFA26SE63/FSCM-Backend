@@ -95,7 +95,8 @@ public sealed class ReportService(IReportStore store, TimeProvider timeProvider)
             .ThenBy(row => row.ProductId)
             .Select((row, index) => new ProductRankingEntryResult(
                 index + 1, row.ProductId, row.Sku, row.ProductName,
-                row.NormalizedSoldQuantity, "carton", row.AdjustedNetRevenue))
+                row.NormalizedSoldQuantity, "carton", row.AdjustedNetRevenue,
+                row.CategoryName, row.OrderCount, row.GrossRevenue, row.DiscountAmount))
             .ToArray();
 
         return new(query.FromDate, query.ToDate, query.Criterion, scope, "carton",

@@ -108,6 +108,7 @@ public sealed record OrderWarehouseProgressView(
 
 public interface IOrderStore
 {
+    Task<IReadOnlyCollection<LoyaltyProgram>> ListEligibleLoyaltyProgramsAsync(Guid retailerId, DateTimeOffset at, CancellationToken cancellationToken);
     Task<SalesOrder?> FindByClientOrderKeyAsync(Guid clientOrderKey, CancellationToken cancellationToken);
     Task<OrderRetailerContext?> FindLinkedRetailerContextAsync(Guid userId, Guid retailerId, CancellationToken cancellationToken) =>
         Task.FromResult<OrderRetailerContext?>(null);

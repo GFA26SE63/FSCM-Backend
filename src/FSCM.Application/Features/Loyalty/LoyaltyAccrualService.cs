@@ -47,7 +47,7 @@ public sealed class LoyaltyAccrualService(ILoyaltyAccrualStore store, TimeProvid
         if (view.Program is null)
         {
             return await HoldAsync(view, 0, LoyaltyAccrualBlock.NoActiveProgram,
-                "Chưa có chương trình tích điểm nào đang chạy.", actorUserId, cancellationToken);
+                "Đơn không có chương trình tích điểm đủ điều kiện.", actorUserId, cancellationToken);
         }
 
         var points = PointsFor(view.ApprovedFinalAmount, view.Program.SpendAmountPerPoint);
@@ -86,7 +86,7 @@ public sealed class LoyaltyAccrualService(ILoyaltyAccrualStore store, TimeProvid
             // The hold is cancelled rather than deleted: the card is a ledger, and a row that
             // disappears takes its own explanation with it.
             await store.AppendAsync(balance.Id, view.Program.Id, salesOrderId, actorUserId,
-                LoyaltyTransactionTypes.PendingEarnCancelled, -points, false,
+                LoyaltyTransactionTypes.PendingEarnCancelled, -(view.PendingPointsForOrder ?? points), false,
                 "Chuyển từ chờ cộng sang đã cộng.", now, cancellationToken);
         }
 
@@ -156,6 +156,15 @@ public sealed class LoyaltyAccrualService(ILoyaltyAccrualStore store, TimeProvid
         Guid? actorUserId, CancellationToken cancellationToken)
     {
         var balance = view.Balance?.CurrentPoints ?? 0;
+        if (view.HasLivePending && view.Balance is not null && view.PendingProgramId is { } pendingProgram &&
+            view.PendingPointsForOrder is > 0 && (view.Program is null || points <= 0))
+        {
+            await store.AppendAsync(view.Balance.Id, pendingProgram, view.SalesOrderId, actorUserId,
+                LoyaltyTransactionTypes.PendingEarnCancelled, -view.PendingPointsForOrder.Value, false,
+                why, timeProvider.GetUtcNow(), cancellationToken);
+            await store.SaveChangesAsync(cancellationToken);
+            return new(view.SalesOrderId, false, points, balance, block, why);
+        }
         if (view.Program is null || points <= 0 || view.HasLivePending)
         {
             return new(view.SalesOrderId, false, points, balance, block, why);
@@ -178,6 +187,6 @@ public sealed class LoyaltyAccrualService(ILoyaltyAccrualStore store, TimeProvid
     private static int PointsFor(decimal finalAmount, decimal spendPerPoint)
     {
         if (finalAmount <= 0 || spendPerPoint <= 0) return 0;
-        return (int)decimal.Floor(finalAmount / spendPerPoint);
+        return checked((int)LoyaltyProgramSelection.PointsFor(finalAmount, spendPerPoint));
     }
 }

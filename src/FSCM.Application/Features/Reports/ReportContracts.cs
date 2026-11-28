@@ -57,7 +57,8 @@ public sealed record ProductRankingQuery(
 
 public sealed record ProductRankingEntryResult(
     int Rank, Guid ProductId, string Sku, string ProductName,
-    decimal NormalizedSoldQuantity, string QuantityUnit, decimal AdjustedNetRevenue);
+    decimal NormalizedSoldQuantity, string QuantityUnit, decimal AdjustedNetRevenue,
+    string CategoryName = "", int OrderCount = 0, decimal GrossRevenue = 0m, decimal DiscountAmount = 0m);
 
 public sealed record ProductRankingResult(
     DateOnly FromDate, DateOnly ToDate, string Criterion, string Scope,

@@ -96,7 +96,7 @@ public static class DependencyInjection
         services.AddScoped<IDeliveryStore, DeliveryStore>();
         services.AddScoped<IShipmentStore, ShipmentStore>();
         services.AddScoped<IReportStore, ReportStore>();
-        services.AddScoped<IOperationsReportStore, OperationsReportStore>();
+        services.AddScoped<IBusinessReportStore, BusinessReportStore>();
         services.AddScoped<IWarehouseLogisticsReportStore, WarehouseLogisticsReportStore>();
         services.AddScoped<FSCM.Application.Features.Dashboard.IDashboardStore, FSCM.Persistence.Dashboard.DashboardStore>();
         services.AddScoped<IIdentityStore, IdentityStore>();

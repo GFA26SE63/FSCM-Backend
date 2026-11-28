@@ -103,6 +103,7 @@ public sealed class WarehouseLogisticsReportBuilderTests
         Assert.Equal(12, row.SalesIssue);
         Assert.Equal(9, row.TransferIssue);
         Assert.Equal(3, row.Disposed);
+        Assert.Equal(99, row.DisposedInPeriod);
     }
 
     [Fact]

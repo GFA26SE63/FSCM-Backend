@@ -15,12 +15,6 @@ public sealed class LoyaltyAccrualStore(AppDbContext dbContext) : ILoyaltyAccrua
             .SingleOrDefaultAsync(item => item.Id == salesOrderId, cancellationToken);
         if (order is null) return null;
 
-        var now = DateTimeOffset.UtcNow;
-        var program = await dbContext.LoyaltyProgramRecords.AsNoTracking()
-            .Where(item => item.IsActive && item.StartAt <= now && item.EndAt >= now)
-            .OrderByDescending(item => item.StartAt)
-            .FirstOrDefaultAsync(cancellationToken);
-
         var balance = await dbContext.RetailerLoyaltyRecords.AsNoTracking()
             .SingleOrDefaultAsync(item => item.RetailerId == order.RetailerId, cancellationToken);
 
@@ -53,6 +47,27 @@ public sealed class LoyaltyAccrualStore(AppDbContext dbContext) : ILoyaltyAccrua
         // receivable being collected, which is the same ledger reaching Paid.
         var payment = await dbContext.PaymentRecords.AsNoTracking()
             .SingleOrDefaultAsync(item => item.SalesOrderId == salesOrderId, cancellationToken);
+        LoyaltyProgram? program = null;
+        if (earning is null)
+        {
+            var capturedJson = await dbContext.AuditLogRecords.AsNoTracking()
+                .Where(a => a.EntityName == nameof(SalesOrder) && a.EntityId == order.Id && a.Action == "OrderCaptured")
+                .OrderBy(a => a.CreatedAt).ThenBy(a => a.Id).Select(a => a.NewValues).FirstOrDefaultAsync(cancellationToken);
+            var captured = OrderLoyaltyEligibility.Read(capturedJson, order.RetailerId, order.ServerReceivedAt);
+            if (captured is not null)
+            {
+                // Expiry, pause, audience edits and rate edits after receipt do not change this entitlement.
+                program = captured.BestForAmount(payment?.AdjustedAmount ?? order.FinalAmount);
+            }
+            else
+            {
+                // Legacy orders have no complete historical audience/rate snapshot. Preserve the
+                // previous evaluation policy rather than inventing historical eligibility.
+                var eligible = await EligibleLoyaltyPrograms.ForRetailer(dbContext, order.RetailerId, DateTimeOffset.UtcNow)
+                    .AsNoTracking().ToArrayAsync(cancellationToken);
+                program = LoyaltyProgramSelection.BestForAmount(eligible, payment?.AdjustedAmount ?? order.FinalAmount);
+            }
+        }
 
         return new LoyaltyAccrualView(
             salesOrderId,
@@ -70,7 +85,12 @@ public sealed class LoyaltyAccrualStore(AppDbContext dbContext) : ILoyaltyAccrua
             pending > cancelled,
             ledger.Where(item => item.TransactionType is LoyaltyTransactionTypes.Earned or
                     LoyaltyTransactionTypes.EarnedAdjusted)
-                .Sum(item => item.Points));
+                .Sum(item => item.Points))
+        {
+            PendingPointsForOrder = ledger.Where(item => item.TransactionType is LoyaltyTransactionTypes.PendingEarn or
+                LoyaltyTransactionTypes.PendingEarnCancelled).Sum(item => item.Points),
+            PendingProgramId = ledger.LastOrDefault(item => item.TransactionType == LoyaltyTransactionTypes.PendingEarn)?.LoyaltyProgramId
+        };
     }
 
     public async Task<RetailerBalanceSnapshot> EnsureBalanceAsync(
