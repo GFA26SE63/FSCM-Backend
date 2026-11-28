@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Reflection;
+using System.Security.Claims;
 using System.Text.Json;
 using FSCM.API.GraphQL;
 using FSCM.API.Security;
@@ -16,6 +17,30 @@ namespace FSCM.IntegrationTests.Api;
 
 public sealed class DynamicScreenAuthorizationTests
 {
+    [Fact]
+    public async Task Admin_has_every_registered_operation_without_delegated_permissions_or_mappings()
+    {
+        // No delegated permission/mapping services are available: an Admin must
+        // not depend on them. Unknown operations and anonymous callers still fail.
+        var access = new OperationAccess(null!, null!);
+        var admin = new ClaimsPrincipal(new ClaimsIdentity(
+            [new Claim(ClaimTypes.Role, SystemRoles.Admin)], "Test"));
+        foreach (var operation in ApiPermissionCatalog.All)
+            Assert.True(await access.AllowsAsync(admin, operation.Controller, operation.Action, default), operation.Key);
+        Assert.False(await access.AllowsAsync(admin, "Unknown", "Unknown", default));
+        Assert.False(await access.AllowsAsync(new ClaimsPrincipal(), "Refunds", "Verify", default));
+
+        using var factory = new IdentityAuthorizationTests.IdentityApiFactory();
+        factory.SetPermissions(SystemRoles.Admin);
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", factory.CreateToken(factory.Admin));
+        var response = await client.PostAsJsonAsync($"/api/v1/refunds/{Guid.NewGuid()}/verify", new { });
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var graphql = await client.PostAsJsonAsync("/graphql", new { query = "{ entities { products(first: 1) { nodes { id } } } }" });
+        var json = await graphql.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.False(json.TryGetProperty("errors", out _));
+    }
+
     [Fact]
     public void Every_registered_business_action_has_a_database_permission_and_no_hardcoded_role_attribute()
     {

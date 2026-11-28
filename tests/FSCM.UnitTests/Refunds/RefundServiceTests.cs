@@ -96,7 +96,7 @@ public sealed class RefundServiceTests
     }
 
     [Fact]
-    public async Task Evidence_submitter_cannot_verify_same_refund_even_with_admin_role()
+    public async Task Non_admin_evidence_submitter_cannot_verify_same_refund()
     {
         var fixture = new Fixture();
         var created = await fixture.CreateAsync(40_000, "refund-create-5");
@@ -105,8 +105,27 @@ public sealed class RefundServiceTests
             "refund-evidence-5", fixture.OperatorId, SystemRoles.Operator, default);
         var error = await Assert.ThrowsAsync<RefundOperationException>(() => fixture.Service.VerifyAsync(
             created.Id, new(submitted.Version, true, null), "refund-verify-5",
-            fixture.OperatorId, SystemRoles.Admin, default));
+            fixture.OperatorId, SystemRoles.Operator, default));
         Assert.Equal("forbidden", error.Code);
+    }
+
+    [Fact]
+    public async Task Admin_can_create_submit_and_verify_own_refund_with_audit_and_idempotency()
+    {
+        var fixture = new Fixture();
+        var created = await fixture.CreateAsync(40_000, "admin-create", fixture.AdminId, SystemRoles.Admin);
+        var submitted = await fixture.Service.SubmitEvidenceAsync(created.Id,
+            new(created.Version, fixture.Now.AddMinutes(-1), "TXN-ADMIN", "private://refunds/admin"),
+            "admin-evidence", fixture.AdminId, SystemRoles.Admin, default);
+        var verified = await fixture.Service.VerifyAsync(created.Id,
+            new(submitted.Version, true, "Admin đã đối chiếu"), "admin-verify", fixture.AdminId, SystemRoles.Admin, default);
+        var replay = await fixture.Service.VerifyAsync(created.Id,
+            new(submitted.Version, true, "Admin đã đối chiếu"), "admin-verify", fixture.AdminId, SystemRoles.Admin, default);
+        Assert.Equal(RefundStatuses.Refunded, verified.Status);
+        Assert.Equal(40_000, verified.RefundedAmount);
+        Assert.Equal(fixture.Now, verified.VerifiedAt);
+        Assert.Equal(verified.Version, replay.Version);
+        Assert.Equal(3, fixture.AuditCount);
     }
 
     [Fact]
@@ -150,9 +169,9 @@ public sealed class RefundServiceTests
             Service = new RefundService(Store, Store, new FixedTimeProvider(Now));
         }
 
-        public Task<RefundResult> CreateAsync(decimal amount, string key) => Service.CreateAsync(
+        public Task<RefundResult> CreateAsync(decimal amount, string key, Guid? actorId = null, string role = SystemRoles.Operator) => Service.CreateAsync(
             new(Store.Order.Id, amount, "Cửa hàng An Khang", "Điều chỉnh nghĩa vụ hợp lệ"),
-            key, OperatorId, SystemRoles.Operator, default);
+            key, actorId ?? OperatorId, role, default);
 
         public void RegisterApprovedClaim(Guid claimId, decimal adjustmentAmount) =>
             Store.Claims[claimId] = new RefundClaimSource(claimId, Store.Order.Id, true,

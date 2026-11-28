@@ -20,7 +20,8 @@ public sealed class BusinessConfigurationsController(WarehouseConfigurationServi
         return User.IsInRole(SystemRoles.Admin) ||
                User.HasClaim(FSCM.API.Security.PermissionAuthorizationHandler.GrantClaim, SystemScreenKeys.Config)
             ? all
-            : all.Where(item => item.Key == BusinessConfigurationKeys.OrderStepCartons).ToArray();
+            : all.Where(item => item.Key is BusinessConfigurationKeys.OrderStepCartons
+                or BusinessConfigurationKeys.DemoFastScanEnabled).ToArray();
     }
 
     [HttpGet("{key}/history")]

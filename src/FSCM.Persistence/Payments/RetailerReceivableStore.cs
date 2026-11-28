@@ -72,7 +72,7 @@ public sealed class RetailerReceivableStore(AppDbContext dbContext) : IRetailerR
             .Where(item => item.PaymentId == core.payment.Id)
             .OrderByDescending(item => item.CreatedAt)
             .Select(item => new ReceivableRefundHistory(item.Id, item.Amount, item.Status,
-                item.TransferredAt, item.TransactionReference, item.VerifiedAt, item.Reason))
+                item.TransferredAt, item.TransactionReference, item.VerifiedAt, item.Reason, item.EvidenceReference))
             .ToArrayAsync(cancellationToken);
         var pendingRefund = refunds.Where(item => RefundStatuses.Open.Contains(item.Status))
             .Sum(item => item.Amount);

@@ -12,6 +12,7 @@ using FSCM.Application.Features.QrLabels;
 using FSCM.Domain.Authorization;
 using FSCM.Domain.Entities;
 using FSCM.Application.Features.AllocationRuns;
+using FSCM.Application.Features.WarehouseConfiguration;
 
 namespace FSCM.Application.Features.Shipments;
 
@@ -29,7 +30,8 @@ public sealed class ShipmentService(
     OrderCompletionService completion,
     TimeProvider timeProvider,
     OrderNotificationService? notifications = null,
-    AllocationDeliveryGuard? deliveryGuard = null)
+    AllocationDeliveryGuard? deliveryGuard = null,
+    IWarehouseConfigurationStore? configurationStore = null)
 {
     private static readonly TimeSpan VietnamOffset = TimeSpan.FromHours(7);
 
@@ -72,6 +74,14 @@ public sealed class ShipmentService(
             throw ShipmentOperationException.Forbidden("You cannot view this order's deliveries.");
         var views = await store.ListAsync(actorUserId, actorRole, orderId, null, null, cancellationToken);
         var shipments = views.Select(ToResult).ToArray();
+        if (await IsDemoFastScanEnabledAsync(cancellationToken))
+            for (var i = 0; i < shipments.Length; i++)
+                if (shipments[i].Status == ShipmentStatuses.Delivering)
+                    shipments[i] = shipments[i] with
+                    {
+                        DemoQrCodes = (await store.ListLabelsAsync(shipments[i].Id, false, cancellationToken))
+                            .Select(item => item.Label.QrCode).ToArray()
+                    };
         var orderCode = shipments.FirstOrDefault()?.OrderCode ?? string.Empty;
 
         var payment = await paymentStore.FindByOrderAsync(orderId, false, cancellationToken);
@@ -861,6 +871,13 @@ public sealed class ShipmentService(
         return ToResult(await store.FindByIdAsync(id, false, cancellationToken)
             ?? throw ShipmentOperationException.Conflict("Receipt was committed but could not be reloaded."));
     }
+
+    /// <summary>Admin switch that reveals expected carton QR codes for demo fast scanning.</summary>
+    private async Task<bool> IsDemoFastScanEnabledAsync(CancellationToken cancellationToken) =>
+        configurationStore is not null &&
+        (await configurationStore.ListCurrentConfigurationsAsync(cancellationToken)).Any(item =>
+            item.ConfigKey == BusinessConfigurationKeys.DemoFastScanEnabled && item.IsActive &&
+            item.ConfigValue.Trim() == "true");
 
     private static ShipmentResult ToResult(ShipmentView view) => new(
         view.Shipment.Id, view.Order.Id, view.Order.OrderCode,

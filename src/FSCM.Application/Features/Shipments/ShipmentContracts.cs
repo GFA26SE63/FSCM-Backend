@@ -74,7 +74,11 @@ public sealed record OrderShipmentReadinessResult(
         : Parts.Any(part => part.Status == ShipmentStatuses.WaitingToPick) ? "WaitingToPick"
         : "Preparing";
 
-    public bool IsHistory => DispatchStatus == "Delivered";
+    // Receipt discrepancies belong to their own workflow; they do not keep
+    // transport dispatch open. A picking exception without a trip is not done.
+    public bool IsHistory => Parts.Count > 0 && Parts.All(part =>
+        part.Status == ShipmentStatuses.Received ||
+        (part.ShipmentId.HasValue && part.Status == ShipmentStatuses.Exception));
 }
 
 public sealed record ConfirmShipmentReceiptLineData(
@@ -136,7 +140,9 @@ public sealed record ShipmentResult(
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,
     IReadOnlyCollection<ShipmentLineResult> Lines,
-    ShipmentReceiptResult? Receipt);
+    ShipmentReceiptResult? Receipt,
+    // Only filled on the retailer delivery view while the admin demo fast-scan switch is on.
+    IReadOnlyCollection<string>? DemoQrCodes = null);
 
 public sealed record FlagShipmentExceptionData(string Reason, int ExpectedVersion);
 
