@@ -127,6 +127,7 @@ public static class DependencyInjection
         services.AddScoped<IPaymentReceiptStore, PaymentReceiptStore>();
         services.AddScoped<IRetailerReceivableStore, RetailerReceivableStore>();
         services.AddScoped<IRetailerDebtPayOsStore, RetailerDebtPayOsStore>();
+        services.AddScoped<IPayOsLinkLifetimeSource, PayOsLinkLifetimeSource>();
         services.AddScoped<IPickingStore, PickingStore>();
         services.AddScoped<FSCM.Persistence.WarehouseWork.WarehouseWorkService>();
         services.AddScoped<FSCM.Persistence.WarehouseWork.FactoryTraceabilityService>();

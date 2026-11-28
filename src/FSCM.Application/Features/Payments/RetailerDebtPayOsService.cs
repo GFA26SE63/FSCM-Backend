@@ -12,7 +12,8 @@ public sealed class RetailerDebtPayOsService(
     IRetailerDebtPayOsStore store,
     IPayOsGateway payOsGateway,
     TimeProvider timeProvider,
-    OrderCompletionService? completionService = null)
+    OrderCompletionService? completionService = null,
+    IPayOsLinkLifetimeSource? linkLifetime = null)
 {
     private static readonly TimeSpan VietnamOffset = TimeSpan.FromHours(7);
 
@@ -50,12 +51,22 @@ public sealed class RetailerDebtPayOsService(
             retailer.Id, mode == RetailerDebtCheckoutModes.All ? null : ids, cancellationToken);
         foreach (var checkout in pending)
             await ReconcilePendingCheckoutAsync(checkout, cancellationToken);
+        var reusable = await ListReusablePendingAsync(pending, cancellationToken);
+        if (mode == RetailerDebtCheckoutModes.Selected &&
+            reusable.FirstOrDefault(x => x.Allocations.Select(a => a.PaymentId).ToHashSet().SetEquals(ids))
+                is { } sameSelection)
+            return ToResult(sameSelection);
         var selected = await store.ListCollectibleForUpdateAsync(
             retailer.Id, mode == RetailerDebtCheckoutModes.All ? null : ids, cancellationToken);
         if (mode == RetailerDebtCheckoutModes.Selected && selected.Count != ids.Length)
             throw PaymentOperationException.Conflict("One or more selected receivables are not collectible or already have a pending checkout.");
         if (selected.Count == 0)
+        {
+            // All remaining debt is already held by one open link: reopen it instead of failing.
+            if (mode == RetailerDebtCheckoutModes.All && reusable.Count == 1)
+                return ToResult(reusable[0]);
             throw PaymentOperationException.Conflict("There is no collectible receivable to pay.");
+        }
         var snapshots = selected.Select(x => new
         {
             View = x,
@@ -67,7 +78,8 @@ public sealed class RetailerDebtPayOsService(
         var payOsOrderCode = CreatePayOsOrderCode(Guid.NewGuid());
         var link = await payOsGateway.CreatePaymentLinkAsync(new(
             payOsOrderCode, ToPayOsAmount(total),
-            CreatePayOsDescription(snapshots.Select(x => x.View.Order.OrderCode)), retailer.Name), cancellationToken);
+            CreatePayOsDescription(snapshots.Select(x => x.View.Order.OrderCode)), retailer.Name,
+            await PayOsLinkLifetime.ExpiredAtAsync(linkLifetime, timeProvider, cancellationToken)), cancellationToken);
         if (link.OrderCode != payOsOrderCode || link.Amount != ToPayOsAmount(total) ||
             string.IsNullOrWhiteSpace(link.PaymentLinkId) || string.IsNullOrWhiteSpace(link.CheckoutUrl))
             throw PaymentOperationException.Gateway("payOS returned an inconsistent debt payment link.");
@@ -136,6 +148,81 @@ public sealed class RetailerDebtPayOsService(
                 : FindRetailerCheckoutAsync(checkoutId, retailerUserId, cancellationToken)) ?? view;
         }
         return ToResult(view);
+    }
+
+    /// <summary>Open (pending, unexpired) debt checkouts of the signed-in retailer, reconciled with PayOS.</summary>
+    public async Task<IReadOnlyCollection<RetailerDebtPayOsCheckoutResult>> ListPendingAsync(
+        Guid retailerUserId, CancellationToken cancellationToken)
+    {
+        var retailer = await store.FindRetailerByUserAsync(retailerUserId, cancellationToken)
+            ?? throw PaymentOperationException.Forbidden("Retailer account was not found for the signed-in user.");
+        var pending = await store.ListPendingForPaymentsAsync(retailer.Id, null, cancellationToken);
+        var results = new List<RetailerDebtPayOsCheckoutResult>();
+        foreach (var checkout in pending)
+        {
+            await ReconcilePendingCheckoutAsync(checkout, cancellationToken);
+            var view = await store.FindByPayOsOrderCodeAsync(checkout.PayOsOrderCode, false, cancellationToken);
+            if (view?.Checkout.Status == RetailerDebtPayOsStatuses.Pending && !IsExpired(view.Checkout))
+                results.Add(ToResult(view));
+        }
+        return results;
+    }
+
+    /// <summary>
+    /// Cancels the retailer's own pending checkout so its receivables can be paid in another
+    /// selection. A link that was already paid is never cancelled: it is reconciled to Paid
+    /// and returned, so the caller must check the returned status before creating a new one.
+    /// </summary>
+    public async Task<RetailerDebtPayOsCheckoutResult> CancelAsync(
+        Guid checkoutId, Guid retailerUserId, CancellationToken cancellationToken)
+    {
+        var view = await FindRetailerCheckoutAsync(checkoutId, retailerUserId, cancellationToken)
+            ?? throw PaymentOperationException.NotFound("Debt checkout was not found.");
+        if (view.Checkout.Status == RetailerDebtPayOsStatuses.Pending)
+            view = await ReconcileAndReloadAsync(view, cancellationToken);
+        if (view.Checkout.Status != RetailerDebtPayOsStatuses.Pending) return ToResult(view);
+
+        try
+        {
+            await payOsGateway.CancelPaymentLinkAsync(view.Checkout.PayOsOrderCode,
+                "Retailer replaced the debt payment selection", cancellationToken);
+        }
+        catch (PaymentOperationException)
+        {
+            // PayOS refuses to cancel a link paid in the meantime; record that payment instead.
+            var after = await ReconcileAndReloadAsync(view, cancellationToken);
+            if (after.Checkout.Status != RetailerDebtPayOsStatuses.Pending) return ToResult(after);
+            throw;
+        }
+
+        await store.ExecuteInTransactionAsync(async token =>
+        {
+            var current = await store.FindByPayOsOrderCodeAsync(view.Checkout.PayOsOrderCode, true, token);
+            if (current?.Checkout.Status != RetailerDebtPayOsStatuses.Pending) return;
+            current.Checkout.Status = RetailerDebtPayOsStatuses.Cancelled;
+            current.Checkout.Version++;
+            current.Checkout.UpdatedAt = timeProvider.GetUtcNow();
+            store.AddAuditLog(new AuditLog
+            {
+                Id = Guid.NewGuid(), UserAccountId = retailerUserId,
+                EntityName = nameof(RetailerDebtPayOsCheckout), EntityId = current.Checkout.Id,
+                Action = RetailerDebtPayOsStatuses.Cancelled,
+                NewValues = JsonSerializer.Serialize(new { Source = "Retailer cancelled pending checkout" }),
+                Reason = "Retailer hủy giao dịch PayOS đang chờ để chọn lại công nợ",
+                CreatedAt = current.Checkout.UpdatedAt
+            });
+            await store.SaveChangesAsync(token);
+        }, cancellationToken);
+        store.ClearTracking();
+        return ToResult(await store.FindByPayOsOrderCodeAsync(view.Checkout.PayOsOrderCode, false, cancellationToken)
+            ?? throw PaymentOperationException.NotFound("Debt checkout was not found."));
+    }
+
+    private async Task<RetailerDebtCheckoutView> ReconcileAndReloadAsync(
+        RetailerDebtCheckoutView view, CancellationToken cancellationToken)
+    {
+        await ReconcilePendingCheckoutAsync(view.Checkout, cancellationToken);
+        return await store.FindByPayOsOrderCodeAsync(view.Checkout.PayOsOrderCode, false, cancellationToken) ?? view;
     }
 
     private async Task<RetailerDebtCheckoutView?> FindRetailerCheckoutAsync(
@@ -266,6 +353,25 @@ public sealed class RetailerDebtPayOsService(
             await store.SaveChangesAsync(token);
         }, cancellationToken);
         store.ClearTracking();
+    }
+
+    // A retailer who leaves PayOS without cancelling keeps an open link; reopening it avoids
+    // a dead end. Only unexpired links whose snapshot still matches the server balance qualify.
+    private async Task<IReadOnlyList<RetailerDebtCheckoutView>> ListReusablePendingAsync(
+        IEnumerable<RetailerDebtPayOsCheckout> pending, CancellationToken cancellationToken)
+    {
+        var result = new List<RetailerDebtCheckoutView>();
+        foreach (var checkout in pending)
+        {
+            var view = await store.FindByPayOsOrderCodeAsync(checkout.PayOsOrderCode, false, cancellationToken);
+            if (view is null || view.Checkout.Status != RetailerDebtPayOsStatuses.Pending ||
+                IsExpired(view.Checkout) || string.IsNullOrWhiteSpace(view.Checkout.CheckoutUrl))
+                continue;
+            if (view.Allocations.All(a => view.Payments.Any(p => p.Payment.Id == a.PaymentId &&
+                    p.Payment.AdjustedAmount - p.Payment.ConfirmedAmount - p.OpenDisputedAmount == a.Amount)))
+                result.Add(view);
+        }
+        return result;
     }
 
     private async Task ReconcilePendingCheckoutAsync(

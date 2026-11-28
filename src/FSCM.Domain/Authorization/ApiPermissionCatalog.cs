@@ -201,6 +201,8 @@ public static class ApiPermissionCatalog
         new("RetailerReceivables", "GetByOrder", "Admin", "Retailer"),
         new("RetailerReceivables", "CreatePayOsCheckout", "Admin", "Retailer"),
         new("RetailerReceivables", "GetPayOsCheckout", "Admin", "Retailer"),
+        new("RetailerReceivables", "ListPendingPayOsCheckouts", "Admin", "Retailer"),
+        new("RetailerReceivables", "CancelPayOsCheckout", "Admin", "Retailer"),
         new("Retailers", "List", "Admin", "Operator", "Sales", "SalesManager"),
         new("Retailers", "Get", "Admin", "Operator", "Sales", "SalesManager"),
         new("Retailers", "Declare", "Admin", "Sales"),

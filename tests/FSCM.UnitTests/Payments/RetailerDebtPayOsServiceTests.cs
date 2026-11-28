@@ -123,6 +123,113 @@ public sealed class RetailerDebtPayOsServiceTests
         Assert.NotEqual(checkout.Id, replacement.Id);
     }
 
+    [Theory]
+    [InlineData(RetailerDebtCheckoutModes.Selected)]
+    [InlineData(RetailerDebtCheckoutModes.All)]
+    public async Task Abandoned_pending_link_is_reopened_instead_of_blocking_a_new_checkout(string mode)
+    {
+        var fixture = new Fixture();
+        var service = fixture.CreateService();
+        var checkout = await service.CreateAsync(new(
+            RetailerDebtCheckoutModes.Selected, [fixture.Payment.Id]), "first-attempt",
+            fixture.UserId, SystemRoles.Retailer, CancellationToken.None);
+
+        var retry = await service.CreateAsync(new(
+            mode, mode == RetailerDebtCheckoutModes.All ? [] : [fixture.Payment.Id]), "second-attempt",
+            fixture.UserId, SystemRoles.Retailer, CancellationToken.None);
+
+        Assert.Equal(checkout.Id, retry.Id);
+        Assert.Equal(checkout.CheckoutUrl, retry.CheckoutUrl);
+        Assert.Equal(1, fixture.Gateway.CreateCount);
+        Assert.Single(fixture.Store.Checkouts);
+    }
+
+    [Theory]
+    [InlineData(15, 900L)]
+    [InlineData(0, null)]
+    public async Task Configured_link_lifetime_sets_the_payos_deadline(int minutes, long? expectedSeconds)
+    {
+        var fixture = new Fixture();
+        await fixture.CreateService(minutes).CreateAsync(new(
+            RetailerDebtCheckoutModes.Selected, [fixture.Payment.Id]), "lifetime",
+            fixture.UserId, SystemRoles.Retailer, CancellationToken.None);
+
+        Assert.Equal(expectedSeconds + Fixture.Now.ToUnixTimeSeconds(), fixture.Gateway.LastCreateData!.ExpiredAt);
+    }
+
+    [Fact]
+    public async Task Retailer_cancels_a_pending_checkout_and_can_pay_with_a_new_link()
+    {
+        var fixture = new Fixture();
+        var service = fixture.CreateService();
+        var old = await service.CreateAsync(new(
+            RetailerDebtCheckoutModes.Selected, [fixture.Payment.Id]), "old",
+            fixture.UserId, SystemRoles.Retailer, CancellationToken.None);
+        Assert.Equal(old.Id, Assert.Single(await service.ListPendingAsync(fixture.UserId, default)).Id);
+
+        var cancelled = await service.CancelAsync(old.Id, fixture.UserId, default);
+        fixture.Gateway.LinkStatus = "PENDING";
+        var replacement = await service.CreateAsync(new(
+            RetailerDebtCheckoutModes.All, []), "new",
+            fixture.UserId, SystemRoles.Retailer, CancellationToken.None);
+
+        Assert.Equal(RetailerDebtPayOsStatuses.Cancelled, cancelled.Status);
+        Assert.Equal(1, fixture.Gateway.CancelCount);
+        Assert.NotEqual(old.Id, replacement.Id);
+        Assert.Equal(2, fixture.Gateway.CreateCount);
+    }
+
+    [Fact]
+    public async Task Cancelling_a_link_paid_in_the_meantime_records_the_payment_instead()
+    {
+        var fixture = new Fixture();
+        var service = fixture.CreateService();
+        var old = await service.CreateAsync(new(
+            RetailerDebtCheckoutModes.Selected, [fixture.Payment.Id]), "old",
+            fixture.UserId, SystemRoles.Retailer, CancellationToken.None);
+        fixture.Gateway.PaidBeforeCancel = true;
+
+        var result = await service.CancelAsync(old.Id, fixture.UserId, default);
+
+        Assert.Equal(RetailerDebtPayOsStatuses.Paid, result.Status);
+        Assert.Single(fixture.Store.Receipts);
+        Assert.Equal(PaymentStatuses.Paid, fixture.Payment.Status);
+    }
+
+    [Fact]
+    public async Task Another_retailer_cannot_cancel_a_checkout()
+    {
+        var fixture = new Fixture();
+        var service = fixture.CreateService();
+        var old = await service.CreateAsync(new(
+            RetailerDebtCheckoutModes.Selected, [fixture.Payment.Id]), "old",
+            fixture.UserId, SystemRoles.Retailer, CancellationToken.None);
+
+        var error = await Assert.ThrowsAsync<PaymentOperationException>(
+            () => service.CancelAsync(old.Id, Guid.NewGuid(), default));
+
+        Assert.Equal("not_found", error.Code);
+        Assert.Equal(0, fixture.Gateway.CancelCount);
+    }
+
+    [Fact]
+    public async Task Pending_link_with_a_stale_balance_is_not_reopened()
+    {
+        var fixture = new Fixture();
+        var service = fixture.CreateService();
+        await service.CreateAsync(new(
+            RetailerDebtCheckoutModes.Selected, [fixture.Payment.Id]), "first-attempt",
+            fixture.UserId, SystemRoles.Retailer, CancellationToken.None);
+        fixture.Payment.AdjustedAmount = 900_000m;
+
+        var error = await Assert.ThrowsAsync<PaymentOperationException>(() => service.CreateAsync(new(
+            RetailerDebtCheckoutModes.Selected, [fixture.Payment.Id]), "second-attempt",
+            fixture.UserId, SystemRoles.Retailer, CancellationToken.None));
+
+        Assert.Equal("conflict", error.Code);
+        Assert.Equal(1, fixture.Gateway.CreateCount);
+    }
+
     [Fact]
     public async Task Polling_a_paid_payment_link_confirms_the_debt_checkout_when_webhook_is_delayed()
     {
@@ -166,8 +273,15 @@ public sealed class RetailerDebtPayOsServiceTests
             Store = new FakeStore(Retailer, new ReceiptPaymentView(Payment, order));
         }
 
-        public RetailerDebtPayOsService CreateService() => new(Store, Gateway,
-            new FixedTimeProvider(new DateTimeOffset(2026, 11, 11, 2, 0, 0, TimeSpan.Zero)));
+        public static readonly DateTimeOffset Now = new(2026, 11, 11, 2, 0, 0, TimeSpan.Zero);
+
+        public RetailerDebtPayOsService CreateService(int linkLifetimeMinutes = 0) => new(Store, Gateway,
+            new FixedTimeProvider(Now), linkLifetime: new FixedLinkLifetime(linkLifetimeMinutes));
+    }
+
+    private sealed class FixedLinkLifetime(int minutes) : IPayOsLinkLifetimeSource
+    {
+        public Task<int> GetMinutesAsync(CancellationToken cancellationToken) => Task.FromResult(minutes);
     }
 
     private sealed class FakeGateway : IPayOsGateway
@@ -186,6 +300,20 @@ public sealed class RetailerDebtPayOsServiceTests
             throw new NotSupportedException();
         public Task<PayOsPaymentLinkStatus> GetPaymentLinkStatusAsync(long orderCode, CancellationToken cancellationToken) =>
             Task.FromResult(new PayOsPaymentLinkStatus(orderCode, "link-1", LinkStatus, 2_000_000_000));
+        /// <summary>Simulates the retailer paying just before the cancel request reaches PayOS.</summary>
+        public bool PaidBeforeCancel { get; set; }
+        public int CancelCount { get; private set; }
+        public Task<PayOsPaymentLinkStatus> CancelPaymentLinkAsync(long orderCode, string reason, CancellationToken cancellationToken)
+        {
+            CancelCount++;
+            if (PaidBeforeCancel)
+            {
+                LinkStatus = "PAID";
+                throw PaymentOperationException.Gateway("payOS could not cancel the payment link: paid");
+            }
+            LinkStatus = "CANCELLED";
+            return Task.FromResult(new PayOsPaymentLinkStatus(orderCode, "link-1", LinkStatus, null));
+        }
     }
 
     private sealed class FakeStore(Retailer retailer, ReceiptPaymentView payment) : IRetailerDebtPayOsStore
