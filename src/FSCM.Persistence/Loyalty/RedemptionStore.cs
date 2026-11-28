@@ -47,14 +47,12 @@ public sealed class RedemptionStore(AppDbContext dbContext) : IRedemptionStore, 
                 return new(existing, existingReward, existingBalance);
             }
 
-            var program = await (from link in dbContext.LoyaltyProgramRetailerRecords
-                                 join item in dbContext.LoyaltyProgramRecords on link.LoyaltyProgramId equals item.Id
-                                 where link.RetailerId == retailer.Id && item.IsActive && item.StartAt <= now && item.EndAt >= now
-                                 orderby item.StartAt descending select item).FirstOrDefaultAsync(cancellationToken)
-                ?? throw LoyaltyOperationException.Conflict("No active loyalty program applies to this retailer.");
             var reward = await dbContext.LoyaltyRewardRecords.SingleOrDefaultAsync(
-                item => item.Id == data.RewardId && item.LoyaltyProgramId == program.Id && item.IsActive, cancellationToken)
+                item => item.Id == data.RewardId && item.IsActive, cancellationToken)
                 ?? throw LoyaltyOperationException.NotFound("Active loyalty reward was not found.");
+            var program = await EligibleLoyaltyPrograms.ForRetailer(dbContext, retailer.Id, now)
+                .SingleOrDefaultAsync(item => item.Id == reward.LoyaltyProgramId, cancellationToken)
+                ?? throw LoyaltyOperationException.Conflict("Chương trình của quà không còn hiệu lực hoặc không áp dụng cho điểm bán này.");
             var totalPoints = checked(reward.RequiredPoints * data.Quantity);
             if (reward.AvailableQuantity.HasValue && reward.AvailableQuantity.Value < data.Quantity)
                 throw LoyaltyOperationException.Conflict("The requested reward quantity is not available.");
