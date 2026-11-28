@@ -107,6 +107,7 @@ public sealed class BackgroundJobCompositionTests
         public Task<IReadOnlyCollection<BatchExpiryCandidate>> ListBatchesForExpirySweepAsync(CancellationToken ct) =>
             Task.FromResult<IReadOnlyCollection<BatchExpiryCandidate>>([]);
         public void AddSweepRun(ExpirySweepRun value) => run = value;
+        public Task SaveFailedSweepAsync(ExpirySweepRun value, CancellationToken ct) => Task.CompletedTask;
         public void AddOutboxMessage(OutboxMessage message) => throw new InvalidOperationException("Empty sweep cannot emit events.");
         public void AddInventoryLock(InventoryLock value) => throw new InvalidOperationException("Empty sweep cannot lock inventory.");
         public Task SaveChangesAsync(CancellationToken ct)

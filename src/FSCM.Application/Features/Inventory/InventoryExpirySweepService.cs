@@ -53,7 +53,8 @@ public sealed class InventoryExpirySweepService(IBatchExpiryStore store, TimePro
                 if (newStatus == BatchExpiryStatuses.Expired && !wasExpired)
                 {
                     expired++;
-                    store.AddOutboxMessage(BuildBatchExpiredMessage(batch, now));
+                    if (!candidate.HasExpiryEvent)
+                        store.AddOutboxMessage(BuildBatchExpiredMessage(batch, now));
 
                     // F42 → F100: withhold the still-issuable (unreserved, not-yet-locked) portion
                     // through an inventory lock instead of touching OnHand. The reserved portion is
@@ -79,7 +80,7 @@ public sealed class InventoryExpirySweepService(IBatchExpiryStore store, TimePro
             run.Status = ExpirySweepStatuses.Failed;
             run.Error = exception.Message.Length <= 2_000 ? exception.Message : exception.Message[..2_000];
             run.CompletedAt = timeProvider.GetUtcNow();
-            await store.SaveChangesAsync(cancellationToken);
+            await store.SaveFailedSweepAsync(run, cancellationToken);
             throw;
         }
     }

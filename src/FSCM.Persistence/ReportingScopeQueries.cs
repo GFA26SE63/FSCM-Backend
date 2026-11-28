@@ -8,6 +8,20 @@ namespace FSCM.Persistence;
 /// <summary>Region assignments are explicit grants; a group/warehouse's region label is not a grant to its siblings.</summary>
 public static class ReportingScopeQueries
 {
+    public static IQueryable<SalesOrder> ShipmentOrders(AppDbContext db, Guid actor, string role)
+    {
+        var orders = db.SalesOrderRecords.AsNoTracking();
+        return role switch
+        {
+            SystemRoles.Admin or SystemRoles.Operator => orders,
+            SystemRoles.Sales => orders.Where(o => o.CreatedByUserId == actor),
+            SystemRoles.SalesManager => orders.Where(o => ManagedGroups(db, actor).Any(g => g.Id == o.SalesGroupId)),
+            SystemRoles.WarehouseKeeper => orders.Where(o => WarehouseOrderIds(db, actor).Contains(o.Id)),
+            SystemRoles.Retailer => orders.Where(o => db.RetailerRecords.Any(r => r.Id == o.RetailerId && r.UserAccountId == actor)),
+            _ => orders.Where(_ => false)
+        };
+    }
+
     public static IQueryable<SalesGroup> ManagedGroups(AppDbContext db, Guid userId) =>
         db.SalesGroupRecords.AsNoTracking().Where(g => g.IsActive &&
             (db.SalesGroupMemberRecords.Any(a => a.UserAccountId == userId && a.SalesGroupId == g.Id && a.IsActive)

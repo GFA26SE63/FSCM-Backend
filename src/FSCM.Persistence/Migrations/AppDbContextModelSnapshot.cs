@@ -2416,7 +2416,7 @@ namespace FSCM.Persistence.Migrations
                     b.Property<DateTimeOffset>("ChangedAt")
                         .HasColumnType("timestamp with time zone");
 
-                    b.Property<Guid>("ChangedByUserId")
+                    b.Property<Guid?>("ChangedByUserId")
                         .HasColumnType("uuid");
 
                     b.Property<string>("FromStatus")
@@ -6752,8 +6752,7 @@ namespace FSCM.Persistence.Migrations
                     b.HasOne("FSCM.Domain.Entities.UserAccount", null)
                         .WithMany()
                         .HasForeignKey("ChangedByUserId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
+                        .OnDelete(DeleteBehavior.Restrict);
 
                     b.HasOne("FSCM.Domain.Entities.SalesOrder", null)
                         .WithMany()
