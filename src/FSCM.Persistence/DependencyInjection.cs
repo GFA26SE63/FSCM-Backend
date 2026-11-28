@@ -96,7 +96,7 @@ public static class DependencyInjection
         services.AddScoped<IDeliveryStore, DeliveryStore>();
         services.AddScoped<IShipmentStore, ShipmentStore>();
         services.AddScoped<IReportStore, ReportStore>();
-        services.AddScoped<IOperationsReportStore, OperationsReportStore>();
+        services.AddScoped<IBusinessReportStore, BusinessReportStore>();
         services.AddScoped<IWarehouseLogisticsReportStore, WarehouseLogisticsReportStore>();
         services.AddScoped<FSCM.Application.Features.Dashboard.IDashboardStore, FSCM.Persistence.Dashboard.DashboardStore>();
         services.AddScoped<IIdentityStore, IdentityStore>();
@@ -127,6 +127,7 @@ public static class DependencyInjection
         services.AddScoped<IPaymentReceiptStore, PaymentReceiptStore>();
         services.AddScoped<IRetailerReceivableStore, RetailerReceivableStore>();
         services.AddScoped<IRetailerDebtPayOsStore, RetailerDebtPayOsStore>();
+        services.AddScoped<IPayOsLinkLifetimeSource, PayOsLinkLifetimeSource>();
         services.AddScoped<IPickingStore, PickingStore>();
         services.AddScoped<FSCM.Persistence.WarehouseWork.WarehouseWorkService>();
         services.AddScoped<FSCM.Persistence.WarehouseWork.FactoryTraceabilityService>();

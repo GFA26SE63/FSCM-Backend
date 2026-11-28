@@ -7,6 +7,7 @@ using FSCM.Application.Features.WarehouseConfiguration;
 using FSCM.Domain.Authorization;
 using FSCM.Domain.Entities;
 using FSCM.Persistence.DbContexts;
+using FSCM.Persistence.Loyalty;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
 
@@ -14,6 +15,10 @@ namespace FSCM.Persistence.Orders;
 
 public sealed class OrderStore(AppDbContext dbContext) : IOrderStore
 {
+    public async Task<IReadOnlyCollection<LoyaltyProgram>> ListEligibleLoyaltyProgramsAsync(
+        Guid retailerId, DateTimeOffset at, CancellationToken cancellationToken) =>
+        await EligibleLoyaltyPrograms.ForRetailer(dbContext, retailerId, at).AsNoTracking().ToArrayAsync(cancellationToken);
+
     public Task<SalesOrder?> FindByClientOrderKeyAsync(Guid clientOrderKey, CancellationToken cancellationToken) =>
         dbContext.SalesOrderRecords.AsNoTracking()
             .SingleOrDefaultAsync(item => item.ClientOrderKey == clientOrderKey, cancellationToken);

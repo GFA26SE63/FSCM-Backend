@@ -56,11 +56,11 @@ public sealed class LoyaltyCardStore(AppDbContext dbContext) : ILoyaltyCardStore
         var balance = await dbContext.RetailerLoyaltyRecords.AsNoTracking()
             .SingleOrDefaultAsync(item => item.RetailerId == retailer.Id, cancellationToken);
         var now = DateTimeOffset.UtcNow;
-        var program = await (from link in dbContext.LoyaltyProgramRetailerRecords.AsNoTracking()
-                             join item in dbContext.LoyaltyProgramRecords.AsNoTracking() on link.LoyaltyProgramId equals item.Id
-                             where link.RetailerId == retailer.Id && item.StartAt <= now && item.EndAt >= now
-                             orderby item.IsActive descending, item.StartAt descending
-                             select item).FirstOrDefaultAsync(cancellationToken);
+        var programs = await EligibleLoyaltyPrograms.ForRetailer(dbContext, retailer.Id, now)
+            .AsNoTracking().OrderBy(item => item.SpendAmountPerPoint).ThenBy(item => item.Code)
+            .ToArrayAsync(cancellationToken);
+        // Legacy single-program fields are a reference rate, not the choice for every order.
+        var program = programs.FirstOrDefault();
         var transactions = await dbContext.LoyaltyTransactionRecords.AsNoTracking()
             .Where(item => balance != null && item.RetailerLoyaltyId == balance.Id)
             .OrderByDescending(item => item.CreatedAt).ToArrayAsync(cancellationToken);
@@ -76,6 +76,6 @@ public sealed class LoyaltyCardStore(AppDbContext dbContext) : ILoyaltyCardStore
             item.SalesOrderId, item.SalesOrderId.HasValue && orders.TryGetValue(item.SalesOrderId.Value, out var code) ? code : null,
             redemptions.TryGetValue(item.Id, out var redemption) ? redemption.Id : null,
             redemptions.TryGetValue(item.Id, out redemption) ? redemption.Status : null)).ToArray();
-        return new(retailer, balance, program, ledger);
+        return new(retailer, balance, program, ledger) { EligiblePrograms = programs };
     }
 }

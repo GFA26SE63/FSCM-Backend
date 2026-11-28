@@ -39,7 +39,24 @@ public sealed record PayOsCreateLinkData(
     long OrderCode,
     long Amount,
     string Description,
-    string BuyerName);
+    string BuyerName,
+    long? ExpiredAt = null);
+
+/// <summary>Admin-configured PayOS link lifetime in minutes; 0 means the link has no FSCM deadline.</summary>
+public interface IPayOsLinkLifetimeSource
+{
+    Task<int> GetMinutesAsync(CancellationToken cancellationToken);
+}
+
+public static class PayOsLinkLifetime
+{
+    public static async Task<long?> ExpiredAtAsync(
+        IPayOsLinkLifetimeSource? source, TimeProvider timeProvider, CancellationToken cancellationToken)
+    {
+        var minutes = source is null ? 0 : await source.GetMinutesAsync(cancellationToken);
+        return minutes > 0 ? timeProvider.GetUtcNow().AddMinutes(minutes).ToUnixTimeSeconds() : null;
+    }
+}
 
 public sealed record PayOsLinkData(
     long OrderCode,
@@ -94,6 +111,8 @@ public interface IPayOsGateway
         PayOsWebhookEnvelope webhook, CancellationToken cancellationToken);
     Task<PayOsPaymentLinkStatus> GetPaymentLinkStatusAsync(
         long orderCode, CancellationToken cancellationToken);
+    Task<PayOsPaymentLinkStatus> CancelPaymentLinkAsync(
+        long orderCode, string reason, CancellationToken cancellationToken);
 }
 
 public sealed record PayOsCheckoutResult(

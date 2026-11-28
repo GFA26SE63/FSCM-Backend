@@ -99,21 +99,14 @@ public sealed class PaymentServiceTests
     }
 
     [Fact]
-    public async Task Sales_records_full_cash_collection_for_own_credit_order()
+    public async Task Cash_collection_method_is_rejected()
     {
         var fixture = new Fixture();
 
-        var result = await fixture.CollectAsync(
-            fixture.SalesUserId, SystemRoles.Sales, PaymentCollectionMethods.Cash);
+        var exception = await Assert.ThrowsAsync<PaymentOperationException>(() => fixture.CollectAsync(
+            Guid.NewGuid(), SystemRoles.Operator, PaymentCollectionMethods.Cash));
 
-        Assert.Equal(PaymentStatuses.Paid, result.Status);
-        Assert.Equal(fixture.Order.FinalAmount, result.Amount);
-        Assert.Equal(fixture.SalesUserId, result.ConfirmedByUserId);
-        Assert.Equal(1, result.Version);
-        var audit = Assert.Single(fixture.Store.Audits);
-        Assert.Equal("Collected", audit.Action);
-        Assert.Equal(fixture.SalesUserId, audit.UserAccountId);
-        Assert.Contains("Thu đủ công nợ", audit.Reason);
+        Assert.Equal("validation_error", exception.Code);
     }
 
     [Fact]
@@ -124,7 +117,7 @@ public sealed class PaymentServiceTests
             fixture.Order.Id, OrderStatuses.Delivered, PaymentSettled: true, HasOpenComplaint: false);
 
         await fixture.CollectAsync(
-            fixture.SalesUserId, SystemRoles.Sales, PaymentCollectionMethods.Cash);
+            Guid.NewGuid(), SystemRoles.Operator, PaymentCollectionMethods.BankTransfer);
 
         Assert.Equal(OrderStatuses.Completed, fixture.Order.Status);
         Assert.Contains(fixture.Order.Id, fixture.CompletionStore.Completed);
@@ -134,12 +127,20 @@ public sealed class PaymentServiceTests
     public async Task Operator_records_bank_transfer_collection()
     {
         var fixture = new Fixture();
+        var operatorUserId = Guid.NewGuid();
 
         var result = await fixture.CollectAsync(
-            Guid.NewGuid(), SystemRoles.Operator, PaymentCollectionMethods.BankTransfer);
+            operatorUserId, SystemRoles.Operator, PaymentCollectionMethods.BankTransfer);
 
         Assert.Equal(PaymentStatuses.Paid, result.Status);
+        Assert.Equal(fixture.Order.FinalAmount, result.Amount);
         Assert.Equal(PaymentCollectionMethods.BankTransfer, result.CollectionMethod);
+        Assert.Equal(operatorUserId, result.ConfirmedByUserId);
+        Assert.Equal(1, result.Version);
+        var audit = Assert.Single(fixture.Store.Audits);
+        Assert.Equal("Collected", audit.Action);
+        Assert.Equal(operatorUserId, audit.UserAccountId);
+        Assert.Contains("Thu đủ công nợ", audit.Reason);
     }
 
     [Fact]
@@ -156,7 +157,7 @@ public sealed class PaymentServiceTests
         var fixture = new Fixture();
 
         var exception = await Assert.ThrowsAsync<PaymentOperationException>(() => fixture.CollectAsync(
-            Guid.NewGuid(), SystemRoles.Sales, PaymentCollectionMethods.Cash));
+            Guid.NewGuid(), SystemRoles.Sales, PaymentCollectionMethods.BankTransfer));
 
         Assert.Equal("forbidden", exception.Code);
     }
@@ -178,16 +179,17 @@ public sealed class PaymentServiceTests
     public async Task Repeated_collection_key_is_idempotent_and_payload_change_conflicts()
     {
         var fixture = new Fixture();
+        var operatorUserId = Guid.NewGuid();
         var first = await fixture.CollectAsync(
-            fixture.SalesUserId, SystemRoles.Sales, PaymentCollectionMethods.Cash);
+            operatorUserId, SystemRoles.Operator, PaymentCollectionMethods.BankTransfer);
         var repeated = await fixture.CollectAsync(
-            fixture.SalesUserId, SystemRoles.Sales, PaymentCollectionMethods.Cash, expectedVersion: 0);
+            operatorUserId, SystemRoles.Operator, PaymentCollectionMethods.BankTransfer, expectedVersion: 0);
 
         Assert.Equal(first.Id, repeated.Id);
         var exception = await Assert.ThrowsAsync<PaymentOperationException>(() =>
             fixture.Service.CollectAsync(fixture.Order.Id,
-                new(PaymentCollectionMethods.Cash, 1, "Nội dung khác"),
-                "payment-test-001", fixture.SalesUserId, SystemRoles.Sales, default));
+                new(PaymentCollectionMethods.BankTransfer, 1, "Nội dung khác"),
+                "payment-test-001", operatorUserId, SystemRoles.Operator, default));
         Assert.Equal("conflict", exception.Code);
     }
 
@@ -197,7 +199,7 @@ public sealed class PaymentServiceTests
         var fixture = new Fixture();
 
         var exception = await Assert.ThrowsAsync<PaymentOperationException>(() => fixture.CollectAsync(
-            fixture.SalesUserId, SystemRoles.Sales, PaymentCollectionMethods.Cash, expectedVersion: 2));
+            Guid.NewGuid(), SystemRoles.Operator, PaymentCollectionMethods.BankTransfer, expectedVersion: 2));
 
         Assert.Equal("conflict", exception.Code);
     }
@@ -209,7 +211,7 @@ public sealed class PaymentServiceTests
         fixture.Store.HasOpenDispute = true;
 
         var exception = await Assert.ThrowsAsync<PaymentOperationException>(() => fixture.CollectAsync(
-            fixture.SalesUserId, SystemRoles.Sales, PaymentCollectionMethods.Cash));
+            Guid.NewGuid(), SystemRoles.Operator, PaymentCollectionMethods.BankTransfer));
 
         Assert.Equal("conflict", exception.Code);
         Assert.Equal(PaymentStatuses.Unpaid, fixture.Payment!.Status);
@@ -277,6 +279,51 @@ public sealed class PaymentServiceTests
         Assert.Equal(2, fixture.Store.Audits.Count);
         Assert.Single(fixture.Store.Audits, audit => audit.Action == "PayOsPaymentConfirmed");
         Assert.Empty(fixture.Store.Receipts);
+    }
+
+    [Theory]
+    [InlineData("CANCELLED")]
+    [InlineData("EXPIRED")]
+    public async Task Closed_prepaid_link_is_replaced_and_only_the_new_link_can_pay(string closedStatus)
+    {
+        var fixture = new Fixture(OrderPaymentMethods.Prepaid);
+        var first = await fixture.Service.CreatePayOsCheckoutAsync(
+            fixture.Order.Id, new(0), fixture.RetailerUserId, SystemRoles.Retailer, default);
+        fixture.Gateway.LinkStatus = closedStatus;
+        var read = await fixture.Service.GetByOrderAsync(
+            fixture.Order.Id, fixture.RetailerUserId, SystemRoles.Retailer, default);
+
+        var second = await fixture.Service.CreatePayOsCheckoutAsync(
+            fixture.Order.Id, new(read.Version), fixture.RetailerUserId, SystemRoles.Retailer, default);
+
+        Assert.Equal(closedStatus, read.PayOsLinkStatus);
+        Assert.NotEqual(first.PaymentLinkId, second.PaymentLinkId);
+        Assert.NotEqual(first.OrderCode, second.OrderCode);
+        Assert.Equal("PENDING", second.Status);
+        Assert.Equal(2, fixture.Gateway.CreateCount);
+
+        var stale = await fixture.Service.HandlePayOsWebhookAsync(fixture.Gateway.CreateWebhook(first), default);
+        Assert.False(stale.Processed);
+        Assert.Equal(PaymentStatuses.Unpaid, fixture.Payment!.Status);
+
+        await fixture.Service.HandlePayOsWebhookAsync(fixture.Gateway.CreateWebhook(second), default);
+        Assert.Equal(PaymentStatuses.Paid, fixture.Payment.Status);
+    }
+
+    [Fact]
+    public async Task Pending_prepaid_link_is_reused_without_creating_another()
+    {
+        var fixture = new Fixture(OrderPaymentMethods.Prepaid);
+        var first = await fixture.Service.CreatePayOsCheckoutAsync(
+            fixture.Order.Id, new(0), fixture.RetailerUserId, SystemRoles.Retailer, default);
+        var read = await fixture.Service.GetByOrderAsync(
+            fixture.Order.Id, fixture.RetailerUserId, SystemRoles.Retailer, default);
+
+        var again = await fixture.Service.CreatePayOsCheckoutAsync(
+            fixture.Order.Id, new(read.Version), fixture.RetailerUserId, SystemRoles.Retailer, default);
+
+        Assert.Equal(first.CheckoutUrl, again.CheckoutUrl);
+        Assert.Equal(1, fixture.Gateway.CreateCount);
     }
 
     [Fact]
@@ -379,7 +426,7 @@ public sealed class PaymentServiceTests
     {
         var fixture = new Fixture();
         // Collect in full first so ConfirmedAmount == AdjustedAmount.
-        await fixture.CollectAsync(fixture.SalesUserId, SystemRoles.Sales, PaymentCollectionMethods.Cash);
+        await fixture.CollectAsync(Guid.NewGuid(), SystemRoles.Operator, PaymentCollectionMethods.BankTransfer);
 
         var result = await fixture.Service.AdjustReceivableAsync(
             fixture.Order.Id, new AdjustReceivableData(100_000, "Giảm sau khi đã thu đủ", 1),
@@ -573,11 +620,16 @@ public sealed class PaymentServiceTests
     private sealed class FakePayOsGateway : IPayOsGateway
     {
         public string LinkStatus { get; set; } = "PENDING";
+        public int CreateCount { get; private set; }
         public Task<PayOsLinkData> CreatePaymentLinkAsync(
             PayOsCreateLinkData data,
-            CancellationToken cancellationToken) => Task.FromResult(new PayOsLinkData(
-                data.OrderCode, data.Amount, "test-link", "https://pay.payos.vn/web/test-link",
+            CancellationToken cancellationToken)
+        {
+            var linkId = ++CreateCount == 1 ? "test-link" : $"test-link-{CreateCount}";
+            return Task.FromResult(new PayOsLinkData(
+                data.OrderCode, data.Amount, linkId, $"https://pay.payos.vn/web/{linkId}",
                 "PAYOS-QR", "PENDING", 1_797_000_000));
+        }
 
         public Task<PayOsVerifiedWebhook> VerifyWebhookAsync(
             PayOsWebhookEnvelope webhook,
@@ -588,6 +640,10 @@ public sealed class PaymentServiceTests
             long orderCode,
             CancellationToken cancellationToken) => Task.FromResult(
                 new PayOsPaymentLinkStatus(orderCode, "test-link", LinkStatus, null));
+
+        public Task<PayOsPaymentLinkStatus> CancelPaymentLinkAsync(
+            long orderCode, string reason, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
 
         public PayOsWebhookEnvelope CreateWebhook(PayOsCheckoutResult checkout) => new(
             "00", "success", true,

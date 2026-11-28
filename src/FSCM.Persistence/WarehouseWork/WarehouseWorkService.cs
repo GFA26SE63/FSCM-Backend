@@ -24,7 +24,7 @@ public sealed record WarehousePalletMapping(string PalletCode, string CartonCode
 public sealed record WarehouseWorkResult(WarehouseDocument Document,
     IReadOnlyCollection<WarehouseDocumentLine> Lines, IReadOnlyCollection<WarehouseDocumentCarton> Cartons,
     IReadOnlyCollection<WarehousePalletMapping>? Pallets = null, string? TransportStatus = null,
-    // Only filled on open issue/picking documents while the admin demo fast-scan switch is on.
+    // Only filled on open issue/picking/transfer-receipt documents while the admin demo fast-scan switch is on.
     IReadOnlyCollection<string>? DemoCartonIds = null);
 
 /// <summary>Document orchestration shares the allocation/picking stock ledger and QR event history.</summary>
@@ -71,18 +71,21 @@ public sealed partial class WarehouseWorkService(AppDbContext db, InventoryServi
     }
 
     /// <summary>
-    /// Demo fast scan: available single-carton labels of each line's batch at the issuing warehouse,
-    /// enough to fill what is still unscanned. The real scan endpoint re-validates every code.
+    /// Demo fast scan: a receipt's unscanned cartons, or for an issue the available single-carton
+    /// labels of each line's batch at the issuing warehouse, enough to fill what is still unscanned.
+    /// Non-null only while the admin switch is on; the real scan endpoint re-validates every code.
     /// </summary>
     private async Task<IReadOnlyCollection<string>?> DemoCartonIds(WarehouseDocument d, WarehouseDocumentLine[] lines,
         WarehouseDocumentCarton[] cartons, Guid actor, string role, CancellationToken ct)
     {
-        if (d.Kind is not ("Picking" or "Issue") || d.Status != "Open" || !await HasAccess(d.WarehouseId, actor, role, ct))
+        var receipt = d.Kind == "Receipt" && d.Reason != "Factory";
+        if (!(receipt || d.Kind is "Picking" or "Issue") || d.Status != "Open" || !await HasAccess(d.WarehouseId, actor, role, ct))
             return null;
         var flag = await db.SystemConfigurationRecords.AsNoTracking()
             .Where(x => x.ConfigKey == BusinessConfigurationKeys.DemoFastScanEnabled && x.IsActive)
             .Select(x => x.ConfigValue).FirstOrDefaultAsync(ct);
         if (flag?.Trim() != "true") return null;
+        if (receipt) return cartons.Where(c => c.ScannedAt is null).Select(c => c.CartonId).ToArray();
         var codes = new List<string>();
         foreach (var line in lines.Where(x => x.BatchId.HasValue))
         {
