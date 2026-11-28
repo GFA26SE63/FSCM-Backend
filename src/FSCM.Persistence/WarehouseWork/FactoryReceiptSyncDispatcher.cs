@@ -9,7 +9,7 @@ public sealed class FactoryReceiptSyncDispatcher(AppDbContext db, FactoryTraceab
 {
     public async Task<int> DispatchAsync(CancellationToken ct)
     {
-        var pending = await db.Set<FactoryReceiptSync>().Where(x => x.SyncedAt == null).OrderBy(x => x.ReceivedAt).Take(100).ToArrayAsync(ct);
+        var pending = await db.Set<FactoryReceiptSync>().Where(x => x.SyncedAt == null).OrderBy(x => x.ReceivedAt).ThenBy(x => x.PalletId).Take(100).ToArrayAsync(ct);
         var synced = 0;
         foreach (var message in pending)
         {

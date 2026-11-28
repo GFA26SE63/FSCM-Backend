@@ -216,7 +216,7 @@ public sealed class DeliveryServiceTests
             PaymentStore = new FakePaymentStore(this);
             Inventory = new FakeInventoryLifecycle(this);
             Service = new DeliveryService(
-                Store, new FakePaymentPlan(), PaymentStore, Inventory, new FixedTimeProvider(Now));
+                Store, new FixedTimeProvider(Now));
         }
 
         private DeliveryLabelView CreateLabel(string code, decimal quantity, Guid batchId)

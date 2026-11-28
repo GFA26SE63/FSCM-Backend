@@ -1,7 +1,5 @@
 using System.Security.Claims;
-using FSCM.API.Contracts.Deliveries;
 using FSCM.API.Contracts.Orders;
-using FSCM.Application.Features.Deliveries;
 using FSCM.Application.Features.Orders;
 using FSCM.Domain.Authorization;
 using Microsoft.AspNetCore.Authorization;
@@ -14,7 +12,6 @@ namespace FSCM.API.Controllers;
 [Route("api/v1/orders")]
 public sealed class OrdersController(
     OrderService service,
-    DeliveryService deliveryService,
     OrderAvailabilityService availability) : ControllerBase
 {
     [HttpPost("availability")]

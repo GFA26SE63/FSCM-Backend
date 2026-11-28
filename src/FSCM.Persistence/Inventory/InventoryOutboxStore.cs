@@ -13,7 +13,7 @@ public sealed class InventoryOutboxStore(AppDbContext dbContext) : IInventoryOut
         await dbContext.OutboxMessageRecords
             .Where(item => item.EventType == InventoryOutboxEventTypes.BatchExpired &&
                            item.Status == OutboxMessageStatuses.Pending)
-            .OrderBy(item => item.CreatedAt)
+            .OrderBy(item => item.CreatedAt).ThenBy(item => item.Id)
             .Take(take)
             .ToArrayAsync(cancellationToken);
 

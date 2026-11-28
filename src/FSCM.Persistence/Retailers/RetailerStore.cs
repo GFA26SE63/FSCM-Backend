@@ -89,7 +89,7 @@ public sealed class RetailerStore(AppDbContext dbContext) : IRetailerStore
             user.Role == SystemRoles.Retailer && !user.IsActive &&
             (user.Email.ToLower() == email || user.Phone == phone) &&
             !dbContext.RetailerRecords.Any(retailer => retailer.UserAccountId == user.Id))
-            .OrderBy(user => user.CreatedAt)
+            .OrderBy(user => user.CreatedAt).ThenBy(user => user.Id)
             .Take(10)
             .ToListAsync(cancellationToken);
 
