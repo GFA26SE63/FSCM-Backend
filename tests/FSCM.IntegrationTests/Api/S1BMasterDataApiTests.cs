@@ -262,8 +262,26 @@ public sealed class S1BMasterDataApiTests
         var rows = await client.GetFromJsonAsync<JsonElement>("/api/v1/configurations");
         Assert.Equal("order.order_step_cartons", Assert.Single(rows.EnumerateArray()).GetProperty("key").GetString());
 
+        var graphResponse = await client.PostAsJsonAsync("/graphql", new
+        {
+            query = "query { businessConfigurations { key value version } }"
+        });
+        var graphBody = await graphResponse.Content.ReadAsStringAsync();
+        var graph = JsonDocument.Parse(graphBody).RootElement;
+        Assert.False(graph.TryGetProperty("errors", out _), graphBody);
+        Assert.Equal("order.order_step_cartons", Assert.Single(graph.GetProperty("data")
+            .GetProperty("businessConfigurations").EnumerateArray()).GetProperty("key").GetString());
+
         client.DefaultRequestHeaders.Authorization = Bearer(identity.Admin, identity);
         Assert.Equal(2, (await client.GetFromJsonAsync<JsonElement>("/api/v1/configurations")).GetArrayLength());
+        var adminGraphResponse = await client.PostAsJsonAsync("/graphql", new
+        {
+            query = "query { businessConfigurations { key value version } }"
+        });
+        var adminGraphBody = await adminGraphResponse.Content.ReadAsStringAsync();
+        var adminGraph = JsonDocument.Parse(adminGraphBody).RootElement;
+        Assert.False(adminGraph.TryGetProperty("errors", out _), adminGraphBody);
+        Assert.Equal(2, adminGraph.GetProperty("data").GetProperty("businessConfigurations").GetArrayLength());
     }
 
     private static AuthenticationHeaderValue Bearer(

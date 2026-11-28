@@ -8,6 +8,8 @@ namespace FSCM.Application.Features.EntityQueries;
 /// </summary>
 public interface IEntityQueryService
 {
+    /// <summary>Scope and grants are applied first, then a unique primary-key ordering for paging.
+    /// Callers may replace that default with an explicit sort, including a unique tie-breaker.</summary>
     IQueryable<TEntity> Query<TEntity>(EntityQueryAccess access) where TEntity : class;
 }
 

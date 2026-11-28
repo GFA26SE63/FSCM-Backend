@@ -10,7 +10,7 @@ public sealed class RealTimeAllocationStore(AppDbContext db) : IRealTimeAllocati
 {
     public async Task<IReadOnlyCollection<(Guid Id, Guid Actor)>> ListRecoverableAsync(DateTimeOffset before, CancellationToken ct) =>
         (await db.SalesOrderRecords.AsNoTracking().Where(o => o.Status == OrderStatuses.Allocating && o.UpdatedAt < before)
-            .OrderBy(o => o.UpdatedAt).Take(50).Select(o => new { o.Id, o.CreatedByUserId }).ToArrayAsync(ct))
+            .OrderBy(o => o.UpdatedAt).ThenBy(o => o.Id).Take(50).Select(o => new { o.Id, o.CreatedByUserId }).ToArrayAsync(ct))
             .Select(o => (o.Id, o.CreatedByUserId)).ToArray();
 
     public async Task MarkFailedAsync(Guid orderId, Guid actorId, string status, string reason, DateTimeOffset now, CancellationToken ct)
