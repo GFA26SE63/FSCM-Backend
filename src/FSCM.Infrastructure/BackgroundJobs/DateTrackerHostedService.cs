@@ -1,93 +1,40 @@
 using FSCM.Application.Features.Inventory;
+using FSCM.Application.Features.WarehouseConfiguration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 
 namespace FSCM.Infrastructure.BackgroundJobs;
 
-/// <summary>
-/// Nightly date-tracker job (BE Sprint 1). Wakes at the configured local time (default 01:30
-/// Asia/Ho_Chi_Minh), recomputes batch shelf-life status, and emits <c>BatchExpired</c> outbox
-/// messages via <see cref="InventoryExpirySweepService"/>.
-/// </summary>
-public sealed class DateTrackerHostedService(
-    IServiceScopeFactory scopeFactory,
-    IOptions<DateTrackerOptions> options,
-    TimeProvider timeProvider,
+/// <summary>Checks the live database schedule every 15 seconds; catches up once after a missed run.</summary>
+public sealed class DateTrackerHostedService(IServiceScopeFactory scopes, TimeProvider clock,
     ILogger<DateTrackerHostedService> logger) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        var settings = options.Value;
-        if (!settings.Enabled)
-        {
-            logger.LogInformation("Date-tracker job is disabled by configuration.");
-            return;
-        }
-
-        TimeZoneInfo timeZone;
-        TimeSpan runAt;
-        try
-        {
-            timeZone = TimeZoneInfo.FindSystemTimeZoneById(settings.TimeZone);
-            runAt = TimeSpan.ParseExact(settings.RunAtLocalTime, @"hh\:mm", null);
-        }
-        catch (Exception exception) when (exception is TimeZoneNotFoundException or FormatException)
-        {
-            logger.LogError(exception,
-                "Invalid date-tracker configuration (TimeZone='{TimeZone}', RunAtLocalTime='{RunAt}'); job will not run.",
-                settings.TimeZone, settings.RunAtLocalTime);
-            return;
-        }
-
-        logger.LogInformation(
-            "Date-tracker job scheduled daily at {RunAt} ({TimeZone}).", settings.RunAtLocalTime, timeZone.Id);
-
+        DateOnly? lastRunDate = null;
         while (!stoppingToken.IsCancellationRequested)
         {
-            var delay = GetDelayUntilNextRun(timeZone, runAt);
             try
             {
-                await Task.Delay(delay, timeProvider, stoppingToken);
+                await using var scope = scopes.CreateAsyncScope();
+                var settings = await scope.ServiceProvider.GetRequiredService<BackgroundJobSettings>()
+                    .ReadAsync<DateTrackerSettings>(BackgroundJobSettings.DateTrackerKey, stoppingToken);
+                var local = TimeZoneInfo.ConvertTime(clock.GetUtcNow(), TimeZoneInfo.FindSystemTimeZoneById(settings.TimeZone));
+                var date = DateOnly.FromDateTime(local.DateTime);
+                if (settings.Enabled && date != lastRunDate &&
+                    TimeOnly.FromDateTime(local.DateTime) >= TimeOnly.ParseExact(settings.RunAtLocalTime, "HH:mm"))
+                {
+                    var result = await scope.ServiceProvider.GetRequiredService<InventoryExpirySweepService>().RunAsync(stoppingToken);
+                    lastRunDate = date;
+                    logger.LogInformation("Date-tracker: {Scanned} batches scanned, {Expired} expired.",
+                        result.BatchesScanned, result.BatchesExpired);
+                }
             }
-            catch (OperationCanceledException)
-            {
-                break;
-            }
-
-            await RunSweepAsync(stoppingToken);
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { break; }
+            catch (Exception e) { logger.LogError(e, "Date-tracker failed; retrying on next settings poll."); }
+            try { await Task.Delay(TimeSpan.FromSeconds(15), clock, stoppingToken); }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { break; }
         }
-    }
-
-    private async Task RunSweepAsync(CancellationToken cancellationToken)
-    {
-        try
-        {
-            await using var scope = scopeFactory.CreateAsyncScope();
-            var sweep = scope.ServiceProvider.GetRequiredService<InventoryExpirySweepService>();
-            var result = await sweep.RunAsync(cancellationToken);
-            logger.LogInformation(
-                "Date-tracker sweep completed: {Scanned} scanned, {Updated} status updates, {Expired} newly expired.",
-                result.BatchesScanned, result.StatusesUpdated, result.BatchesExpired);
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            // Shutdown in progress - swallow.
-        }
-        catch (Exception exception)
-        {
-            logger.LogError(exception, "Date-tracker sweep failed; it will retry at the next scheduled run.");
-        }
-    }
-
-    private TimeSpan GetDelayUntilNextRun(TimeZoneInfo timeZone, TimeSpan runAt)
-    {
-        var nowLocal = TimeZoneInfo.ConvertTime(timeProvider.GetUtcNow(), timeZone);
-        var nextLocal = new DateTimeOffset(nowLocal.Date.Add(runAt), nowLocal.Offset);
-        if (nextLocal <= nowLocal) nextLocal = nextLocal.AddDays(1);
-
-        var delay = nextLocal - nowLocal;
-        return delay < TimeSpan.Zero ? TimeSpan.Zero : delay;
     }
 }

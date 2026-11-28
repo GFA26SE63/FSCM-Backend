@@ -1,9 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
 using FSCM.Application.Features.Orders;
-using FSCM.Application.Features.Payments;
-using FSCM.Application.Features.QrLabels;
-using FSCM.Application.Features.Inventory;
 using FSCM.Domain.Authorization;
 using FSCM.Domain.Entities;
 
@@ -11,9 +8,6 @@ namespace FSCM.Application.Features.Deliveries;
 
 public sealed class DeliveryService(
     IDeliveryStore store,
-    IPaymentPlanService paymentPlanService,
-    IPaymentStore paymentStore,
-    IInventoryLifecycleService inventoryLifecycleService,
     TimeProvider timeProvider)
 {
     public async Task<IReadOnlyCollection<DriverResult>> ListDriversAsync(

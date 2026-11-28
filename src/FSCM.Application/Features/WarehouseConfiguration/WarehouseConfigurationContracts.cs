@@ -108,6 +108,10 @@ public static class BusinessConfigurationKeys
     public static readonly IReadOnlyDictionary<string, BusinessConfigurationDefinition> Supported =
         new Dictionary<string, BusinessConfigurationDefinition>(StringComparer.Ordinal)
         {
+            [BackgroundJobSettings.AllocationRecoveryKey] = new("object", "Tự động phục hồi phân bổ bị gián đoạn"),
+            [BackgroundJobSettings.DateTrackerKey] = new("object", "Lịch kiểm tra hạn sử dụng lô hàng"),
+            [BackgroundJobSettings.InventoryOutboxKey] = new("object", "Xử lý thông báo lô hết hạn"),
+            [BackgroundJobSettings.OrderDeadlineKey] = new("object", "Kiểm tra hạn báo giá và thanh toán trả trước"),
             [AllocationWeights] = new("object", "Trọng số chấm điểm phân bổ theo hạn sử dụng, khoảng cách và độ phủ"),
             [ServiceRadiusMeters] = new("integer", "Bán kính phục vụ tối đa mặc định, tính bằng mét"),
             [DefaultMlorRatio] = new("decimal", "Tỷ lệ hạn sử dụng còn lại tối thiểu mặc định"),

@@ -411,6 +411,12 @@ public sealed partial class WarehouseConfigurationService(
 
         switch (key)
         {
+            case BackgroundJobSettings.AllocationRecoveryKey:
+            case BackgroundJobSettings.DateTrackerKey:
+            case BackgroundJobSettings.InventoryOutboxKey:
+            case BackgroundJobSettings.OrderDeadlineKey:
+                BackgroundJobSettings.Validate(key, value);
+                break;
             case BusinessConfigurationKeys.AllocationWeights:
                 if (value.ValueKind != JsonValueKind.Object ||
                     !TryGetDecimal(value, "expiry", out var expiry) ||

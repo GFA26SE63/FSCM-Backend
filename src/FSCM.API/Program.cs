@@ -20,8 +20,10 @@ builder.Host.UseSerilog((context, services, loggerConfiguration) =>
     loggerConfiguration
         .ReadFrom.Configuration(context.Configuration)
         .ReadFrom.Services(services)
-        .Enrich.FromLogContext()
-        .WriteTo.Console();
+        .Enrich.FromLogContext();
+    var consoleConfigured = context.Configuration.GetSection("Serilog:WriteTo").GetChildren()
+        .Any(sink => string.Equals(sink["Name"] ?? sink.Value, "Console", StringComparison.OrdinalIgnoreCase));
+    if (!consoleConfigured) loggerConfiguration.WriteTo.Console();
 });
 
 builder.Services.AddApiServices(builder.Configuration);

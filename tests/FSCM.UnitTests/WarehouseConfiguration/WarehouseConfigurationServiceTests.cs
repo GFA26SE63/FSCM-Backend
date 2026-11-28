@@ -5,6 +5,55 @@ namespace FSCM.UnitTests.WarehouseConfiguration;
 
 public sealed class WarehouseConfigurationServiceTests
 {
+    [Theory]
+    [InlineData(BackgroundJobSettings.DateTrackerKey, """{"enabled":true,"timeZone":"Asia/Ho_Chi_Minh","runAtLocalTime":"25:00"}""")]
+    [InlineData(BackgroundJobSettings.DateTrackerKey, """{"enabled":true,"timeZone":"Missing/Zone","runAtLocalTime":"01:30"}""")]
+    [InlineData(BackgroundJobSettings.InventoryOutboxKey, """{"enabled":true,"pollIntervalSeconds":0,"batchSize":50}""")]
+    [InlineData(BackgroundJobSettings.InventoryOutboxKey, """{"enabled":true,"pollIntervalSeconds":15,"batchSize":501}""")]
+    [InlineData(BackgroundJobSettings.OrderDeadlineKey, """{"enabled":true,"pollIntervalMinutes":61,"prepaidPaymentWindowDays":3}""")]
+    [InlineData(BackgroundJobSettings.OrderDeadlineKey, """{"enabled":true,"pollIntervalMinutes":5,"prepaidPaymentWindowDays":0}""")]
+    [InlineData(BackgroundJobSettings.OrderDeadlineKey, """{"enabled":true,"pollIntervalMinutes":5}""")]
+    [InlineData(BackgroundJobSettings.AllocationRecoveryKey, """{"enabled":"true"}""")]
+    public async Task Invalid_job_settings_are_rejected_before_any_version_is_written(string key, string json)
+    {
+        var fixture = new Fixture();
+        await Assert.ThrowsAsync<WarehouseConfigurationOperationException>(() =>
+            fixture.Service.UpdateConfigurationsAsync([
+                new(BusinessConfigurationKeys.OrderStepCartons, "2"), new(key, json)
+            ], Guid.NewGuid(), default));
+        Assert.Empty(fixture.Store.Configurations);
+    }
+
+    [Fact]
+    public async Task Job_reader_observes_live_changes_and_preserves_configuration_history()
+    {
+        var fixture = new Fixture();
+        var reader = new BackgroundJobSettings(fixture.Store);
+        var actor = Guid.NewGuid();
+        var first = await fixture.Service.UpdateConfigurationAsync(BackgroundJobSettings.InventoryOutboxKey,
+            """{"enabled":false,"pollIntervalSeconds":15,"batchSize":50}""", actor, default);
+        Assert.False((await reader.ReadAsync<InventoryOutboxSettings>(BackgroundJobSettings.InventoryOutboxKey, default)).Enabled);
+        var second = await fixture.Service.UpdateConfigurationAsync(BackgroundJobSettings.InventoryOutboxKey,
+            """{"enabled":true,"pollIntervalSeconds":1,"batchSize":500}""", actor, default);
+        var live = await reader.ReadAsync<InventoryOutboxSettings>(BackgroundJobSettings.InventoryOutboxKey, default);
+        Assert.True(live.Enabled);
+        Assert.Equal(1, live.PollIntervalSeconds);
+        Assert.Equal(500, live.BatchSize);
+        Assert.Equal(first.Version + 1, second.Version);
+        Assert.Equal(actor, second.UpdatedByUserId);
+        Assert.Single(fixture.Store.Configurations, item => item.IsActive);
+        Assert.Equal(2, fixture.Store.Configurations.Count);
+    }
+
+    [Fact]
+    public async Task Missing_job_settings_fail_closed_instead_of_using_file_defaults()
+    {
+        var fixture = new Fixture();
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            new BackgroundJobSettings(fixture.Store).ReadAsync<DateTrackerSettings>(
+                BackgroundJobSettings.DateTrackerKey, default));
+    }
+
     private static readonly DateTimeOffset Now = new(2026, 10, 13, 2, 0, 0, TimeSpan.Zero);
 
     [Fact]
