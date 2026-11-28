@@ -253,7 +253,6 @@ public sealed class ShipmentService(
                 item.Shipment.Status, item.Shipment.ExceptionReason))
             .ToArray();
 
-        var covered = existing.Select(item => item.WarehouseId).ToHashSet();
         var expected = await store.ListExpectedWarehousesAsync(order.Id, cancellationToken);
         if (actorRole == SystemRoles.WarehouseKeeper && actorUserId.HasValue)
         {
@@ -263,6 +262,14 @@ public sealed class ShipmentService(
                     scoped.Add(warehouse);
             expected = scoped;
         }
+        return ComposeReadiness(order, existing, expected, await IsPaymentSettledAsync(order, cancellationToken));
+    }
+
+    public static OrderShipmentReadinessResult ComposeReadiness(SalesOrder order,
+        IReadOnlyCollection<ShipmentReadinessPartResult> existing,
+        IReadOnlyCollection<ExpectedWarehousePart> expected, bool paymentSettled)
+    {
+        var covered = existing.Select(item => item.WarehouseId).ToHashSet();
         var pending = expected
             .Where(item => !covered.Contains(item.WarehouseId))
             .Select(item => new ShipmentReadinessPartResult(
@@ -297,7 +304,6 @@ public sealed class ShipmentService(
             reasons.Add($"Kho {part.WarehouseCode} chua soan xong phan hang cua don.");
         }
 
-        var paymentSettled = await IsPaymentSettledAsync(order, cancellationToken);
         if (!paymentSettled)
         {
             reasons.Add("Don tra truoc chua thanh toan du, chua du dieu kien xuat kho.");
@@ -333,8 +339,11 @@ public sealed class ShipmentService(
     {
         if (order.PaymentMethod != OrderPaymentMethods.Prepaid) return true;
         var payment = await paymentStore.FindByOrderAsync(order.Id, false, cancellationToken);
-        return payment?.Payment.Status == PaymentStatuses.Paid;
+        return IsPaymentSettled(order, payment?.Payment.Status);
     }
+
+    public static bool IsPaymentSettled(SalesOrder order, string? paymentStatus) =>
+        order.PaymentMethod != OrderPaymentMethods.Prepaid || paymentStatus == PaymentStatuses.Paid;
 
     /// <summary>
     /// F96: the warehouse confirms this part physically left.
