@@ -187,10 +187,14 @@ public sealed class ReportStore(AppDbContext dbContext) : IReportStore
                 on order.Id equals line.SalesOrderId
             join product in dbContext.ProductRecords.AsNoTracking()
                 on line.ProductId equals product.Id
+            join cat in dbContext.ProductCategoryRecords.AsNoTracking()
+                on product.ProductCategoryId equals cat.Id into cats
+            from cat in cats.DefaultIfEmpty()
             select new
             {
                 Order = order, Payment = payment, Line = line,
-                ProductSku = product.Sku, ProductName = product.Name
+                ProductSku = product.Sku, ProductName = product.Name,
+                CategoryName = cat != null ? cat.Name : ""
             }).ToArrayAsync(cancellationToken);
 
         var productCompletedOn = await LoadCompletionDatesAsync(
@@ -215,7 +219,10 @@ public sealed class ReportStore(AppDbContext dbContext) : IReportStore
             row.Line.ProductId,
             Sku = string.IsNullOrWhiteSpace(row.Line.SkuSnapshot) ? row.ProductSku : row.Line.SkuSnapshot,
             Name = string.IsNullOrWhiteSpace(row.Line.ProductNameSnapshot) ? row.ProductName : row.Line.ProductNameSnapshot,
+            row.CategoryName,
             Quantity = row.Line.OrderedQuantity,
+            LineGross = row.Line.GrossAmount > 0 ? row.Line.GrossAmount : row.Line.UnitPrice * row.Line.OrderedQuantity,
+            LineDiscount = row.Line.DiscountAmount,
             LineNet = row.Line.NetAmount,
             AdjustedOrderAmount = row.Payment?.AdjustedAmount ?? row.Order.FinalAmount
         }).ToArray();
@@ -225,17 +232,22 @@ public sealed class ReportStore(AppDbContext dbContext) : IReportStore
             var canonicalOrderNet = orderGroup.Sum(row => row.LineNet);
             return orderGroup.Select(row => new
             {
-                row.ProductId, row.Sku, row.Name, row.Quantity,
+                OrderId = row.Id,
+                row.ProductId, row.Sku, row.Name, row.CategoryName, row.Quantity, row.LineGross, row.LineDiscount,
                 Revenue = canonicalOrderNet <= 0 ? 0 : decimal.Round(
                     row.AdjustedOrderAmount * row.LineNet / canonicalOrderNet, 2,
                     MidpointRounding.AwayFromZero)
             });
         });
 
-        return allocated.GroupBy(row => new { row.ProductId, row.Sku, row.Name })
+        return allocated.GroupBy(row => new { row.ProductId, row.Sku, row.Name, row.CategoryName })
             .Select(group => new ProductSalesRow(
                 group.Key.ProductId, group.Key.Sku, group.Key.Name,
-                group.Sum(row => row.Quantity), group.Sum(row => row.Revenue)))
+                group.Sum(row => row.Quantity), group.Sum(row => row.Revenue),
+                group.Key.CategoryName,
+                group.Select(row => row.OrderId).Distinct().Count(),
+                group.Sum(row => row.LineGross),
+                group.Sum(row => row.LineDiscount)))
             .ToArray();
     }
 }

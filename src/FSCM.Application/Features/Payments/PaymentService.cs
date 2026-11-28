@@ -130,7 +130,7 @@ public sealed class PaymentService(
                     $"Payment version is {view.Payment.Version}; refresh and retry.");
             if (actorRole == SystemRoles.Sales && view.Order.CreatedByUserId != actorUserId)
                 throw PaymentOperationException.Forbidden(
-                    "Sales can only record cash collection for their own order.");
+                    "Delegated Sales user can only record bank transfer collection for their own order.");
             var outstanding = Math.Max(0, view.Payment.AdjustedAmount - view.Payment.ConfirmedAmount);
             if (outstanding <= 0)
                 throw PaymentOperationException.Conflict("Payment has no outstanding amount to collect.");
@@ -679,10 +679,9 @@ public sealed class PaymentService(
 
     private static string NormalizeCollectionMethod(string value) => value?.Trim() switch
     {
-        PaymentCollectionMethods.Cash => PaymentCollectionMethods.Cash,
         PaymentCollectionMethods.BankTransfer => PaymentCollectionMethods.BankTransfer,
         _ => throw PaymentOperationException.Validation(
-            "Collection method must be Cash or BankTransfer.")
+            "Collection method must be BankTransfer.")
     };
 
     private static string NormalizeOperationKey(string value)
