@@ -38,7 +38,7 @@ public static class ScreenOperationDependencies
         "TerritoryAccess" => ["mobile-sales-order-create"],
         "Dashboard" => ["dashboard"],
         "Reports" => role == SystemRoles.Sales ? ["mobile-sales-kpi"] : ["kpi", "dashboard"],
-        "OperationsReports" => ["reports"],
+        "BusinessReports" => ["reports"],
         "WarehouseLogisticsReports" => ["warehouse-report"],
         "Orders" when action is "Create" or "Availability" => role == SystemRoles.Retailer
             ? ["mobile-rt-order-create"] : role == SystemRoles.Sales ? ["mobile-sales-order-create"] : ["orders"],

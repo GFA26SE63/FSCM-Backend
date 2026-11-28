@@ -176,12 +176,12 @@ public sealed class RealTimePostgresWorkflowTests
         });
         async Task Collect(Guid orderId)
         {
-            var payment = await Call<PaymentService, PaymentResult>(s => s.GetByOrderAsync(orderId, sales, SystemRoles.Sales, default));
+            var payment = await Call<PaymentService, PaymentResult>(s => s.GetByOrderAsync(orderId, op, SystemRoles.Operator, default));
             Assert.NotNull(payment.DeliveredDate); Assert.Equal(payment.DeliveredDate.Value.AddDays(14), payment.DueDate);
-            var paid = await Call<PaymentService, PaymentResult>(s => s.CollectAsync(orderId, new("Cash", payment.Version, "E2E cash"), $"e2e:{orderId}", sales, SystemRoles.Sales, default));
+            var paid = await Call<PaymentService, PaymentResult>(s => s.CollectAsync(orderId, new("BankTransfer", payment.Version, "E2E bank transfer"), $"e2e:{orderId}", op, SystemRoles.Operator, default));
             Assert.Equal("Paid", paid.Status); Assert.Equal(0, paid.OutstandingAmount);
             // Simulate a lost collection response: the same request must replay safely.
-            var replay = await Call<PaymentService, PaymentResult>(s => s.CollectAsync(orderId, new("Cash", payment.Version, "E2E cash"), $"e2e:{orderId}", sales, SystemRoles.Sales, default));
+            var replay = await Call<PaymentService, PaymentResult>(s => s.CollectAsync(orderId, new("BankTransfer", payment.Version, "E2E bank transfer"), $"e2e:{orderId}", op, SystemRoles.Operator, default));
             Assert.Equal(paid.Version, replay.Version);
             await Db(async db =>
             {
