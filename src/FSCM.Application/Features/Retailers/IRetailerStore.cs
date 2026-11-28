@@ -20,6 +20,8 @@ public sealed record RetailerTerritoryAccess(Guid SalesGroupId, string SalesGrou
 
 public interface IRetailerStore
 {
+    async Task<IReadOnlyCollection<RetailerView>> ListSelectedAsync(Guid actor, string role, Guid[] ids, CancellationToken ct) =>
+        (await ListAsync(actor, role, null, ct)).Where(v => ids.Contains(v.Retailer.Id)).ToArray();
     Task<IReadOnlyCollection<RetailerView>> ListAsync(Guid actorUserId, string actorRole, string? status, CancellationToken cancellationToken);
     Task<RetailerView?> FindViewAsync(Guid retailerId, CancellationToken cancellationToken);
     Task<Retailer?> FindForUpdateAsync(Guid retailerId, CancellationToken cancellationToken);
