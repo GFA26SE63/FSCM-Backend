@@ -60,6 +60,7 @@ public static class DependencyInjection
         services.AddScoped<InventoryLifecycleService>();
         services.AddScoped<InventoryLockService>();
         services.AddScoped<InventoryOutboxDispatcher>();
+        services.AddScoped<InventoryExpirySweepService>();
         services.AddScoped<IInventoryLifecycleService>(provider => provider.GetRequiredService<InventoryLifecycleService>());
         services.AddScoped<LoyaltyService>();
         services.AddScoped<RewardService>();
@@ -99,6 +100,7 @@ public static class DependencyInjection
         services.AddScoped<TransitTableService>();
         services.AddScoped<DeliveryEtaService>();
         services.AddScoped<WarehouseConfigurationService>();
+        services.AddScoped<BackgroundJobSettings>();
 
         return services;
     }

@@ -1,3 +1,4 @@
+using System.Linq.Expressions;
 using FSCM.Application.Features.EntityQueries;
 using FSCM.Domain.Authorization;
 using FSCM.Domain.Entities;
@@ -8,7 +9,29 @@ namespace FSCM.Persistence.EntityQueries;
 
 public sealed class EntityQueryService(AppDbContext dbContext) : IEntityQueryService
 {
-    public IQueryable<TEntity> Query<TEntity>(EntityQueryAccess access) where TEntity : class
+    public IQueryable<TEntity> Query<TEntity>(EntityQueryAccess access) where TEntity : class =>
+        OrderByPrimaryKey(QueryWithGrants<TEntity>(access));
+
+    private IQueryable<TEntity> OrderByPrimaryKey<TEntity>(IQueryable<TEntity> query) where TEntity : class
+    {
+        var key = dbContext.Model.FindEntityType(typeof(TEntity))?.FindPrimaryKey()
+            ?? throw new InvalidOperationException($"Entity '{typeof(TEntity).Name}' must have a primary key for paging.");
+        var parameter = Expression.Parameter(typeof(TEntity), "entity");
+        var expression = query.Expression;
+        for (var index = 0; index < key.Properties.Count; index++)
+        {
+            var property = key.Properties[index];
+            var selector = Expression.Lambda(
+                Expression.Call(typeof(EF), nameof(EF.Property), [property.ClrType],
+                    parameter, Expression.Constant(property.Name)), parameter);
+            expression = Expression.Call(typeof(Queryable),
+                index == 0 ? nameof(Queryable.OrderBy) : nameof(Queryable.ThenBy),
+                [typeof(TEntity), property.ClrType], expression, Expression.Quote(selector));
+        }
+        return query.Provider.CreateQuery<TEntity>(expression);
+    }
+
+    private IQueryable<TEntity> QueryWithGrants<TEntity>(EntityQueryAccess access) where TEntity : class
     {
         var query = QueryScoped<TEntity>(access);
         if (access.Role == SystemRoles.Admin || access.Permissions is null) return query;

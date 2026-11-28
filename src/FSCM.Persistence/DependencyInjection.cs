@@ -104,6 +104,7 @@ public static class DependencyInjection
         services.AddScoped<IRetailerActivationStore, RetailerActivationStore>();
         services.AddScoped<IInventoryStore, InventoryStore>();
         services.AddScoped<IInventoryLifecycleStore, InventoryStore>();
+        services.AddScoped<IBatchExpiryStore, InventoryStore>();
         services.AddScoped<IInventoryOutboxStore, InventoryOutboxStore>();
         services.AddScoped<IInventoryLockStore, InventoryLockStore>();
         services.AddScoped<ILoyaltyStore, LoyaltyStore>();

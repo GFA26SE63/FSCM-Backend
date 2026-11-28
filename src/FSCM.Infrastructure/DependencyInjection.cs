@@ -47,17 +47,13 @@ public static class DependencyInjection
         services.Configure<FscmBlobStorageOptions>(configuration.GetSection(FscmBlobStorageOptions.SectionName));
         services.AddSingleton<IImageStorage, AzureBlobImageStorage>();
 
-        services.Configure<DateTrackerOptions>(configuration.GetSection(DateTrackerOptions.SectionName));
         services.AddHostedService<DateTrackerHostedService>();
         // Review 2 flow allocates each SO in real time. The legacy scheduled run still targets
         // archived RUN_* tables and must not start alongside real-time reservation.
         services.Configure<AllocationRunOptions>(configuration.GetSection(AllocationRunOptions.SectionName));
-        services.Configure<InventoryOutboxOptions>(configuration.GetSection(InventoryOutboxOptions.SectionName));
         services.AddHostedService<InventoryOutboxHostedService>();
-        services.Configure<OrderDeadlineOptions>(configuration.GetSection(OrderDeadlineOptions.SectionName));
         services.AddHostedService<OrderDeadlineHostedService>();
         services.AddHostedService<AllocationRecoveryHostedService>();
-        services.Configure<AllocationRecoveryOptions>(configuration.GetSection("BackgroundJobs:AllocationRecovery"));
         services.AddSingleton<IPayOsGateway>(_ => new PayOsGateway(configuration));
 
         services.AddHttpClient("OpenAI", client =>

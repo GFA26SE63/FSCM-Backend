@@ -1,3 +1,5 @@
+using System.Linq.Expressions;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using FSCM.Application.Features.EntityQueries;
 using FSCM.Application.Features.Identity;
 using FSCM.Domain.Authorization;
@@ -10,6 +12,51 @@ namespace FSCM.IntegrationTests.Persistence;
 
 public sealed class EntityQueryScopeTests
 {
+    [Fact]
+    public void Every_mapped_graphql_entity_connection_has_ordering_before_offset_paging()
+    {
+        using var db = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
+            .UseNpgsql("Host=127.0.0.1;Database=unused;Username=unused")
+            .ConfigureWarnings(warnings => warnings.Throw(CoreEventId.RowLimitingOperationWithoutOrderByWarning)).Options);
+        var source = new EntityQueryService(db);
+        var access = new EntityQueryAccess(Guid.NewGuid(), SystemRoles.Admin, IdentityScope.Empty);
+        var queryMethod = typeof(EntityQueryService).GetMethod(nameof(EntityQueryService.Query))!;
+        var connections = typeof(FSCM.API.GraphQL.EntityQuery).GetMethods()
+            .Where(method => method.ReturnType.IsGenericType &&
+                method.ReturnType.GetGenericTypeDefinition() == typeof(IQueryable<>) &&
+                // Archived Review-2 models are deliberately ignored by AppDbContext.
+                db.Model.FindEntityType(method.ReturnType.GetGenericArguments()[0]) is not null).ToArray();
+        Assert.NotEmpty(connections);
+        foreach (var connection in connections)
+        {
+            var entity = connection.ReturnType.GetGenericArguments()[0];
+            var query = (IQueryable)queryMethod.MakeGenericMethod(entity).Invoke(source, [access])!;
+            var skip = Expression.Call(typeof(Queryable), nameof(Queryable.Skip), [entity], query.Expression, Expression.Constant(1));
+            var take = Expression.Call(typeof(Queryable), nameof(Queryable.Take), [entity], skip, Expression.Constant(2));
+            var sql = query.Provider.CreateQuery(take).ToQueryString();
+            Assert.Contains("ORDER BY", sql);
+        }
+    }
+
+    [Fact]
+    public void Composite_primary_keys_and_explicit_client_sorting_remain_supported()
+    {
+        using var db = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
+            .UseNpgsql("Host=127.0.0.1;Database=unused;Username=unused")
+            .ConfigureWarnings(warnings => warnings.Throw(CoreEventId.RowLimitingOperationWithoutOrderByWarning)).Options);
+        var source = new EntityQueryService(db);
+        var access = new EntityQueryAccess(Guid.NewGuid(), SystemRoles.Admin, IdentityScope.Empty);
+        var composite = source.Query<ScreenApiMapping>(access).Take(2).ToQueryString();
+        var order = composite[composite.LastIndexOf("ORDER BY", StringComparison.Ordinal)..];
+        Assert.Contains("BusinessRole", order);
+        Assert.Contains("ScreenCode", order);
+        Assert.Contains("ApiCode", order);
+
+        var custom = source.Query<Warehouse>(access).OrderBy(w => w.Name).ThenBy(w => w.Id).Take(2).ToQueryString();
+        order = custom[custom.LastIndexOf("ORDER BY", StringComparison.Ordinal)..];
+        Assert.True(order.IndexOf("Name", StringComparison.Ordinal) < order.IndexOf("Id", StringComparison.Ordinal));
+    }
+
     [Fact]
     public void Admin_notification_query_is_always_limited_to_the_current_recipient()
     {
