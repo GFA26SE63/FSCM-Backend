@@ -95,6 +95,7 @@ public static class DependencyInjection
         services.AddScoped<ICatalogStore, CatalogStore>();
         services.AddScoped<IDeliveryStore, DeliveryStore>();
         services.AddScoped<IShipmentStore, ShipmentStore>();
+        services.AddScoped<IShipmentDispatchReadStore, ShipmentDispatchReadStore>();
         services.AddScoped<IReportStore, ReportStore>();
         services.AddScoped<IBusinessReportStore, BusinessReportStore>();
         services.AddScoped<IWarehouseLogisticsReportStore, WarehouseLogisticsReportStore>();

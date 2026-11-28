@@ -93,6 +93,13 @@ public sealed class ConfiguredTransportReadTests
         var expected = await new ShipmentStore(db).ListBusyTransportAsync(default, actor.Id, SystemRoles.Operator);
         Assert.Equal(expected.DriverIds.Order(), busy.GetProperty("driverIds").EnumerateArray().Select(x => x.GetGuid()).Order());
         Assert.Equal(expected.VehicleIds.Order(), busy.GetProperty("vehicleIds").EnumerateArray().Select(x => x.GetGuid()).Order());
+        // This fixture shares one DbContext; independent production calls use separate scopes.
+        var pickingResponse = await client.PostAsJsonAsync("/graphql", new
+        {
+            query = "{ entities { deliveryDispatchPickingReads { id orderId warehouseId items { sku productName requestedQuantity } } } }"
+        });
+        using var pickingJson = JsonDocument.Parse(await pickingResponse.Content.ReadAsStringAsync());
+        Assert.False(pickingJson.RootElement.TryGetProperty("errors", out _), pickingJson.RootElement.ToString());
 
         // Reach domain validation using the dispatch screen alone, without touching real trips.
         var departure = await client.PostAsJsonAsync($"/api/v1/shipments/{Guid.NewGuid()}/dispatch",
@@ -112,6 +119,15 @@ public sealed class ConfiguredTransportReadTests
             Assert.False(readiness.RootElement.TryGetProperty("errors", out _), readiness.RootElement.ToString());
             var result = readiness.RootElement.GetProperty("data").GetProperty("entities").GetProperty("shipmentReadinessRead");
             Assert.Equal(orderId.Value, result.GetProperty("salesOrderId").GetGuid());
+            var batchResponse = await client.PostAsJsonAsync("/graphql", new
+            {
+                query = "query($orderIds: [UUID!]!) { entities { shipmentReadinessBatchRead(orderIds: $orderIds) { salesOrderId dispatchStatus isHistory parts { warehouseId status } } } }",
+                variables = new { orderIds = new[] { orderId.Value } }
+            });
+            using var batchJson = JsonDocument.Parse(await batchResponse.Content.ReadAsStringAsync());
+            Assert.False(batchJson.RootElement.TryGetProperty("errors", out _), batchJson.RootElement.ToString());
+            Assert.Equal(result.GetRawText(), batchJson.RootElement.GetProperty("data").GetProperty("entities")
+                .GetProperty("shipmentReadinessBatchRead")[0].GetRawText());
             Assert.Equal(result.GetProperty("dispatchStatus").GetString() == "Delivered", result.GetProperty("isHistory").GetBoolean());
         }
     }

@@ -96,6 +96,37 @@ public sealed class InventoryExpirySweepServiceTests
         Assert.Empty(store.Locks);
     }
 
+    [Fact]
+    public async Task Sweep_repairs_stale_status_without_republishing_existing_expiry_event()
+    {
+        var batch = NewBatch(new DateOnly(2026, 10, 12), BatchExpiryStatuses.Valid);
+        var store = new FakeStore([Candidate(batch, 10, 0, 10) with { HasExpiryEvent = true }]);
+
+        var result = await new InventoryExpirySweepService(store, new FixedTimeProvider(Now)).RunAsync(default);
+
+        Assert.Equal(BatchExpiryStatuses.Expired, batch.ExpiryStatus);
+        Assert.Equal(1, result.StatusesUpdated);
+        Assert.Empty(store.Outbox);
+        Assert.Empty(store.Locks);
+        Assert.Equal(ExpirySweepStatuses.Completed, Assert.Single(store.Runs).Status);
+    }
+
+    [Fact]
+    public async Task Failed_save_records_failure_without_replaying_pending_business_changes()
+    {
+        var batch = NewBatch(new DateOnly(2026, 10, 12), BatchExpiryStatuses.Valid);
+        var store = new FakeStore([Candidate(batch, 10, 0, 0)]) { FailBusinessSave = true };
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            new InventoryExpirySweepService(store, new FixedTimeProvider(Now)).RunAsync(default));
+
+        Assert.Equal("Business save failed", exception.Message);
+        Assert.True(store.FailureSaved);
+        Assert.Equal(ExpirySweepStatuses.Failed, Assert.Single(store.Runs).Status);
+        Assert.Empty(store.Outbox);
+        Assert.Empty(store.Locks);
+    }
+
     private static BatchExpiryCandidate Candidate(Batch batch, decimal physical, decimal reserved, decimal locked) =>
         new(batch, NearDateThresholdHours: 48, physical, reserved, locked);
 
@@ -118,6 +149,8 @@ public sealed class InventoryExpirySweepServiceTests
         public List<ExpirySweepRun> Runs { get; } = [];
         public List<InventoryLock> Locks { get; } = [];
         public bool Saved { get; private set; }
+        public bool FailBusinessSave { get; init; }
+        public bool FailureSaved { get; private set; }
 
         public Task<IReadOnlyCollection<BatchExpiryCandidate>> ListBatchesForExpirySweepAsync(
             CancellationToken cancellationToken) => Task.FromResult(candidates);
@@ -128,7 +161,16 @@ public sealed class InventoryExpirySweepServiceTests
 
         public Task SaveChangesAsync(CancellationToken cancellationToken)
         {
+            if (FailBusinessSave && Saved) throw new InvalidOperationException("Business save failed");
             Saved = true;
+            return Task.CompletedTask;
+        }
+
+        public Task SaveFailedSweepAsync(ExpirySweepRun run, CancellationToken cancellationToken)
+        {
+            Outbox.Clear();
+            Locks.Clear();
+            FailureSaved = true;
             return Task.CompletedTask;
         }
     }

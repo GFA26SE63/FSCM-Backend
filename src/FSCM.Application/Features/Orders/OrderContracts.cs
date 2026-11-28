@@ -163,7 +163,7 @@ public sealed record OrderStatusHistoryResult(
     string? FromStatus,
     string ToStatus,
     string? Reason,
-    Guid ChangedByUserId,
+    Guid? ChangedByUserId,
     DateTimeOffset ChangedAt);
 
 public sealed record OrderSummaryResult(
