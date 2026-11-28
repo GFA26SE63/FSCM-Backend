@@ -12,7 +12,7 @@ public sealed class OrderStatusHistoryConfiguration : IEntityTypeConfiguration<O
         builder.HasKey(entity => entity.Id);
         builder.Property(entity => entity.Id).HasColumnType("uuid").IsRequired();
         builder.Property(entity => entity.SalesOrderId).HasColumnType("uuid").IsRequired();
-        builder.Property(entity => entity.ChangedByUserId).HasColumnType("uuid").IsRequired();
+        builder.Property(entity => entity.ChangedByUserId).HasColumnType("uuid").IsRequired(false);
         builder.Property(entity => entity.FromStatus).HasMaxLength(30).IsRequired(false);
         builder.Property(entity => entity.ToStatus).HasMaxLength(30).IsRequired();
         builder.Property(entity => entity.Reason).HasColumnType("text").IsRequired(false);

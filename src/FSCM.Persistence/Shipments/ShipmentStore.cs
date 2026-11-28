@@ -41,21 +41,10 @@ public sealed class ShipmentStore(AppDbContext dbContext) : IShipmentStore
             : ReportingScopeQueries.ManagedWarehouses(dbContext, userId).AnyAsync(item => item.Id == warehouseId, cancellationToken);
 
     public Task<bool> CanViewOrderAsync(Guid orderId, Guid userId, string role, CancellationToken cancellationToken) =>
-        role switch
-        {
-            SystemRoles.Admin or SystemRoles.Operator => Task.FromResult(true),
-            SystemRoles.Sales => dbContext.SalesOrderRecords.AsNoTracking().AnyAsync(order =>
-                order.Id == orderId && order.CreatedByUserId == userId, cancellationToken),
-            SystemRoles.SalesManager => dbContext.SalesOrderRecords.AsNoTracking().AnyAsync(order =>
-                order.Id == orderId && ReportingScopeQueries.ManagedGroups(dbContext, userId).Select(g => g.Id).Contains(order.SalesGroupId), cancellationToken),
-            SystemRoles.WarehouseKeeper => ReportingScopeQueries.WarehouseOrderIds(dbContext, userId)
-                .AnyAsync(id => id == orderId, cancellationToken),
-            SystemRoles.Retailer => dbContext.SalesOrderRecords.AsNoTracking().AnyAsync(order =>
-                order.Id == orderId && dbContext.RetailerRecords.Any(retailer =>
-                    retailer.Id == order.RetailerId && retailer.UserAccountId == userId), cancellationToken),
-            _ => Task.FromResult(false)
-        };
-
+        role is SystemRoles.Admin or SystemRoles.Operator
+            ? Task.FromResult(true)
+            : ReportingScopeQueries.ShipmentOrders(dbContext, userId, role)
+                .AnyAsync(order => order.Id == orderId, cancellationToken);
     public async Task<IReadOnlyCollection<ShipmentView>> ListAsync(
         Guid userId, string role, Guid? orderId, Guid? warehouseId, string? status, CancellationToken cancellationToken)
     {

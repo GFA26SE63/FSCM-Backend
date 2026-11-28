@@ -20,6 +20,8 @@ public sealed class PickingExceptionHandler(
             "not_found" => StatusCodes.Status404NotFound,
             "forbidden" => StatusCodes.Status403Forbidden,
             "conflict" => StatusCodes.Status409Conflict,
+            "service_unavailable" => StatusCodes.Status503ServiceUnavailable,
+            "bad_gateway" => StatusCodes.Status502BadGateway,
             _ => StatusCodes.Status500InternalServerError
         };
         logger.LogWarning("Picking request failed with code {ErrorCode}: {ErrorMessage}",

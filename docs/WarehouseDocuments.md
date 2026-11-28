@@ -53,3 +53,25 @@ Cập nhật ứng dụng độc lập: hệ thống nhà máy nằm ở `../FSC
 ## Draft PXK before scans
 
 New warehouse requests create Kind Issue, status Open with a PXK code before scanning. Scans assign cartons without dispatching stock. Posting requires all cartons, preserves document ID/code and dispatches atomically. Transfer receipts require a Posted source issue. Legacy Picking documents keep their existing snapshot completion path. No schema migration.
+
+## Factory integration reads and failures
+
+Only the factory request queue loads `factory-pending-dispatches`. The ordinary
+inbound queue, transfer arrivals, outbound, transfer and transport screens do not
+load factory pending goods. `factory-receipt-groups` is loaded only for the visible
+factory receipt history; detail and create screens do not load either list.
+These existing REST reads are integration-specific: pending goods come from the
+external factory service, and legacy receipt grouping can enrich local history
+with factory dispatch metadata. Local transport read models continue to use GraphQL.
+
+The factory HTTP gateway returns ProblemDetails with `service_unavailable` (503)
+for connectivity failures, timeouts and unavailable/misconfigured integration,
+and `bad_gateway` (502) for invalid JSON or null responses. A factory state
+conflict remains `conflict` (409), and an unknown manifest remains `not_found`
+(404). Caller cancellation propagates. Responses never expose integration keys
+or raw upstream error bodies. Receipt history keeps its existing local fallback
+when optional factory enrichment is unavailable. No schema or data migration.
+
+The existing document list hydrates lines, cartons and pallet mappings through
+lookups keyed by document/carton, avoiding repeated full-table scans in memory.
+Local stock snapshots remain sufficient for outbound, transfer and transport work.
